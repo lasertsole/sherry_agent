@@ -228,7 +228,7 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
         fs.LaneSystemConfig,
         {
             "subagent_max_concurrent": 8,
-            "nudge_max_concurrent": 4,
+            "background_review_max_concurrent": 4,
             "nested_max_concurrent": 1,
             "lane_wait_warn_ms": 5000,
             "lane_drain_timeout_seconds": 30.0,
@@ -451,7 +451,7 @@ class TestLaneConfig:
         resolved = lane_system._resolve_main_concurrency()
         floor = (
             lane_system.LANE_SYSTEM["subagent_max_concurrent"]
-            + lane_system.LANE_SYSTEM["nudge_max_concurrent"]
+            + lane_system.LANE_SYSTEM["background_review_max_concurrent"]
         )
 
         assert floor <= resolved <= 16
@@ -475,7 +475,7 @@ class TestLaneConfig:
 
     @pytest.mark.parametrize(
         "key",
-        ["subagent_max_concurrent", "nudge_max_concurrent", "nested_max_concurrent"],
+        ["subagent_max_concurrent", "background_review_max_concurrent", "nested_max_concurrent"],
     )
     def test_non_positive_lane_limits_are_rejected(
         self, monkeypatch: pytest.MonkeyPatch, key: str

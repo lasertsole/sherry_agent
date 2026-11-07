@@ -1,6 +1,6 @@
-"""Live-network e2e: the plan-completion skill-quality nudge.
+"""Live-network e2e: the plan-completion skill-review review_mod.
 
-Drives the REAL ``_run_plan_extraction`` fork: auxiliary model, real
+Drives the REAL ``_run_skill_review`` fork: auxiliary model, real
 ``skill_list`` / ``skill_view`` / ``skill_manage`` tools, real sandboxed
 ``skills/auto`` tree, and the runtime quality judge. It verifies the skill-only
 contract: no knowledge/FACTS writes, a class-level module-notes skill is created
@@ -27,8 +27,8 @@ import agent.tools.pub_base.skill_usage as agent_skill_usage
 import agent.tools.skill_tools.skill_manage as skill_manage_module
 import agent.tools.skill_tools.skill_view as skill_view_module
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
-from agent.middlewares.summarization import nudges as nudge_mod
-from agent.middlewares.summarization import skill_quality
+from agent.middlewares.summarization import background_reviews as review_mod
+from agent.middlewares.summarization import skill_review
 from agent.prompt_data_provider import register_prompt_data_provider
 from agent.tools.todolist.knowledge import knowledge_store
 from agent.tools.todolist.registry.store_sqlite import delete_todos_by_session, replace_all
@@ -66,7 +66,7 @@ class _Sandbox:
         monkeypatch.setattr(knowledge_store, "_KNOWLEDGE_ROOT", self.plans_dir)
         monkeypatch.setattr(skill_manage_module, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         monkeypatch.setattr(skill_view_module, "SKILLS_DIR", self.auto_skills_dir)
-        monkeypatch.setattr(skill_quality, "AUTO_SKILLS_DIR", self.auto_skills_dir)
+        monkeypatch.setattr(skill_review, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         monkeypatch.setattr("skills.build_skills_snapshot", lambda: None)
         monkeypatch.setattr(agent_skill_usage, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         monkeypatch.setattr(curator_constants, "AUTO_SKILLS_DIR", self.auto_skills_dir)
@@ -94,7 +94,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Sandbox:
 
 
 def _new_sid(tag: str) -> str:
-    return f"e2e-skill-nudge-{tag}-{uuid.uuid4().hex[:8]}"
+    return f"e2e-skill-review-{tag}-{uuid.uuid4().hex[:8]}"
 
 
 async def _purge_session(session_id: str) -> None:
@@ -110,7 +110,7 @@ async def _purge_session(session_id: str) -> None:
         clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
 
 
-_PLAN_MARKDOWN = """# {plan_name}: skill-quality probe
+_PLAN_MARKDOWN = """# {plan_name}: skill-review probe
 
 ## Goal
 Verify that the completed plan updates a class-level skill with real evidence.
@@ -165,15 +165,15 @@ async def _seed_completed_plan(sid: str, tag: str) -> str:
     return plan_name
 
 
-async def _run_plan_extraction(session_id: str, instruction: str = "") -> None:
+async def _run_skill_review(session_id: str, instruction: str = "") -> None:
     state_register_mem.set_state(session_id, "system_prompt", _TEST_SYSTEM_PROMPT)
-    original_prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
+    original_prompt = review_mod._SKILL_REVIEW_PROMPT
     if instruction:
-        nudge_mod._PLAN_EXTRACTION_PROMPT = f"{original_prompt}\n\n{instruction}"
+        review_mod._SKILL_REVIEW_PROMPT = f"{original_prompt}\n\n{instruction}"
     try:
-        await nudge_mod._run_plan_extraction(session_id)
+        await review_mod._run_skill_review(session_id)
     finally:
-        nudge_mod._PLAN_EXTRACTION_PROMPT = original_prompt
+        review_mod._SKILL_REVIEW_PROMPT = original_prompt
 
 
 def _notes_has_module_lesson(content: str) -> bool:
@@ -190,14 +190,14 @@ def _frontmatter(content: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_module_notes_created_by_real_skill_nudge(sandbox: _Sandbox) -> None:
+async def test_module_notes_created_by_real_skill_review(sandbox: _Sandbox) -> None:
     reports: list[str] = []
     for attempt in (1, 2):
         sandbox.reset()
         sid = _new_sid(f"create-{attempt}")
         try:
             await _seed_completed_plan(sid, f"create-{attempt}")
-            await _run_plan_extraction(sid, _CREATE_INSTRUCTION)
+            await _run_skill_review(sid, _CREATE_INSTRUCTION)
 
             skill_file = sandbox.notes_skill_file()
             if not skill_file.is_file():
@@ -211,7 +211,7 @@ async def test_module_notes_created_by_real_skill_nudge(sandbox: _Sandbox) -> No
             return
         finally:
             await _purge_session(sid)
-    pytest.fail("the live nudge never created auth-module-notes:\n" + "\n".join(reports))
+    pytest.fail("the live review never created auth-module-notes:\n" + "\n".join(reports))
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_module_notes_patched_when_already_present(sandbox: _Sandbox) -> N
         sid = _new_sid(f"patch-{attempt}")
         try:
             await _seed_completed_plan(sid, f"patch-{attempt}")
-            await _run_plan_extraction(sid, _PATCH_INSTRUCTION)
+            await _run_skill_review(sid, _PATCH_INSTRUCTION)
 
             content = skill_file.read_text(encoding="utf-8")
             auth_dirs = [
@@ -244,7 +244,7 @@ async def test_module_notes_patched_when_already_present(sandbox: _Sandbox) -> N
             return
         finally:
             await _purge_session(sid)
-    pytest.fail("the live nudge never patched auth-module-notes:\n" + "\n".join(reports))
+    pytest.fail("the live review never patched auth-module-notes:\n" + "\n".join(reports))
 
 
 @pytest.mark.asyncio
@@ -257,7 +257,7 @@ async def test_module_notes_visible_to_curator_report(sandbox: _Sandbox) -> None
         sid = _new_sid(f"curator-{attempt}")
         try:
             await _seed_completed_plan(sid, f"curator-{attempt}")
-            await _run_plan_extraction(sid, _CREATE_INSTRUCTION)
+            await _run_skill_review(sid, _CREATE_INSTRUCTION)
 
             rows = agent_created_report()
             names = [row["name"] for row in rows]

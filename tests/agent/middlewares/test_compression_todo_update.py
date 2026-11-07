@@ -1,4 +1,4 @@
-"""Unit tests for the post-compression todo reconciliation nudge.
+"""Unit tests for the post-compression todo reconciliation review_mod.
 
 Covers:
 - trigger gating (feature switch / empty slice / empty todo list / lock),
@@ -10,7 +10,7 @@ Covers:
 - fail-open behavior (runner errors never reach the compression result and
   always release the lock),
 - prompt content (discarded slice + current todos + replacement rules),
-- ``_NudgeLimitTool(allowed_metadata_key=...)`` metadata gate (and the legacy
+- ``_BackgroundReviewLimitTool(allowed_metadata_key=...)`` metadata gate (and the legacy
   ``nudge`` metadata rule non-regression),
 - full-fork isolation (derived session key, main-session-bound ``todowrite``
   shim, no checkpointer / message leakage).
@@ -33,13 +33,13 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel
 
-import agent.middlewares.summarization.nudges as nudge_mod
-from agent.middlewares.summarization.nudges import (
+import agent.middlewares.summarization.background_reviews as review_mod
+from agent.middlewares.summarization.background_reviews import (
     _COMPRESSION_TODO_LOCK_KEY,
     _COMPRESSION_TODO_METADATA_KEY,
     _COMPRESSION_TODO_SESSION_SUFFIX,
     _COMPRESSION_TODO_TASKS,
-    _NudgeLimitTool,
+    _BackgroundReviewLimitTool,
     schedule_compression_todo_update,
     update_todos_from_compaction,
 )
@@ -154,7 +154,7 @@ def _spy_create_task(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.Task[None]
         created.append(task)
         return task
 
-    monkeypatch.setattr(nudge_mod.asyncio, "create_task", _spy)
+    monkeypatch.setattr(review_mod.asyncio, "create_task", _spy)
     return created
 
 
@@ -166,7 +166,7 @@ def _spy_create_task(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.Task[None]
 @pytest.fixture
 def fake_nudge_state(monkeypatch: pytest.MonkeyPatch) -> _FakeStateRegister:
     fake = _FakeStateRegister()
-    monkeypatch.setattr(nudge_mod, "state_register_mem", fake)
+    monkeypatch.setattr(review_mod, "state_register_mem", fake)
     return fake
 
 
@@ -196,7 +196,7 @@ class TestTriggerGates:
         self, monkeypatch: pytest.MonkeyPatch, fake_nudge_state: _FakeStateRegister
     ) -> None:
         monkeypatch.setattr(
-            nudge_mod,
+            review_mod,
             "SUMMARIZATION",
             {**SUMMARIZATION, "compression_todo_update_enabled": False},
         )
@@ -261,7 +261,7 @@ class TestFireAndForget:
             started.set()
             await release.wait()
 
-        monkeypatch.setattr(nudge_mod, "update_todos_from_compaction", _slow_runner)
+        monkeypatch.setattr(review_mod, "update_todos_from_compaction", _slow_runner)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
         created = _spy_create_task(monkeypatch)
 
@@ -319,7 +319,7 @@ class TestReentrancyLock:
         ) -> Any:
             return _BlockingAgent()
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", _create)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
 
         assert schedule_compression_todo_update("sess-reentry", [HumanMessage("a")]) is True
@@ -350,7 +350,7 @@ class TestCompressionPathWiring:
         async def _noop(*args: Any, **kwargs: Any) -> None:
             return None
 
-        monkeypatch.setattr(nudge_mod, "_nudge_memory", _noop)
+        monkeypatch.setattr(review_mod, "_execute_memory_review", _noop)
 
     @pytest.mark.asyncio
     async def test_async_path_fires_real_task_with_discarded_slice(
@@ -361,7 +361,7 @@ class TestCompressionPathWiring:
         async def _runner(session_id: str, messages: list) -> None:
             runs.append((session_id, len(messages)))
 
-        monkeypatch.setattr(nudge_mod, "update_todos_from_compaction", _runner)
+        monkeypatch.setattr(review_mod, "update_todos_from_compaction", _runner)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
         created = _spy_create_task(monkeypatch)
 
@@ -384,7 +384,7 @@ class TestCompressionPathWiring:
         self, monkeypatch: pytest.MonkeyPatch, fake_nudge_state: _FakeStateRegister, sid: str
     ) -> None:
         monkeypatch.setattr(
-            nudge_mod,
+            review_mod,
             "SUMMARIZATION",
             {**SUMMARIZATION, "compression_todo_update_enabled": False},
         )
@@ -393,7 +393,7 @@ class TestCompressionPathWiring:
         async def _runner(session_id: str, messages: list) -> None:
             runs.append(session_id)
 
-        monkeypatch.setattr(nudge_mod, "update_todos_from_compaction", _runner)
+        monkeypatch.setattr(review_mod, "update_todos_from_compaction", _runner)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
 
         result = await _make_summarization()._aapply_compression_under_lock(
@@ -413,7 +413,7 @@ class TestCompressionPathWiring:
         async def _runner(session_id: str, messages: list) -> None:
             runs.append(session_id)
 
-        monkeypatch.setattr(nudge_mod, "update_todos_from_compaction", _runner)
+        monkeypatch.setattr(review_mod, "update_todos_from_compaction", _runner)
         _patch_todos(monkeypatch, [])
 
         await _make_summarization()._aapply_compression_under_lock(
@@ -432,7 +432,7 @@ class TestCompressionPathWiring:
         async def _runner(session_id: str, messages: list) -> None:
             runs.append(session_id)
 
-        monkeypatch.setattr(nudge_mod, "update_todos_from_compaction", _runner)
+        monkeypatch.setattr(review_mod, "update_todos_from_compaction", _runner)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
         monkeypatch.setattr(
             Summarization, "_determine_cutoff", lambda self, messages, session_id="": 0
@@ -509,7 +509,7 @@ class TestUpdateTodosFromCompaction:
             captured_kwargs.append({"allowed_metadata_key": allowed_metadata_key, "tools": tools})
             return agent
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", _create)
         todos = [
             {
                 "content": "ship feature",
@@ -566,7 +566,7 @@ class TestUpdateTodosFromCompaction:
             captured_system.append(system_prompt)
             return agent
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", _create)
         ref = "workspace/sessions/sess-prompt/plans/scoped.md"
         _patch_todos(
             monkeypatch,
@@ -589,7 +589,7 @@ class TestUpdateTodosFromCompaction:
         ) -> Any:
             raise RuntimeError("llm down")
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _boom)
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", _boom)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
 
         await update_todos_from_compaction("sess-fail", [HumanMessage("hello")])
@@ -610,7 +610,7 @@ class TestUpdateTodosFromCompaction:
             called.append("create")
             return _CapturingAgent()
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", _create)
         _patch_todos(monkeypatch, [])
 
         await update_todos_from_compaction("sess-empty", [HumanMessage("hello")])
@@ -631,7 +631,7 @@ class TestCompressionResultUnaffectedByTodoFailure:
         ) -> Any:
             raise RuntimeError("llm down")
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _boom)
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", _boom)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
 
         messages = _large_history()
@@ -646,7 +646,7 @@ class TestCompressionResultUnaffectedByTodoFailure:
 
 
 # ---------------------------------------------------------------------------
-# _NudgeLimitTool metadata-key gate
+# _BackgroundReviewLimitTool metadata-key gate
 # ---------------------------------------------------------------------------
 
 
@@ -663,7 +663,7 @@ async def _ok_handler(request: Any) -> ToolMessage:
     )
 
 
-class TestNudgeLimitToolMetadataKey:
+class TestBackgroundReviewLimitToolMetadataKey:
     def test_real_todowrite_carries_marker_and_todoread_does_not(self) -> None:
         tools = {t.name: t for t in build_todolist_tools()}
 
@@ -675,7 +675,7 @@ class TestNudgeLimitToolMetadataKey:
     @pytest.mark.asyncio
     async def test_real_todowrite_passes_the_gate(self) -> None:
         tools = {t.name: t for t in build_todolist_tools()}
-        gate = _NudgeLimitTool(allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY)
+        gate = _BackgroundReviewLimitTool(allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY)
         handled: list[str] = []
 
         async def handler(request: Any) -> ToolMessage:
@@ -693,7 +693,7 @@ class TestNudgeLimitToolMetadataKey:
     @pytest.mark.asyncio
     async def test_todoread_and_untagged_tools_are_denied(self) -> None:
         tools = {t.name: t for t in build_todolist_tools()}
-        gate = _NudgeLimitTool(allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY)
+        gate = _BackgroundReviewLimitTool(allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY)
         handled: list[str] = []
 
         async def handler(request: Any) -> ToolMessage:
@@ -710,20 +710,22 @@ class TestNudgeLimitToolMetadataKey:
             result = await gate.awrap_tool_call(_tool_request(name, metadata), handler)
             assert isinstance(result, ToolMessage)
             assert result.status == "error", name
-            assert "not allowed during nudge phase" in result.content
+            assert "not allowed during a background review" in result.content
 
         assert handled == []
 
     @pytest.mark.asyncio
     async def test_nudge_metadata_rule_unchanged_when_no_key(self) -> None:
-        gate = _NudgeLimitTool()
+        gate = _BackgroundReviewLimitTool()
         handled: list[str] = []
 
         async def handler(request: Any) -> ToolMessage:
             handled.append(request.tool_call["name"])
             return await _ok_handler(request)
 
-        allowed = await gate.awrap_tool_call(_tool_request("memory", {"nudge": True}), handler)
+        allowed = await gate.awrap_tool_call(
+            _tool_request("memory", {"background_review": True}), handler
+        )
         assert isinstance(allowed, ToolMessage)
         assert allowed.status == "success"
 
@@ -732,10 +734,18 @@ class TestNudgeLimitToolMetadataKey:
         assert denied.status == "error"
         assert handled == ["memory"]
 
-    def test_is_nudge_allowed_static_metadata_rule(self) -> None:
-        assert _NudgeLimitTool._is_nudge_allowed(SimpleNamespace(metadata={"nudge": True})) is True
-        assert _NudgeLimitTool._is_nudge_allowed(SimpleNamespace(metadata={})) is False
-        assert _NudgeLimitTool._is_nudge_allowed(None) is False
+    def test_is_background_review_allowed_static_metadata_rule(self) -> None:
+        assert (
+            _BackgroundReviewLimitTool._is_background_review_allowed(
+                SimpleNamespace(metadata={"background_review": True})
+            )
+            is True
+        )
+        assert (
+            _BackgroundReviewLimitTool._is_background_review_allowed(SimpleNamespace(metadata={}))
+            is False
+        )
+        assert _BackgroundReviewLimitTool._is_background_review_allowed(None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -956,13 +966,13 @@ class TestForkIsolation:
         sid: str,
     ) -> None:
         created: list[dict] = []
-        real_create_agent = nudge_mod.create_agent
+        real_create_agent = review_mod.create_agent
 
         def _spy(**kwargs: Any) -> Any:
             created.append(kwargs)
             return real_create_agent(**kwargs)
 
-        monkeypatch.setattr(nudge_mod, "create_agent", _spy)
+        monkeypatch.setattr(review_mod, "create_agent", _spy)
         monkeypatch.setattr("models.build_main_llm", lambda: _StubTodoUpdateModel())
         fake_todo_store.by_session[sid] = [{"content": "initial", "status": "pending"}]
         discarded = [HumanMessage(content="hello"), AIMessage(content="world")]
@@ -985,7 +995,7 @@ class TestForkIsolation:
 class TestTodowriteShim:
     def test_shim_reuses_real_schema_and_description(self) -> None:
         real = {t.name: t for t in build_todolist_tools()}["todowrite"]
-        shim = nudge_mod._build_main_session_todowrite("sess-shim")
+        shim = review_mod._build_main_session_todowrite("sess-shim")
         real_schema = real.args_schema
         shim_schema = shim.args_schema
         assert isinstance(real_schema, type) and issubclass(real_schema, BaseModel)
@@ -1002,7 +1012,7 @@ class TestTodowriteShim:
 
     def test_shim_preserves_injected_state_annotation(self) -> None:
         real = {t.name: t for t in build_todolist_tools()}["todowrite"]
-        shim = nudge_mod._build_main_session_todowrite("sess-shim")
+        shim = review_mod._build_main_session_todowrite("sess-shim")
         real_schema = real.args_schema
         shim_schema = shim.args_schema
         assert isinstance(real_schema, type) and issubclass(real_schema, BaseModel)
@@ -1019,7 +1029,7 @@ class TestTodowriteShim:
         main_sid = "shim-main"
         derived = f"{main_sid}{_COMPRESSION_TODO_SESSION_SUFFIX}"
         fake_todo_store.by_session[main_sid] = [{"content": "initial", "status": "pending"}]
-        shim = nudge_mod._build_main_session_todowrite(main_sid)
+        shim = review_mod._build_main_session_todowrite(main_sid)
 
         out = await shim.ainvoke(
             {
@@ -1038,7 +1048,7 @@ class TestTodowriteShim:
     @pytest.mark.asyncio
     async def test_shim_forwards_plan_ref(self, fake_todo_store: _FakeTodoStore) -> None:
         main_sid = "shim-plan"
-        shim = nudge_mod._build_main_session_todowrite(main_sid)
+        shim = review_mod._build_main_session_todowrite(main_sid)
 
         await shim.ainvoke(
             {

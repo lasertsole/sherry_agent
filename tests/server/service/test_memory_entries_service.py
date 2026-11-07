@@ -203,7 +203,7 @@ def test_consolidation_task_runs_in_background(repo, monkeypatch):
         return {"status": "completed", "archived": 2, "entries_before": 10, "entries_after": 8}
 
     monkeypatch.setattr(
-        "agent.middlewares.summarization.nudges.run_memory_consolidation", _fake
+        "agent.middlewares.summarization.background_reviews.run_memory_consolidation", _fake
     )
 
     async def _run():

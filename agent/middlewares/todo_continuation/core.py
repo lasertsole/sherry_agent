@@ -74,9 +74,9 @@ _ORIGIN = "todo_continuation"
 #: (the plan snapshot changes) while the list rots — that window is what this
 #: catches. The nudge is APPENDED to the continuation directive, never a
 #: directive of its own.
-_TODO_WRITE_NUDGE_TURNS = TODOLIST_INFRA["todo_write_nudge_turns"]
+_TODO_WRITE_REMINDER_TURNS = TODOLIST_INFRA["todo_write_nudge_turns"]
 
-_TODO_WRITE_NUDGE = """
+_TODO_WRITE_REMINDER = """
 
 [REMINDER: TODO TRACKING]
 You have not used the todowrite tool in {n} turns. If task statuses have
@@ -437,16 +437,16 @@ class PlanContinuationEnforcer(AgentMiddleware):
                         _reminded_plans[session_id] = fingerprint
                     return None
                 st.reset(session_id)
-                # The plan just finished: hand it to the plan-extraction fork.
+                # The plan just finished: hand it to the skill-review fork.
                 # Deliberately independent of compaction — a short session whose
                 # window never fills must still get its plan extracted, and the
                 # fork needs no conversation history (the data is in the todos,
                 # the subagent runs and the plan file).
-                from agent.middlewares.summarization.nudges import (
-                    maybe_trigger_plan_extraction,
+                from agent.middlewares.summarization.background_reviews import (
+                    maybe_trigger_skill_review,
                 )
 
-                await maybe_trigger_plan_extraction(session_id)
+                await maybe_trigger_skill_review(session_id)
                 return None
 
             # The cap latched on an earlier turn: the stop directive was already
@@ -521,12 +521,12 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 todo_status=_build_status_block(todos), flow_status=flow_status
             )
             turns_without = st.turns_since_todowrite(session_id)
-            if turns_without >= _TODO_WRITE_NUDGE_TURNS:
+            if turns_without >= _TODO_WRITE_REMINDER_TURNS:
                 # Appended, never a directive of its own: the model receives
                 # "keep going" AND "your TODO list may be stale" in one turn.
                 # Recovery mode carries its own, stronger todowrite guidance, so
                 # the nudge stays out of that branch on purpose.
-                prompt += _TODO_WRITE_NUDGE.format(n=turns_without)
+                prompt += _TODO_WRITE_REMINDER.format(n=turns_without)
                 logger.info(
                     "plan continuation: appending the todo-tracking nudge for session {} "
                     "({} turns without todowrite)",

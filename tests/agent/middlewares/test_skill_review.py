@@ -1,4 +1,4 @@
-"""The plan-completion skill-quality loop: pass, retry, rollback, failure."""
+"""The plan-completion skill-review loop: pass, retry, rollback, failure."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage
 
-import agent.middlewares.summarization.nudges as nudges
-from agent.middlewares.summarization.skill_quality import SkillJudgement, SkillTreeSnapshot
+import agent.middlewares.summarization.background_reviews as reviews
+from agent.middlewares.summarization.skill_review import SkillJudgement, SkillTreeSnapshot
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -75,10 +75,10 @@ def loop_env(monkeypatch):
     async def _judge(*_args, **_kwargs):
         return judgements.pop(0)
 
-    monkeypatch.setattr(nudges, "state_register_mem", mem)
-    monkeypatch.setattr(nudges, "state_register_db", db)
+    monkeypatch.setattr(reviews, "state_register_mem", mem)
+    monkeypatch.setattr(reviews, "state_register_db", db)
     monkeypatch.setattr(
-        nudges,
+        reviews,
         "_build_plan_context",
         lambda _sid: {"plan_name": "p", "plan_path": "x", "plan_content": "", "todos": []},
     )
@@ -86,11 +86,11 @@ def loop_env(monkeypatch):
         "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
         lambda _sid: "sys",
     )
-    monkeypatch.setattr(nudges, "_create_plan_extraction_agent", _create)
-    monkeypatch.setattr(nudges, "judge_skill_update", _judge)
-    monkeypatch.setattr(nudges, "snapshot_auto_skills", lambda: SkillTreeSnapshot())
+    monkeypatch.setattr(reviews, "_create_skill_review_agent", _create)
+    monkeypatch.setattr(reviews, "judge_skill_update", _judge)
+    monkeypatch.setattr(reviews, "snapshot_auto_skills", lambda: SkillTreeSnapshot())
     monkeypatch.setattr(
-        nudges,
+        reviews,
         "restore_auto_skills",
         lambda snapshot: restores.append(snapshot),
     )
@@ -120,18 +120,18 @@ async def test_a_judge_approved_no_op_marks_the_plan_extracted(loop_env):
         )
     )
 
-    await nudges._run_plan_extraction("s-noop")
+    await reviews._run_skill_review("s-noop")
 
     assert loop_env["restores"] == []
-    assert loop_env["db"].get_state("s-noop", nudges._PLAN_SNAPSHOT_HASH_KEY) == (
-        nudges._plan_snapshot_hash([])
+    assert loop_env["db"].get_state("s-noop", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY) == (
+        reviews._plan_snapshot_hash([])
     )
 
 
 @pytest.mark.asyncio
 async def test_the_prompt_carries_loaded_skills_and_user_corrections(loop_env, monkeypatch):
     monkeypatch.setattr(
-        nudges,
+        reviews,
         "_build_plan_context",
         lambda _sid: {
             "plan_name": "p",
@@ -160,7 +160,7 @@ async def test_the_prompt_carries_loaded_skills_and_user_corrections(loop_env, m
         )
     )
 
-    await nudges._run_plan_extraction("s-feedback")
+    await reviews._run_skill_review("s-feedback")
 
     prompt = loop_env["prompts"][0]
     assert "alpha" in prompt and "Alpha skill" in prompt
@@ -177,40 +177,40 @@ async def test_a_rejected_attempt_is_restored_and_retried_with_feedback(loop_env
     )
     loop_env["judgements"].extend([_fail("add the failed branch"), _pass()])
 
-    await nudges._run_plan_extraction("s-retry")
+    await reviews._run_skill_review("s-retry")
 
     assert len(loop_env["prompts"]) == 2
     assert "add the failed branch" in loop_env["prompts"][1]
     assert len(loop_env["restores"]) == 1
-    assert loop_env["db"].get_state("s-retry", nudges._PLAN_SNAPSHOT_HASH_KEY) == (
-        nudges._plan_snapshot_hash([])
+    assert loop_env["db"].get_state("s-retry", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY) == (
+        reviews._plan_snapshot_hash([])
     )
 
 
 @pytest.mark.asyncio
 async def test_exhausted_attempts_record_failure_not_success(loop_env, monkeypatch):
-    monkeypatch.setitem(nudges.NUDGE, "skill_nudge_max_attempts", 1)
+    monkeypatch.setitem(reviews.BACKGROUND_REVIEW_CONFIG, "skill_review_max_attempts", 1)
     loop_env["payloads"].append('{"status":"updated","skills":["demo"],"reason":"bad"}')
     loop_env["judgements"].append(_fail("still wrong"))
 
-    await nudges._run_plan_extraction("s-fail")
+    await reviews._run_skill_review("s-fail")
 
-    assert loop_env["db"].get_state("s-fail", nudges._PLAN_SNAPSHOT_HASH_KEY, "") == ""
+    assert loop_env["db"].get_state("s-fail", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY, "") == ""
     assert loop_env["db"].get_state(
-        "s-fail", nudges._PLAN_SKILL_FAILED_HASH_KEY, ""
-    ) == nudges._plan_snapshot_hash([])
+        "s-fail", reviews._SKILL_REVIEW_FAILED_HASH_KEY, ""
+    ) == reviews._plan_snapshot_hash([])
     assert len(loop_env["restores"]) == 1
 
 
 @pytest.mark.asyncio
 async def test_a_failure_cooldown_skips_the_judge_loop(loop_env, monkeypatch):
     loop_env["db"].set_state(
-        "s-cooldown", nudges._PLAN_SKILL_FAILED_HASH_KEY, nudges._plan_snapshot_hash([])
+        "s-cooldown", reviews._SKILL_REVIEW_FAILED_HASH_KEY, reviews._plan_snapshot_hash([])
     )
-    loop_env["db"].set_state("s-cooldown", nudges._PLAN_SKILL_FAILED_AT_KEY, time.time())
-    monkeypatch.setitem(nudges.NUDGE, "skill_nudge_failure_cooldown_s", 3600)
+    loop_env["db"].set_state("s-cooldown", reviews._SKILL_REVIEW_FAILED_AT_KEY, time.time())
+    monkeypatch.setitem(reviews.BACKGROUND_REVIEW_CONFIG, "skill_review_failure_cooldown_s", 3600)
 
-    await nudges._run_plan_extraction("s-cooldown")
+    await reviews._run_skill_review("s-cooldown")
 
     assert loop_env["prompts"] == []
     assert loop_env["restores"] == []

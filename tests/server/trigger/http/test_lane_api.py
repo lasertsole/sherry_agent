@@ -33,7 +33,7 @@ class TestLaneStatusHandler:
     async def test_returns_snapshot_for_all_four_lanes(self, lanes: LaneManager):
         snapshot = await _snapshot()
 
-        assert set(snapshot) == {"main", "subagent", "nudge", "nested"}
+        assert set(snapshot) == {"main", "subagent", "background_review", "nested"}
         for name, lane_snapshot in snapshot.items():
             assert lane_snapshot["name"] == name
             assert set(lane_snapshot) == {"name", "max_concurrent", "active", "queued"}

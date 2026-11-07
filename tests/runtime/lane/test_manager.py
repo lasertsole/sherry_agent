@@ -33,7 +33,7 @@ class TestRegistration:
 
         snapshot = manager.snapshot()
 
-        assert set(snapshot) == {"main", "subagent", "nudge", "nested"}
+        assert set(snapshot) == {"main", "subagent", "background_review", "nested"}
         for name, lane_snapshot in snapshot.items():
             assert lane_snapshot["name"] == name
             assert set(lane_snapshot) == {"name", "max_concurrent", "active", "queued"}
@@ -71,7 +71,7 @@ class TestHotUpdate:
         manager = LaneManager()
 
         with pytest.raises(ValueError):
-            manager.set_concurrency(LaneType.NUDGE, 0)
+            manager.set_concurrency(LaneType.BACKGROUND_REVIEW, 0)
 
 
 class TestIsolation:

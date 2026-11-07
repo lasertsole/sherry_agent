@@ -1,10 +1,10 @@
-"""Bounded feedback collection for the skill-quality nudge."""
+"""Bounded feedback collection for the skill-review review_mod."""
 
 from __future__ import annotations
 
 import pytest
 
-import agent.middlewares.summarization.nudges as nudges
+import agent.middlewares.summarization.background_reviews as reviews
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -60,7 +60,7 @@ def test_collects_user_corrections_and_loaded_skills(monkeypatch):
         ],
     )
 
-    feedback = nudges._collect_plan_feedback("s1")
+    feedback = reviews._collect_skill_review_feedback("s1")
 
     assert feedback["user_corrections"] == ["use passlib, not bcrypt"]
     assert {item["name"] for item in feedback["loaded_skills"]} == {"alpha", "beta"}
@@ -71,15 +71,15 @@ def test_collects_user_corrections_and_loaded_skills(monkeypatch):
 
 
 def test_feedback_caps_items_and_chars(monkeypatch):
-    monkeypatch.setitem(nudges.NUDGE, "skill_nudge_feedback_max_items", 2)
-    monkeypatch.setitem(nudges.NUDGE, "skill_nudge_feedback_chars", 20)
+    monkeypatch.setitem(reviews.BACKGROUND_REVIEW_CONFIG, "skill_review_feedback_max_items", 2)
+    monkeypatch.setitem(reviews.BACKGROUND_REVIEW_CONFIG, "skill_review_feedback_chars", 20)
     rows = [_row("human", f"correction-{index}-" + "x" * 30, origin="user") for index in range(5)]
     monkeypatch.setattr(
         "context_engine.store.core.get_messages_by_lastest_n_turns",
         lambda *_args, **_kwargs: rows,
     )
 
-    feedback = nudges._collect_plan_feedback("s1")
+    feedback = reviews._collect_skill_review_feedback("s1")
 
     assert len(feedback["user_corrections"]) <= 2
     assert sum(len(item) for item in feedback["user_corrections"]) <= 20
@@ -92,7 +92,7 @@ def test_feedback_read_failure_is_fail_open(monkeypatch):
 
     monkeypatch.setattr("context_engine.store.core.get_messages_by_lastest_n_turns", _boom)
 
-    assert nudges._collect_plan_feedback("s1") == {
+    assert reviews._collect_skill_review_feedback("s1") == {
         "loaded_skills": [],
         "user_corrections": [],
     }

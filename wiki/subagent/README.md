@@ -138,7 +138,7 @@ and stores the five fields on `run.completion.handoff`; metadata
 code injects it. The run record also carries the TaskFlow coordinates
 (`step_id`/`flow_id`) captured at spawn.
 
-Plan extraction then reads the descendant runs' handoffs, filters them against
+Skill review then reads the descendant runs' handoffs, filters them against
 the CURRENT plan snapshot (a cancelled todo or a superseded flow drops its
 runs; `resolved_position` re-maps `step_id` to the todo's CURRENT position,
 never `step_id - 1`), assembles the per-layer tree (orphans whose parent was

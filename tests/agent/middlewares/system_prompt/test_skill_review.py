@@ -1,13 +1,13 @@
-"""Unit tests for the plan-extraction trigger and the memory-review dispatch.
+"""Unit tests for the skill-review trigger and the memory-review dispatch.
 
 Covers:
 - ``_detect_todo_all_complete`` — the decision branches (no todos / first
   all-complete fire / already-fired fingerprint / not-all-complete reset).
 - ``schedule_memory_review`` — per-compression memory-review dispatch and
-  lock semantics. Plan extraction no longer rides this path (it forks on plan
-  completion — see ``tests/agent/middlewares/test_plan_extraction_trigger.py``).
+  lock semantics. Skill review no longer rides this path (it forks on plan
+  completion — see ``tests/agent/middlewares/test_skill_review_trigger.py``).
 - ``system_prompt_injection`` — the ``@dynamic_prompt`` middleware does not
-  override the after-agent hooks (nudge dispatch moved to the compression
+  override the after-agent hooks (background-review dispatch moved to the compression
   pipeline).
 - ``_build_plan_context`` — plan_ref resolution (state first, todo fallback,
   session-hash fallback) and the reverse lock that an external-orchestration
@@ -23,9 +23,9 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
 from agent.middlewares.system_prompt import core as ce_core
-from agent.middlewares.summarization import nudges as nudge_mod
-from agent.middlewares.summarization.nudges import (
-    _PLAN_EXTRACTION_FIRED_KEY,
+from agent.middlewares.summarization import background_reviews as review_mod
+from agent.middlewares.summarization.background_reviews import (
+    _SKILL_REVIEW_FIRED_KEY,
     _detect_todo_all_complete,
     schedule_memory_review,
 )
@@ -51,7 +51,7 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
     async def _pass(*_args, **_kwargs):
         return _Judgement()
 
-    monkeypatch.setattr(nudge_mod, "judge_skill_update", _pass)
+    monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
 
 class _FakeStateRegister:
@@ -70,14 +70,14 @@ class _FakeStateRegister:
 @pytest.fixture
 def fake_state_db(monkeypatch):
     fake = _FakeStateRegister()
-    monkeypatch.setattr(nudge_mod, "state_register_db", fake)
+    monkeypatch.setattr(review_mod, "state_register_db", fake)
     return fake
 
 
 @pytest.fixture
 def fake_state_mem(monkeypatch):
     fake = _FakeStateRegister()
-    monkeypatch.setattr(nudge_mod, "state_register_mem", fake)
+    monkeypatch.setattr(review_mod, "state_register_mem", fake)
     return fake
 
 
@@ -93,7 +93,7 @@ def _patch_todos(monkeypatch, todos: list[dict]) -> None:
     )
 
 
-def _nudge_spies(monkeypatch) -> list[tuple]:
+def _review_spies(monkeypatch) -> list[tuple]:
     calls: list[tuple] = []
 
     async def _memory(session_id, system_prompt, messages):
@@ -102,8 +102,8 @@ def _nudge_spies(monkeypatch) -> list[tuple]:
     async def _plan(session_id):
         calls.append(("plan", session_id))
 
-    monkeypatch.setattr(nudge_mod, "_nudge_memory", _memory)
-    monkeypatch.setattr(nudge_mod, "_run_plan_extraction", _plan)
+    monkeypatch.setattr(review_mod, "_execute_memory_review", _memory)
+    monkeypatch.setattr(review_mod, "_run_skill_review", _plan)
     return calls
 
 
@@ -121,32 +121,32 @@ class TestDetectTodoAllComplete:
     def test_no_todos_returns_false(self, monkeypatch, fake_state_db):
         _patch_todos(monkeypatch, [])
         assert _detect_todo_all_complete("sess-none") is False
-        assert fake_state_db.get_state("sess-none", _PLAN_EXTRACTION_FIRED_KEY, False) is False
+        assert fake_state_db.get_state("sess-none", _SKILL_REVIEW_FIRED_KEY, False) is False
 
     def test_all_complete_fires_on_first_call(self, monkeypatch, fake_state_db):
         _patch_todos(monkeypatch, [{"status": "completed"}, {"status": "cancelled"}])
         assert _detect_todo_all_complete("sess-first") is True
-        assert fake_state_db.get_state("sess-first", _PLAN_EXTRACTION_FIRED_KEY, False) is True
+        assert fake_state_db.get_state("sess-first", _SKILL_REVIEW_FIRED_KEY, False) is True
 
     def test_already_fired_with_an_unchanged_plan_returns_false(self, monkeypatch, fake_state_db):
         todos = [{"status": "completed", "id": "t1", "content": "a"}]
         _patch_todos(monkeypatch, todos)
-        fake_state_db.set_state("sess-fired", _PLAN_EXTRACTION_FIRED_KEY, True)
+        fake_state_db.set_state("sess-fired", _SKILL_REVIEW_FIRED_KEY, True)
         # The fired flag alone is no longer enough: the fingerprint of what was
         # extracted has to match the current plan (that is what catches an
         # in-place edit of a completed todo — see the trigger suite).
         fake_state_db.set_state(
             "sess-fired",
-            nudge_mod._PLAN_SNAPSHOT_HASH_KEY,
-            nudge_mod._plan_snapshot_hash(todos),
+            review_mod._SKILL_REVIEW_SNAPSHOT_HASH_KEY,
+            review_mod._plan_snapshot_hash(todos),
         )
         assert _detect_todo_all_complete("sess-fired") is False
 
     def test_not_all_complete_resets_fired(self, monkeypatch, fake_state_db):
-        fake_state_db.set_state("sess-reset", _PLAN_EXTRACTION_FIRED_KEY, True)
+        fake_state_db.set_state("sess-reset", _SKILL_REVIEW_FIRED_KEY, True)
         _patch_todos(monkeypatch, [{"status": "completed"}, {"status": "in_progress"}])
         assert _detect_todo_all_complete("sess-reset") is False
-        assert fake_state_db.get_state("sess-reset", _PLAN_EXTRACTION_FIRED_KEY, False) is False
+        assert fake_state_db.get_state("sess-reset", _SKILL_REVIEW_FIRED_KEY, False) is False
 
 
 # ---------------------------------------------------------------------------
@@ -154,13 +154,13 @@ class TestDetectTodoAllComplete:
 # ---------------------------------------------------------------------------
 
 
-class TestScheduleCompressionNudges:
+class TestScheduleCompressionReviews:
     @pytest.mark.asyncio
     async def test_first_compression_dispatches_memory(
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
-        calls = _nudge_spies(monkeypatch)
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
+        calls = _review_spies(monkeypatch)
+        monkeypatch.setattr(review_mod, "_detect_todo_all_complete", lambda session_id: False)
 
         scheduled = schedule_memory_review("sess-first", [HumanMessage("hi")])
         await _settle()
@@ -173,8 +173,8 @@ class TestScheduleCompressionNudges:
     async def test_consecutive_compressions_both_dispatch(
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
-        calls = _nudge_spies(monkeypatch)
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
+        calls = _review_spies(monkeypatch)
+        monkeypatch.setattr(review_mod, "_detect_todo_all_complete", lambda session_id: False)
 
         first = schedule_memory_review("sess-twice", [HumanMessage("hi")])
         await _settle()
@@ -193,9 +193,9 @@ class TestScheduleCompressionNudges:
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
         """Compaction is memory-only: the plan fork belongs to the completion hook."""
-        calls = _nudge_spies(monkeypatch)
-        monkeypatch.setattr(nudge_mod, "_PLAN_EXTRACTION_ENABLED", True)
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
+        calls = _review_spies(monkeypatch)
+        monkeypatch.setattr(review_mod, "_SKILL_REVIEW_ENABLED", True)
+        monkeypatch.setattr(review_mod, "_detect_todo_all_complete", lambda session_id: True)
 
         scheduled = schedule_memory_review("sess-plan", [HumanMessage("hi")])
         await _settle()
@@ -207,14 +207,14 @@ class TestScheduleCompressionNudges:
     async def test_lock_skips_dispatch(
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
-        calls = _nudge_spies(monkeypatch)
+        calls = _review_spies(monkeypatch)
         detect_calls: list[str] = []
         monkeypatch.setattr(
-            nudge_mod,
+            review_mod,
             "_detect_todo_all_complete",
             lambda session_id: detect_calls.append(session_id) or True,
         )
-        fake_state_mem.set_state("sess-locked", nudge_mod._NUDGE_MEMORY_LOCK_KEY, True)
+        fake_state_mem.set_state("sess-locked", review_mod._BACKGROUND_REVIEW_MEMORY_LOCK_KEY, True)
 
         scheduled = schedule_memory_review("sess-locked", [HumanMessage("hi")])
         await _settle()
@@ -224,10 +224,10 @@ class TestScheduleCompressionNudges:
         assert detect_calls == []
 
     def test_no_running_loop_skips_dispatch(self, monkeypatch, fake_state_db, fake_state_mem):
-        calls = _nudge_spies(monkeypatch)
+        calls = _review_spies(monkeypatch)
         detect_calls: list[str] = []
         monkeypatch.setattr(
-            nudge_mod,
+            review_mod,
             "_detect_todo_all_complete",
             lambda session_id: detect_calls.append(session_id) or True,
         )
@@ -258,7 +258,7 @@ class TestAfterAgentHooksRemoved:
 class TestBuildPlanContext:
     def test_empty_without_todos(self, monkeypatch, fake_state_db):
         _patch_todos(monkeypatch, [])
-        assert nudge_mod._build_plan_context("sess-notodos") == {}
+        assert review_mod._build_plan_context("sess-notodos") == {}
 
     def test_reads_plan_ref_file_from_session_tree(self, monkeypatch, tmp_path, fake_state_db):
         plan_file = tmp_path / "workspace" / "sessions" / "sess-ctx" / "plans" / "my-plan.md"
@@ -272,9 +272,9 @@ class TestBuildPlanContext:
             monkeypatch,
             [{"status": "completed", "plan_ref": "workspace/sessions/sess-ctx/plans/my-plan.md"}],
         )
-        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+        monkeypatch.setattr(review_mod, "_read_subagent_runs", lambda session_id: [])
 
-        context = nudge_mod._build_plan_context("sess-ctx")
+        context = review_mod._build_plan_context("sess-ctx")
 
         assert context["plan_name"] == "my-plan"
         assert context["plan_path"] == str(plan_file)
@@ -291,9 +291,9 @@ class TestBuildPlanContext:
         missing_ref = "workspace/sessions/abcdefgh-session/plans/missing.md"
         fake_state_db.set_state("abcdefgh-session", "plan_ref", missing_ref)
         _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": "other.md"}])
-        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+        monkeypatch.setattr(review_mod, "_read_subagent_runs", lambda session_id: [])
 
-        context = nudge_mod._build_plan_context("abcdefgh-session")
+        context = review_mod._build_plan_context("abcdefgh-session")
 
         assert context["plan_path"] == missing_ref
         assert context["plan_name"] == fallback_plan_name("abcdefgh-session")
@@ -309,9 +309,9 @@ class TestBuildPlanContext:
         monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
         plan_ref = "workspace/sessions/sess-ctx/plans/new-plan.md"
         _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": plan_ref}])
-        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+        monkeypatch.setattr(review_mod, "_read_subagent_runs", lambda session_id: [])
 
-        context = nudge_mod._build_plan_context("sess-ctx")
+        context = review_mod._build_plan_context("sess-ctx")
 
         assert context["plan_name"] == "new-plan"
         assert context["plan_path"] == str(plan_file)
@@ -326,9 +326,9 @@ class TestBuildPlanContext:
         monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
         monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
         _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": ".omo/plans/moved.md"}])
-        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+        monkeypatch.setattr(review_mod, "_read_subagent_runs", lambda session_id: [])
 
-        context = nudge_mod._build_plan_context("sess-ctx")
+        context = review_mod._build_plan_context("sess-ctx")
 
         assert context["plan_content"] == ""
         assert context["plan_path"] == ".omo/plans/moved.md"
@@ -336,7 +336,7 @@ class TestBuildPlanContext:
 
 
 # ---------------------------------------------------------------------------
-# _run_plan_extraction (plan-context injection + fail-open)
+# _run_skill_review (plan-context injection + fail-open)
 # ---------------------------------------------------------------------------
 
 
@@ -361,62 +361,58 @@ class TestRunPlanExtraction:
     async def test_injects_plan_context_and_renders_both_parts(self, monkeypatch, prompt_stub):
         prompts: list[str] = []
 
-        async def _create_plan_extraction_agent(system_prompt):
+        async def _create_skill_review_agent(system_prompt):
             return _CapturingAgent(prompts)
 
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
         monkeypatch.setattr(
-            nudge_mod, "_create_plan_extraction_agent", _create_plan_extraction_agent
+            review_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"}
         )
-        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
+        monkeypatch.setattr(review_mod, "_create_skill_review_agent", _create_skill_review_agent)
+        monkeypatch.setattr(review_mod, "state_register_mem", _FakeStateRegister())
+        monkeypatch.setattr(review_mod, "state_register_db", _FakeStateRegister())
 
-        await nudge_mod._run_plan_extraction("sess-prompt")
+        await review_mod._run_skill_review("sess-prompt")
 
         assert len(prompts) == 1
         prompt = prompts[0]
         assert '"plan_name": "p"' in prompt
-        assert "You are a skill-quality maintainer." in prompt
+        assert "You are a skill-review maintainer." in prompt
         assert "aggregated_handoff.success_steps" in prompt
         assert "Do NOT write knowledge" in prompt
 
     @pytest.mark.asyncio
     async def test_agent_failure_is_swallowed_and_lock_released(self, monkeypatch, prompt_stub):
-        async def _create_plan_extraction_agent(system_prompt):
+        async def _create_skill_review_agent(system_prompt):
             return _FailingAgent()
 
         fake_state = _FakeStateRegister()
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
         monkeypatch.setattr(
-            nudge_mod, "_create_plan_extraction_agent", _create_plan_extraction_agent
+            review_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"}
         )
-        monkeypatch.setattr(nudge_mod, "state_register_mem", fake_state)
+        monkeypatch.setattr(review_mod, "_create_skill_review_agent", _create_skill_review_agent)
+        monkeypatch.setattr(review_mod, "state_register_mem", fake_state)
         fake_db = _FakeStateRegister()
-        monkeypatch.setattr(nudge_mod, "state_register_db", fake_db)
+        monkeypatch.setattr(review_mod, "state_register_db", fake_db)
 
-        await nudge_mod._run_plan_extraction("sess-fail")
+        await review_mod._run_skill_review("sess-fail")
 
+        assert fake_state.get_state("sess-fail", review_mod._SKILL_REVIEW_LOCK_KEY, False) is False
         assert (
-            fake_state.get_state("sess-fail", nudge_mod._PLAN_EXTRACTION_LOCK_KEY, False) is False
-        )
-        assert fake_db.get_state("sess-fail", nudge_mod._PLAN_SNAPSHOT_HASH_KEY, "") == "", (
-            "a failed pass must not claim the plan was extracted"
-        )
+            fake_db.get_state("sess-fail", review_mod._SKILL_REVIEW_SNAPSHOT_HASH_KEY, "") == ""
+        ), "a failed pass must not claim the plan was extracted"
 
     @pytest.mark.asyncio
     async def test_no_plan_context_skips_the_agent(self, monkeypatch, prompt_stub):
         prompts: list[str] = []
 
-        async def _create_plan_extraction_agent(system_prompt):
+        async def _create_skill_review_agent(system_prompt):
             return _CapturingAgent(prompts)
 
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {})
-        monkeypatch.setattr(
-            nudge_mod, "_create_plan_extraction_agent", _create_plan_extraction_agent
-        )
-        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
+        monkeypatch.setattr(review_mod, "_build_plan_context", lambda session_id: {})
+        monkeypatch.setattr(review_mod, "_create_skill_review_agent", _create_skill_review_agent)
+        monkeypatch.setattr(review_mod, "state_register_mem", _FakeStateRegister())
+        monkeypatch.setattr(review_mod, "state_register_db", _FakeStateRegister())
 
-        await nudge_mod._run_plan_extraction("sess-nocontext")
+        await review_mod._run_skill_review("sess-nocontext")
 
         assert prompts == []

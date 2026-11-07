@@ -1,7 +1,7 @@
-"""Plan extraction consumes the structured subagent handoff chain.
+"""Skill review consumes the structured subagent handoff chain.
 
 The child emits four EXPERIENCE fields about its own layer; completion parses
-them into ``run.completion.handoff``; plan extraction reads that dict, filters
+them into ``run.completion.handoff``; skill review reads that dict, filters
 the runs against the CURRENT plan snapshot (cancelled/superseded branches out,
 step→position re-resolved), assembles the parent→child tree, aggregates it, and
 writes the RAW tree to ``handoff-tree.json`` BEFORE the extraction LLM runs.
@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from agent.middlewares.summarization import nudges
+from agent.middlewares.summarization import background_reviews as reviews
 from agent.tools.subagent.types.registry import (
     CompletionState,
     ExecutionState,
@@ -101,7 +101,7 @@ def test_read_subagent_runs_carries_the_handoff_and_coordinates(runs):
         )
     )
 
-    out = nudges._read_subagent_runs(SESSION)
+    out = reviews._read_subagent_runs(SESSION)
 
     assert len(out) == 1
     entry = out[0]
@@ -116,7 +116,7 @@ def test_read_subagent_runs_carries_the_handoff_and_coordinates(runs):
 def test_a_run_without_a_handoff_keeps_its_free_text(runs):
     runs.append(_run("agent:main:subagent:b", MAIN))
 
-    entry = nudges._read_subagent_runs(SESSION)[0]
+    entry = reviews._read_subagent_runs(SESSION)[0]
 
     assert entry["handoff"] is None
     assert entry["result_text"] == "free text result"
@@ -134,7 +134,7 @@ def test_a_cancelled_todo_is_filtered_out():
     run = {"step_id": "step-1", "flow_id": None}
     snapshot = _snapshot([{"step_id": "step-1", "status": "cancelled", "position": 1}])
 
-    assert nudges._filter_runs_by_snapshot([run], snapshot) == []
+    assert reviews._filter_runs_by_snapshot([run], snapshot) == []
 
 
 def test_a_superseded_flow_is_filtered_out():
@@ -144,14 +144,14 @@ def test_a_superseded_flow_is_filtered_out():
         {"flow-1": {"status": "running", "superseded_by": "flow-2", "steps": {}}},
     )
 
-    assert nudges._filter_runs_by_snapshot([run], snapshot) == []
+    assert reviews._filter_runs_by_snapshot([run], snapshot) == []
 
 
 def test_a_run_with_unknown_coordinates_is_kept():
     run = {"step_id": "step-gone", "flow_id": "flow-gone"}
     snapshot = _snapshot([])
 
-    kept = nudges._filter_runs_by_snapshot([run], snapshot)
+    kept = reviews._filter_runs_by_snapshot([run], snapshot)
 
     assert kept == [{**run, "relevance": "unknown", "resolved_position": None}]
 
@@ -159,7 +159,7 @@ def test_a_run_with_unknown_coordinates_is_kept():
 def test_a_free_form_spawn_is_kept():
     run = {"step_id": None, "flow_id": None}
 
-    kept = nudges._filter_runs_by_snapshot([run], _snapshot([]))
+    kept = reviews._filter_runs_by_snapshot([run], _snapshot([]))
 
     assert kept[0]["relevance"] == "unknown"
     assert kept[0]["resolved_position"] is None
@@ -169,7 +169,7 @@ def test_resolved_position_uses_the_current_todo_position():
     run = {"step_id": "step-1", "flow_id": None}
     snapshot = _snapshot([{"step_id": "step-1", "status": "completed", "position": 7}])
 
-    kept = nudges._filter_runs_by_snapshot([run], snapshot)
+    kept = reviews._filter_runs_by_snapshot([run], snapshot)
 
     assert kept[0]["relevance"] == "active"
     assert kept[0]["resolved_position"] == 7
@@ -178,7 +178,7 @@ def test_resolved_position_uses_the_current_todo_position():
 def test_no_snapshot_fails_open():
     run = {"step_id": "step-1", "flow_id": None}
 
-    assert nudges._filter_runs_by_snapshot([run], None) == [run]
+    assert reviews._filter_runs_by_snapshot([run], None) == [run]
 
 
 # ── tree assembly + aggregation ──────────────────────────────────────────
@@ -204,7 +204,7 @@ def test_the_tree_reparents_children_and_injects_metadata():
         "outcome": "ok",
     }
 
-    roots = nudges._assemble_handoff_tree([parent, child])
+    roots = reviews._assemble_handoff_tree([parent, child])
 
     assert len(roots) == 1
     root = roots[0]
@@ -227,7 +227,7 @@ def test_an_orphan_handoff_is_promoted_to_a_root():
         "outcome": "ok",
     }
 
-    roots = nudges._assemble_handoff_tree([orphan])
+    roots = reviews._assemble_handoff_tree([orphan])
 
     assert len(roots) == 1
     assert roots[0]["task_understanding"] == "orphan"
@@ -264,7 +264,7 @@ def test_aggregation_flattens_depth_first_with_sources_and_dedupes():
         "outcome": "ok",
     }
 
-    aggregated = nudges._aggregate_handoffs(nudges._assemble_handoff_tree([parent, child]))
+    aggregated = reviews._aggregate_handoffs(reviews._assemble_handoff_tree([parent, child]))
 
     assert [entry["branch"] for entry in aggregated["failed_branches"]] == ["p1", "p2"]
     assert aggregated["failed_branches"][1]["source"] == "depth-1:researcher > depth-2:executor"
@@ -284,7 +284,7 @@ def test_compact_view_caps_lists_and_drops_the_forest():
         "handoff_forest": [{"big": "tree"}],
     }
 
-    compact = nudges._compact_aggregate(aggregate)
+    compact = reviews._compact_aggregate(aggregate)
 
     assert len(compact["failed_branches"]) == 10
     assert len(compact["success_steps"]) == 10
@@ -314,7 +314,7 @@ def test_read_plan_snapshot_indexes_steps_and_flows(monkeypatch):
         },
     )
 
-    snapshot = nudges._read_plan_snapshot(SESSION)
+    snapshot = reviews._read_plan_snapshot(SESSION)
 
     assert snapshot is not None
     assert snapshot["todo_by_step"]["step-1"]["position"] == 2
@@ -340,7 +340,7 @@ def test_build_plan_context_runs_the_whole_chain(monkeypatch):
         "agent.tools.taskflow.registry.store_sqlite.get_flow_sync", lambda *_a: None
     )
 
-    context = nudges._build_plan_context(SESSION)
+    context = reviews._build_plan_context(SESSION)
 
     assert context
     assert context["subagent_runs"][0]["resolved_position"] == 3
@@ -378,7 +378,7 @@ def test_the_full_tree_is_written_before_the_llm(monkeypatch):
 
     import asyncio
 
-    asyncio.run(nudges._write_handoff_tree_safely(SESSION, context))
+    asyncio.run(reviews._write_handoff_tree_safely(SESSION, context))
 
     assert written and written[0][1]["handoff_forest"]
     payload_text = json.dumps(written[0][1])
@@ -394,13 +394,13 @@ def test_no_file_is_written_without_a_forest(monkeypatch):
 
     import asyncio
 
-    asyncio.run(nudges._write_handoff_tree_safely(SESSION, {"aggregated_handoff": {}}))
+    asyncio.run(reviews._write_handoff_tree_safely(SESSION, {"aggregated_handoff": {}}))
 
     assert calls == []
 
 
 def test_the_plan_prompt_consumes_success_steps_and_branches():
-    prompt = nudges._PLAN_EXTRACTION_PROMPT
+    prompt = reviews._SKILL_REVIEW_PROMPT
 
     assert "success_steps" in prompt
     assert "failed_branches" in prompt

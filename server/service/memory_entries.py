@@ -302,7 +302,7 @@ def start_memory_consolidation(session_id: str) -> dict[str, Any]:
     _prune_consolidation_tasks()
 
     async def _runner() -> None:
-        from agent.middlewares.summarization.nudges import run_memory_consolidation
+        from agent.middlewares.summarization.background_reviews import run_memory_consolidation
 
         try:
             result = await run_memory_consolidation(session_id)

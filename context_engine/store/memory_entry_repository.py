@@ -9,7 +9,7 @@ Why SQLite here:
 
 * the memory panel needs per-entry CRUD, stable ids and archive/restore — a file
   rewrite has none of those;
-* concurrent writers (main agent, nudges, session-end salvage) are serialized by
+* concurrent writers (main agent, background reviews, session-end salvage) are serialized by
   the store's single connection instead of a per-file lock;
 * usage-aware eviction is a WHERE clause rather than a file parse.
 

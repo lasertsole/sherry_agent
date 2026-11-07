@@ -2,7 +2,7 @@
 
 Serves the summarization middleware's own model: the LLM summary
 (``_create_summary`` / ``_acreate_summary``). It does NOT serve memory review
-(that is the MAIN model, cache-warm by design) or plan extraction (that stays
+(that is the MAIN model, cache-warm by design) or skill review (that stays
 on the auxiliary model). An unconfigured family falls back to the auxiliary
 model. See :mod:`models.LLMs.family_llm` for the three-way rule.
 """

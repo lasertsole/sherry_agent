@@ -205,7 +205,7 @@ session のモデル profile は `context_window`（クライアント descripto
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
 | `tests/agent/middlewares/message_persistence/` | 31 | 境界 + ツール返却の増分フラッシュ: 各メッセージちょうど 1 回、境界をまたいで重複なし、永続ウォーターマークによる再起動リプレイで行数不増、同期 + 非同期フック、session_id 欠落スキップ、HITL 拒否ペアの再装着、フィルタ意味論; さらに T1/T2/T3 圧縮経路のゼロ書き込み証明と、要約ペア（両半分）のゼロ書き込み証明 |
-| `tests/agent/middlewares/test_compression_nudges.py` | 2 | 圧縮時 nudge ディスパッチ: memory review + plan extraction が compact 経路から発火、カットなし圧縮は何もディスパッチしない |
+| `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | 圧縮時バックグラウンドレビュー ディスパッチ: memory review + skill review が compact 経路から発火、カットなし圧縮は何もディスパッチしない |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
@@ -214,7 +214,7 @@ session のモデル profile は `context_window`（クライアント descripto
 ## ⚠️ 正直な限界
 
 - **ModelDownshift は切替時フックではなく、次の pre-request チェックで実行されます。** モデル override（context window 込み）はターン境界で反映され、続く T1/T2 が小さいウィンドウを見て必要なら圧縮します。
-- **Microcompact が LLM 要約を先取りすることがあります。** 古いツール結果の削除だけで履歴が保持予算以下になると、compact 経路はスキップされ、memory-review nudge も発火しません（メッセージは破棄されていないため）。
+- **Microcompact が LLM 要約を先取りすることがあります。** 古いツール結果の削除だけで履歴が保持予算以下になると、compact 経路はスキップされ、memory review も発火しません（メッセージは破棄されていないため）。
 - **`compact_now` はツールであり、クライアントコマンドではありません。** ユーザーの要求時にモデルが呼びます。入力欄に `/compact` コマンドはありません。
 - **末尾保持は予算ベースであり、メッセージ件数ではありません。** 保持予算は `PRESERVE_RATIO` × ウィンドウを [2 000, 15 000] にクランプし、ルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。コンストラクタは `keep` 引数を受け取りません。
 - **飾りインポート。** `summarization/core.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。

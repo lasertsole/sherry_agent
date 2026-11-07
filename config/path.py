@@ -187,7 +187,7 @@ if (
 ):
     WORKSPACE_TEMPLATE_DIR = _SHIPPED_WORKSPACE_TEMPLATE_DIR
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
-# Plan-extraction knowledge namespace (Tier-1 prompt injection + Tier-2 tool
+# Skill-review knowledge namespace (Tier-1 prompt injection + Tier-2 tool
 # reads): one directory per plan, holding task-*.json / wave-*.json /
 # plan-summary.json. Kept separate from KNOWLEDGE_INDEX_DIR (graph index).
 PLAN_KNOWLEDGE_DIR = KNOWLEDGE_DIR / "plans"

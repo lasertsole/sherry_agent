@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-import agent.middlewares.summarization.nudges as nudge_mod
+import agent.middlewares.summarization.background_reviews as review_mod
 import agent.tools.memory as memory_module
 from agent.tools.memory import MemoryStore
-from config.features import NUDGE
+from config.features import BACKGROUND_REVIEW_CONFIG
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -38,14 +38,14 @@ class _FakeRegister:
 def _tool() -> SimpleNamespace:
     return SimpleNamespace(
         name="memory",
-        metadata={"nudge": True, "nudge_memory": True},
+        metadata={"background_review": True, "background_review_memory": True},
     )
 
 
 def test_the_session_end_tool_face_carries_the_memory_only_gate():
-    tool = nudge_mod._memory_only_tool_face()[0]
+    tool = review_mod._memory_only_tool_face()[0]
     assert tool.name == "memory"
-    assert tool.metadata["nudge_memory"] is True
+    assert tool.metadata["background_review_memory"] is True
 
 
 def test_the_cutoff_is_clamped_to_the_snapshot(monkeypatch: pytest.MonkeyPatch):
@@ -57,18 +57,18 @@ def test_the_cutoff_is_clamped_to_the_snapshot(monkeypatch: pytest.MonkeyPatch):
         lambda _self, _messages, _session_id: 99,
     )
 
-    assert nudge_mod._session_end_cutoff(_messages(), "sess-clamp") == 3
+    assert review_mod._session_end_cutoff(_messages(), "sess-clamp") == 3
 
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setitem(NUDGE, "session_end_review_enabled", True)
-    monkeypatch.setitem(NUDGE, "session_end_review_timeout_s", 5)
-    nudge_mod._SESSION_END_REVIEW_TASKS.clear()
-    nudge_mod._SESSION_END_REVIEW_INFLIGHT.clear()
+    monkeypatch.setitem(BACKGROUND_REVIEW_CONFIG, "session_end_review_enabled", True)
+    monkeypatch.setitem(BACKGROUND_REVIEW_CONFIG, "session_end_review_timeout_s", 5)
+    review_mod._SESSION_END_REVIEW_TASKS.clear()
+    review_mod._SESSION_END_REVIEW_INFLIGHT.clear()
     yield
-    nudge_mod._SESSION_END_REVIEW_TASKS.clear()
-    nudge_mod._SESSION_END_REVIEW_INFLIGHT.clear()
+    review_mod._SESSION_END_REVIEW_TASKS.clear()
+    review_mod._SESSION_END_REVIEW_INFLIGHT.clear()
 
 
 async def _settle() -> None:
@@ -95,10 +95,10 @@ async def test_salvage_splits_at_the_compression_cutoff_and_schedules(
     async def _run(**kwargs):
         scheduled.append(kwargs)
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
-    monkeypatch.setattr(nudge_mod, "_run_session_end_salvage", _run)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_run_session_end_salvage", _run)
 
-    assert await nudge_mod.salvage_session_memory("sess-two-wave") is True
+    assert await review_mod.salvage_session_memory("sess-two-wave") is True
     await _settle()
 
     assert len(scheduled) == 1
@@ -108,8 +108,8 @@ async def test_salvage_splits_at_the_compression_cutoff_and_schedules(
     assert call["model"] is model
     assert call["system_prompt"] == "captured prompt"
     assert call["tools"] == tools
-    assert "sess-two-wave" not in nudge_mod._SESSION_END_REVIEW_INFLIGHT
-    assert not nudge_mod._SESSION_END_REVIEW_TASKS
+    assert "sess-two-wave" not in review_mod._SESSION_END_REVIEW_INFLIGHT
+    assert not review_mod._SESSION_END_REVIEW_TASKS
 
 
 @pytest.mark.asyncio
@@ -125,10 +125,10 @@ async def test_no_compression_cut_is_one_wave_over_all_messages(
     async def _run(**kwargs):
         scheduled.append(kwargs)
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
-    monkeypatch.setattr(nudge_mod, "_run_session_end_salvage", _run)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_run_session_end_salvage", _run)
 
-    assert await nudge_mod.salvage_session_memory("sess-no-cut") is True
+    assert await review_mod.salvage_session_memory("sess-no-cut") is True
     await _settle()
 
     assert [m.content for m in scheduled[0]["first_wave"]] == ["one", "two", "three"]
@@ -148,10 +148,10 @@ async def test_a_full_cut_is_one_wave_over_all_messages(
     async def _run(**kwargs):
         scheduled.append(kwargs)
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
-    monkeypatch.setattr(nudge_mod, "_run_session_end_salvage", _run)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_run_session_end_salvage", _run)
 
-    assert await nudge_mod.salvage_session_memory("sess-full-cut") is True
+    assert await review_mod.salvage_session_memory("sess-full-cut") is True
     await _settle()
 
     assert len(scheduled[0]["first_wave"]) == 3
@@ -174,11 +174,11 @@ async def test_snapshot_captures_model_prompt_tools_and_cutoff(
         "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
         lambda _session_id: "captured prompt",
     )
-    monkeypatch.setattr(nudge_mod, "_build_session_model", lambda _session_id: model)
-    monkeypatch.setattr(nudge_mod, "_session_tool_face", lambda _session_id: tools)
-    monkeypatch.setattr(nudge_mod, "_session_end_cutoff", lambda _messages, _sid: 2)
+    monkeypatch.setattr(review_mod, "_build_session_model", lambda _session_id: model)
+    monkeypatch.setattr(review_mod, "_session_tool_face", lambda _session_id: tools)
+    monkeypatch.setattr(review_mod, "_session_end_cutoff", lambda _messages, _sid: 2)
 
-    snapshot = await nudge_mod._snapshot_session_for_salvage("sess-snapshot")
+    snapshot = await review_mod._snapshot_session_for_salvage("sess-snapshot")
 
     assert snapshot is not None
     snapshot_messages, snapshot_model, prompt, snapshot_tools, cutoff = snapshot
@@ -194,10 +194,10 @@ async def test_empty_transcript_skips_salvage(monkeypatch: pytest.MonkeyPatch):
     async def _snapshot(_session_id: str):
         return None
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
 
-    assert await nudge_mod.salvage_session_memory("sess-empty") is False
-    assert "sess-empty" not in nudge_mod._SESSION_END_REVIEW_INFLIGHT
+    assert await review_mod.salvage_session_memory("sess-empty") is False
+    assert "sess-empty" not in review_mod._SESSION_END_REVIEW_INFLIGHT
 
 
 @pytest.mark.asyncio
@@ -205,53 +205,53 @@ async def test_snapshot_failure_is_fail_open(monkeypatch: pytest.MonkeyPatch):
     async def _snapshot(_session_id: str):
         raise RuntimeError("checkpoint unavailable")
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
 
-    assert await nudge_mod.salvage_session_memory("sess-broken") is False
-    assert "sess-broken" not in nudge_mod._SESSION_END_REVIEW_INFLIGHT
+    assert await review_mod.salvage_session_memory("sess-broken") is False
+    assert "sess-broken" not in review_mod._SESSION_END_REVIEW_INFLIGHT
 
 
 @pytest.mark.asyncio
 async def test_snapshot_timeout_is_fail_open(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(nudge_mod, "_SESSION_END_SNAPSHOT_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(review_mod, "_SESSION_END_SNAPSHOT_TIMEOUT_S", 0.01)
 
     async def _snapshot(_session_id: str):
         await asyncio.sleep(1)
         return None
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
 
-    assert await nudge_mod.salvage_session_memory("sess-timeout") is False
-    assert "sess-timeout" not in nudge_mod._SESSION_END_REVIEW_INFLIGHT
+    assert await review_mod.salvage_session_memory("sess-timeout") is False
+    assert "sess-timeout" not in review_mod._SESSION_END_REVIEW_INFLIGHT
 
 
 @pytest.mark.asyncio
 async def test_master_switch_off_skips_snapshot(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setitem(NUDGE, "session_end_review_enabled", False)
+    monkeypatch.setitem(BACKGROUND_REVIEW_CONFIG, "session_end_review_enabled", False)
     called: list[str] = []
 
     async def _snapshot(session_id: str):
         called.append(session_id)
         return None
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
 
-    assert await nudge_mod.salvage_session_memory("sess-off") is False
+    assert await review_mod.salvage_session_memory("sess-off") is False
     assert called == []
 
 
 @pytest.mark.asyncio
 async def test_duplicate_salvage_is_refused(monkeypatch: pytest.MonkeyPatch):
-    nudge_mod._SESSION_END_REVIEW_INFLIGHT.add("sess-duplicate")
+    review_mod._SESSION_END_REVIEW_INFLIGHT.add("sess-duplicate")
     called: list[str] = []
 
     async def _snapshot(session_id: str):
         called.append(session_id)
         return None
 
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
+    monkeypatch.setattr(review_mod, "_snapshot_session_for_salvage", _snapshot)
 
-    assert await nudge_mod.salvage_session_memory("sess-duplicate") is False
+    assert await review_mod.salvage_session_memory("sess-duplicate") is False
     assert called == []
 
 
@@ -270,13 +270,13 @@ async def test_two_wave_runner_refreshes_the_prompt_between_waves(
         rebuilds.append((session_id, fallback))
         return "updated prompt"
 
-    monkeypatch.setattr(nudge_mod, "_run_session_end_wave", _wave)
-    monkeypatch.setattr(nudge_mod, "_rebuild_session_end_prompt", _rebuild)
+    monkeypatch.setattr(review_mod, "_run_session_end_wave", _wave)
+    monkeypatch.setattr(review_mod, "_rebuild_session_end_prompt", _rebuild)
 
     first = [HumanMessage(content="first")]
     rest = [HumanMessage(content="second")]
     tools = [_tool()]
-    await nudge_mod._run_session_end_salvage(
+    await review_mod._run_session_end_salvage(
         session_id="sess-order",
         model=object(),
         system_prompt="captured prompt",
@@ -306,14 +306,14 @@ async def test_failed_first_wave_keeps_the_captured_prompt_for_wave_two(
         waves.append(kwargs)
         return False
 
-    monkeypatch.setattr(nudge_mod, "_run_session_end_wave", _wave)
+    monkeypatch.setattr(review_mod, "_run_session_end_wave", _wave)
     monkeypatch.setattr(
-        nudge_mod,
+        review_mod,
         "_rebuild_session_end_prompt",
         lambda *_args: rebuilds.append("called") or "unexpected",
     )
 
-    await nudge_mod._run_session_end_salvage(
+    await review_mod._run_session_end_salvage(
         session_id="sess-failed-first",
         model=object(),
         system_prompt="captured prompt",
@@ -344,11 +344,11 @@ async def test_wave_uses_a_derived_session_key_and_clears_it(
         seen["origin_session"] = origin_session
         return AIMessage(content="ok")
 
-    monkeypatch.setattr(nudge_mod, "_build_memory_review_agent", _build)
-    monkeypatch.setattr(nudge_mod, "_invoke_memory_review", _invoke)
-    monkeypatch.setattr(nudge_mod, "state_register_mem", register)
+    monkeypatch.setattr(review_mod, "_build_memory_review_agent", _build)
+    monkeypatch.setattr(review_mod, "_invoke_memory_review", _invoke)
+    monkeypatch.setattr(review_mod, "state_register_mem", register)
 
-    ok = await nudge_mod._run_session_end_wave(
+    ok = await review_mod._run_session_end_wave(
         session_id="sess-derived",
         wave=1,
         model=object(),
@@ -359,7 +359,7 @@ async def test_wave_uses_a_derived_session_key_and_clears_it(
     )
 
     assert ok is True
-    assert built[0]["kwargs"]["allowed_metadata_key"] == "nudge_memory"
+    assert built[0]["kwargs"]["allowed_metadata_key"] == "background_review_memory"
     assert seen["origin_session"] == "sess-derived"
     assert register.cleared == ["sess-derived::session-end-salvage:1"]
 
@@ -388,16 +388,16 @@ async def test_run_session_end_salvage_writes_both_waves_to_memory(
         memory_module.memory_store.add("user", f"wave-{wave}-fact", origin_session=origin_session)
         return await agent.ainvoke({})
 
-    monkeypatch.setattr(nudge_mod, "_build_memory_review_agent", _build)
-    monkeypatch.setattr(nudge_mod, "_invoke_memory_review", _invoke)
+    monkeypatch.setattr(review_mod, "_build_memory_review_agent", _build)
+    monkeypatch.setattr(review_mod, "_invoke_memory_review", _invoke)
     monkeypatch.setattr(
-        nudge_mod,
+        review_mod,
         "_rebuild_session_end_prompt",
         lambda _sid, _fallback: "updated prompt",
     )
-    monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeRegister())
+    monkeypatch.setattr(review_mod, "state_register_mem", _FakeRegister())
 
-    await nudge_mod._run_session_end_salvage(
+    await review_mod._run_session_end_salvage(
         session_id="sess-memory",
         model=object(),
         system_prompt="captured prompt",

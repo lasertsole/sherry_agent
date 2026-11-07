@@ -44,14 +44,14 @@ def _isolate_dao(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         return None
 
     from server.service import session_cleanup_service as dao
-    from agent.middlewares.summarization import nudges as nudge_mod
+    from agent.middlewares.summarization import background_reviews as review_mod
 
     async def _noop_salvage(session_id: str) -> bool:
         return False
 
     monkeypatch.setattr("context_engine.session_continuity.auto_save_on_session_end", _noop)
     monkeypatch.setattr("context_engine.delete_messages_by_session", lambda session_id: 0)
-    monkeypatch.setattr(nudge_mod, "salvage_session_memory", _noop_salvage)
+    monkeypatch.setattr(review_mod, "salvage_session_memory", _noop_salvage)
     monkeypatch.setattr(dao, "delete_thread_history", _noop)
     monkeypatch.setattr(dao, "clear_all_register_sessions", lambda *a, **k: None)
     monkeypatch.setattr(dao, "SESSIONS_DIR", tmp_path / "sessions")
@@ -233,7 +233,8 @@ async def test_purge_session_schedules_salvage_before_destroying_stores(
         "context_engine.session_continuity.auto_save_on_session_end", _recorder("continuity")
     )
     monkeypatch.setattr(
-        "agent.middlewares.summarization.nudges.salvage_session_memory", _recorder("salvage")
+        "agent.middlewares.summarization.background_reviews.salvage_session_memory",
+        _recorder("salvage"),
     )
     monkeypatch.setattr(dao, "purge_subagent_subtree_for_session", _recorder("subtree"))
     monkeypatch.setattr(side_chat_service, "purge_side_chat_children", _recorder("sidechat"))
@@ -260,7 +261,7 @@ async def test_salvage_failure_does_not_block_the_purge(
         called.append("data")
 
     monkeypatch.setattr(
-        "agent.middlewares.summarization.nudges.salvage_session_memory", _broken_salvage
+        "agent.middlewares.summarization.background_reviews.salvage_session_memory", _broken_salvage
     )
     monkeypatch.setattr(dao, "purge_session_data", _record_data)
 

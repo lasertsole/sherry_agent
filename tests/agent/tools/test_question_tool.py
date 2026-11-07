@@ -392,7 +392,7 @@ class TestFactoryWiring:
         assert tool.metadata == {
             "idempotent": True,
             "skip_heartbeat": True,
-            "nudge": True,
+            "background_review": True,
             "side_effect_scope": "user_interaction",
         }
         assert tool.args_schema is QuestionInput

@@ -1340,7 +1340,7 @@ onBeforeUnmount(onHide);
         "groupHelpLabel": "查看 {group} 的用途与适用场景",
         "modelHelp": {
           "main": "主对话模型：负责日常对话、工具调用、任务规划和最终回答。适合作为能力最强、工具调用可靠、上下文较长的默认模型。",
-          "auxiliary": "辅助模型：处理 JSON 生成、判断、计划提取等轻量结构化调用。适合便宜、低延迟的模型。",
+          "auxiliary": "辅助模型：处理 JSON 生成、判断、技能评审等轻量结构化调用。适合便宜、低延迟的模型。",
           "taskflow": "TaskFlow 决策模型：用于计划、重规划、步骤判定和收尾检查（temperature 0）。适合稳定遵循 JSON 的模型。",
           "compression": "压缩模型：为长会话生成摘要并整理记忆。适合长上下文、低成本模型。",
           "ittt": "图生文模型：读取图片并输出文字。用于截图理解、OCR 和视觉问答。",
@@ -1665,7 +1665,7 @@ onBeforeUnmount(onHide);
         "groupHelpLabel": "Show what {group} is for and when to use it",
         "modelHelp": {
           "main": "Main chat model — drives conversation, tool calls, task planning, and the final answer. Best for your strongest general model with reliable tool use and a long context.",
-          "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and plan extraction. Best for a cheap, low-latency model.",
+          "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and skill review. Best for a cheap, low-latency model.",
           "taskflow": "TaskFlow decision model — planning, replanning, step judging, and finish checks at temperature 0. Best for a stable model that follows JSON schemas.",
           "compression": "Compression model — summarizes long conversations. Best for a long-context, low-cost model.",
           "ittt": "Image-to-text model — reads an image and returns text. Use for screenshots, OCR, and visual Q&A.",
@@ -1990,7 +1990,7 @@ onBeforeUnmount(onHide);
         "groupHelpLabel": "{group} の用途と利用シーンを表示",
         "modelHelp": {
           "main": "メインチャットモデル：会話、ツール呼び出し、タスク計画、最終回答を担当。ツール使用が安定し、長いコンテキストを持つ最強の汎用モデル向け。",
-          "auxiliary": "補助モデル：JSON 生成、判定、計画抽出などの軽量な構造化呼び出しを担当。安価で低遅延なモデル向け。",
+          "auxiliary": "補助モデル：JSON 生成、判定、スキルレビューなどの軽量な構造化呼び出しを担当。安価で低遅延なモデル向け。",
           "taskflow": "TaskFlow 意思決定モデル：計画、再計画、ステップ判定、完了チェック（temperature 0）に使用。JSON を安定して守るモデル向け。",
           "compression": "圧縮モデル：長い会話の要約とメモリ整理を担当。長コンテキストで低コストなモデル向け。",
           "ittt": "画像→テキストモデル：画像を読み取りテキスト化。スクリーンショット理解、OCR、視覚 Q&A に使用。",
@@ -2309,7 +2309,7 @@ onBeforeUnmount(onHide);
         "groupHelpLabel": "{group}의 용도와 사용 사례 보기",
         "modelHelp": {
           "main": "메인 채팅 모델 — 대화, 도구 호출, 작업 계획, 최종 답변을 담당합니다. 도구 사용이 안정적이고 긴 컨텍스트를 가진 가장 강한 범용 모델에 적합합니다.",
-          "auxiliary": "보조 모델 — JSON 생성, 판정, 계획 추출 같은 가벼운 구조화 호출을 담당합니다. 저렴하고 지연이 낮은 모델에 적합합니다.",
+          "auxiliary": "보조 모델 — JSON 생성, 판정, 스킬 리뷰 같은 가벼운 구조화 호출을 담당합니다. 저렴하고 지연이 낮은 모델에 적합합니다.",
           "taskflow": "TaskFlow 의사결정 모델 — 계획, 재계획, 단계 판정, 마무리 검사(temperature 0)에 사용합니다. JSON을 안정적으로 따르는 모델에 적합합니다.",
           "compression": "압축 모델 — 긴 대화 요약과 메모리 정리를 담당합니다. 긴 컨텍스트와 낮은 비용의 모델에 적합합니다.",
           "ittt": "이미지→텍스트 모델 — 이미지를 읽어 텍스트로 변환합니다. 스크린샷 이해, OCR, 시각 Q&A에 사용합니다.",

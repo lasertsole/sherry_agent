@@ -2,7 +2,7 @@
 
 The nudge prompt asks the model to maintain FACTS.md like an editor: merge
 entries that describe the same pitfall and replace/remove outdated ones. This
-test runs the real ``_nudge_memory`` fork against an isolated memory directory
+test runs the real ``_execute_memory_review`` fork against an isolated memory directory
 with a stub LLM that emits exactly those two calls through the real ``memory``
 tool, then asserts the file reflects the merge and the prune.
 
@@ -17,7 +17,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-import agent.middlewares.summarization.nudges as nudge_mod
+import agent.middlewares.summarization.background_reviews as review_mod
 import agent.tools.memory as memory_module
 from agent.tools.memory import MemoryStore, build_memory_tool
 
@@ -103,11 +103,11 @@ def isolated_facts(tmp_path, monkeypatch):
 async def test_memory_review_merges_and_prunes_facts(isolated_facts, monkeypatch):
     # The review runs on the session's own model (cache-warm); the seam is the
     # rebuild helper, so the fake model stands in for it.
-    monkeypatch.setattr(nudge_mod, "_build_session_model", lambda session_id: _EditorialModel())
+    monkeypatch.setattr(review_mod, "_build_session_model", lambda session_id: _EditorialModel())
     monkeypatch.setattr("agent.get_agent_tools", lambda: [build_memory_tool()])
-    monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
+    monkeypatch.setattr(review_mod, "state_register_mem", _FakeStateRegister())
 
-    await nudge_mod._nudge_memory("sess-facts-editor", "sys", [HumanMessage("hi")])
+    await review_mod._execute_memory_review("sess-facts-editor", "sys", [HumanMessage("hi")])
 
     text = memory_module.memory_store.format_live_content("facts")
     assert "pitfall A and B merged" in text

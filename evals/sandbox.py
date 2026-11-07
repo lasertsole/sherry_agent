@@ -104,7 +104,7 @@ class EvalSandbox:
     def _redirect_skills_and_knowledge(self) -> None:
         """Redirect auto-skill + plan-knowledge writes into the sandbox.
 
-        Additive isolation for suites that exercise the plan-extraction pass.
+        Additive isolation for suites that exercise the skill review.
         ``skill_manage`` and the skill-usage / skill-utils helpers bind
         ``config.AUTO_SKILLS_DIR`` at import time, and the plan-knowledge store
         binds ``config.path.PLAN_KNOWLEDGE_DIR``; each owning module is patched
@@ -119,7 +119,7 @@ class EvalSandbox:
             "agent.tools.skill_tools.skill_manage",
             "agent.tools.pub_base.skill_usage",
             "agent.tools.pub_base.skill_utils",
-            "agent.middlewares.summarization.skill_quality",
+            "agent.middlewares.summarization.skill_review",
         ):
             try:
                 module = importlib.import_module(module_name)

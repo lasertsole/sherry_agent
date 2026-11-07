@@ -1,20 +1,20 @@
-# 🚦 並行レーン — MAIN · SUBAGENT · NUDGE · NESTED
+# 🚦 並行レーン — MAIN · SUBAGENT · BACKGROUND_REVIEW · NESTED
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> [Long-Running Tasks](../README.ja.md) の一部：プロセスレベルの並行レーン（MAIN、SUBAGENT、NUDGE、NESTED）で、子エージェント、バックグラウンド nudge、ネスト返信ターンを制御します。
+> [Long-Running Tasks](../README.ja.md) の一部：プロセスレベルの並行レーン（MAIN、SUBAGENT、BACKGROUND_REVIEW、NESTED）で、子エージェント、バックグラウンドレビュー、ネスト返信ターンを制御します。
 
 ---
 
 ## 🚦 並行レーン
 
-長時間実行される作業は無制限にファンアウトしません。切り離された子エージェント、バックグラウンドの nudge、ネストされた `sessions.send` の返信ターンは、まず**プロセスレベルのレーン**を通ります。レーンは `asyncio.Semaphore` と `active`/`queued` カウンタ（`runtime/lane/core.py`）で、上限超過の作業は拒否されず **FIFO でキューイング**されます。
+長時間実行される作業は無制限にファンアウトしません。切り離された子エージェント、バックグラウンドレビュー、ネストされた `sessions.send` の返信ターンは、まず**プロセスレベルのレーン**を通ります。レーンは `asyncio.Semaphore` と `active`/`queued` カウンタ（`runtime/lane/core.py`）で、上限超過の作業は拒否されず **FIFO でキューイング**されます。
 
 | レーン | 制約対象 | 既定並行数 | 設定キー |
 | :--- | :--- | :--- | :--- |
-| `MAIN` | メインエージェントのターン（`server/service/input_queue_service.py::_run_executor`） | `min(16, max(8, CPU))`、`SUBAGENT + NUDGE` 以上へ切り上げ → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
+| `MAIN` | メインエージェントのターン（`server/service/input_queue_service.py::_run_executor`） | `min(16, max(8, CPU))`、`SUBAGENT + BACKGROUND_REVIEW` 以上へ切り上げ → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 子エージェントの実行（`spawn/core.py`、`control/steer.py`） | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | メモリ nudge / 計画抽出 / 圧縮後 todo 更新（`agent/middlewares/summarization/nudges.py` の 3 箇所） | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `BACKGROUND_REVIEW` | メモリレビュー / スキルレビュー / 圧縮後 todo 更新（`agent/middlewares/summarization/background_reviews.py` の 3 箇所） | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
 | `NESTED` | `sessions_send` の返信ターン（直列） | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 設定と検証
@@ -25,14 +25,14 @@
 LANE_SYSTEM: LaneSystemConfig = {
     "main_max_concurrent": _resolve_main_concurrency(),   # 12–16
     "subagent_max_concurrent": 8,
-    "nudge_max_concurrent": 4,
+    "background_review_max_concurrent": 4,
     "nested_max_concurrent": 1,
     "lane_wait_warn_ms": 5000,
     "lane_drain_timeout_seconds": 30.0,
 }
 ```
 
-`_resolve_main_concurrency()` は OpenClaw の CPU スケーリング——`min(16, max(8, CPU))`——を踏襲し、さらにハード不変条件 `SUBAGENT + NUDGE`（8 + 4 = 12）以上へ**切り上げ**るため、出荷時の既定値はどの CPU 数でも有効です。`validate_lane_config()` はサーバー起動時に `install_lane_lifecycle()`（`server/service/lane_lifecycle.py`）から一度だけ呼ばれ（import 時には決して呼ばれません）、`main_max_concurrent < subagent + nudge` またはいずれかの上限が `< 1` のとき例外を送出します。`lane_wait_warn_ms` は「スロット待ちが長すぎる」警告を制御し、`lane_drain_timeout_seconds` は `LaneManager.drain_all()` の既定タイムアウトです。`LaneManager.set_concurrency(lane, n)` は上限をホット更新します——実行中のスロットは permit を保持したまま、新しい acquire だけが新しい上限を見ます。
+`_resolve_main_concurrency()` は OpenClaw の CPU スケーリング——`min(16, max(8, CPU))`——を踏襲し、さらにハード不変条件 `SUBAGENT + BACKGROUND_REVIEW`（8 + 4 = 12）以上へ**切り上げ**るため、出荷時の既定値はどの CPU 数でも有効です。`validate_lane_config()` はサーバー起動時に `install_lane_lifecycle()`（`server/service/lane_lifecycle.py`）から一度だけ呼ばれ（import 時には決して呼ばれません）、`main_max_concurrent < subagent + background_review` またはいずれかの上限が `< 1` のとき例外を送出します。`lane_wait_warn_ms` は「スロット待ちが長すぎる」警告を制御し、`lane_drain_timeout_seconds` は `LaneManager.drain_all()` の既定タイムアウトです。`LaneManager.set_concurrency(lane, n)` は上限をホット更新します——実行中のスロットは permit を保持したまま、新しい acquire だけが新しい上限を見ます。
 
 ### SUBAGENT lane の手前にある負荷ゲート
 
@@ -90,7 +90,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 ```json
 {"main": {"name": "main", "max_concurrent": 12, "active": 1, "queued": 0},
  "subagent": {"name": "subagent", "max_concurrent": 8, "active": 3, "queued": 2},
- "nudge": {"name": "nudge", "max_concurrent": 4, "active": 0, "queued": 0},
+ "background_review": {"name": "background_review", "max_concurrent": 4, "active": 0, "queued": 0},
  "nested": {"name": "nested", "max_concurrent": 1, "active": 0, "queued": 0}}
 ```
 
@@ -99,7 +99,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | シナリオ | メカニズム |
 | :--- | :--- |
 | メインターンが MAIN スロットを保持したまま子の結果を待つ | 子は SUBAGENT スロットだけを必要とします——レーンは独立したセマフォであり、レーン間の待機サイクルは存在しません（`test_filling_main_does_not_block_subagent`、spawn 経路: `test_subagent_runs_while_main_lane_slot_is_held`）；任意の `run_timeout_seconds > 0` がハングした子を追加で打ち切ります |
-| Nudge が SUBAGENT スロットを待つ | nudge はサブエージェントを spawn せず（ツールセット制限）、NUDGE レーン自体も独立です |
+| バックグラウンドレビューが SUBAGENT スロットを待つ | バックグラウンドレビューはサブエージェントを spawn せず（ツールセット制限）、BACKGROUND_REVIEW レーン自体も独立です |
 | 実行中のレーンホット更新 | `set_concurrency` は新しい acquire にのみ影響します |
 | `sessions_yield` が PENDING の子を待つ | yield タイムアウトはレーン待ちを含み、期限切れ時は正常に戻ります |
 | Drain モード + レーン待機者 | `acquire()` は drain チェックで拒否し、permit を消費しません |
@@ -115,7 +115,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `server/service/lane_lifecycle.py` | 起動時検証、drain ゲート登録、有界終了 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT レーンラッパー + PENDING → RUNNING 昇格 |
-| `agent/middlewares/summarization/nudges.py` | NUDGE レーンの 3 呼び出し箇所 |
+| `agent/middlewares/summarization/background_reviews.py` | BACKGROUND_REVIEW レーンの 3 呼び出し箇所 |
 | `agent/tools/subagent/tools/sessions_send.py` | 返信ターンを包む NESTED レーン |
 | `server/service/input_queue_service.py` | `_run_executor` を包む MAIN レーン |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤児の `pending_orphaned` 確定 |
@@ -126,7 +126,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 
 実装時に記録した意図的なトレードオフが 3 点あります：
 
-- **MAIN は不変条件まで切り上げ。** CPU スケーリング単独（`min(16, max(8, CPU))`）では CPU ≤ 8 のマシンで 8 となり、起動時に `validate_lane_config()` が失敗するため、既定値を `SUBAGENT + NUDGE`（12）まで切り上げ、4/8/12/16/64 コアのマシンいずれでも有効にしています。
+- **MAIN は不変条件まで切り上げ。** CPU スケーリング単独（`min(16, max(8, CPU))`）では CPU ≤ 8 のマシンで 8 となり、起動時に `validate_lane_config()` が失敗するため、既定値を `SUBAGENT + BACKGROUND_REVIEW`（12）まで切り上げ、4/8/12/16/64 コアのマシンいずれでも有効にしています。
 - **`GET /lane-status` に `/api` プレフィックスは付きません。** 当初設計の `/api/lane-status` ルートは採用せず、リポジトリ既存のルーティング慣例に従っています：ハンドラは `server/trigger/http/lane.py` にあり、`/channels` や `/cron` と並んでいます。
 - **終了 drain は `atexit` 経由。** リポジトリに非同期シャットダウン seam が存在しない（Robyn の `shutdown_handler` は SIGINT/SIGTERM では呼ばれない）ため、有界の `drain_all(timeout=0)` は最終的なレーン別カウンタを報告するだけで、終了を遅らせません。実行中のターンは OS に委ねられます。
 

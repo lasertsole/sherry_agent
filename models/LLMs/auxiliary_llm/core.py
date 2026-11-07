@@ -138,7 +138,7 @@ def build_auxiliary_llm(
         from models.LLMs.anthropic_cache import maybe_wrap_anthropic_cache
 
         # Same provider gate as the main client: the auxiliary family serves the
-        # completion judge / nudges / scanner calls, whose prompts repeat, so it
+        # completion judge / background reviews / scanner calls, whose prompts repeat, so it
         # benefits from the same breakpoints when it runs on Anthropic.
         inner = maybe_wrap_anthropic_cache(init_chat_model(**_model_config), _provider)
         model = NormalizingChatModel(inner=inner)

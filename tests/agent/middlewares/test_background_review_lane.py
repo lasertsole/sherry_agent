@@ -1,16 +1,16 @@
-"""Nudge agents are gated by the process-wide NUDGE lane.
+"""Background-review agents are gated by the process-wide BACKGROUND_REVIEW lane.
 
 Covers plan Step 9's lane landing:
 
-1. ``_nudge_memory`` concurrency is capped by the NUDGE lane (queue, never reject)
-2. the plan-extraction nudge shares the same lane
+1. ``_execute_memory_review`` concurrency is capped by the BACKGROUND_REVIEW lane (queue, never reject)
+2. the skill-review pass shares the same lane
 3. the compression-time scheduler never dispatches without a running event
    loop, and the ``system_prompt_injection`` middleware does not override the
    after-agent hooks — so no ``run_async()`` worker loop can ever acquire the
    loop-bound semaphore
-4. acquiring the NUDGE lane across two loops does not raise (Wave 1 rebind)
+4. acquiring the BACKGROUND_REVIEW lane across two loops does not raise (Wave 1 rebind)
 
-Hermetic: the nudge agent builder is replaced with a gated fake (no LLM), and
+Hermetic: the background-review agent builder is replaced with a gated fake (no LLM), and
 each test gets a fresh ``LaneManager`` through the monkeypatched singleton.
 """
 
@@ -22,7 +22,7 @@ import pytest
 import runtime.lane.core as lane_core
 from runtime.lane.core import LaneManager, LaneType, lane_slot
 from agent.middlewares.system_prompt import core as ce_core
-from agent.middlewares.summarization import nudges as nudge
+from agent.middlewares.summarization import background_reviews as review_mod
 
 pytestmark = [pytest.mark.unit]
 
@@ -42,7 +42,7 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
     async def _pass(*_args, **_kwargs):
         return _Judgement()
 
-    monkeypatch.setattr(nudge, "judge_skill_update", _pass)
+    monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
 
 async def _wait_until(predicate, timeout: float = 2.0) -> None:
@@ -54,8 +54,8 @@ async def _wait_until(predicate, timeout: float = 2.0) -> None:
         await asyncio.sleep(0.01)
 
 
-class NudgeTracker:
-    """Shared state for fake nudge agents: gate + concurrency high-water mark."""
+class ReviewTracker:
+    """Shared state for fake background-review agents: gate + concurrency high-water mark."""
 
     def __init__(self) -> None:
         self.active = 0
@@ -64,8 +64,8 @@ class NudgeTracker:
         self.gate = asyncio.Event()
 
 
-class FakeNudgeAgent:
-    def __init__(self, tracker: NudgeTracker) -> None:
+class FakeReviewAgent:
+    def __init__(self, tracker: ReviewTracker) -> None:
         self._tracker = tracker
 
     async def ainvoke(self, input: dict) -> dict:
@@ -80,11 +80,11 @@ class FakeNudgeAgent:
         return {"messages": ["ok"]}
 
 
-def _fake_builder(tracker: NudgeTracker):
-    """Tolerant of both factory signatures (memory review / plan extraction)."""
+def _fake_builder(tracker: ReviewTracker):
+    """Tolerant of both factory signatures (memory review / skill review)."""
 
     async def build(system_prompt, *args, **kwargs):
-        return FakeNudgeAgent(tracker)
+        return FakeReviewAgent(tracker)
 
     return build
 
@@ -98,21 +98,24 @@ def _isolated_lanes(monkeypatch: pytest.MonkeyPatch) -> LaneManager:
     lane_core.set_drain_check(None)
 
 
-class TestNudgeLaneCap:
+class TestBackgroundReviewLaneCap:
     @pytest.mark.asyncio
-    async def test_nudge_memory_concurrency_is_capped(
+    async def test_execute_memory_review_concurrency_is_capped(
         self, _isolated_lanes: LaneManager, monkeypatch: pytest.MonkeyPatch
     ):
-        _isolated_lanes.set_concurrency(LaneType.NUDGE, 2)
-        lane = _isolated_lanes.get_lane(LaneType.NUDGE)
-        tracker = NudgeTracker()
-        monkeypatch.setattr(nudge, "_create_memory_review_agent", _fake_builder(tracker))
+        _isolated_lanes.set_concurrency(LaneType.BACKGROUND_REVIEW, 2)
+        lane = _isolated_lanes.get_lane(LaneType.BACKGROUND_REVIEW)
+        tracker = ReviewTracker()
+        monkeypatch.setattr(review_mod, "_create_memory_review_agent", _fake_builder(tracker))
 
-        tasks = [asyncio.create_task(nudge._nudge_memory(f"s{i}", "sys", [])) for i in range(3)]
+        tasks = [
+            asyncio.create_task(review_mod._execute_memory_review(f"s{i}", "sys", []))
+            for i in range(3)
+        ]
 
         await _wait_until(lambda: lane.active_count == 2)
         await _wait_until(lambda: lane.queued_count == 1)
-        assert tracker.max_active == 2, "the third nudge must queue, not run"
+        assert tracker.max_active == 2, "the third review must queue, not run"
 
         tracker.gate.set()
         await asyncio.gather(*tasks)
@@ -123,20 +126,20 @@ class TestNudgeLaneCap:
         assert lane.queued_count == 0
 
     @pytest.mark.asyncio
-    async def test_plan_extraction_shares_the_same_lane(
+    async def test_skill_review_shares_the_same_lane(
         self, _isolated_lanes: LaneManager, monkeypatch: pytest.MonkeyPatch
     ):
-        _isolated_lanes.set_concurrency(LaneType.NUDGE, 1)
-        lane = _isolated_lanes.get_lane(LaneType.NUDGE)
-        tracker = NudgeTracker()
-        monkeypatch.setattr(nudge, "_create_memory_review_agent", _fake_builder(tracker))
-        monkeypatch.setattr(nudge, "_create_plan_extraction_agent", _fake_builder(tracker))
-        monkeypatch.setattr(nudge, "_build_plan_context", lambda session_id: {"plan": "x"})
+        _isolated_lanes.set_concurrency(LaneType.BACKGROUND_REVIEW, 1)
+        lane = _isolated_lanes.get_lane(LaneType.BACKGROUND_REVIEW)
+        tracker = ReviewTracker()
+        monkeypatch.setattr(review_mod, "_create_memory_review_agent", _fake_builder(tracker))
+        monkeypatch.setattr(review_mod, "_create_skill_review_agent", _fake_builder(tracker))
+        monkeypatch.setattr(review_mod, "_build_plan_context", lambda session_id: {"plan": "x"})
 
-        memory_task = asyncio.create_task(nudge._nudge_memory("s1", "sys", []))
+        memory_task = asyncio.create_task(review_mod._execute_memory_review("s1", "sys", []))
         await _wait_until(lambda: lane.active_count == 1)
 
-        plan_task = asyncio.create_task(nudge._run_plan_extraction("s2"))
+        plan_task = asyncio.create_task(review_mod._run_skill_review("s2"))
         await _wait_until(lambda: lane.queued_count == 1)
         assert tracker.max_active == 1
 
@@ -162,22 +165,24 @@ class TestNudgeLaneCap:
         async def _plan(*args):
             calls.append("plan")
 
-        monkeypatch.setattr(nudge, "_nudge_memory", _memory)
-        monkeypatch.setattr(nudge, "_run_plan_extraction", _plan)
+        monkeypatch.setattr(review_mod, "_execute_memory_review", _memory)
+        monkeypatch.setattr(review_mod, "_run_skill_review", _plan)
 
-        scheduled = nudge.schedule_memory_review("sess-sync", [])
+        scheduled = review_mod.schedule_memory_review("sess-sync", [])
 
         assert scheduled is False, "no running loop: the scheduler must not dispatch"
-        assert calls == [], "the sync path must not dispatch nudge agents"
-        lane = _isolated_lanes.get_lane(LaneType.NUDGE)
+        assert calls == [], "the sync path must not dispatch background-review agents"
+        lane = _isolated_lanes.get_lane(LaneType.BACKGROUND_REVIEW)
         assert lane.active_count == 0
         assert lane.queued_count == 0
 
-    def test_nudge_lane_acquire_across_two_loops_does_not_raise(self, _isolated_lanes: LaneManager):
-        lane = _isolated_lanes.get_lane(LaneType.NUDGE)
+    def test_background_review_lane_acquire_across_two_loops_does_not_raise(
+        self, _isolated_lanes: LaneManager
+    ):
+        lane = _isolated_lanes.get_lane(LaneType.BACKGROUND_REVIEW)
 
         async def acquire_release() -> None:
-            async with lane_slot(LaneType.NUDGE):
+            async with lane_slot(LaneType.BACKGROUND_REVIEW):
                 assert lane.active_count == 1
 
         asyncio.run(acquire_release())

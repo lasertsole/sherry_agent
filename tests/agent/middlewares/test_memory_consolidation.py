@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import HumanMessage
 
-from agent.middlewares.summarization import nudges
-from agent.middlewares.summarization.nudges import (
+from agent.middlewares.summarization import background_reviews as reviews
+from agent.middlewares.summarization.background_reviews import (
     _render_memory_entries_for_consolidation,
     run_memory_consolidation,
 )
@@ -27,7 +27,7 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
 
 
 def test_below_threshold_only_ages(store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(nudges.MEMORY_TOOL, "consolidation_min_entries", 10)
+    monkeypatch.setitem(reviews.MEMORY_TOOL, "consolidation_min_entries", 10)
     store.repo.add_entry("memory", "one")
     store.repo.add_entry("user", "two")
 
@@ -49,19 +49,19 @@ def test_listing_contains_ids_usage_and_targets(store: MemoryStore) -> None:
 
 
 def test_llm_pass_runs_when_due(store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(nudges.MEMORY_TOOL, "consolidation_min_entries", 1)
+    monkeypatch.setitem(reviews.MEMORY_TOOL, "consolidation_min_entries", 1)
     store.repo.add_entry("memory", "duplicate A")
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(nudges, "_build_session_model", lambda _sid: object())
-    monkeypatch.setattr(nudges, "_build_memory_review_agent", lambda *a, **k: object())
+    monkeypatch.setattr(reviews, "_build_session_model", lambda _sid: object())
+    monkeypatch.setattr(reviews, "_build_memory_review_agent", lambda *a, **k: object())
 
     async def _invoke(agent, session_id, messages, prompt, **kwargs):
         captured["prompt"] = prompt
         captured["session"] = session_id
         return HumanMessage(content="Nothing to consolidate.")
 
-    monkeypatch.setattr(nudges, "_invoke_memory_review", _invoke)
+    monkeypatch.setattr(reviews, "_invoke_memory_review", _invoke)
 
     result = asyncio.run(run_memory_consolidation("s1", system_prompt="system prompt", timeout_s=5))
     assert result["status"] == "completed"

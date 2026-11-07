@@ -25,7 +25,7 @@ class TestLaneTypes:
         assert {lane_type.value for lane_type in LaneType} == {
             "main",
             "subagent",
-            "nudge",
+            "background_review",
             "nested",
         }
 

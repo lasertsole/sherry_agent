@@ -1,4 +1,4 @@
-"""Env-loading contract of the nudge_extraction eval suite.
+"""Env-loading contract of the skill_review eval suite.
 
 The suite must source its API keys from the eval-local ``.env`` next to
 ``suite.py`` — never from the production repo-root ``.env``: an eval run must
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import evals.nudge_extraction.suite as suite
+import evals.skill_review.suite as suite
 
 pytestmark = [pytest.mark.unit]
 

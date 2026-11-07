@@ -40,7 +40,7 @@
 
 ### 回合级：`ToolGuardrails`，工具调用病理检测
 
-作用于主 Agent、worker Agent 和 nudge 子 Agent。每次工具调用的记录都会在评估*之前*追加进每回合状态（`state_register_mem` 中的 `tool_guardrail_state`），所以阈值是自包含的："第 2 次之后"意味着当前调用就是第 2 次，而第 5 次相同的无进展调用本身就达到 np=5 并被拦截。升级阶梯：ALLOW → WARN（向对话记录追加一条 nudge）→ BLOCK（拒绝该调用并附上说明消息）→ HALT（回合以一条终止消息优雅结束，与迭代预算同一模式）。
+作用于主 Agent、worker Agent 和 后台评审子 Agent。每次工具调用的记录都会在评估*之前*追加进每回合状态（`state_register_mem` 中的 `tool_guardrail_state`），所以阈值是自包含的："第 2 次之后"意味着当前调用就是第 2 次，而第 5 次相同的无进展调用本身就达到 np=5 并被拦截。升级阶梯：ALLOW → WARN（向对话记录追加一条 nudge）→ BLOCK（拒绝该调用并附上说明消息）→ HALT（回合以一条终止消息优雅结束，与迭代预算同一模式）。
 
 | 病理 | 信号 | WARN 阈值 | BLOCK 阈值 | hard-stop 模式 |
 |---|---|---|---|---|

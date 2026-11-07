@@ -1,39 +1,39 @@
-"""Live-network e2e: compression-time nudge cadence on the REAL summary chain.
+"""Live-network e2e: compression-time background-review cadence on the REAL summary chain.
 
 LIVE-NETWORK, RUN EXPLICITLY. These tests drive the production
 ``Summarization`` middleware (real auxiliary-LLM summaries via
-``build_auxiliary_llm()``), the REAL compression-time nudge agents built by
-``summarization/nudges.py`` (auxiliary model), the real ``skill_manage`` /
+``build_auxiliary_llm()``), the REAL compression-time background-review agents built by
+``summarization/background_reviews.py`` (auxiliary model), the real ``skill_manage`` /
 ``skill_list`` / ``skill_view`` tools, and real SQLite stores
 (MesMemory, todos.db, taskflow registry, state registers). They require a
 populated ``.env`` with working endpoints. Run with::
 
-    uv run --no-sync pytest -m llm_e2e tests/full/test_nudge_cadence_e2e.py -v --durations=0
+    uv run --no-sync pytest -m llm_e2e tests/full/test_background_review_cadence_e2e.py -v --durations=0
 
 Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
 ``pyproject.toml`` addopts and the hermetic CI gate never collects this file;
 ``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright.
 
-Contract under test (the "nudge cadence" contract): every compression that
+Contract under test (the "background-review cadence" contract): every compression that
 actually discards messages dispatches ONE memory review; there is no counter or
-threshold that could suppress the 2nd/3rd dispatch; plan extraction is
+threshold that could suppress the 2nd/3rd dispatch; skill review is
 evaluated independently in the same round when the todo list is all-complete;
-an in-flight nudge lock skips dispatch without queueing. Nudge agents, summary
+an in-flight review lock skips dispatch without queueing. Background-review agents, summary
 LLM calls, plan-knowledge writes and skill writes are all real — spies only
 COUNT and OBSERVE (they wrap the production functions and delegate to them).
 
 Coverage:
 
-1. Single compression → exactly one memory-review dispatch, the real nudge
+1. Single compression → exactly one memory-review dispatch, the real review
    agent runs (real main-LLM usage) and attempts a real ``memory`` tool write.
 2. Three consecutive compressions (cooldown ticked between them, the production
    gate) → three dispatches; no ``nudge_review_memory_count``-style key exists
    in either state register.
-3. Lock semantics: a held ``nudge_review_memory_lock`` skips dispatch and
+3. Lock semantics: a held ``background_review_memory_lock`` skips dispatch and
    queues nothing; after release the next compression dispatches normally.
-4. All-complete todos: memory review and plan extraction both fire in the same
+4. All-complete todos: memory review and skill review both fire in the same
    round, sequentially, without suppressing each other.
-5. Skill-only plan extraction: the real nudge writes a class-level
+5. Skill-only skill review: the real review writes a class-level
    ``skill_manage`` update in the auto-skills sandbox and no longer writes
    ``plan-summary.json`` / task knowledge.
 6. P1-9 interleave: a ~210K-char human message is evicted (full text in state +
@@ -55,11 +55,11 @@ Coverage:
 Session sandboxing / cleanup: memory files, plan knowledge and auto-skills are
 redirected into the pytest tmp dir; the real session directory, MesMemory rows,
 checkpoints, todo rows, taskflow rows, state-register rows, compaction-lock
-rows and any pending nudge tasks for every session this module created are
+rows and any pending review tasks for every session this module created are
 purged in ``finally`` blocks, so the module is independently re-runnable.
 
 Cost note: ``compression_todo_update_enabled`` is turned off for these tests —
-the post-compression todo reconciliation fork is a separate nudge path with its
+the post-compression todo reconciliation fork is a separate background-review path with its
 own contract, not asserted here, and disabling it keeps every main-model call
 attributable to the cadence/extraction checks above.
 """
@@ -86,8 +86,8 @@ import agent.core as agent_core
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
 from agent.middlewares.context_eviction import ContextEvictionMiddleware
 from agent.middlewares.message_persistence import MessagePersistenceMiddleware
-from agent.middlewares.summarization import nudges as nudge_mod
-from agent.middlewares.summarization import skill_quality
+from agent.middlewares.summarization import background_reviews as review_mod
+from agent.middlewares.summarization import skill_review
 from agent.middlewares.summarization.core import Summarization, _get_taskflow_context_sync
 from agent.tools import memory as memory_module
 from agent.tools.skill_tools import skill_manage
@@ -119,7 +119,7 @@ _TEST_SYSTEM_PROMPT = "You are Sherry, an e2e test session agent. Follow the ins
 
 
 def _new_sid(tag: str) -> str:
-    return f"e2e-nudge-{tag}-{uuid.uuid4().hex[:8]}"
+    return f"e2e-review-{tag}-{uuid.uuid4().hex[:8]}"
 
 
 async def _purge_session(session_id: str) -> None:
@@ -168,10 +168,10 @@ def _evicted_path(preview: str) -> Path:
     return Path(match.group(1))
 
 
-async def _cancel_pending_nudges() -> None:
+async def _cancel_pending_reviews() -> None:
     pending = [
         task
-        for task in (*nudge_mod._COMPRESSION_NUDGE_TASKS, *nudge_mod._COMPRESSION_TODO_TASKS)
+        for task in (*review_mod._BACKGROUND_REVIEW_TASKS, *review_mod._COMPRESSION_TODO_TASKS)
         if not task.done()
     ]
     if not pending:
@@ -182,25 +182,25 @@ async def _cancel_pending_nudges() -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def _settle_nudge_tasks(timeout_s: float = 900.0) -> None:
-    """Wait until every fire-and-forget compression nudge task has finished."""
+async def _settle_review_tasks(timeout_s: float = 900.0) -> None:
+    """Wait until every fire-and-forget compression review task has finished."""
     deadline = time.monotonic() + timeout_s
     while True:
         pending = [
             task
-            for task in (*nudge_mod._COMPRESSION_NUDGE_TASKS, *nudge_mod._COMPRESSION_TODO_TASKS)
+            for task in (*review_mod._BACKGROUND_REVIEW_TASKS, *review_mod._COMPRESSION_TODO_TASKS)
             if not task.done()
         ]
         if not pending:
             return
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            pytest.fail(f"compression nudge tasks did not finish: {len(pending)} still pending")
+            pytest.fail(f"compression review tasks did not finish: {len(pending)} still pending")
         await asyncio.wait(pending, timeout=remaining)
 
 
 # ---------------------------------------------------------------------------
-# Payload builders (small enough for cheap nudge prompts, big enough to compact)
+# Payload builders (small enough for cheap review prompts, big enough to compact)
 # ---------------------------------------------------------------------------
 
 
@@ -263,8 +263,8 @@ def _ai_tool_call(*call_ids: str) -> AIMessage:
 # ---------------------------------------------------------------------------
 
 
-class _NudgeRun:
-    """One recorded nudge-agent invocation (observation only)."""
+class _ReviewRun:
+    """One recorded review-agent invocation (observation only)."""
 
     def __init__(
         self,
@@ -296,9 +296,9 @@ class _NudgeRun:
         return "\n".join(item["content"] for item in self.tool_results if item["name"] == name)
 
 
-class _NudgeRecorder:
+class _ReviewRecorder:
     def __init__(self) -> None:
-        self.runs: list[_NudgeRun] = []
+        self.runs: list[_ReviewRun] = []
         self.events: list[tuple[str, str]] = []
         self.memory_done = 0
         self.plan_done = 0
@@ -332,7 +332,7 @@ class _NudgeRecorder:
                 if isinstance(message.content, str) and message.content.strip():
                     ai_texts.append(message.content[:300])
         self.runs.append(
-            _NudgeRun(
+            _ReviewRun(
                 session_id=str(input.get("session_id", "")),
                 kind=_classify_prompt(prompt),
                 prompt=prompt,
@@ -349,15 +349,15 @@ class _NudgeRecorder:
 def _classify_prompt(prompt: str) -> str:
     if prompt.startswith("Review the conversation above"):
         return "memory_review"
-    if prompt.startswith("You are a skill-quality maintainer"):
-        return "plan_extraction"
+    if prompt.startswith("You are a skill-review maintainer"):
+        return "skill_review"
     return "other"
 
 
 class _RecordingAgent:
-    """Delegates to the real nudge agent and records its result."""
+    """Delegates to the real review agent and records its result."""
 
-    def __init__(self, inner: Any, recorder: _NudgeRecorder) -> None:
+    def __init__(self, inner: Any, recorder: _ReviewRecorder) -> None:
         self._inner = inner
         self._recorder = recorder
 
@@ -418,9 +418,9 @@ class _Sandbox:
         monkeypatch.setattr(knowledge_store, "_KNOWLEDGE_ROOT", self.plans_dir)
         monkeypatch.setattr(skill_manage, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         monkeypatch.setattr(skill_view_module, "SKILLS_DIR", self.auto_skills_dir)
-        monkeypatch.setattr(skill_quality, "AUTO_SKILLS_DIR", self.auto_skills_dir)
+        monkeypatch.setattr(skill_review, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         monkeypatch.setattr("skills.build_skills_snapshot", lambda: None)
-        # The post-compression todo reconciliation fork is a separate nudge
+        # The post-compression todo reconciliation fork is a separate review
         # path with its own contract; disabling it keeps every main-model call
         # here attributable to the cadence / extraction assertions.
         monkeypatch.setitem(SUMMARIZATION, "compression_todo_update_enabled", False)
@@ -432,11 +432,11 @@ class _Sandbox:
         state_register_mem.set_state(sid, "system_prompt", _TEST_SYSTEM_PROMPT)
         return sid
 
-    def instrument(self, recorder: _NudgeRecorder) -> None:
+    def instrument(self, recorder: _ReviewRecorder) -> None:
         monkeypatch = self.monkeypatch
-        original_create = nudge_mod._create_nudge_agent
-        original_review_create = nudge_mod._create_memory_review_agent
-        original_plan_create = nudge_mod._create_plan_extraction_agent
+        original_create = review_mod._create_background_review_agent
+        original_review_create = review_mod._create_memory_review_agent
+        original_plan_create = review_mod._create_skill_review_agent
 
         async def recording_create(system_prompt, allowed_metadata_key=None, tools=None):
             inner = await original_create(
@@ -454,15 +454,15 @@ class _Sandbox:
 
         # Three seams: the compression-todo fork keeps the main model, the
         # memory review rebuilds the session's main-model configuration
-        # (cache-warm), and the plan extraction builds its own (auxiliary) agent.
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", recording_create)
-        monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", recording_review_create)
+        # (cache-warm), and the skill review builds its own (auxiliary) agent.
+        monkeypatch.setattr(review_mod, "_create_background_review_agent", recording_create)
+        monkeypatch.setattr(review_mod, "_create_memory_review_agent", recording_review_create)
         # The extraction fork builds its own agent (auxiliary model) — the seam
         # the recorder has to wrap to see its runs.
-        monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", recording_plan_create)
+        monkeypatch.setattr(review_mod, "_create_skill_review_agent", recording_plan_create)
 
-        original_memory = nudge_mod._nudge_memory
-        original_plan = nudge_mod._run_plan_extraction
+        original_memory = review_mod._execute_memory_review
+        original_plan = review_mod._run_skill_review
 
         async def recording_memory(session_id, system_prompt, messages):
             recorder.events.append(("memory", session_id))
@@ -474,8 +474,8 @@ class _Sandbox:
             await original_plan(session_id)
             recorder.plan_done += 1
 
-        monkeypatch.setattr(nudge_mod, "_nudge_memory", recording_memory)
-        monkeypatch.setattr(nudge_mod, "_run_plan_extraction", recording_plan)
+        monkeypatch.setattr(review_mod, "_execute_memory_review", recording_memory)
+        monkeypatch.setattr(review_mod, "_run_skill_review", recording_plan)
 
 
 class _CompressionHarness:
@@ -520,7 +520,7 @@ def _summary_present(messages: list[AnyMessage]) -> bool:
 
 def _memory_review_problems(
     harness: _CompressionHarness,
-    recorder: _NudgeRecorder,
+    recorder: _ReviewRecorder,
     sid: str,
     final: list[AnyMessage],
     sandbox: _Sandbox,
@@ -532,14 +532,14 @@ def _memory_review_problems(
         problems.append("the real auxiliary LLM was never invoked for the summary")
     runs = [run for run in recorder.runs if run.session_id == sid and run.kind == "memory_review"]
     if not runs:
-        problems.append("the memory-review nudge agent never ran")
+        problems.append("the memory-review agent never ran")
         return problems
     run = runs[0]
     if not run.ai_texts and not run.tool_results:
-        problems.append("the nudge agent produced neither text nor tool results")
+        problems.append("the review agent produced neither text nor tool results")
     memory_results = [item for item in run.tool_results if item["name"] == "memory"]
     if not memory_results:
-        problems.append(f"the nudge agent never called the memory tool; tools={run.tool_names()}")
+        problems.append(f"the review agent never called the memory tool; tools={run.tool_names()}")
         return problems
     if not any('"success": true' in item["content"] for item in memory_results):
         problems.append(f"memory tool returned no success: {memory_results[0]['content'][:200]!r}")
@@ -558,7 +558,7 @@ def _memory_review_problems(
 
 @pytest.mark.asyncio
 async def test_single_compression_dispatches_one_memory_review(sandbox: _Sandbox) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     reports: list[str] = []
@@ -568,7 +568,7 @@ async def test_single_compression_dispatches_one_memory_review(sandbox: _Sandbox
         try:
             messages = _conversation(_preference_blob(f"single-{attempt}"))
             final = await harness.compress(sid, messages)
-            await _settle_nudge_tasks()
+            await _settle_review_tasks()
 
             problems = _memory_review_problems(harness, recorder, sid, final, sandbox)
             if not problems:
@@ -585,7 +585,7 @@ async def test_single_compression_dispatches_one_memory_review(sandbox: _Sandbox
             reports.append(f"attempt {attempt} (sid={sid}): {'; '.join(problems)}")
             logger.warning("single-compression attempt {} not compliant: {}", attempt, problems)
         finally:
-            await _cancel_pending_nudges()
+            await _cancel_pending_reviews()
             await _purge_session(sid)
 
     pytest.fail(
@@ -601,7 +601,7 @@ async def test_single_compression_dispatches_one_memory_review(sandbox: _Sandbox
 
 @pytest.mark.asyncio
 async def test_three_consecutive_compressions_dispatch_three_reviews(sandbox: _Sandbox) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     sid = sandbox.new_session("triple")
@@ -613,7 +613,7 @@ async def test_three_consecutive_compressions_dispatch_three_reviews(sandbox: _S
             assert _summary_present(final), f"compression {index} produced no summary pair"
             # Let the real in-flight review finish first (case 3 covers the lock
             # itself); this isolates the cadence contract from it.
-            await _settle_nudge_tasks()
+            await _settle_review_tasks()
         assert recorder.memory_done == 3, (
             f"expected one memory review per compression; events={recorder.events}"
         )
@@ -624,7 +624,11 @@ async def test_three_consecutive_compressions_dispatch_three_reviews(sandbox: _S
         mem_states = state_register_mem.get_all_states(sid)
         assert "nudge_review_memory_count" not in db_states
         assert "nudge_review_memory_count" not in mem_states
-        stale = [key for key in (*db_states, *mem_states) if "nudge" in key and "count" in key]
+        stale = [
+            key
+            for key in (*db_states, *mem_states)
+            if "background_review" in key and "count" in key
+        ]
         assert stale == [], f"a legacy nudge counter survived: {stale}"
 
         total_in = sum(run.input_tokens for run in recorder.runs if run.session_id == sid)
@@ -636,7 +640,7 @@ async def test_three_consecutive_compressions_dispatch_three_reviews(sandbox: _S
             total_out,
         )
     finally:
-        await _cancel_pending_nudges()
+        await _cancel_pending_reviews()
         await _purge_session(sid)
 
 
@@ -647,34 +651,34 @@ async def test_three_consecutive_compressions_dispatch_three_reviews(sandbox: _S
 
 @pytest.mark.asyncio
 async def test_memory_lock_skips_dispatch_then_release_dispatches(sandbox: _Sandbox) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     sid = sandbox.new_session("lock")
     try:
-        state_register_mem.set_state(sid, "nudge_review_memory_lock", True)
+        state_register_mem.set_state(sid, "background_review_memory_lock", True)
         held = await harness.compress(sid, _conversation(_log_blob("lock-held")))
         assert _summary_present(held), "compression must still produce a summary while locked"
         assert recorder.memory_done == 0, "a held lock must skip the dispatch"
         assert recorder.events == []
-        assert not nudge_mod._COMPRESSION_NUDGE_TASKS, "a held lock must queue nothing"
+        assert not review_mod._BACKGROUND_REVIEW_TASKS, "a held lock must queue nothing"
 
-        state_register_mem.set_state(sid, "nudge_review_memory_lock", False)
+        state_register_mem.set_state(sid, "background_review_memory_lock", False)
         await harness.tick_cooldown(sid, 3)
         released = await harness.compress(sid, _conversation(_log_blob("lock-released")))
         assert _summary_present(released), "second compression produced no summary pair"
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         assert recorder.memory_done == 1
         assert recorder.events == [("memory", sid)]
     finally:
-        state_register_mem.set_state(sid, "nudge_review_memory_lock", False)
-        await _cancel_pending_nudges()
+        state_register_mem.set_state(sid, "background_review_memory_lock", False)
+        await _cancel_pending_reviews()
         await _purge_session(sid)
 
 
 # ---------------------------------------------------------------------------
-# Plan-extraction scenario helpers (cases 4 + 5)
+# Skill-review scenario helpers (cases 4 + 5)
 # ---------------------------------------------------------------------------
 
 _PLAN_MARKDOWN = """# {plan_name}: jittered exponential backoff for the retry helper
@@ -738,7 +742,7 @@ async def _setup_plan(sandbox: _Sandbox, tag: str) -> _PlanSetup:
 
 
 def _plan_output_problems(
-    sandbox: _Sandbox, recorder: _NudgeRecorder, setup: _PlanSetup
+    sandbox: _Sandbox, recorder: _ReviewRecorder, setup: _PlanSetup
 ) -> list[str]:
     problems: list[str] = []
     key_dir = sandbox.plans_dir / setup.expected_key
@@ -757,18 +761,16 @@ def _plan_output_problems(
             problems.append(f"created SKILL.md lacks valid frontmatter: {content[:120]!r}")
 
     plan_runs = [
-        run
-        for run in recorder.runs
-        if run.session_id == setup.sid and run.kind == "plan_extraction"
+        run for run in recorder.runs if run.session_id == setup.sid and run.kind == "skill_review"
     ]
     if not plan_runs:
-        problems.append("the skill-quality nudge agent never ran")
+        problems.append("the skill review agent never ran")
         return problems
     tools = {name for run in plan_runs for name in run.tool_names()}
     if "knowledge" in tools or "memory" in tools:
         problems.append(f"retired knowledge/memory tools were called; tools={sorted(tools)}")
     if "skill_manage" not in tools:
-        problems.append(f"skill-quality nudge never called skill_manage; tools={sorted(tools)}")
+        problems.append(f"skill review never called skill_manage; tools={sorted(tools)}")
     skill_text = "\n".join(run.tool_content("skill_manage") for run in plan_runs)
     if not any(word in skill_text.lower() for word in ("created", "patched", "updated")):
         problems.append(f"skill_manage produced no skill change: {skill_text[:300]!r}")
@@ -776,7 +778,7 @@ def _plan_output_problems(
 
 
 # ---------------------------------------------------------------------------
-# 4. All-complete todos → memory review + plan extraction in the SAME round
+# 4. All-complete todos → memory review + skill review in the SAME round
 # ---------------------------------------------------------------------------
 
 
@@ -784,46 +786,51 @@ def _plan_output_problems(
 async def test_compaction_reviews_memory_and_the_completion_hook_forks_the_extraction(
     sandbox: _Sandbox,
 ) -> None:
-    """The two nudge paths are independent now.
+    """The two review paths are independent now.
 
-    Compaction carries the memory review and NOTHING else; the plan extraction
+    Compaction carries the memory review and NOTHING else; the skill review
     forks from the plan-completion hook, so the same all-complete round reaches
     both without the extraction ever seeing the conversation.
     """
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     setup = await _setup_plan(sandbox, "same-round")
     try:
         final = await harness.compress(setup.sid, _plan_conversation(setup.plan_name))
         assert _summary_present(final), "the plan round produced no summary pair"
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         assert recorder.memory_done == 1, f"memory review did not complete: {recorder.events}"
         assert recorder.plan_done == 0, (
-            f"compaction must not run the plan extraction any more: {recorder.events}"
+            f"compaction must not run the skill review any more: {recorder.events}"
         )
 
-        await nudge_mod.maybe_trigger_plan_extraction(setup.sid)
-        await _settle_nudge_tasks()
+        await review_mod.maybe_trigger_skill_review(setup.sid)
+        await _settle_review_tasks()
 
-        assert recorder.plan_done == 1, f"plan extraction did not complete: {recorder.events}"
+        assert recorder.plan_done == 1, f"skill review did not complete: {recorder.events}"
         assert [kind for kind, sid in recorder.events if sid == setup.sid] == ["memory", "plan"]
-        fingerprint = state_register_db.get_state(setup.sid, "nudge_plan_snapshot_hash", "")
-        assert fingerprint, "the plan snapshot fingerprint was not stored"
+        # This test pins the cadence, not the quality verdict. The live judge
+        # may reject the generated skill (and the loop then records the failure
+        # marker); either terminal gate outcome proves the review reached the
+        # judge. A missing fingerprint alone is not a cadence failure.
+        fingerprint = state_register_db.get_state(setup.sid, "skill_review_snapshot_hash", "")
+        failed = state_register_db.get_state(setup.sid, "skill_review_failed_hash", "")
+        assert fingerprint or failed, "the skill review reached no judge outcome"
     finally:
-        await _cancel_pending_nudges()
+        await _cancel_pending_reviews()
         await _purge_session(setup.sid)
 
 
 # ---------------------------------------------------------------------------
-# 5. Plan extraction: skill-only output, no knowledge files
+# 5. Skill review: skill-only output, no knowledge files
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_plan_extraction_writes_skill_without_knowledge(sandbox: _Sandbox) -> None:
-    recorder = _NudgeRecorder()
+async def test_skill_review_writes_skill_without_knowledge(sandbox: _Sandbox) -> None:
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     reports: list[str] = []
@@ -832,28 +839,28 @@ async def test_plan_extraction_writes_skill_without_knowledge(sandbox: _Sandbox)
         setup = await _setup_plan(sandbox, f"output-{attempt}")
         try:
             final = await harness.compress(setup.sid, _plan_conversation(setup.plan_name))
-            await _settle_nudge_tasks()
+            await _settle_review_tasks()
             # The extraction no longer rides compaction: fork it explicitly, the
             # way the plan-completion hook does.
-            await nudge_mod.maybe_trigger_plan_extraction(setup.sid)
-            await _settle_nudge_tasks()
+            await review_mod.maybe_trigger_skill_review(setup.sid)
+            await _settle_review_tasks()
             problems = _plan_output_problems(sandbox, recorder, setup)
             if not problems:
                 skill_files = sorted(sandbox.auto_skills_dir.rglob("SKILL.md"))
                 logger.info(
-                    "plan extraction outputs: skills={}",
+                    "skill review outputs: skills={}",
                     [path.parent.name for path in skill_files],
                 )
                 assert _summary_present(final)
                 return
             reports.append(f"attempt {attempt} (sid={setup.sid}): {'; '.join(problems)}")
-            logger.warning("plan-extraction attempt {} missing outputs: {}", attempt, problems)
+            logger.warning("skill-review attempt {} missing outputs: {}", attempt, problems)
         finally:
-            await _cancel_pending_nudges()
+            await _cancel_pending_reviews()
             await _purge_session(setup.sid)
 
     pytest.fail(
-        "the live skill-quality nudge did not produce a skill output after 2 attempts:\n"
+        "the live skill review did not produce a skill output after 2 attempts:\n"
         + "\n".join(reports)
     )
 
@@ -865,7 +872,7 @@ async def test_plan_extraction_writes_skill_without_knowledge(sandbox: _Sandbox)
 
 @pytest.mark.asyncio
 async def test_p1_9_evicted_human_then_compression_dispatches_review(sandbox: _Sandbox) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     sid = sandbox.new_session("p19-compress")
@@ -902,7 +909,7 @@ async def test_p1_9_evicted_human_then_compression_dispatches_review(sandbox: _S
         final = await harness.compress(
             sid, [tagged, AIMessage(content="ack"), HumanMessage(content="继续跟进")]
         )
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         assert _summary_present(final), "compression after P1-9 eviction produced no summary"
         assert harness.aux.prompts, "the real auxiliary LLM was never invoked"
@@ -921,7 +928,7 @@ async def test_p1_9_evicted_human_then_compression_dispatches_review(sandbox: _S
             run.input_tokens,
         )
     finally:
-        await _cancel_pending_nudges()
+        await _cancel_pending_reviews()
         await _purge_session(sid)
 
 
@@ -939,7 +946,7 @@ async def _tool_returning(value: Any):
 
 @pytest.mark.asyncio
 async def test_p0_2_evicted_tool_result_then_compression_keeps_full_text(sandbox: _Sandbox) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     sid = sandbox.new_session("p02-compress")
@@ -988,7 +995,7 @@ async def test_p0_2_evicted_tool_result_then_compression_keeps_full_text(sandbox
             HumanMessage(content="继续。"),
         ]
         final = await harness.compress(sid, messages)
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         assert _summary_present(final), "compression after P0-2 eviction produced no summary"
         assert recorder.memory_done == 1, f"memory review not dispatched: {recorder.events}"
@@ -998,7 +1005,7 @@ async def test_p0_2_evicted_tool_result_then_compression_keeps_full_text(sandbox
             "compression must not rewrite the MesMemory tool row"
         )
     finally:
-        await _cancel_pending_nudges()
+        await _cancel_pending_reviews()
         await _purge_session(sid)
 
 
@@ -1011,7 +1018,7 @@ async def test_p0_2_evicted_tool_result_then_compression_keeps_full_text(sandbox
 async def test_two_sessions_compress_isolated_reviews_and_taskflow_context(
     sandbox: _Sandbox,
 ) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     sid_a = sandbox.new_session("iso-a")
@@ -1047,13 +1054,13 @@ async def test_two_sessions_compress_isolated_reviews_and_taskflow_context(
         memory_module.memory_store.load_from_store()
         final_a = await harness.compress(sid_a, _conversation(_preference_blob(marker_a)))
         assert _summary_present(final_a)
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         sandbox.monkeypatch.setattr(memory_module, "memory_entry_repo", repo_b)
         memory_module.memory_store.load_from_store()
         final_b = await harness.compress(sid_b, _conversation(_preference_blob(marker_b)))
         assert _summary_present(final_b)
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         assert recorder.memory_done == 2, f"expected one review per session: {recorder.events}"
         run_a = next(run for run in recorder.runs if run.session_id == sid_a)
@@ -1074,7 +1081,7 @@ async def test_two_sessions_compress_isolated_reviews_and_taskflow_context(
             )
             assert foreign not in text, f"cross-session memory pollution in {repo}"
     finally:
-        await _cancel_pending_nudges()
+        await _cancel_pending_reviews()
         await _purge_session(sid_a)
         await _purge_session(sid_b)
 
@@ -1110,14 +1117,14 @@ def _clip_insufficient_messages() -> list[AnyMessage]:
 async def test_insufficient_tail_clip_degrades_to_compression_and_dispatches_review(
     sandbox: _Sandbox,
 ) -> None:
-    recorder = _NudgeRecorder()
+    recorder = _ReviewRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
     sid = sandbox.new_session("clip-degrade")
     try:
         with _capture_logs(level="DEBUG") as lines:
             final = await harness.compress(sid, _clip_insufficient_messages())
-        await _settle_nudge_tasks()
+        await _settle_review_tasks()
 
         assert any("Overflow tail clip insufficient" in line for line in lines), (
             "the insufficient tail clip was not attempted"
@@ -1131,7 +1138,7 @@ async def test_insufficient_tail_clip_degrades_to_compression_and_dispatches_rev
         assert recorder.memory_done == 1, f"memory review not dispatched: {recorder.events}"
         assert recorder.events == [("memory", sid)]
     finally:
-        await _cancel_pending_nudges()
+        await _cancel_pending_reviews()
         await _purge_session(sid)
 
 

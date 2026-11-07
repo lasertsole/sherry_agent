@@ -1,16 +1,16 @@
-"""Eval suite: real skill-quality nudge scored by an auxiliary-LLM judge.
+"""Eval suite: real skill review scored by an auxiliary-LLM judge.
 
 The suite seeds a self-contained, completed-plan run (plan file + completed
 todos + synthetic subagent run records), invokes the
-production skill-quality nudge
-(``agent.middlewares.summarization.nudges._run_plan_extraction``), then asks
+production skill review
+(``agent.middlewares.summarization.background_reviews._run_skill_review``), then asks
 an auxiliary LLM whether the skill it produced is genuinely grounded in THIS
 run, reusable, and non-generic. It also asserts that the retired knowledge
 documents are not written. Every write is redirected into the sandbox, so the
 repo's real ``skills/auto/`` and ``workspace/`` are never touched.
 
 Usage:
-    uv run python evals/evals.py nudge_extraction
+    uv run python evals/evals.py skill_review
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from evals.sandbox import EvalSandbox  # noqa: E402
 
-_SUITE = "nudge_extraction"
+_SUITE = "skill_review"
 _PLAN_NAME = "duckdb-csv-ingest"
 _EXTRACTION_TIMEOUT_S = 480.0
 _JUDGE_TIMEOUT_S = 180.0
@@ -79,7 +79,7 @@ keeping the swap atomic and tolerating dirty schema across files.
 
 _JUDGE_PROMPT_TEMPLATE = """\
 You are an exacting evaluation judge. Decide whether an automated post-plan
-skill-quality nudge produced a GENUINELY USEFUL, REUSABLE skill.
+skill review produced a GENUINELY USEFUL, REUSABLE skill.
 
 Use ONLY the material below. Do not reward generic advice, and do not assume
 anything that is not shown here.
@@ -159,8 +159,8 @@ def _diff_snapshots(
     }
 
 
-def _install_nudge_tools() -> list[str]:
-    """Bind the skill trio the skill-quality nudge may call.
+def _install_review_tools() -> list[str]:
+    """Bind the skill trio the skill review may call.
 
     The extraction pass is skill-only: knowledge and memory are deliberately
     absent, so the eval exercises the same barrier as production.
@@ -253,8 +253,8 @@ def _seed_subagent_runs(session_id: str) -> list[dict[str, str]]:
     seeded: list[dict[str, str]] = []
     for index, (task_name, task, result_text) in enumerate(fixtures):
         run = SubagentRunRecord(
-            run_id=f"evals-nudge-{task_name}-{uuid.uuid4().hex[:8]}",
-            child_session_key=f"agent:main:subagent:evals-nudge-{index}",
+            run_id=f"evals-skill-review-{task_name}-{uuid.uuid4().hex[:8]}",
+            child_session_key=f"agent:main:subagent:evals-skill-review-{index}",
             requester_session_key=requester,
             task=task,
             task_name=task_name,
@@ -402,11 +402,11 @@ async def _seed_fixture(session_id: str, results_dir: Path, sandbox: EvalSandbox
 
 async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) -> dict[str, Any]:
     """Seed the fixture, run the real extraction, and evaluate every check."""
-    from agent.middlewares.summarization.nudges import _run_plan_extraction
+    from agent.middlewares.summarization.background_reviews import _run_skill_review
 
     checks: list[dict[str, Any]] = []
     fixture = await _seed_fixture(session_id, results_dir, sandbox)
-    nudge_tool_names = _install_nudge_tools()
+    review_tool_names = _install_review_tools()
 
     extraction_error = ""
     extraction_started = time.monotonic()
@@ -421,16 +421,14 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
             # The fork builds its own prompt from the plan context and carries no
             # conversation; the scenario's tail line is folded into the prompt the
             # way the old call site appended its HumanMessage.
-            import agent.middlewares.summarization.nudges as nudge_module
+            import agent.middlewares.summarization.background_reviews as review_module
 
-            original_prompt = nudge_module._PLAN_EXTRACTION_PROMPT
-            nudge_module._PLAN_EXTRACTION_PROMPT = f"{original_prompt}\n\n{_SESSION_TAIL}"
+            original_prompt = review_module._SKILL_REVIEW_PROMPT
+            review_module._SKILL_REVIEW_PROMPT = f"{original_prompt}\n\n{_SESSION_TAIL}"
             try:
-                await asyncio.wait_for(
-                    _run_plan_extraction(session_id), timeout=_EXTRACTION_TIMEOUT_S
-                )
+                await asyncio.wait_for(_run_skill_review(session_id), timeout=_EXTRACTION_TIMEOUT_S)
             finally:
-                nudge_module._PLAN_EXTRACTION_PROMPT = original_prompt
+                review_module._SKILL_REVIEW_PROMPT = original_prompt
         except Exception as exc:  # noqa: BLE001 — extraction is fail-open; record the failure
             extraction_error = f"{type(exc).__name__}: {exc}"
         knowledge = _scan_knowledge(sandbox.knowledge_plans_dir)
@@ -468,7 +466,7 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
     context_text = _render_context(fixture)
     judge = await _judge_skill(context_text, skill_text)
     judge_passed = judge["skill_created"] and judge["grounded_in_run"] and judge["quality"] >= 6
-    checks.append({"check": "ai_judge_skill_quality", "passed": judge_passed, "detail": judge})
+    checks.append({"check": "ai_judge_skill_review", "passed": judge_passed, "detail": judge})
 
     return {
         "checks": checks,
@@ -481,7 +479,7 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
         "extraction_error": extraction_error,
         "extraction_latency_s": extraction_latency,
         "extraction_attempts": extraction_attempts,
-        "nudge_tools": nudge_tool_names,
+        "review_tools": review_tool_names,
         "skill_chars": len(skill_text),
     }
 
@@ -511,7 +509,7 @@ def _load_eval_env() -> Path:
 
 
 def main() -> None:
-    """Run the nudge-extraction eval under the sandbox and write the report."""
+    """Run the skill-review eval under the sandbox and write the report."""
     faulthandler.dump_traceback_later(900, exit=True)
 
     _load_eval_env()
@@ -548,7 +546,7 @@ def main() -> None:
     sandbox = EvalSandbox(results_dir)
     sandbox.apply()
     started = time.monotonic()
-    session_id = f"evals-nudge-{uuid.uuid4().hex[:8]}"
+    session_id = f"evals-skill-review-{uuid.uuid4().hex[:8]}"
     try:
         outcome = asyncio.run(_run_checks(session_id, results_dir, sandbox))
     except Exception as exc:  # noqa: BLE001 — suite failure is recorded, not raised
@@ -587,7 +585,7 @@ def main() -> None:
             "error": outcome.get("extraction_error", ""),
             "latency_s": outcome.get("extraction_latency_s"),
             "attempts": outcome.get("extraction_attempts", 0),
-            "nudge_tools": outcome.get("nudge_tools", []),
+            "review_tools": outcome.get("review_tools", []),
             "skill_chars": outcome.get("skill_chars", 0),
         },
         "judge": outcome.get("judge", {}),

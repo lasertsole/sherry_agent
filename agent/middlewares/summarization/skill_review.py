@@ -1,16 +1,16 @@
-"""Skill-quality gate for the plan-completion nudge.
+"""Skill-review gate for the plan-completion review.
 
-The nudge writes directly into ``skills/auto``; this module gives the caller a
+The review writes directly into ``skills/auto``; this module gives the caller a
 safe transaction around those writes and a semantic judge for the result:
 
-* :class:`SkillTreeSnapshot` captures the auto-skill tree before a nudge attempt;
+* :class:`SkillTreeSnapshot` captures the auto-skill tree before a review attempt;
 * :func:`restore_auto_skills` rolls a rejected attempt back (including the
   skills snapshot index and usage sidecar);
 * :func:`judge_skill_update` asks the auxiliary model whether the change is
   grounded in the plan evidence, reusable, and well triggered. A no-op is only
   accepted when the judge says the evidence genuinely had no reusable signal.
 
-The module is deliberately independent of the nudge prompt so the gate can be
+The module is deliberately independent of the review prompt so the gate can be
 tested with plain dictionaries and temporary skill roots.
 """
 
@@ -24,7 +24,7 @@ from typing import Any
 from loguru import logger
 
 from config import AUTO_SKILLS_DIR
-from config.features import NUDGE
+from config.features import BACKGROUND_REVIEW_CONFIG
 
 __all__ = [
     "SkillJudgement",
@@ -50,7 +50,7 @@ class SkillTreeSnapshot:
 
 @dataclass(frozen=True)
 class SkillJudgement:
-    """The judge's verdict for one nudge attempt."""
+    """The judge's verdict for one review attempt."""
 
     passed: bool
     verdict: str
@@ -97,7 +97,7 @@ def snapshot_auto_skills(root: Path | None = None) -> SkillTreeSnapshot:
         try:
             files[_relative(path, root)] = path.read_bytes()
         except OSError as exc:
-            logger.warning("skill-quality: cannot snapshot {}: {}", path, exc)
+            logger.warning("skill-review: cannot snapshot {}: {}", path, exc)
     return SkillTreeSnapshot(files=files, dirs=frozenset(dirs))
 
 
@@ -158,7 +158,7 @@ def restore_auto_skills(
         except FileNotFoundError:
             pass
         except OSError as exc:
-            logger.warning("skill-quality: cannot remove {} during rollback: {}", path, exc)
+            logger.warning("skill-review: cannot remove {} during rollback: {}", path, exc)
 
     for name, content in snapshot.files.items():
         path = root / name
@@ -166,7 +166,7 @@ def restore_auto_skills(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
         except OSError as exc:
-            logger.warning("skill-quality: cannot restore {}: {}", path, exc)
+            logger.warning("skill-review: cannot restore {}: {}", path, exc)
 
     # Drop directories created only by the rejected attempt (deepest first).
     current_dirs = snapshot_auto_skills(root).dirs
@@ -181,12 +181,12 @@ def restore_auto_skills(
 
         build_skills_snapshot()
     except Exception as exc:  # noqa: BLE001 - index rebuild is best-effort
-        logger.warning("skill-quality: skills snapshot rebuild after rollback failed: {}", exc)
+        logger.warning("skill-review: skills snapshot rebuild after rollback failed: {}", exc)
 
 
-_JUDGE_PROMPT = """You are the skill-quality judge for an autonomous plan-completion nudge.
+_JUDGE_PROMPT = """You are the skill-review judge for an autonomous plan-completion review.
 
-The nudge was given success/failure evidence from one completed plan and asked to
+The review was given success/failure evidence from one completed plan and asked to
 update a class-level skill (or return a justified no-op). Judge ONLY the change
 below, not the plan's overall success.
 
@@ -196,7 +196,7 @@ below, not the plan's overall success.
 ## Changed skill files
 {changes}
 
-## The nudge's no-op reason
+## The review's no-op reason
 {no_op_reason}
 
 Return ONLY a JSON object with exactly these keys:
@@ -254,7 +254,7 @@ async def judge_skill_update(
     after: SkillTreeSnapshot,
     no_op_reason: str | None,
 ) -> SkillJudgement:
-    """Judge one nudge attempt; judge failures are retryable, never passes."""
+    """Judge one review attempt; judge failures are retryable, never passes."""
     changed = {name for name in changed_skill_paths(before, after) if not _is_telemetry_path(name)}
     reason = (no_op_reason or "").strip()
     if not changed and not reason:
@@ -288,7 +288,7 @@ async def judge_skill_update(
         raw = response.content if hasattr(response, "content") else str(response)
         data = _strip_json(str(raw))
     except Exception as exc:  # noqa: BLE001 - an unavailable judge is retryable
-        logger.warning("skill-quality: judge unavailable/failed: {}", exc)
+        logger.warning("skill-review: judge unavailable/failed: {}", exc)
         return SkillJudgement(
             passed=False,
             verdict="retry",
@@ -307,7 +307,7 @@ async def judge_skill_update(
     quality = _as_score(data.get("quality"))
     no_op_ok = _as_bool(data.get("no_op_justified"))
     feedback = str(data.get("feedback") or "").strip()
-    threshold = int(NUDGE["skill_nudge_quality_threshold"])
+    threshold = int(BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"])
 
     passed = (
         verdict == "pass"

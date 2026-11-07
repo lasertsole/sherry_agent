@@ -1,7 +1,7 @@
 """Process-level multi-lane concurrency queue with FIFO ordering.
 
 Four lanes gate concurrent work: MAIN agent turns, SUBAGENT executions,
-NUDGE calls and serial NESTED reply turns. Each lane is an
+BACKGROUND_REVIEW calls and serial NESTED reply turns. Each lane is an
 ``asyncio.Semaphore`` bound to the running event loop plus active/queued
 counters.
 
@@ -34,7 +34,7 @@ class LaneType(StrEnum):
 
     MAIN = "main"
     SUBAGENT = "subagent"
-    NUDGE = "nudge"
+    BACKGROUND_REVIEW = "background_review"
     NESTED = "nested"
 
 
@@ -242,7 +242,9 @@ class LaneManager:
         self._lanes: dict[LaneType, Lane] = {
             LaneType.MAIN: Lane("main", LANE_SYSTEM["main_max_concurrent"]),
             LaneType.SUBAGENT: Lane("subagent", LANE_SYSTEM["subagent_max_concurrent"]),
-            LaneType.NUDGE: Lane("nudge", LANE_SYSTEM["nudge_max_concurrent"]),
+            LaneType.BACKGROUND_REVIEW: Lane(
+                "background_review", LANE_SYSTEM["background_review_max_concurrent"]
+            ),
             LaneType.NESTED: Lane("nested", LANE_SYSTEM["nested_max_concurrent"]),
         }
         self._warn_ms = LANE_SYSTEM["lane_wait_warn_ms"]

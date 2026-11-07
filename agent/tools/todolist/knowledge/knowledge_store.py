@@ -1,4 +1,4 @@
-"""Plan-aware knowledge storage for plan extraction.
+"""Plan-aware knowledge storage for skill review.
 
 Sidecar JSON documents live under ``config.path.PLAN_KNOWLEDGE_DIR`` in one
 directory per **plan identity** (``<plan_key>/`` — see ``identity.py``): one
@@ -261,7 +261,7 @@ def _format_wave(plan_name: str, all_data: dict, wave_index: int | None) -> str:
 
 
 class KnowledgeStore:
-    """Filesystem-backed store for per-plan extraction knowledge."""
+    """Filesystem-backed store for per-skill review knowledge."""
 
     @staticmethod
     async def write(

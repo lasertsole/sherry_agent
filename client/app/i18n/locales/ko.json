@@ -557,7 +557,7 @@
       "groupTaskflow": "TaskFlow 결정 모델",
       "groupCompression": "압축 모델",
       "followsAuxiliary": "Provider와 API Base가 비어 있어 이 그룹은 보조 모델(AUXILIARY_LLM_*)을 따릅니다.",
-      "compressionScope": "LLM 요약에 사용됩니다. 메모리 리뷰는 메인 모델, 계획 추출은 보조 모델을 사용합니다."
+      "compressionScope": "LLM 요약에 사용됩니다. 메모리 리뷰는 메인 모델, 스킬 리뷰는 보조 모델을 사용합니다."
     },
     "memory": {
       "addEntry": "항목 추가",

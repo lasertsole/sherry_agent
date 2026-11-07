@@ -13,7 +13,7 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 from loguru import logger
 
-from config.features import MEMORY_TOOL, NUDGE, SUMMARIZATION
+from config.features import MEMORY_TOOL, BACKGROUND_REVIEW_CONFIG, SUMMARIZATION
 from config.path import resolve_plan_path
 from pub.func import sanitize_tool_use_result_pairing
 from pub.func.message.system_reminder import is_system_reminder
@@ -21,7 +21,7 @@ from pub.func.message.workspace_notice import is_workspace_notice
 from runtime import StateKey, state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
 
-from .skill_quality import (
+from .skill_review import (
     changed_skill_paths,
     judge_skill_update,
     restore_auto_skills,
@@ -107,10 +107,10 @@ _MEMORY_CONSOLIDATION_PROMPT = (
 
 
 def _render_facts_context() -> tuple[str, str]:
-    """Return ``(current facts-target content, formatted char limit)`` for nudge prompts.
+    """Return ``(current facts-target content, formatted char limit)`` for review prompts.
 
     Reads the live content (not the frozen system-prompt snapshot) so a
-    compression-time nudge hands the model what the file holds right now.
+    compression-time review hands the model what the file holds right now.
     """
     from agent.tools.memory import memory_store
 
@@ -154,14 +154,14 @@ def _msg_type(msg: Any) -> str:
 
 
 def _render_discarded_text(discarded_messages: Sequence[Any]) -> str:
-    """Render the soon-to-be-discarded slice for nudge / extraction prompts."""
+    """Render the soon-to-be-discarded slice for background-review / skill-review prompts."""
     return "\n\n".join(f"[{_msg_type(m)}] {_msg_to_text(m)}" for m in discarded_messages)
 
 
-# Skill-quality prompt. The plan-completion pass is skill-only: success/failure
+# Skill-review prompt. The plan-completion pass is skill-only: success/failure
 # evidence, loaded skills and user corrections feed class-level skill updates.
 # No knowledge or FACTS writes; the raw handoff tree stays as an audit file.
-_PLAN_EXTRACTION_PROMPT = """You are a skill-quality maintainer.
+_SKILL_REVIEW_PROMPT = """You are a skill-review maintainer.
 A plan has just completed. Update the class-level skill library from the real
 success/failure evidence below. Do NOT write knowledge; the only durable output
 is a skill change, or a judge-approved no-op.
@@ -229,10 +229,10 @@ If `judge_feedback` is present in the context, address it directly and do not
 repeat the rejected approach.
 
 """
-_PLAN_EXTRACTION_LOCK_KEY = StateKey.NUDGE_PLAN_EXTRACTION_LOCK
+_SKILL_REVIEW_LOCK_KEY = StateKey.SKILL_REVIEW_LOCK
 _PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 # Subagent result text is truncated before it enters the extraction prompt so a
-# verbose child transcript cannot blow up the nudge context.
+# verbose child transcript cannot blow up the review context.
 _MAX_SUBAGENT_RESULT_CHARS = 24 * 1024
 
 # Post-compression todo reconciliation. The Summarization middleware fires this
@@ -296,7 +296,7 @@ replacement list."""
 _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 
 # ---------------------------------------------------------------------------
-# Compression-time nudge scheduling (memory review + plan extraction)
+# Compression-time background-review scheduling (memory review + skill review)
 #
 # Both triggers are driven by the compression pipeline: the Summarization
 # middleware calls
@@ -304,27 +304,27 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 # messages. The memory review is dispatched on **every** compression (a
 # compaction discards content, so the review must never be skipped), and plan
 # extraction is evaluated at compression time. The single-fire flag semantics
-# are unchanged: ``nudge_plan_extraction_fired`` still guarantees one
+# are unchanged: ``skill_review_fired`` still guarantees one
 # extraction per completion cycle and resets whenever the list is not
 # all-complete.
 #
 # The in-flight locks live in ``state_register_mem``. Dispatch is
 # fire-and-forget: compression runs inside ``wrap_model_call`` and must never
-# block on a nudge agent's LLM call. While a nudge lock is held the
+# block on a background-review agent's LLM call. While a review lock is held the
 # compression dispatches nothing — nothing is queued.
 # ---------------------------------------------------------------------------
 
-_NUDGE_MEMORY_LOCK_KEY = StateKey.NUDGE_REVIEW_MEMORY_LOCK
-_PLAN_EXTRACTION_FIRED_KEY = StateKey.NUDGE_PLAN_EXTRACTION_FIRED
+_BACKGROUND_REVIEW_MEMORY_LOCK_KEY = StateKey.BACKGROUND_REVIEW_MEMORY_LOCK
+_SKILL_REVIEW_FIRED_KEY = StateKey.SKILL_REVIEW_FIRED
 #: Fingerprint of the plan content the last SUCCESSFUL extraction consumed.
-_PLAN_SNAPSHOT_HASH_KEY = StateKey.NUDGE_PLAN_SNAPSHOT_HASH
-_PLAN_SKILL_FAILED_HASH_KEY = StateKey.NUDGE_SKILL_QUALITY_FAILED_HASH
-_PLAN_SKILL_FAILED_AT_KEY = StateKey.NUDGE_SKILL_QUALITY_FAILED_AT
-_PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"] and NUDGE["skill_nudge_enabled"]
+_SKILL_REVIEW_SNAPSHOT_HASH_KEY = StateKey.SKILL_REVIEW_SNAPSHOT_HASH
+_SKILL_REVIEW_FAILED_HASH_KEY = StateKey.SKILL_REVIEW_FAILED_HASH
+_SKILL_REVIEW_FAILED_AT_KEY = StateKey.SKILL_REVIEW_FAILED_AT
+_SKILL_REVIEW_ENABLED = BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]
 
-# Keeps scheduled nudge coroutines referenced until they complete (asyncio
+# Keeps scheduled background-review coroutines referenced until they complete (asyncio
 # holds only weak references to tasks).
-_COMPRESSION_NUDGE_TASKS: set[asyncio.Task[None]] = set()
+_BACKGROUND_REVIEW_TASKS: set[asyncio.Task[None]] = set()
 
 # Session-end salvage: deletion snapshots the transcript, schedules this task,
 # and returns to the purge. The derived session keys carry the fork's engine
@@ -387,23 +387,23 @@ def _detect_todo_all_complete(session_id: str) -> bool:
 
     all_done = all(t.get("status") in ("completed", "cancelled") for t in todos)
     if not all_done:
-        state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
+        state_register_db.set_state(session_id, _SKILL_REVIEW_FIRED_KEY, False)
         return False
 
-    already_fired = state_register_db.get_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
+    already_fired = state_register_db.get_state(session_id, _SKILL_REVIEW_FIRED_KEY, False)
     if not already_fired:
-        state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, True)
+        state_register_db.set_state(session_id, _SKILL_REVIEW_FIRED_KEY, True)
         return True
 
-    stored = state_register_db.get_state(session_id, _PLAN_SNAPSHOT_HASH_KEY, "") or ""
+    stored = state_register_db.get_state(session_id, _SKILL_REVIEW_SNAPSHOT_HASH_KEY, "") or ""
     return _plan_snapshot_hash(todos) != stored
 
 
-def _nudges_locked(session_id: str) -> bool:
-    """True while a memory-review or plan-extraction nudge is in flight."""
+def _background_reviews_locked(session_id: str) -> bool:
+    """True while a memory review or skill review is in flight."""
     return bool(
-        state_register_mem.get_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
-        or state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False)
+        state_register_mem.get_state(session_id, _BACKGROUND_REVIEW_MEMORY_LOCK_KEY, False)
+        or state_register_mem.get_state(session_id, _SKILL_REVIEW_LOCK_KEY, False)
     )
 
 
@@ -411,12 +411,12 @@ async def _run_memory_review(
     session_id: str,
     messages_to_summarize: list[BaseMessage],
 ) -> None:
-    """Run the compression-scoped memory review under the NUDGE lane (fail-open).
+    """Run the compression-scoped memory review under the BACKGROUND_REVIEW lane (fail-open).
 
     Compaction carries the MEMORY review only, and it is handed the messages
     about to be DISCARDED — those are the ones whose facts are about to be lost,
-    and they are a fraction of the whole conversation. Plan extraction lives on
-    the plan-completion path (:func:`maybe_trigger_plan_extraction`) — it needs
+    and they are a fraction of the whole conversation. Skill review lives on
+    the plan-completion path (:func:`maybe_trigger_skill_review`) — it needs
     no message history and must not wait for a window to fill.
     """
     try:
@@ -426,7 +426,7 @@ async def _run_memory_review(
         from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
 
         system_prompt = _get_and_reload_system_prompt(session_id)
-        await _nudge_memory(session_id, system_prompt, list(messages_to_summarize))
+        await _execute_memory_review(session_id, system_prompt, list(messages_to_summarize))
     except Exception:
         logger.exception("memory review dispatch failed (fail-open) for {}", session_id)
 
@@ -438,8 +438,8 @@ def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Base
     discards messages, with the messages being discarded. Returns True when a
     task was created.
 
-    Plan extraction does not ride this path — it forks on plan completion (see
-    :func:`maybe_trigger_plan_extraction`). While a nudge is in flight, dispatch
+    Skill review does not ride this path — it forks on plan completion (see
+    :func:`maybe_trigger_skill_review`). While a background review is in flight, dispatch
     is skipped entirely — nothing is queued. With no running event loop (the
     sync compression path outside an async caller) scheduling is skipped
     entirely.
@@ -454,7 +454,7 @@ def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Base
         )
         return False
 
-    if _nudges_locked(session_id):
+    if _background_reviews_locked(session_id):
         return False
 
     coro = _run_memory_review(session_id, list(messages_to_summarize))
@@ -463,17 +463,17 @@ def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Base
     except RuntimeError:  # pragma: no cover - the loop vanished after the check
         coro.close()
         return False
-    _COMPRESSION_NUDGE_TASKS.add(task)
-    task.add_done_callback(_COMPRESSION_NUDGE_TASKS.discard)
+    _BACKGROUND_REVIEW_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_REVIEW_TASKS.discard)
     logger.debug("memory review scheduled for session {}", session_id)
     return True
 
 
-class _NudgeLimitTool(AgentMiddleware):
-    """Tool gate for nudge sub-agents.
+class _BackgroundReviewLimitTool(AgentMiddleware):
+    """Tool gate for background-review sub-agents.
 
     With no ``allowed_metadata_key`` (the default), a tool passes only when its
-    metadata carries ``nudge: True`` — the memory review's rule (``memory``,
+    metadata carries ``background_review: True`` — the memory review's rule (``memory``,
     ``knowledge``, ``question``, plan mode). With an explicit metadata key, a
     tool passes only when ``tool.metadata[key] is True`` (strict identity), so
     the compression todo fork can admit exactly the metadata-marked
@@ -481,7 +481,7 @@ class _NudgeLimitTool(AgentMiddleware):
 
     The skills toolset is deliberately UNTAGGED: skill extraction is the
     plan-completion fork's job, and that fork binds its own explicit four-tool
-    face (``_extraction_tool_face``) instead of riding this gate.
+    face (``_skill_review_tool_face``) instead of riding this gate.
     """
 
     def __init__(self, allowed_metadata_key: str | None = None) -> None:
@@ -500,7 +500,7 @@ class _NudgeLimitTool(AgentMiddleware):
         if not self._is_allowed(request.tool):
             return ToolMessage(
                 content=(
-                    f"Tool [{tool_name}] is not allowed during nudge phase. "
+                    f"Tool [{tool_name}] is not allowed during a background review. "
                     "Execution has been skipped. Please reconsider your approach."
                 ),
                 tool_call_id=request.tool_call["id"],
@@ -511,15 +511,15 @@ class _NudgeLimitTool(AgentMiddleware):
         return await handler(request)
 
     @staticmethod
-    def _is_nudge_allowed(tool: Any) -> bool:
-        """Legacy metadata rule: only tools tagged ``nudge: True`` pass."""
+    def _is_background_review_allowed(tool: Any) -> bool:
+        """Legacy metadata rule: only tools tagged ``background_review: True`` pass."""
         if tool is not None and isinstance(getattr(tool, "metadata", None), dict):
-            return bool(tool.metadata.get("nudge", False))
+            return bool(tool.metadata.get("background_review", False))
         return False
 
     def _is_allowed(self, tool: Any) -> bool:
         if self._allowed_metadata_key is None:
-            return self._is_nudge_allowed(tool)
+            return self._is_background_review_allowed(tool)
         metadata = getattr(tool, "metadata", None)
         if isinstance(metadata, dict):
             return metadata.get(self._allowed_metadata_key) is True
@@ -532,7 +532,7 @@ class StateSchema(AgentState):
     session_id: str
 
 
-async def _create_nudge_agent(
+async def _create_background_review_agent(
     system_prompt: str,
     allowed_metadata_key: str | None = None,
     tools: Sequence[BaseTool] | None = None,
@@ -553,7 +553,7 @@ async def _create_nudge_agent(
         state_schema=StateSchema,
         system_prompt=system_prompt,
         middleware=[
-            _NudgeLimitTool(allowed_metadata_key=allowed_metadata_key),
+            _BackgroundReviewLimitTool(allowed_metadata_key=allowed_metadata_key),
             ToolCallNormalize(),
             ToolGuardrails(),
             _get_iteration_budget(),
@@ -622,7 +622,7 @@ def _build_memory_review_agent(
     can build its agents from values snapshotted before the session is purged.
     The fork has no checkpointer; its result messages never reach the main graph.
     ``allowed_metadata_key`` is the session-end ``memory``-only gate; the
-    compression review leaves it ``None`` and keeps the broader nudge allowlist.
+    compression review leaves it ``None`` and keeps the broader background-review allowlist.
     ``max_turns`` bounds the iteration budget (15 for consolidation, 90 for a
     review).
     """
@@ -633,7 +633,7 @@ def _build_memory_review_agent(
         state_schema=StateSchema,
         system_prompt=system_prompt,
         middleware=[
-            _NudgeLimitTool(allowed_metadata_key=allowed_metadata_key),
+            _BackgroundReviewLimitTool(allowed_metadata_key=allowed_metadata_key),
             ToolCallNormalize(),
             ToolGuardrails(),
             IterationBudget(max(1, int(max_turns))),
@@ -657,8 +657,8 @@ async def _create_memory_review_agent(session_id: str, system_prompt: str, *, ma
     Everything that is part of the prefix is reproduced: the model
     configuration the turn used (``_build_session_model`` — the session's
     override and thinking variant, or the env default), the session's assembled
-    system prompt, the session's own tool face and order. The nudge gate still
-    applies — the review may only EXECUTE the tools carrying ``nudge: True``.
+    system prompt, the session's own tool face and order. The background-review gate still
+    applies — the review may only EXECUTE the tools carrying ``background_review: True``.
     """
     return _build_memory_review_agent(
         _build_session_model(session_id),
@@ -706,7 +706,7 @@ def _read_subagent_runs(session_id: str) -> list[dict]:
 
         runs = list_descendant_runs(f"agent:main:session:{session_id}")
     except Exception:
-        logger.exception("plan extraction: failed to list subagent runs for {}", session_id)
+        logger.exception("skill review: failed to list subagent runs for {}", session_id)
         return runs_out
 
     for run in runs:
@@ -740,7 +740,7 @@ def _read_flow_status(session_id: str, flow_id: str) -> dict:
 
         flow = get_flow_sync(flow_id, session_id)
     except Exception:
-        logger.debug("plan extraction: failed to read taskflow {}", flow_id, exc_info=True)
+        logger.debug("skill review: failed to read taskflow {}", flow_id, exc_info=True)
         return {}
     if not flow:
         return {}
@@ -767,7 +767,7 @@ def _read_plan_snapshot(session_id: str) -> dict | None:
 
         todos = get_todos_sync(session_id)
     except Exception:
-        logger.exception("plan extraction: failed to read the plan snapshot for {}", session_id)
+        logger.exception("skill review: failed to read the plan snapshot for {}", session_id)
         return None
 
     todo_by_step: dict[str, dict] = {}
@@ -1078,13 +1078,13 @@ def _recent_usage_skill_names(limit: int) -> list[str]:
     return [name for _stamp, name in rows[:limit]]
 
 
-def _collect_plan_feedback(session_id: str) -> dict[str, Any]:
-    """Bounded user corrections + actually-loaded skills for the nudge.
+def _collect_skill_review_feedback(session_id: str) -> dict[str, Any]:
+    """Bounded user corrections + actually-loaded skills for the skill review.
 
-    Plan extraction has never received the conversation; the skill-quality
+    Skill review has never received the conversation; the skill-review
     prompt needs the user's explicit corrections and the skills the plan really
     touched. This reads only the recent persisted turns, skips internal carriers
-    and system reminders, and caps both lists so the nudge prompt stays small.
+    and system reminders, and caps both lists so the skill-review prompt stays small.
     """
     corrections: list[str] = []
     loaded_names: list[str] = []
@@ -1093,15 +1093,15 @@ def _collect_plan_feedback(session_id: str) -> dict[str, Any]:
 
         rows = get_messages_by_lastest_n_turns(
             session_id,
-            last_n=max(1, int(NUDGE["skill_nudge_feedback_turns"])),
+            last_n=max(1, int(BACKGROUND_REVIEW_CONFIG["skill_review_feedback_turns"])),
             only_eligible=True,
         )
     except Exception as exc:  # noqa: BLE001 - advisory context, never load-bearing
-        logger.debug("plan extraction: feedback read failed for {}: {}", session_id, exc)
+        logger.debug("skill review: feedback read failed for {}: {}", session_id, exc)
         return {"loaded_skills": [], "user_corrections": []}
 
-    max_items = max(1, int(NUDGE["skill_nudge_feedback_max_items"]))
-    max_chars = max(0, int(NUDGE["skill_nudge_feedback_chars"]))
+    max_items = max(1, int(BACKGROUND_REVIEW_CONFIG["skill_review_feedback_max_items"]))
+    max_chars = max(0, int(BACKGROUND_REVIEW_CONFIG["skill_review_feedback_chars"]))
     for row in reversed(rows or []):
         role = str(row.get("role") or "")
         if role == "human":
@@ -1126,7 +1126,7 @@ def _collect_plan_feedback(session_id: str) -> dict[str, Any]:
                 loaded_names.append(name)
 
     # Chronological order is more useful to a reviewer than newest-first.
-    max_loaded = max(1, int(NUDGE["skill_nudge_loaded_skills_max"]))
+    max_loaded = max(1, int(BACKGROUND_REVIEW_CONFIG["skill_review_loaded_skills_max"]))
     for name in _recent_usage_skill_names(max_loaded):
         if name not in loaded_names:
             loaded_names.append(name)
@@ -1148,7 +1148,7 @@ def _collect_plan_feedback(session_id: str) -> dict[str, Any]:
 
 
 def _build_plan_context(session_id: str) -> dict[str, Any]:
-    """Build the structured context handed to one plan-extraction pass.
+    """Build the structured context handed to one skill-review pass.
 
     Reads:
     1. Plan file (``plan_ref`` from session state, else first non-empty todo
@@ -1166,7 +1166,7 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
 
         todos = get_todos_sync(session_id)
     except Exception:
-        logger.exception("plan extraction: failed to read todos for {}", session_id)
+        logger.exception("skill review: failed to read todos for {}", session_id)
         return {}
     if not todos:
         return {}
@@ -1180,7 +1180,7 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
             plan_content = resolved.read_text(encoding="utf-8")
             plan_name = resolved.stem
         except OSError:
-            logger.exception("plan extraction: failed to read plan file {}", resolved)
+            logger.exception("skill review: failed to read plan file {}", resolved)
     if not plan_name:
         # Full-id hash: ids sharing an 8-char prefix must not share a fallback dir.
         from agent.tools.todolist.knowledge.identity import fallback_plan_name
@@ -1200,13 +1200,13 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
         "todos": todos,
         "subagent_runs": filtered,
         "aggregated_handoff": aggregated,
-        "feedback": _collect_plan_feedback(session_id),
+        "feedback": _collect_skill_review_feedback(session_id),
         "plan_snapshot": snapshot,
     }
 
 
 def _memory_review_messages(session_id: str, messages: list[BaseMessage]) -> list[BaseMessage]:
-    """The messages the review sends, per ``NUDGE["memory_review_mode"]``.
+    """The messages the review sends, per ``BACKGROUND_REVIEW_CONFIG["memory_review_mode"]``.
 
     ``cache_warm`` (default): the discarded slice VERBATIM — it is the main
     model's own prefix, so the provider serves it from cache and the review sees
@@ -1216,7 +1216,7 @@ def _memory_review_messages(session_id: str, messages: list[BaseMessage]) -> lis
     provider does not cache prefixes well or whose review model has a small
     window — the fold bounds the input regardless of provider behaviour.
     """
-    if str(NUDGE.get("memory_review_mode", "cache_warm")) == "digest":
+    if str(BACKGROUND_REVIEW_CONFIG.get("memory_review_mode", "cache_warm")) == "digest":
         from agent.middlewares.summarization.digest import digest_history
 
         return digest_history(list(messages))
@@ -1253,7 +1253,7 @@ async def _invoke_memory_review(
     *,
     origin_session: str | None = None,
 ) -> Any:
-    """Invoke one memory-review fork under the NUDGE lane.
+    """Invoke one memory-review fork under the BACKGROUND_REVIEW lane.
 
     ``session_id`` is the state identity for the fork (compression uses the main
     session; session-end salvage uses a per-wave derived key so the deleted
@@ -1266,7 +1266,7 @@ async def _invoke_memory_review(
     review_state: dict[str, Any] = {"session_id": session_id}
     if origin_session:
         review_state["memory_origin_session"] = origin_session
-    async with lane_slot(LaneType.NUDGE):
+    async with lane_slot(LaneType.BACKGROUND_REVIEW):
         res = await agent.ainvoke(
             input={
                 **review_state,
@@ -1283,34 +1283,36 @@ async def _invoke_memory_review(
         session_id,
         cache_read if cache_read is not None else "unknown",
     )
-    logger.debug("nudge memory res is {}", reply)
+    logger.debug("memory review res is {}", reply)
     return reply
 
 
-async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
+async def _execute_memory_review(
+    session_id: str, system_prompt: str, messages: list[BaseMessage]
+) -> None:
     """Compression-time memory review: the main model, on the turn's own prefix.
 
     The caller hands it the DISCARDED slice, which — because the cut is a prefix
     cut — is exactly the part of the request immediately following the system
     prompt. Sending it verbatim with the same model, system prompt and tools
     turns the whole thing into a prefix-cache hit; only the review instruction
-    is fresh input. ``NUDGE["memory_review_mode"] = "digest"`` switches to the
+    is fresh input. ``BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"`` switches to the
     folded view for deployments whose provider caches poorly.
 
-    NUDGE lane is event-loop-bound: acquire only on the main loop. Nudges are
+    BACKGROUND_REVIEW lane is event-loop-bound: acquire only on the main loop. Reviews are
     dispatched exclusively from the async compression path, so no run_async()
     worker loop ever touches this semaphore.
     """
-    state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, True)
+    state_register_mem.set_state(session_id, _BACKGROUND_REVIEW_MEMORY_LOCK_KEY, True)
     try:
         prepared = _memory_review_messages(session_id, messages)
         agent = await _create_memory_review_agent(session_id, system_prompt)
         await _invoke_memory_review(agent, session_id, prepared, _MEMORY_REVIEW_PROMPT)
     finally:
-        state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
+        state_register_mem.set_state(session_id, _BACKGROUND_REVIEW_MEMORY_LOCK_KEY, False)
     # Consolidation runs AFTER the extraction pass (newly rescued entries are
     # available to the merge/dedupe pass) and after the extraction lock is
-    # released, so a long consolidation cannot block plan extraction.
+    # released, so a long consolidation cannot block skill review.
     if int(MEMORY_TOOL["consolidation_min_entries"]) > 0:
         try:
             await run_memory_consolidation(session_id, timeout_s=300)
@@ -1514,9 +1516,9 @@ async def _run_session_end_wave(
             model,
             system_prompt,
             tools,
-            allowed_metadata_key="nudge_memory",
+            allowed_metadata_key="background_review_memory",
         )
-        timeout = max(1.0, float(NUDGE["session_end_review_timeout_s"]))
+        timeout = max(1.0, float(BACKGROUND_REVIEW_CONFIG["session_end_review_timeout_s"]))
         await asyncio.wait_for(
             _invoke_memory_review(
                 agent,
@@ -1604,7 +1606,7 @@ async def salvage_session_memory(session_id: str) -> bool:
     passed through this function. The review writes global memory files, uses no
     checkpointer, and never resurrects the deleted session's state.
     """
-    if not bool(NUDGE.get("session_end_review_enabled", True)):
+    if not bool(BACKGROUND_REVIEW_CONFIG.get("session_end_review_enabled", True)):
         return False
     try:
         loop = asyncio.get_running_loop()
@@ -1676,10 +1678,10 @@ async def salvage_session_memory(session_id: str) -> bool:
     return True
 
 
-async def _create_plan_extraction_agent(system_prompt: str):
-    """The skill-quality fork: auxiliary model, explicit skill tool binding.
+async def _create_skill_review_agent(system_prompt: str):
+    """The skill-review fork: auxiliary model, explicit skill tool binding.
 
-    NOT ``_create_nudge_agent``: the memory review keeps the main model (it reads
+    NOT ``_create_background_review_agent``: the memory review keeps the main model (it reads
     a conversation), while this pass consumes structured plan evidence and runs
     a template-driven skill review — the same shape the step / completion judges
     already run on the auxiliary model, at a fraction of the cost and with no
@@ -1702,21 +1704,21 @@ async def _create_plan_extraction_agent(system_prompt: str):
             ToolGuardrails(),
             _get_iteration_budget(),
         ],
-        tools=_extraction_tool_face(),
+        tools=_skill_review_tool_face(),
     )
 
 
-#: The skill tools the skill-quality nudge drives. Knowledge and memory are
+#: The skill tools the skill-review pass drives. Knowledge and memory are
 #: deliberately absent: this pass only updates the skill library.
-_EXTRACTION_TOOL_NAMES = ("skill_list", "skill_view", "skill_manage")
+_SKILL_REVIEW_TOOL_NAMES = ("skill_list", "skill_view", "skill_manage")
 
 
-def _extraction_tool_face() -> list[BaseTool]:
+def _skill_review_tool_face() -> list[BaseTool]:
     """The extraction fork's bound tools, in the main face's order."""
     from agent import get_agent_tools
 
     return [
-        tool for tool in get_agent_tools() if getattr(tool, "name", "") in _EXTRACTION_TOOL_NAMES
+        tool for tool in get_agent_tools() if getattr(tool, "name", "") in _SKILL_REVIEW_TOOL_NAMES
     ]
 
 
@@ -1724,7 +1726,7 @@ async def _write_handoff_tree_safely(session_id: str, context: dict[str, Any]) -
     """Persist the code-merged handoff tree BEFORE the extraction LLM runs.
 
     An interrupted synthesis must not lose the raw merged data: the file is
-    written first (atomic replace). The nudge's skill update is a second,
+    written first (atomic replace). The review's skill update is a second,
     lossy layer on top and the audit file remains available if it is rejected.
     Fail-open.
     """
@@ -1741,13 +1743,13 @@ async def _write_handoff_tree_safely(session_id: str, context: dict[str, Any]) -
         await KnowledgeStore.write_handoff_tree(identity, aggregated)
     except Exception:
         logger.exception(
-            "plan extraction: failed to write handoff-tree.json for {} (fail-open)",
+            "skill review: failed to write handoff-tree.json for {} (fail-open)",
             session_id,
         )
 
 
 def _last_ai_text(res: dict[str, Any]) -> str:
-    """Return the final assistant text from a nudge invocation."""
+    """Return the final assistant text from a skill-review invocation."""
     messages = res.get("messages") if isinstance(res, dict) else None
     for message in reversed(messages or []):
         if isinstance(message, AIMessage) or getattr(message, "type", "") == "ai":
@@ -1756,7 +1758,7 @@ def _last_ai_text(res: dict[str, Any]) -> str:
 
 
 def _extract_no_op_reason(text: str) -> str | None:
-    """Read the nudge's final ``{"status":"no_op",...}`` JSON block."""
+    """Read the skill review's final ``{"status":"no_op",...}`` JSON block."""
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end <= start:
@@ -1770,35 +1772,35 @@ def _extract_no_op_reason(text: str) -> str | None:
     return str(payload.get("reason") or "").strip() or "no-op without a reason"
 
 
-def _plan_skill_failure_active(session_id: str, snapshot_hash: str) -> bool:
-    """Whether this exact plan snapshot is in a skill-quality failure cooldown."""
+def _skill_review_failure_active(session_id: str, snapshot_hash: str) -> bool:
+    """Whether this exact plan snapshot is in a skill-review failure cooldown."""
     stored_hash = str(
-        state_register_db.get_state(session_id, _PLAN_SKILL_FAILED_HASH_KEY, "") or ""
+        state_register_db.get_state(session_id, _SKILL_REVIEW_FAILED_HASH_KEY, "") or ""
     )
     if stored_hash != snapshot_hash:
         return False
     try:
-        failed_at = float(state_register_db.get_state(session_id, _PLAN_SKILL_FAILED_AT_KEY, 0))
+        failed_at = float(state_register_db.get_state(session_id, _SKILL_REVIEW_FAILED_AT_KEY, 0))
     except (TypeError, ValueError):
         failed_at = 0.0
-    cooldown = max(0, int(NUDGE["skill_nudge_failure_cooldown_s"]))
+    cooldown = max(0, int(BACKGROUND_REVIEW_CONFIG["skill_review_failure_cooldown_s"]))
     return failed_at > 0 and (time.time() - failed_at) < cooldown
 
 
-def _mark_plan_skill_failed(session_id: str, snapshot_hash: str) -> None:
-    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_HASH_KEY, snapshot_hash)
-    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_AT_KEY, time.time())
+def _mark_skill_review_failed(session_id: str, snapshot_hash: str) -> None:
+    state_register_db.set_state(session_id, _SKILL_REVIEW_FAILED_HASH_KEY, snapshot_hash)
+    state_register_db.set_state(session_id, _SKILL_REVIEW_FAILED_AT_KEY, time.time())
 
 
-def _clear_plan_skill_failed(session_id: str) -> None:
-    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_HASH_KEY, "")
-    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_AT_KEY, 0)
+def _clear_skill_review_failed(session_id: str) -> None:
+    state_register_db.set_state(session_id, _SKILL_REVIEW_FAILED_HASH_KEY, "")
+    state_register_db.set_state(session_id, _SKILL_REVIEW_FAILED_AT_KEY, 0)
 
 
-async def _run_plan_extraction(session_id: str) -> None:
-    """Run the skill-quality nudge with judge/rollback/retry.
+async def _run_skill_review(session_id: str) -> None:
+    """Run the skill review with judge/rollback/retry.
 
-    The plan's raw handoff tree is written first for audit. The nudge then
+    The plan's raw handoff tree is written first for audit. The review then
     receives a bounded view of the evidence, loaded skills and user corrections;
     its only tools are the skill trio (``skill_list`` / ``skill_view`` /
     ``skill_manage``). No knowledge or facts are written.
@@ -1808,25 +1810,23 @@ async def _run_plan_extraction(session_id: str) -> None:
     restored and retried with the judge's feedback. Exhaustion records a failure
     marker and leaves the plan eligible for a later retry after the cooldown.
     """
-    state_register_mem.set_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, True)
+    state_register_mem.set_state(session_id, _SKILL_REVIEW_LOCK_KEY, True)
     try:
         from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
         from agent.tools.pub_base.skill_provenance import (
-            BACKGROUND_REVIEW,
+            BACKGROUND_REVIEW as BACKGROUND_REVIEW_ORIGIN,
             reset_current_write_origin,
             set_current_write_origin,
         )
 
         context = _build_plan_context(session_id)
         if not context:
-            logger.debug("plan extraction: no plan context for session {}", session_id)
+            logger.debug("skill review: no plan context for session {}", session_id)
             return
 
         snapshot_hash = _plan_snapshot_hash(list(context.get("todos") or []))
-        if _plan_skill_failure_active(session_id, snapshot_hash):
-            logger.debug(
-                "plan extraction: skill-quality failure cooldown active for {}", session_id
-            )
+        if _skill_review_failure_active(session_id, snapshot_hash):
+            logger.debug("skill review: skill-review failure cooldown active for {}", session_id)
             return
 
         # Raw merged tree first (code), then the compact view for the LLM.
@@ -1838,19 +1838,19 @@ async def _run_plan_extraction(session_id: str) -> None:
         )
         system_prompt = _get_and_reload_system_prompt(session_id)
 
-        attempts = max(1, int(NUDGE["skill_nudge_max_attempts"]))
+        attempts = max(1, int(BACKGROUND_REVIEW_CONFIG["skill_review_max_attempts"]))
         before = snapshot_auto_skills()
         feedback = ""
         for attempt in range(1, attempts + 1):
             prompt_context = dict(render_context)
             if feedback:
                 prompt_context["judge_feedback"] = feedback
-            prompt = _PLAN_EXTRACTION_PROMPT.replace(
+            prompt = _SKILL_REVIEW_PROMPT.replace(
                 "{plan_context}", json.dumps(prompt_context, ensure_ascii=False, indent=2)
             )
-            async with lane_slot(LaneType.NUDGE):
-                agent = await _create_plan_extraction_agent(system_prompt)
-                token = set_current_write_origin(BACKGROUND_REVIEW)
+            async with lane_slot(LaneType.BACKGROUND_REVIEW):
+                agent = await _create_skill_review_agent(system_prompt)
+                token = set_current_write_origin(BACKGROUND_REVIEW_ORIGIN)
                 try:
                     res = await agent.ainvoke(
                         input={
@@ -1862,7 +1862,7 @@ async def _run_plan_extraction(session_id: str) -> None:
                     reset_current_write_origin(token)
 
             text = _last_ai_text(res)
-            logger.debug("plan extraction attempt {}/{} result: {}", attempt, attempts, text[:2000])
+            logger.debug("skill review attempt {}/{} result: {}", attempt, attempts, text[:2000])
             after = snapshot_auto_skills()
             judgement = await judge_skill_update(
                 render_context,
@@ -1871,7 +1871,7 @@ async def _run_plan_extraction(session_id: str) -> None:
                 _extract_no_op_reason(text),
             )
             logger.info(
-                "skill-quality nudge attempt {}/{}: pass={} verdict={} grounded={} "
+                "skill-review attempt {}/{}: pass={} verdict={} grounded={} "
                 "reusable={} trigger={} quality={} changed={} reason={}",
                 attempt,
                 attempts,
@@ -1885,26 +1885,28 @@ async def _run_plan_extraction(session_id: str) -> None:
                 judgement.feedback,
             )
             if judgement.passed:
-                _clear_plan_skill_failed(session_id)
-                state_register_db.set_state(session_id, _PLAN_SNAPSHOT_HASH_KEY, snapshot_hash)
+                _clear_skill_review_failed(session_id)
+                state_register_db.set_state(
+                    session_id, _SKILL_REVIEW_SNAPSHOT_HASH_KEY, snapshot_hash
+                )
                 return
 
             restore_auto_skills(before)
             feedback = judgement.feedback
 
         logger.warning(
-            "skill-quality nudge exhausted {} attempt(s) for {}; rolled back skills/auto",
+            "skill-review exhausted {} attempt(s) for {}; rolled back skills/auto",
             attempts,
             session_id,
         )
-        _mark_plan_skill_failed(session_id, snapshot_hash)
+        _mark_skill_review_failed(session_id, snapshot_hash)
     except Exception:
-        logger.exception("plan extraction failed (fail-open) for {}", session_id)
+        logger.exception("skill review failed (fail-open) for {}", session_id)
     finally:
-        state_register_mem.set_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False)
+        state_register_mem.set_state(session_id, _SKILL_REVIEW_LOCK_KEY, False)
 
 
-async def maybe_trigger_plan_extraction(session_id: str) -> None:
+async def maybe_trigger_skill_review(session_id: str) -> None:
     """Fork the extraction pass when the plan just finished (fail-open).
 
     Called by the plan-completion hook (``PlanContinuationEnforcer`` at the end
@@ -1915,27 +1917,27 @@ async def maybe_trigger_plan_extraction(session_id: str) -> None:
     Every gate is checked BEFORE the completion detector (which consumes the
     once-per-cycle flag) so a bail-out never marks a plan as extracted.
     """
-    if not session_id or not _PLAN_EXTRACTION_ENABLED:
+    if not session_id or not _SKILL_REVIEW_ENABLED:
         return
-    if state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False):
+    if state_register_mem.get_state(session_id, _SKILL_REVIEW_LOCK_KEY, False):
         return
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        logger.debug("plan extraction: no running event loop, skipping for {}", session_id)
+        logger.debug("skill review: no running event loop, skipping for {}", session_id)
         return
     if not _detect_todo_all_complete(session_id):
         return
 
-    coro = _run_plan_extraction(session_id)
+    coro = _run_skill_review(session_id)
     try:
         task = asyncio.create_task(coro)
     except RuntimeError:  # pragma: no cover - the loop vanished after the check
         coro.close()
         return
-    _COMPRESSION_NUDGE_TASKS.add(task)
-    task.add_done_callback(_COMPRESSION_NUDGE_TASKS.discard)
-    logger.debug("plan extraction scheduled for session {}", session_id)
+    _BACKGROUND_REVIEW_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_REVIEW_TASKS.discard)
+    logger.debug("skill review scheduled for session {}", session_id)
 
 
 def _build_main_session_todowrite(main_session_id: str) -> BaseTool:
@@ -1978,7 +1980,7 @@ def _build_main_session_todowrite(main_session_id: str) -> BaseTool:
 async def update_todos_from_compaction(session_id: str, discarded_messages: Sequence[Any]) -> None:
     """Reconcile the session todo list with a just-discarded compaction slice.
 
-    Runs a dedicated nudge agent whose system prompt is
+    Runs a dedicated background-review agent whose system prompt is
     :data:`_COMPRESSION_TODO_PROMPT` and whose tool set is exactly the
     metadata-marked ``todowrite`` shim bound to the main session.
 
@@ -2015,8 +2017,8 @@ async def update_todos_from_compaction(session_id: str, discarded_messages: Sequ
         context = _COMPRESSION_TODO_CONTEXT_TEMPLATE.replace(
             "{discarded_text}", discarded_text
         ).replace("{todos}", json.dumps(todos, ensure_ascii=False, indent=2))
-        async with lane_slot(LaneType.NUDGE):
-            agent = await _create_nudge_agent(
+        async with lane_slot(LaneType.BACKGROUND_REVIEW):
+            agent = await _create_background_review_agent(
                 _COMPRESSION_TODO_PROMPT,
                 allowed_metadata_key=_COMPRESSION_TODO_METADATA_KEY,
                 tools=[_build_main_session_todowrite(session_id)],

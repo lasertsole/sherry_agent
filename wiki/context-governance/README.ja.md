@@ -76,7 +76,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 
 ## 🗂️ 情報源
 
-グラフ state や MesMemory に到達するすべての情報は、以下のいずれかの情報源から入る。`origin` 列は全量の情報源マーカーへと昇格中である：`NULL` はタグ付け以前に書かれた既存のユーザーメッセージ（読み側では `user` と同義）、`internal=True` を持つメッセージは**ユーザーリクエストではない** —— 要約の Unresolved リストはユーザーが直接送ったメッセージのみを受け付ける（正の識別 / positive identification）。非メッセージ情報源（退避ファイル、計画知識）も併記する：`messages` 行にはならないが、注入可能なコンテキストである。`planned` / `reserved` の行は未実装。
+グラフ state や MesMemory に到達するすべての情報は、以下のいずれかの情報源から入る。`origin` 列は全量の情報源マーカーへと昇格中である：`NULL` はタグ付け以前に書かれた既存のユーザーメッセージ（読み側では `user` と同義）、`internal=True` を持つメッセージは**ユーザーリクエストではない** —— 要約の Unresolved リストはユーザーが直接送ったメッセージのみを受け付ける（正の識別 / positive identification）。非メッセージ情報源（退避ファイル、レガシー計画知識）も併記する：`messages` 行にはならず、レガシー計画知識ディレクトリはもはやモデルへ注入されない。`planned` / `reserved` の行は未実装。
 
 | 情報源 | origin / マーカー | internal | 発生場面 | 永続化 | 注入挙動 |
 |---|---|---|---|---|---|
@@ -89,8 +89,8 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | 圧縮要約ペア | `lc_source='summarization'`（`additional_kwargs` 内、origin 列ではない） | — | 圧縮成果物（`_build_new_messages`） | **MesMemory には永続化されない**；state の要約ペア | `<summary>` がモデルビューに常駐；`<prior-summary>` として連鎖継続 |
 | 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンは構造化要約ドキュメント内で `evicted_refs[]` ポインタを運ぶ |
 | メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、履歴メッセージのネイティブブロック除去、または圧縮時オフロード（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（永続コピー；圧縮時オフロードは `sha256[:16]` 命名で重複排除）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒントとリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
-| 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
-| `facts` target | MesMemory `memory_entries` 行（唯一のグローバルターゲット） | — | システムレベル / プロジェクト横断の落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ターゲット（1 375 文字上限；超過時は最も使われていないエントリをアーカイブ） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
+| レガシー計画知識 | 非メッセージ —— ディレクトリ | — | モデル読み取りから退役 | `workspace/knowledge/plans/<plan_key>/` | 注入しない；生の `handoff-tree.json` 監査ファイルのみ残る |
+| `facts` target | MesMemory `memory_entries` 行（唯一のグローバルターゲット） | — | システムレベル / プロジェクト横断の落とし穴・規約：圧縮時の記憶レビュー + 計画完了時のスキルレビュー | memory ターゲット（1 375 文字上限；超過時は最も使われていないエントリをアーカイブ） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
 
 ## 🧵 Message 行のターン識別子
 

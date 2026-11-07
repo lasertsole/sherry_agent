@@ -204,7 +204,7 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
 | `tests/agent/middlewares/message_persistence/` | 31 | 경계 + 도구 반환 증분 플러시: 각 메시지 정확히 1회, 경계 넘어 중복 없음, 영속 워터마크로 재시작 리플레이 시 행 수 불변, 동기 + 비동기 훅, session_id 부재 시 건너뜀, HITL 거부 페어 재장착, 필터 의미론; 추가로 T1/T2/T3 압축 경로의 제로 쓰기 증명과 요약 쌍(양쪽 절반)의 제로 쓰기 증명 |
-| `tests/agent/middlewares/test_compression_nudges.py` | 2 | 압축 시점 nudge 디스패치: memory review + plan extraction이 compact 경로에서 발화, 컷 없는 압축은 아무것도 디스패치하지 않음 |
+| `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | 압축 시점 백그라운드 리뷰 디스패치: memory review + skill review이 compact 경로에서 발화, 컷 없는 압축은 아무것도 디스패치하지 않음 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
@@ -213,7 +213,7 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 ## ⚠️ 정직함과 한계
 
 - **ModelDownshift는 전환 시점 훅이 아니라 다음 pre-request 검사에서 실행됩니다.** 모델 override(context window 포함)는 턴 경계에서 반영되고, 이어지는 T1/T2가 더 작은 윈도우를 보고 필요하면 압축합니다.
-- **Microcompact가 LLM 요약을 앞지를 수 있습니다.** 오래된 도구 결과 정리만으로 이력이 보존 예산 아래로 내려가면 compact 경로가 건너뛰어지고 memory-review nudge도 실행되지 않습니다(메시지가 버려지지 않았기 때문).
+- **Microcompact가 LLM 요약을 앞지를 수 있습니다.** 오래된 도구 결과 정리만으로 이력이 보존 예산 아래로 내려가면 compact 경로가 건너뛰어지고 memory review도 실행되지 않습니다(메시지가 버려지지 않았기 때문).
 - **`compact_now`는 도구이며 클라이언트 명령이 아닙니다.** 사용자가 요청할 때 모델이 호출하며, 입력창에 `/compact` 명령은 없습니다.
 - **꼬리 보존은 예산 기반이며 메시지 개수가 아닙니다.** 보존 예산은 `PRESERVE_RATIO` × 윈도우를 [2 000, 15 000]으로 클램프하고 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. 생성자는 `keep` 인자를 받지 않습니다.
 - **문서 장식용 임포트.** `summarization/core.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.

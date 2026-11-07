@@ -76,7 +76,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 
 ## 🗂️ 정보 출처
 
-그래프 state나 MesMemory에 도달하는 모든 정보는 아래 출처 중 하나로 들어온다. `origin` 열은 전량 출처 마커로 승격 중이다: `NULL`은 태깅 이전에 기록된 기존 사용자 메시지(읽기 측에서 `user`로 취급), `internal=True`를 가진 메시지는 **사용자 요청이 아니다** —— 요약의 Unresolved 목록은 사용자가 직접 보낸 메시지만 받는다(긍정 식별 / positive identification). 비메시지 출처(축출 파일, 계획 지식)도 함께 기재한다: `messages` 행이 되지는 않지만 주입 가능한 컨텍스트다. `planned` / `reserved`로 표시된 행은 아직 구현되지 않았다.
+그래프 state나 MesMemory에 도달하는 모든 정보는 아래 출처 중 하나로 들어온다. `origin` 열은 전량 출처 마커로 승격 중이다: `NULL`은 태깅 이전에 기록된 기존 사용자 메시지(읽기 측에서 `user`로 취급), `internal=True`를 가진 메시지는 **사용자 요청이 아니다** —— 요약의 Unresolved 목록은 사용자가 직접 보낸 메시지만 받는다(긍정 식별 / positive identification). 비메시지 출처(축출 파일, 레거시 계획 지식)도 함께 기재한다: `messages` 행이 되지 않으며, 레거시 계획 지식 디렉터리는 더 이상 모델에 주입되지 않는다. `planned` / `reserved`로 표시된 행은 아직 구현되지 않았다.
 
 | 정보 출처 | origin / 마커 | internal | 발생 상황 | 영속화 | 주입 동작 |
 |---|---|---|---|---|---|
@@ -89,8 +89,8 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | 압축 요약 쌍 | `lc_source='summarization'`(`additional_kwargs` 내, origin 열 아님) | — | 압축 산출물(`_build_new_messages`) | **MesMemory에 영속화되지 않음**; state 요약 쌍 | `<summary>`가 모델 뷰에 상주; `<prior-summary>`로 체인 연속 |
 | 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 구조화 요약 문서에 `evicted_refs[]` 포인터를 운반 |
 | 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 이력 메시지의 네이티브 블록 제거, 또는 압축 시점 오프로드(`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/`(영속 사본; 압축 시점 오프로드는 `sha256[:16]` 이름으로 중복 제거); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
-| 계획 지식 | 비메시지 —— 디렉터리 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref`로 `<knowledge>` 블록 주입 |
-| `facts` target | MesMemory `memory_entries` 행(유일한 전역 대상) | — | 시스템 수준 / 프로젝트 횡단 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 대상(1 375자 상한; 초과 시 가장 적게 사용된 항목부터 보관) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
+| 레거시 계획 지식 | 비메시지 —— 디렉터리 | — | 모델 읽기에서 퇴역 | `workspace/knowledge/plans/<plan_key>/` | 주입하지 않음; 원본 `handoff-tree.json` 감사 파일만 남음 |
+| `facts` target | MesMemory `memory_entries` 행(유일한 전역 대상) | — | 시스템 수준 / 프로젝트 횡단 함정과 규약: 압축 시 기억 검토 + 계획 완료 스킬 리뷰 | memory 대상(1 375자 상한; 초과 시 가장 적게 사용된 항목부터 보관) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
 
 ## 🧵 Message 행의 턴 식별자
 

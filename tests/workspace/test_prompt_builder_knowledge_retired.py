@@ -1,4 +1,4 @@
-"""The knowledge prompt block is retired in favour of skill-quality nudges."""
+"""The knowledge prompt block is retired in favour of the skill review."""
 
 from __future__ import annotations
 

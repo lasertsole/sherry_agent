@@ -101,7 +101,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## 🧹 セッション削除時のメモリサルベージ
 
-メインセッションを破棄する前に、`purge_session` は独立した memory review（`nudges.salvage_session_memory`）もスケジュールする。圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、スケジュール後すぐに戻る——削除はモデルを待たない。第 1 波は圧縮が破棄したはずのプレフィックスを、キャプチャした（cache-warm の）モデル/プロンプト/ツール面で review する。メモリエントリ（由来は派生 wave キーではなく削除対象セッションの id）を書いた後、第 2 波は memory を再読み込みし、システムプロンプトを非永続的に再構築して、`memory` のみのツール面で保持尾部を review する。両波は NUDGE レーン、派生セッションキー（`<id>::session-end-salvage:1|2`）、checkpointer なしで走る。`nudge_memory` metadata ゲートが削除後の `knowledge`/plan ツールを拒否する。すべての失敗は fail-open で、プロセス終了は未完了の波を放棄しうる。サイドチャット/サブエージェントの子は対象外。上の continuity は次の会話のために最後の AI 返信を保存し、このサルベージは永続 memory 行を書く。
+メインセッションを破棄する前に、`purge_session` は独立した memory review（`background_reviews.salvage_session_memory`）もスケジュールする。圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、スケジュール後すぐに戻る——削除はモデルを待たない。第 1 波は圧縮が破棄したはずのプレフィックスを、キャプチャした（cache-warm の）モデル/プロンプト/ツール面で review する。メモリエントリ（由来は派生 wave キーではなく削除対象セッションの id）を書いた後、第 2 波は memory を再読み込みし、システムプロンプトを非永続的に再構築して、`memory` のみのツール面で保持尾部を review する。両波は BACKGROUND_REVIEW レーン、派生セッションキー（`<id>::session-end-salvage:1|2`）、checkpointer なしで走る。`background_review_memory` metadata ゲートが削除後の `knowledge`/plan ツールを拒否する。すべての失敗は fail-open で、プロセス終了は未完了の波を放棄しうる。サイドチャット/サブエージェントの子は対象外。上の continuity は次の会話のために最後の AI 返信を保存し、このサルベージは永続 memory 行を書く。
 
 ## ♻️ TaskFlow 自動再開
 

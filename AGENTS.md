@@ -198,7 +198,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    → ContextLimitGuard(RepetitionGuard(graph))
   │
   ├─ lanes: runtime/lane/lane_slot() gates every dispatch point —
-  │    MAIN(turn) / SUBAGENT(child) / NUDGE(memory) / NESTED(sessions.send)
+  │    MAIN(turn) / SUBAGENT(child) / BACKGROUND_REVIEW(memory) / NESTED(sessions.send)
   │    (the SUBAGENT lane ALSO sits behind the load gate, below)
   │
   └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
@@ -393,7 +393,7 @@ User message → Robyn WS → agent.core.built_agent() graph
       caps truncate the tail).
       At completion `_extract_handoff_json` parses the LAST block (fail-open
       → None, then the free-text result) into `run.completion.handoff`; the run
-      also carries its spawn-time `step_id`/`flow_id`. Plan extraction reads the
+      also carries its spawn-time `step_id`/`flow_id`. Skill review reads the
       DESCENDANT runs' handoffs, filters them against the LIVE plan snapshot
       (a cancelled todo / superseded flow drops its run; `resolved_position`
       re-maps step_id → the todo's CURRENT position, never step_id-1), assembles
@@ -866,17 +866,17 @@ per-project FACTS path and `runtime/session/context.py` no longer exists.
 FACTS holds only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY
 project on this machine (toolchain behavior, environment limits, generic command
 gotchas), not project conventions (those go to `memory` or the project's
-AGENTS.md). The memory review states this routing; the plan-completion nudge is
+AGENTS.md). The memory review states this routing; the plan-completion skill review is
 skill-only and does not write FACTS or knowledge, so it never migrates facts.
 
-**Skill-quality nudge (plan completion).** `_run_plan_extraction` reads the plan,
+**Skill review (plan completion).** `_run_skill_review` reads the plan,
 compact success/failure evidence, loaded skills and bounded user corrections, then
 asks the auxiliary model to update a class-level skill. Its tool face is only
 `skill_list` / `skill_view` / `skill_manage`; knowledge and memory are absent.
-It snapshots `skills/auto`, runs the nudge, and sends the changed files plus the
-evidence to `skill_quality.judge_skill_update()` (grounded / reusable / trigger /
+It snapshots `skills/auto`, runs the review, and sends the changed files plus the
+evidence to `skill_review.judge_skill_update()` (grounded / reusable / trigger /
 quality). A rejected attempt restores the snapshot and retries with judge feedback;
-exhaustion records `nudge_skill_quality_failed_hash` and leaves the success
+exhaustion records `skill_review_failed_hash` and leaves the success
 fingerprint untouched. A no-op is allowed only when the judge accepts its reason.
 `handoff-tree.json` remains the raw audit file; `task-*.json` / `wave-*.json` /
 `plan-summary.json` are legacy and the `knowledge` tool/prompt block are retired.
@@ -1267,10 +1267,10 @@ are deliberately NOT part of the per-session agent config):
 - `TASKFLOW_LLM_*` — the TaskFlow decision model. It serves the four internal
   calls `taskflow_flow(action="plan")` / `taskflow_flow(action="replan")` / `step_judge` / `taskflow_flow(action="finish")`
   (temperature 0). Non-taskflow callers stay on auxiliary: the subagent
-  completion judge, the spawn/steer branches and the skill-quality nudge.
+  completion judge, the spawn/steer branches and the skill review.
 - `COMPRESSION_LLM_*` — the summarization middleware's own model: the LLM
   summary (`_create_summary` / `_acreate_summary`). It does NOT serve memory
-  review (the MAIN model, cache-warm by design) or the skill-quality nudge (the
+  review (the MAIN model, cache-warm by design) or the skill review (the
   auxiliary model).
 
 Both are built by `models/LLMs/family_llm.py::build_family_llm` (exposed as
@@ -1631,7 +1631,7 @@ live switches.
   (`session_settings_service.promote_pending_settings_sync`) — and it deletes only
   `StateKey.SYSTEM_PROMPT`, never the frozen persona snapshot.
 - **Session-end memory salvage**: MAIN-session deletion (`purge_session` →
-  `nudges.salvage_session_memory`) snapshots the post-compaction checkpoint
+  `background_reviews.salvage_session_memory`) snapshots the post-compaction checkpoint
   transcript, the session model, the system prompt and the tool face BEFORE any
   destructive step, computes the normal compression cutoff READ-ONLY (no
   summary/pruning/offload/state write), then schedules a detached two-wave
@@ -1640,12 +1640,12 @@ live switches.
   face (cache-warm); after it writes memory entries (stamped with the deleted
   session's id, not the derived wave key), wave 2 reloads
   memory, rebuilds the system prompt non-persistently, and reviews the preserved
-  tail with a `memory`-only face. Both waves run under the NUDGE lane with
-  per-wave derived session keys and no checkpointer; `_NudgeLimitTool` admits
-  only `memory` (`metadata["nudge_memory"]`). The snapshot has a 5 s budget and
+  tail with a `memory`-only face. Both waves run under the BACKGROUND_REVIEW lane with
+  per-wave derived session keys and no checkpointer; `_BackgroundReviewLimitTool` admits
+  only `memory` (`metadata["background_review_memory"]`). The snapshot has a 5 s budget and
   every step is fail-open; side chats/subagent children do not run this path, and
   a process exit may abandon an unfinished background wave. Config:
-  `NUDGE["session_end_review_enabled"]` / `session_end_review_timeout_s`.
+  `BACKGROUND_REVIEW_CONFIG["session_end_review_enabled"]` / `session_end_review_timeout_s`.
 - **Subagent models**: `subagent_models[role]` is a profile descriptor (the same shape as the
   session main-model override); at spawn `resolve_role_model_profile` reads it for the
   requester session and the child LLM is built with `build_main_llm_for_profile` (provider /
@@ -2295,15 +2295,15 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | Lane       | Constrains                                                   | Default                                                               | Config key                               |
 | ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------- |
-| `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
+| `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + BACKGROUND_REVIEW` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
 | `SUBAGENT` | child-agent executions (spawn + steer)                       | 8                                                                     | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 4 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
+| `BACKGROUND_REVIEW`    | background-review calls (`summarization/background_reviews.py`, 4 sites) | 4                                                                     | `LANE_SYSTEM["background_review_max_concurrent"]`    |
 | `NESTED`   | `sessions_send` reply turns (serial)                         | 1                                                                     | `LANE_SYSTEM["nested_max_concurrent"]`   |
 
-- Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
+- Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + background_review` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
 - Queueing: a spawn that passes per-parent admission but exceeds the SUBAGENT lane is registered `PENDING` (no `forbidden`); `PENDING → RUNNING` happens inside the lane slot and only then is `started_at` stamped (queue wait is not run time). `PENDING` counts as active in registry queries and is killable; restore finalizes restart-leftover PENDING runs the same way at startup (silently — no announce), and orphan recovery covers same-lifetime lost tasks with `ended_reason="pending_orphaned"`.
 - Drain mode: `set_drain_check(fn)` makes `Lane.acquire()` refuse (without consuming a permit) while the subagent gateway reports draining.
-- Observability: `GET /lane-status` → `{main|subagent|nudge|nested: {name, max_concurrent, active, queued}}`.
+- Observability: `GET /lane-status` → `{main|subagent|background_review|nested: {name, max_concurrent, active, queued}}`.
 - Hot updates (`LaneManager.set_concurrency`) only affect new acquires; in-flight slots keep their permits.
 
 ## Key Configuration
@@ -2555,7 +2555,7 @@ each suite is the version-controlled reference (threshold + model id).
 - file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). Its fuzzy ladder (`pub_base/text_matcher.py`, 11 strategies, first match wins) strips a copied snippet's line numbers (`N|` / `N: ` / `N<tab>`) and unescapes `\uXXXX` before the fuzzy ones, refuses `replace_all=True` for the lossy `BROAD_MATCHERS` (a global replace must not land on a lookalike), re-indents a fuzzy replacement to the file's own indentation and rewrites its straight quotes into the region's curly ones (only when the region uses that kind exclusively — mixed code/prose keeps straight quotes).
 - `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Oversized files add three gates: the input schema refuses binary extensions and blocking device paths before any syscall (a FIELD validator, so the tool node keeps the refusal text instead of a blank "fix the error"); a WHOLE read (offset=1 + the default limit) of a file at or above `TOOLS_TIMEOUTS["read_file_max_whole_read_bytes"]` (256 KiB) is refused with its size and an offset/limit hint (a range read is never refused); and at or above `read_file_fast_path_threshold_bytes` (10 MiB) the reader streams `read_file_stream_chunk_bytes` (64 KiB) chunks — incremental decoding, an exact `total_lines`, only the window retained (one clipped line head at most) — returning `oversized: true` + `truncated: true` and NO write license, with `truncated_by_token_cap` separating the token budget from the line window. `_line_token_cost` short-circuits past the per-line cap, so a 500 MB single line costs ~13 600 chars, not 500 million. Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
-- the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
+- the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the skill review / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_flow(action="plan")`'s planner may emit the field and `taskflow_step(action="update_steps")` may change it.
 - `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file) and STAYS there after the command exits — the log is the durable record (`terminal_bg(action="output")` reads it while running AND afterwards; only session deletion removes it), the watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg(action="list"|"output", task_id=...)` (`scope=main_only`, catalogue group `terminal`) is how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
 - terminal HITL cards can offer **Allow for this session** (`decision: "session"`): it writes the command's two-word pattern to `HITL_SESSION_APPROVED_KEY`, while `approve` stays one-shot. The option is sent only for cacheable ordinary commands; dangerous commands, confirm-all and clawhub never write it, and `check_command` moves dangerous detection BEFORE Layer 6 so a stored pattern can never auto-approve a dangerous command (permanent Layer 5 ALWAYS still wins). The card labels are four-language.

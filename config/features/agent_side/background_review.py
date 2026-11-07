@@ -1,32 +1,28 @@
-"""Experience-extraction nudge settings.
+"""Background-review settings.
 
-The memory review is dispatched on every compression, plan extraction fires when
-the plan completes at a turn boundary, and MAIN-session deletion schedules a
-detached two-wave memory salvage before the purge.
+The memory review is dispatched on every compression, the skill review fires
+when the plan completes at a turn boundary, and MAIN-session deletion schedules
+a detached two-wave memory salvage before the purge.
 """
 
 from typing import TypedDict
 
 
-class NudgeConfig(TypedDict):
-    """Compression-time nudge settings."""
+class BackgroundReviewConfig(TypedDict):
+    """Background-review settings."""
 
-    plan_extraction_enabled: bool
-    #: The plan-completion pass is now a skill-quality nudge: it updates skills
-    #: from success/failure evidence and never writes knowledge. Kept separate
-    #: from ``plan_extraction_enabled`` so an upgrade can disable only the new
-    #: LLM judge/retry loop without turning off the completion detector.
-    skill_nudge_enabled: bool
-    skill_nudge_max_attempts: int
-    skill_nudge_quality_threshold: int
+    #: Master switch for the plan-completion skill review (judge + retry).
+    skill_review_enabled: bool
+    skill_review_max_attempts: int
+    skill_review_quality_threshold: int
     #: Bounded user-correction / loaded-skill context (no full transcript).
-    skill_nudge_feedback_turns: int
-    skill_nudge_feedback_max_items: int
-    skill_nudge_feedback_chars: int
-    skill_nudge_loaded_skills_max: int
+    skill_review_feedback_turns: int
+    skill_review_feedback_max_items: int
+    skill_review_feedback_chars: int
+    skill_review_loaded_skills_max: int
     #: After an exhausted judge/retry pass, do not hot-loop on the same plan
     #: snapshot for this long. A changed plan (new snapshot hash) retries at once.
-    skill_nudge_failure_cooldown_s: int
+    skill_review_failure_cooldown_s: int
     #: How the memory review builds its input.
     #:
     #: - ``cache_warm`` (default): the discarded messages VERBATIM, on the main
@@ -48,16 +44,15 @@ class NudgeConfig(TypedDict):
     session_end_review_timeout_s: int
 
 
-NUDGE: NudgeConfig = {
-    "plan_extraction_enabled": True,
-    "skill_nudge_enabled": True,
-    "skill_nudge_max_attempts": 2,
-    "skill_nudge_quality_threshold": 6,
-    "skill_nudge_feedback_turns": 12,
-    "skill_nudge_feedback_max_items": 8,
-    "skill_nudge_feedback_chars": 2000,
-    "skill_nudge_loaded_skills_max": 20,
-    "skill_nudge_failure_cooldown_s": 3600,
+BACKGROUND_REVIEW_CONFIG: BackgroundReviewConfig = {
+    "skill_review_enabled": True,
+    "skill_review_max_attempts": 2,
+    "skill_review_quality_threshold": 6,
+    "skill_review_feedback_turns": 12,
+    "skill_review_feedback_max_items": 8,
+    "skill_review_feedback_chars": 2000,
+    "skill_review_loaded_skills_max": 20,
+    "skill_review_failure_cooldown_s": 3600,
     "memory_review_mode": "cache_warm",
     "session_end_review_enabled": True,
     "session_end_review_timeout_s": 120,

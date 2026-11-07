@@ -26,7 +26,7 @@ TASKFLOW_CALL_SITES = (
 
 NON_TASKFLOW_CALL_SITES = (
     "agent/tools/subagent/spawn/completion_judge.py",
-    "agent/middlewares/summarization/nudges.py",
+    "agent/middlewares/summarization/background_reviews.py",
     "agent/tools/subagent/spawn/core.py",
 )
 

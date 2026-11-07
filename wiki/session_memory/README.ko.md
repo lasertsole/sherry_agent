@@ -27,15 +27,15 @@ SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagen
 
 세 가지 장기 메모리 대상(`memory`, `user`, `facts`)은 MesMemory `memory_entries` 테이블의 SQLite 행이며 `§` 항목당 한 행으로, `MemoryEntryRepository`(`context_engine/store/memory_entry_repository.py`)를 통해 읽고 씁니다. 이전 `workspace/memory/{MEMORY,USER,FACTS}.md` 파일은 레거시 시드일 뿐입니다: `memory_migration.migrate_legacy_memory_files()`가 `agent_core.init()`에서 단일 트랜잭션으로 한 번 가져온 뒤, 커밋이 성공한 경우에만 각 파일을 `*.md.bak`으로 이름을 바꿉니다. 기존 행이 하나라도 있으면 가져오기를 건너뛰므로 이름 변경이 실패해도 중복되지 않습니다. 트랜잭션이 실패하면 파일을 남겨 두고 다음 부팅에서 재시도합니다.
 
-`MemoryStore.load_from_store()`는 `created_at ASC, id ASC`(이전 파일의 위에서 아래 순서)로 활성 행을 읽고 렌더링 결과를 시스템 프롬프트 스냅샷으로 동결합니다. 세션 중 쓰기는 영구 저장되지만 스냅샷을 다시 그리지 않아 provider prefix 캐시를 안정적으로 유지합니다. 스냅샷은 다음 세션 시작, 압축 후 재구성, 모델/사고 전환, 서브에이전트 완료 유입 시 다시 로드됩니다. per-project FACTS는 없으며 레거시 `<project>/.sherry/memory/FACTS.md`는 무시됩니다. FACTS는 계속 시스템 수준 / 프로젝트 횡단 함정만 담고, memory review / plan extraction nudge가 이 라우팅을 강제합니다.
+`MemoryStore.load_from_store()`는 `created_at ASC, id ASC`(이전 파일의 위에서 아래 순서)로 활성 행을 읽고 렌더링 결과를 시스템 프롬프트 스냅샷으로 동결합니다. 세션 중 쓰기는 영구 저장되지만 스냅샷을 다시 그리지 않아 provider prefix 캐시를 안정적으로 유지합니다. 스냅샷은 다음 세션 시작, 압축 후 재구성, 모델/사고 전환, 서브에이전트 완료 유입 시 다시 로드됩니다. per-project FACTS는 없으며 레거시 `<project>/.sherry/memory/FACTS.md`는 무시됩니다. FACTS는 계속 시스템 수준 / 프로젝트 횡단 함정만 담고, memory review / 스킬 리뷰가 이 라우팅을 강제합니다.
 
 각 행은 `origin_session`, `usage_count`, `last_used`를 기록합니다. 렌더링 블록은 출처를 아는 항목 뒤에 `[origin: <sid>, created: <date>, used: <n>x]`를 덧붙입니다. `memory(action="read")`는 일치하는 항목을 반환하고 사용 횟수를 늘립니다. `facts`가 넘치면 **가장 적게 사용된** 항목을 보관하고(`COALESCE(last_used, created_at)`, 그다음 `usage_count`), 모든 삭제는 복원 가능한 소프트 삭제입니다. 기억 패널은 `/memory/entries*`, `/memory/settings`, `/memory/consolidate`를 사용하며, 이전 `GET/PUT /memory`는 `§` 구분 형식을 유지합니다.
 
 | 대상 | 용도 | 상한 | 유지 |
 |---|---|---|---|
-| `memory` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`, 패널에서 재정의 가능) | `memory` 도구 / memory review nudge |
-| `user` | 사용자 프로필: 선호, 소통 방식, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`, 패널에서 재정의 가능) | `memory` 도구 / memory review nudge |
-| `facts` | 시스템 수준 / 프로젝트 횡단 함정. 모든 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`, 패널에서 재정의 가능), 가장 적게 사용된 항목부터 롤오프 | `memory` 도구 / memory review·plan extraction nudge |
+| `memory` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`, 패널에서 재정의 가능) | `memory` 도구 / memory review |
+| `user` | 사용자 프로필: 선호, 소통 방식, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`, 패널에서 재정의 가능) | `memory` 도구 / memory review |
+| `facts` | 시스템 수준 / 프로젝트 횡단 함정. 모든 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`, 패널에서 재정의 가능), 가장 적게 사용된 항목부터 롤오프 | `memory` 도구 / memory review·스킬 리뷰 |
 
 ## MesMemory 스키마
 

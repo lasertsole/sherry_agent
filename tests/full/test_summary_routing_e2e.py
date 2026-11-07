@@ -45,10 +45,10 @@ Coverage (Part 0 = structured_output compression; Part 1 = plan context +
 Every test purges the session it created (MesMemory rows, checkpoints, session
 folder incl. plan files, todo rows, register states) so the module is
 independently re-runnable. The post-compression todo fork and the compression
-nudges are kept from firing (an in-flight nudge lock is simulated, the todo
+reviews are kept from firing (an in-flight review lock is simulated, the todo
 fork switch is off) so every main/aux model call is attributable to the
 routing assertions above — their own contracts are covered by
-``test_nudge_cadence_e2e.py``.
+``test_background_review_cadence_e2e.py``.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ from runtime import clear_all_register_sessions, state_register_db, state_regist
 pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(1200)]
 
 # A small window keeps the auxiliary prompts cheap: usable 4000, compact
-# threshold 3200, preserve budget 5000 — the same knobs test_nudge_cadence_e2e
+# threshold 3200, preserve budget 5000 — the same knobs test_background_review_cadence_e2e
 # uses for its real compression harness.
 _CTX_WINDOW = 20_000
 _BIG_CHARS = 26_000
@@ -219,12 +219,12 @@ class _CompressionHarness:
     async def compress(self, session_id: str, messages: list[AnyMessage]) -> list[AnyMessage]:
         """Run one model-call wrap; returns the messages the real LLM would see.
 
-        The production nudge lock is held for the session: a real in-flight
-        nudge suppresses the dispatch (production semantics), which keeps the
+        The production review lock is held for the session: a real in-flight
+        review suppresses the dispatch (production semantics), which keeps the
         main-LLM cost of this file attributable to the routing assertions. The
-        nudge contracts themselves are covered by ``test_nudge_cadence_e2e.py``.
+        review contracts themselves are covered by ``test_background_review_cadence_e2e.py``.
         """
-        state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
+        state_register_mem.set_state(session_id, "background_review_memory_lock", True)
         captured: dict[str, list[AnyMessage]] = {}
 
         async def handler(request: ModelRequest) -> AIMessage:

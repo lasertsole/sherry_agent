@@ -73,7 +73,7 @@ class TestInstallLaneLifecycle:
         async def fake_drain(timeout: float | None = None) -> dict[str, bool]:
             observed_draining.append(is_gateway_draining())
             drain_calls.append(timeout)
-            return {"main": True, "subagent": True, "nudge": True, "nested": True}
+            return {"main": True, "subagent": True, "background_review": True, "nested": True}
 
         monkeypatch.setattr(lc, "drain_all_lanes", fake_drain)
         try:
@@ -92,5 +92,5 @@ class TestDrainAllLanes:
 
         results = await lc.drain_all_lanes(timeout=0.05)
 
-        assert set(results) == {"main", "subagent", "nudge", "nested"}
+        assert set(results) == {"main", "subagent", "background_review", "nested"}
         assert all(results.values())

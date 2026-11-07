@@ -1716,7 +1716,7 @@ async def _execute_subagent_scoped(
                     )
 
         # The layer's own handoff block, extracted ONCE here and stored with the
-        # run: plan extraction reads the parsed dict instead of re-parsing
+        # run: skill review reads the parsed dict instead of re-parsing
         # free text 24 KB at a time.
         handoff = _extract_handoff_json(result_text)
 

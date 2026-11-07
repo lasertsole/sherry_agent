@@ -81,7 +81,7 @@ turn ends (no tool_call, agent loop exits)
       → is_abort_error? → skip
       → a turn the gate did not inject (user message / subagent completion)?
         → reset the continuation budget
-      → incomplete plan? → no → reset() (+ the plan-extraction fork)
+      → incomplete plan? → no → reset() (+ the skill-review fork)
       → budget spent (latched)? → silent, wait for a user message
       → continuation turns >= 15? → STOP_PROMPT + latch → return
       → get_todos_sync(session_id) → filter incomplete

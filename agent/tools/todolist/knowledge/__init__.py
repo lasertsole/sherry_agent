@@ -1,8 +1,8 @@
 """Knowledge tool family: ``knowledge`` (write / read / list plan knowledge).
 
 ``build_knowledge_tools`` mirrors the other tool families: it tags the tool
-with ``handle_tool_error=True`` and merges the shared ``nudge`` +
-``scope=main_only`` metadata contract (nudge allowlist + subagent tool policy).
+with ``handle_tool_error=True`` and merges the shared ``background_review`` +
+``scope=main_only`` metadata contract (background-review allowlist + subagent tool policy).
 
 Access is isolated per plan identity — ``identity.resolve_plan_identity`` /
 ``identity.associated_plan_identities`` derive the storage key from the
@@ -33,7 +33,7 @@ def build_knowledge_tools() -> list[BaseTool]:
     """Build and return the knowledge tool for main-agent wiring."""
     for t in _KNOWLEDGE_TOOLS:
         t.handle_tool_error = True
-        t.metadata = {**(t.metadata or {}), "nudge": True, "scope": "main_only"}
+        t.metadata = {**(t.metadata or {}), "background_review": True, "scope": "main_only"}
     return list(_KNOWLEDGE_TOOLS)
 
 

@@ -212,7 +212,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` 这个 mem 键是与压缩管线的契约：`Summarization` 读取它做 token 估算（`_estimate_system_prompt_tokens`），并在压缩后重写（mem + db）——因此缓存未命中时必须双写。
 
-**持久化已不再属于压缩管线。** `MessagePersistenceMiddleware` 在每个模型边界把新消息落库到 MesMemory（见下文小节）；记忆复盘 / 计划提取两个 nudge 仍由 `Summarization` 从 compact 接缝调度。`system_prompt_injection` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
+**持久化已不再属于压缩管线。** `MessagePersistenceMiddleware` 在每个模型边界把新消息落库到 MesMemory（见下文小节）；记忆复盘 / 技能评审两个后台任务 仍由 `Summarization` 从 compact 接缝调度。`system_prompt_injection` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
 
@@ -466,7 +466,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **两条路径共用同一水位，写入幂等。** 工具返回时写入的结果在后续每个边界都会被再次扫到，边界写入的 AI 消息在下一边界也会被再次扫到；图状态会累积，但水位保证每条消息只有一行——跨进程重启同样成立（消息 id 与内容指纹都能跨检查点序列化存活）。写入失败只记日志、**不**登记墓碑，下一边界会重试该批次（fail-open——落库绝不弄坏回合或工具结果）。
 
-> 压缩路径不再做任何持久化：`compaction_persistence.py` 模块与 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。一次 compact 只做压缩并调度压缩时 nudge（见 Summarization 小节）。
+> 压缩路径不再做任何持久化：`compaction_persistence.py` 模块与 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。一次 compact 只做压缩并调度压缩时后台评审（见 Summarization 小节）。
 
 ### ContextEvictionMiddleware
 
@@ -591,14 +591,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **结构化摘要：** 辅助调用经 `with_structured_output(SummaryDoc, method="json_mode")`（`summarization/summary_doc.py`）；Markdown 由文档代码渲染，cap 后的文档本体存于 AIMessage 的 `additional_kwargs["summary_doc"]`（链式再压缩以 `<prior-summary-json>` 回喂）。解析失败退化为 `json_repair`，再退化为旧 free-form 路径；条目上限是数组切片（`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`、`evicted_refs[-20:]`），不再解析 Markdown。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
 - **不再持久化：** 压缩路径不向 MesMemory 写任何内容。消息持久化在每个模型边界由 `MessagePersistenceMiddleware` 完成；原先 `compaction_persistence.py` 的被丢弃前缀落库及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。
-- **压缩时 nudge：** `schedule_memory_review`（`summarization/nudges.py`）每次压缩只派发**记忆复盘**，交给它的是**即将被丢弃**的那段——要留的事实正在那里。默认 `cache_warm` 模式下 `_nudge_memory` 把这段**原文**发在"本轮刚用过的"模型配置上（`_build_session_model`：会话的模型覆盖与思考变体，或环境默认），并复刻会话自己的系统提示词与工具面。压缩切点是**前缀切点**，因此 `[工具][系统提示词][被丢弃消息][复盘指令]` 恰好复现主模型刚服务过的请求前缀——提供商从前缀缓存作答，复盘读到真实原文、只按缓存读价付费，唯一的新增输入就是那条指令。`NUDGE["memory_review_mode"] = "digest"` 则先折叠（`digest_history`：最近 24 条原文、更早的每条一行截断），供缓存不友好或复盘窗口较小的部署使用。两道防爆仍然成立：复盘恰好运行在上下文最满时——它只拿被丢弃段（绝不拿整段对话），且绝不阻塞本轮。它以 fire-and-forget 任务在 NUDGE 车道上运行；nudge 锁被持有时压缩完全跳过派发。计划提取不在这条路径上（改为计划完成时 fork，见下）。
+- **压缩时记忆复盘：** `schedule_memory_review`（`summarization/background_reviews.py`）每次压缩只派发**记忆复盘**，交给它的是**即将被丢弃**的那段——要留的事实正在那里。默认 `cache_warm` 模式下 `_execute_memory_review` 把这段**原文**发在"本轮刚用过的"模型配置上（`_build_session_model`：会话的模型覆盖与思考变体，或环境默认），并复刻会话自己的系统提示词与工具面。压缩切点是**前缀切点**，因此 `[工具][系统提示词][被丢弃消息][复盘指令]` 恰好复现主模型刚服务过的请求前缀——提供商从前缀缓存作答，复盘读到真实原文、只按缓存读价付费，唯一的新增输入就是那条指令。`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` 则先折叠（`digest_history`：最近 24 条原文、更早的每条一行截断），供缓存不友好或复盘窗口较小的部署使用。两道防爆仍然成立：复盘恰好运行在上下文最满时——它只拿被丢弃段（绝不拿整段对话），且绝不阻塞本轮。它以 fire-and-forget 任务在 BACKGROUND_REVIEW 车道上运行；评审锁被持有时压缩完全跳过派发。技能评审不在这条路径上（改为计划完成时 fork，见下）。
 
-**Nudge 子 Agent**（`summarization/nudges.py`，由压缩管线调度）：独立的 `create_agent` 实例，两条通道各有不同的触发点、模型与工具屏障：
+**后台评审子 Agent**（`summarization/background_reviews.py`，由压缩管线调度）：独立的 `create_agent` 实例，两条通道各有不同的触发点、模型与工具屏障：
 
-- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：由压缩管线触发，跑在**按本轮配置重建的主模型**上（`_build_session_model`，即上面的 cache_warm 接缝），工具面为会话的完整面；其图携带 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，`_NudgeLimitTool` 拒绝一切元数据缺少 `nudge: true` 的工具，因此复盘**只能执行**带标记的那组（`memory`、`knowledge`、`question`、计划模式）。完整工具面是为了前缀缓存一致，门控才是执行屏障。技能三件套**刻意不打标记**——复盘不可能做技能抽取。
-- `_PLAN_EXTRACTION_PROMPT`（skill-quality nudge）：由**计划完成**钩子触发（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_plan_extraction`），用**辅助模型**（`_create_plan_extraction_agent`，`temperature=0`），**不带对话**。工具面只绑定 `skill_list` / `skill_view` / `skill_manage`；knowledge 与 memory 不在其中。它先快照 `skills/auto`，运行 nudge，再由运行时 judge（`skill_quality.judge_skill_update`）检查 grounded / reusable / trigger / quality；失败会恢复快照并带反馈重试，耗尽后记录失败标记且不推进成功指纹。不写 knowledge、不写 FACTS；`handoff-tree.json` 保留为原始审计文件。
-- **计划提取去重：** `_detect_todo_all_complete` 在全部 todo 为 `completed`/`cancelled` 且计划的**快照指纹**（`_plan_snapshot_hash`：id + content + status + plan_ref）与上次**成功**抽取后存于 `nudge_plan_snapshot_hash` 的指纹不同时触发——因此就地修改已完成的 todo 会重抽、计划未变则跳过、失败的一轮会在下次完成轮重试。前置门控：每会话 `Summarization → nudge` 开关、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、以及必须有运行中的事件循环。
-- **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用 nudge agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_NudgeLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
+- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：由压缩管线触发，跑在**按本轮配置重建的主模型**上（`_build_session_model`，即上面的 cache_warm 接缝），工具面为会话的完整面；其图携带 `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，`_BackgroundReviewLimitTool` 拒绝一切元数据缺少 `background_review: true` 的工具，因此复盘**只能执行**带标记的那组（`memory`、`knowledge`、`question`、计划模式）。完整工具面是为了前缀缓存一致，门控才是执行屏障。技能三件套**刻意不打标记**——复盘不可能做技能评审。
+- `_SKILL_REVIEW_PROMPT`（技能评审）：由**计划完成**钩子触发（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_skill_review`），用**辅助模型**（`_create_skill_review_agent`，`temperature=0`），**不带对话**。工具面只绑定 `skill_list` / `skill_view` / `skill_manage`；knowledge 与 memory 不在其中。它先快照 `skills/auto`，运行评审，再由运行时 judge（`skill_review.judge_skill_update`）检查 grounded / reusable / trigger / quality；失败会恢复快照并带反馈重试，耗尽后记录失败标记且不推进成功指纹。不写 knowledge、不写 FACTS；`handoff-tree.json` 保留为原始审计文件。
+- **技能评审去重：** `_detect_todo_all_complete` 在全部 todo 为 `completed`/`cancelled` 且计划的**快照指纹**（`_plan_snapshot_hash`：id + content + status + plan_ref）与上次**成功**评审后存于 `skill_review_snapshot_hash` 的指纹不同时触发——因此就地修改已完成的 todo 会重新评审、计划未变则跳过、失败的一轮会在下次完成轮重试。前置门控：`BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]`、`skill_review_lock`、以及必须有运行中的事件循环。
+- **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用后台评审 agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_BackgroundReviewLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
 
 ▶️ 完整文档：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
@@ -773,9 +773,9 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | 键                                                                                                                                          | 归属                                                                     | 寄存器   |
 | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------- |
 | `system_prompt`                                                                                                                             | system_prompt_injection / Summarization                                  | mem + db |
-| `nudge_plan_extraction_fired`                                                                                                               | 计划完成触发器（PlanContinuationEnforcer → `summarization/nudges.py`）   | db       |
-| `nudge_plan_snapshot_hash`                                                                                                                  | 计划完成触发器——上次已抽取计划的指纹（id + content + status + plan_ref） | db       |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock`                                                                                    | nudge fork（压缩记忆复盘 / 计划完成抽取）                                | mem      |
+| `skill_review_fired`                                                                                                               | 计划完成触发器（PlanContinuationEnforcer → `summarization/background_reviews.py`）   | db       |
+| `skill_review_snapshot_hash`                                                                                                                  | 计划完成触发器——上次已抽取计划的指纹（id + content + status + plan_ref） | db       |
+| `background_review_memory_lock`、`skill_review_lock`                                                                                    | 后台评审 fork（压缩记忆复盘 / 计划完成技能评审）                                | mem      |
 | `iteration_budget`、`iteration_budget_used`                                                                                                 | IterationBudget                                                          | mem      |
 | `tool_guardrail_state`                                                                                                                      | ToolGuardrails                                                           | mem      |
 | `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问）                                        | Summarization                                                            | mem      |
@@ -808,7 +808,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                           |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
-| `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/nudges.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
+| `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/background_reviews.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
 | `tool_guardrails.py`      | ToolGuardrails 小节列出的五类病态阈值与恢复默认值                                                                                                                                                               |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                |
@@ -935,7 +935,7 @@ agent = create_agent(
     · MultimodalProcessor  清理 mutil_temp（> 7 天 / 非数字文件名）
     · PlanContinuationEnforcer  仍有未完成 todo 时以 fire-and-forget 注入续作提示
     · （system_prompt_injection 不实现任何生命周期钩子；消息持久化在自己的
-       after_model 钩子中运行，记忆复盘 / 计划提取 nudge 改在 Summarization
+       after_model 钩子中运行，记忆复盘 / 技能评审改在 Summarization
        的压缩路径内触发。）
 ```
 
@@ -1044,8 +1044,8 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
 │   ├── media_offload.py         # 压缩时内联媒体归档
-│   ├── nudges.py                # 压缩时 nudge 调度 + 提示词
-│   ├── plan_context.py          # 计划提取 nudge 的活跃计划检测
+│   ├── background_reviews.py    # 压缩时后台评审调度 + 提示词
+│   ├── plan_context.py          # 技能评审的活跃计划检测
 │   └── summary_doc.py           # SummaryDoc 模式 + 确定性 Markdown 渲染
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # 导出 TaskIntentMiddleware

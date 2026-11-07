@@ -3,7 +3,7 @@
 This module is the composition root. The middleware class owns the lifecycle
 hooks, the session-validation / token-estimation helpers, the durable cooldown
 mirror and the thin seams that bind process-level dependencies (system-prompt
-rebuild, task-intent re-arm, nudge scheduling, active-plan / taskflow context)
+rebuild, task-intent re-arm, background-review scheduling, active-plan / taskflow context)
 for the responsibility mixins in :mod:`summarization.compression`,
 :mod:`summarization.overflow`, :mod:`summarization.summary_generation` and
 :mod:`summarization.thrash`.
@@ -215,13 +215,15 @@ def _get_plan_context_sync(session_id: str) -> str:
 def _schedule_compression_todo_update(session_id: str, discarded_messages: Sequence[Any]) -> None:
     """Fire-and-forget the post-compression todo update (never blocks/raises).
 
-    Call-time import keeps the nudges module's heavier import graph out of
+    Call-time import keeps the background_reviews module's heavier import graph out of
     ``summarization.core``; the scheduler itself gates (feature switch,
     non-empty todo list, per-session lock) and skips when no event loop is
     running (sync compression path).
     """
     try:
-        from agent.middlewares.summarization.nudges import schedule_compression_todo_update
+        from agent.middlewares.summarization.background_reviews import (
+            schedule_compression_todo_update,
+        )
 
         schedule_compression_todo_update(session_id, discarded_messages)
     except Exception:
@@ -234,11 +236,11 @@ def _schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Any
     The review moved here from the middleware's after-agent hook and is handed
     the messages about to be DISCARDED — the facts worth keeping are in those,
     and the whole conversation would sit within a few thousand tokens of the
-    window. Call-time import keeps the nudges module out of the summarization
+    window. Call-time import keeps the background_reviews module out of the summarization
     module-load graph.
     """
     try:
-        from agent.middlewares.summarization.nudges import schedule_memory_review
+        from agent.middlewares.summarization.background_reviews import schedule_memory_review
 
         schedule_memory_review(session_id, messages_to_summarize)
     except Exception:
@@ -249,7 +251,7 @@ def _schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Any
 # flushes new messages to MesMemory via ``MessagePersistenceMiddleware``
 # (registered in ``agent/core.py``), so the compression path only compacts and
 # schedules the
-# compression-time nudges below.
+# compression-time background reviews below.
 
 
 class Summarization(
@@ -341,13 +343,13 @@ class Summarization(
         """Seam bound to ``plan_context.resolve_active_plan`` (patchable)."""
         return resolve_active_plan(session_id)
 
-    def _fire_compression_nudges(
+    def _fire_compression_reviews(
         self,
         session_id: str,
         original_messages,
         messages_to_summarize,
     ) -> None:
-        """Dispatch the compression-time nudges through the core module globals."""
+        """Dispatch the compression-time background reviews through the core module globals."""
         _schedule_memory_review(session_id, messages_to_summarize)
         _schedule_compression_todo_update(session_id, messages_to_summarize)
 

@@ -1,4 +1,4 @@
-"""Skill-quality nudge: module-notes guidance + memory-review FACTS routing.
+"""Skill review: module-notes guidance + memory-review FACTS routing.
 
 The plan-completion pass is now skill-only. It no longer writes knowledge or
 FACTS; module-bound lessons still go to ``<module>-notes`` skills. The memory
@@ -14,8 +14,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-import agent.middlewares.summarization.nudges as nudge_mod
-import agent.middlewares.summarization.skill_quality as skill_quality
+import agent.middlewares.summarization.background_reviews as review_mod
+import agent.middlewares.summarization.skill_review as skill_review
 import agent.tools.skill_tools.skill_manage as skill_manage_module
 from agent.tools.skill_tools.skill_manage import build_skill_manage_tool
 
@@ -60,19 +60,19 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
     async def _pass(*_args, **_kwargs):
         return _PassingJudgement()
 
-    monkeypatch.setattr(nudge_mod, "judge_skill_update", _pass)
+    monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
 
 class TestSkillPrompt:
     def test_module_notes_carry_forward_is_still_present(self):
-        prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
+        prompt = review_mod._SKILL_REVIEW_PROMPT
 
         assert "<module>-notes" in prompt
         assert "auth-module-notes" in prompt
         assert "symptom" in prompt and "avoidance" in prompt
 
     def test_prompt_is_skill_only(self):
-        prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
+        prompt = review_mod._SKILL_REVIEW_PROMPT
 
         assert "Do NOT write knowledge" in prompt
         assert "aggregate_success_steps" not in prompt
@@ -85,7 +85,7 @@ class TestSkillPrompt:
 
 class TestMemoryReviewFacts:
     def test_memory_review_prompt_has_facts_routing(self):
-        prompt = nudge_mod._MEMORY_REVIEW_PROMPT
+        prompt = review_mod._MEMORY_REVIEW_PROMPT
 
         assert "target: 'facts'" in prompt
         assert "{facts_limit}" in prompt
@@ -95,7 +95,7 @@ class TestMemoryReviewFacts:
     def test_facts_rendering_injects_live_content_and_limit(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
 
-        rendered = nudge_mod._render_prompt_facts(
+        rendered = review_mod._render_prompt_facts(
             "limit={facts_limit}\n<facts>\n{facts_block}\n</facts>"
         )
 
@@ -107,7 +107,7 @@ class TestMemoryReviewFacts:
     def test_facts_rendering_marks_empty_store(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore(content=""))
 
-        assert "(the facts target is empty)" in nudge_mod._render_prompt_facts("{facts_block}")
+        assert "(the facts target is empty)" in review_mod._render_prompt_facts("{facts_block}")
 
 
 _CREATE_CONTENT = """---
@@ -155,7 +155,7 @@ def _install_stub(monkeypatch, tmp_path, tool_call: dict) -> SimpleNamespace:
     auto_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(skill_manage_module, "AUTO_SKILLS_DIR", auto_dir)
-    monkeypatch.setattr(skill_quality, "AUTO_SKILLS_DIR", auto_dir)
+    monkeypatch.setattr(skill_review, "AUTO_SKILLS_DIR", auto_dir)
     monkeypatch.setattr("skills.build_skills_snapshot", lambda: None)
 
     import agent.tools.pub_base as pub_base
@@ -166,17 +166,17 @@ def _install_stub(monkeypatch, tmp_path, tool_call: dict) -> SimpleNamespace:
 
     monkeypatch.setattr("models.build_auxiliary_llm", lambda **kwargs: _stub_model(tool_call))
     monkeypatch.setattr(
-        nudge_mod, "_build_session_model", lambda session_id: _stub_model(tool_call)
+        review_mod, "_build_session_model", lambda session_id: _stub_model(tool_call)
     )
     monkeypatch.setattr("agent.get_agent_tools", lambda: [build_skill_manage_tool()])
-    monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-    monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
+    monkeypatch.setattr(review_mod, "state_register_mem", _FakeStateRegister())
+    monkeypatch.setattr(review_mod, "state_register_db", _FakeStateRegister())
     monkeypatch.setattr(
         "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
         lambda session_id: "sys",
     )
     monkeypatch.setattr(
-        nudge_mod,
+        review_mod,
         "_build_plan_context",
         lambda sid: {"plan_name": "p", "plan_path": "x", "plan_content": "", "todos": []},
     )
@@ -203,7 +203,7 @@ class TestModuleNotesBehavior:
             },
         )
 
-        await nudge_mod._run_plan_extraction("sess-notes-create")
+        await review_mod._run_skill_review("sess-notes-create")
 
         skill_md = env.auto_dir / "auth-module-notes" / "SKILL.md"
         assert skill_md.exists()
@@ -234,7 +234,7 @@ class TestModuleNotesBehavior:
             },
         )
 
-        await nudge_mod._run_plan_extraction("sess-notes-patch")
+        await review_mod._run_skill_review("sess-notes-patch")
 
         skill_dirs = sorted(p.name for p in env.auto_dir.iterdir() if p.is_dir())
         assert skill_dirs == ["auth-module-notes"]

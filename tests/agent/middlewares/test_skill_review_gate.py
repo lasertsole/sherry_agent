@@ -1,4 +1,4 @@
-"""Skill-quality gate: snapshots, rollback, judge verdicts, no-op handling."""
+"""Skill-review gate: snapshots, rollback, judge verdicts, no-op handling."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import agent.middlewares.summarization.skill_quality as quality
+import agent.middlewares.summarization.skill_review as quality
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 

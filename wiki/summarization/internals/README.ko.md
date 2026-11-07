@@ -45,11 +45,11 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 6. **복구 주입**(`_inject_recovery_context`, compression.py:379): 캡처한 파일 작업 래칫이 요약의 `## Relevant Files` 섹션으로 재작성되어, 체크포인트가 항상 최신 읽기/수정 파일 맵을 품도록 합니다.
 7. **장부 기록**(`_record_compression`, thrash.py:117), 마지막으로 `request.override(messages=..., system_message=...)`.
 
-### 💾 압축 시점 nudge
+### 💾 압축 시점 백그라운드 리뷰
 
-메시지 영속화는 압축 경로 밖에서 동작합니다: `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/AI 메시지를 각 모델 호출 경계에서, 도구 결과를 반환 시 MesMemory로 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. compact는 압축과 아래 nudge 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
+메시지 영속화는 압축 경로 밖에서 동작합니다: `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/AI 메시지를 각 모델 호출 경계에서, 도구 결과를 반환 시 MesMemory로 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. compact는 압축과 아래 백그라운드 리뷰 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
 
-**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_memory_review`): 메시지를 실제로 버리는 압축마다 메모리 리뷰(`_nudge_memory`)가 디스패치되며, 넘겨받는 것은 바로 그 버려질 슬라이스입니다. **cache_warm** 방식으로 실행됩니다——해당 턴이 사용한 모델 구성에 원문 그대로, 세션의 시스템 프롬프트와 도구 면을 갖춰 보내므로 프리픽스 절단이 그대로 프리픽스 캐시 적중이 됩니다(`NUDGE["memory_review_mode"] = "digest"`면 접음). NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다; nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음). 플랜 추출은 이 경로에 없습니다——플랜 완료 시 `PlanContinuationEnforcer.aafter_agent`에서 fork합니다(단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장).
+**압축 시점 메모리 리뷰**(`agent/middlewares/summarization/background_reviews.py::schedule_memory_review`): 메시지를 실제로 버리는 압축마다 메모리 리뷰(`_execute_memory_review`)가 디스패치되며, 넘겨받는 것은 바로 그 버려질 슬라이스입니다. **cache_warm** 방식으로 실행됩니다——해당 턴이 사용한 모델 구성에 원문 그대로, 세션의 시스템 프롬프트와 도구 면을 갖춰 보내므로 프리픽스 절단이 그대로 프리픽스 캐시 적중이 됩니다(`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"`면 접음). BACKGROUND_REVIEW 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다; 리뷰 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음). 스킬 리뷰는 이 경로에 없습니다——플랜 완료 시 `PlanContinuationEnforcer.aafter_agent`에서 fork합니다(단발 `skill_review_fired` 플래그는 완료 사이클당 1회 추출을 보장).
 
 **절단점 선택**(`_determine_cutoff`, compression.py:277): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, compression.py:70)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(compression.py:311)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입의 `_plan_model_call`에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 
@@ -64,7 +64,7 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 - 블록은 텍스트 포인터 `[evicted to: <path>]`로 대체됩니다. `pub/func/message/eviction.py`가 내는 것과 같은 마커라서 `_collect_evicted_refs`가 줍고 `_finalize_summary_doc`이 경로를 `SummaryDoc.evicted_refs`로 실어 나릅니다(*Evicted References*로 렌더링);
 - 디코드나 쓰기에 실패한 블록은 `<media error="failed_to_offload" />`가 됩니다 —— 미디어 실패가 압축을 망치는 일은 없습니다.
 
-보존 윈도우(`current_messages[cutoff:]`)는 절대 건드리지 않습니다: 미디어는 해당 턴이 실제로 요약될 때까지 남습니다. 두 압축 경로 모두 nudge 스케줄링 전에 프리픽스 슬라이스에 오프로드를 호출합니다 —— `_apply_compression_under_lock`(동기)와 `_aapply_compression_under_lock`(비동기). 요약 프롬프트(`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`)는 포인터가 존재한다는 것, `evicted_refs`로 그대로 옮겨야 한다는 것, 시각/오디오/비디오 세부를 지어내지 말 것, 페이로드는 경로에서 가져올 수 있다는 것을 모델에 알립니다.
+보존 윈도우(`current_messages[cutoff:]`)는 절대 건드리지 않습니다: 미디어는 해당 턴이 실제로 요약될 때까지 남습니다. 두 압축 경로 모두 백그라운드 리뷰 스케줄링 전에 프리픽스 슬라이스에 오프로드를 호출합니다 —— `_apply_compression_under_lock`(동기)와 `_aapply_compression_under_lock`(비동기). 요약 프롬프트(`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`)는 포인터가 존재한다는 것, `evicted_refs`로 그대로 옮겨야 한다는 것, 시각/오디오/비디오 세부를 지어내지 말 것, 페이로드는 경로에서 가져올 수 있다는 것을 모델에 알립니다.
 
 미디어 파일은 세션 트리 안에 있으므로 `clear_session()`이 `evicted/` 및 `plans/`와 함께 삭제합니다.
 
@@ -168,7 +168,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 시스템 프롬프트 갱신
 
-메인 에이전트 전용(`need_update_system_prompt=True`): 압축 후 미들웨어가 시스템 프롬프트를 재구축해 `system_prompt` 상태 키에 기록하므로, 다음 모델 호출은 페르소나 파일 / 장기 기억을 지금 현재 상태 그대로 봅니다. 두 전달 경로: 압축 직후의 `request.override(system_message=SystemMessage(...))`, 그리고 — T1 compact가 이미 일어났지만 안티-스래싱 게이트가 두 번째 압축을 막을 때 — 재구축된 프롬프트는 게이트 경로에서 여전히 전달됩니다(`core.py::_refresh_system_prompt_if_needed`). `@dynamic_prompt` 시스템 프롬프트 미들웨어가 없는 체인(서브에이전트 / nudge 파이프라인)은 이 미들웨어가 전달해 주기 때문입니다. 게이트 경로는 요청의 현재 system message와 **내용이 다를 때만** 주입합니다: 내용이 같으면 override도 새 `SystemMessage`도 만들지 않습니다(재주입하지 않음).
+메인 에이전트 전용(`need_update_system_prompt=True`): 압축 후 미들웨어가 시스템 프롬프트를 재구축해 `system_prompt` 상태 키에 기록하므로, 다음 모델 호출은 페르소나 파일 / 장기 기억을 지금 현재 상태 그대로 봅니다. 두 전달 경로: 압축 직후의 `request.override(system_message=SystemMessage(...))`, 그리고 — T1 compact가 이미 일어났지만 안티-스래싱 게이트가 두 번째 압축을 막을 때 — 재구축된 프롬프트는 게이트 경로에서 여전히 전달됩니다(`core.py::_refresh_system_prompt_if_needed`). `@dynamic_prompt` 시스템 프롬프트 미들웨어가 없는 체인(서브에이전트 / 백그라운드 리뷰 파이프라인)은 이 미들웨어가 전달해 주기 때문입니다. 게이트 경로는 요청의 현재 system message와 **내용이 다를 때만** 주입합니다: 내용이 같으면 override도 새 `SystemMessage`도 만들지 않습니다(재주입하지 않음).
 
 ## 📌 등록 지점
 

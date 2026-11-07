@@ -50,7 +50,7 @@ async def purge_session(session_id: str) -> None:
     # in the background, so deletion still returns immediately. Fail-open: a
     # broken/timed-out snapshot must never keep the session alive.
     try:
-        from agent.middlewares.summarization.nudges import salvage_session_memory
+        from agent.middlewares.summarization.background_reviews import salvage_session_memory
 
         await salvage_session_memory(session_id)
     except Exception:  # noqa: BLE001 - deletion owns the transaction

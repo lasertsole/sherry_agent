@@ -75,7 +75,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 ## 🗂️ 信息来源
 
-进入图 state 或 MesMemory 的一切信息都来自下列来源之一。`origin` 列正在升级为全量来源标记：`NULL` 是标记之前写入的存量用户消息（读侧视同 `user`），携带 `internal=True` 的消息**不是用户请求** —— 摘要的 Unresolved 清单只收用户亲发消息（正向识别）。非消息来源（驱逐文件、计划知识）也一并列出：它们永远不会成为 `messages` 行，但同样是可注入的上下文。标注 `planned` / `reserved` 的行尚未实现。
+进入图 state 或 MesMemory 的一切信息都来自下列来源之一。`origin` 列正在升级为全量来源标记：`NULL` 是标记之前写入的存量用户消息（读侧视同 `user`），携带 `internal=True` 的消息**不是用户请求** —— 摘要的 Unresolved 清单只收用户亲发消息（正向识别）。非消息来源（驱逐文件、遗留计划知识）也一并列出：它们永远不会成为 `messages` 行；遗留计划知识目录已不再注入模型。标注 `planned` / `reserved` 的行尚未实现。
 
 | 信息来源 | origin / 标记 | internal | 产生场景 | 持久化 | 注入行为 |
 |---|---|---|---|---|---|
@@ -88,7 +88,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | 压缩摘要对 | `lc_source='summarization'`（在 `additional_kwargs`，非 origin 列） | — | 压缩产物（`_build_new_messages`） | **不落 MesMemory**；state 摘要对 | `<summary>` 常驻模型视图；以 `<prior-summary>` 链式延续 |
 | 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链在结构化摘要文档中携带 `evicted_refs[]` 指针 |
 | 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、历史消息原生块剥离，或压缩期卸载（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（持久副本；压缩期卸载以 `sha256[:16]` 命名并去重）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
-| 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
+| 遗留计划知识 | 非消息 —— 磁盘目录 | — | 已退出模型读取 | `workspace/knowledge/plans/<plan_key>/` | 不再注入；仅保留原始 `handoff-tree.json` 审计文件 |
 | `facts` target | MesMemory `memory_entries` 行（唯一全局 target） | — | 系统级 / 跨项目普适的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory target（1 375 字符上限；超限先归档最不活跃条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
 
 ## 🧵 Message 行上的 Turn 身份

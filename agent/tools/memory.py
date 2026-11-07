@@ -491,7 +491,7 @@ class MemoryStore:
     ) -> dict[str, Any]:
         """Append a new entry. Returns error if it would exceed the char limit.
 
-        ``facts`` is nudge-maintained and high-churn, so when the new entry
+        ``facts`` is maintained by background review and high-churn, so when the new entry
         would overflow the facts budget the least-active entries roll off first
         (``COALESCE(last_used, created_at)`` then ``usage_count``) and the new
         entry still lands. ``memory`` / ``user`` keep the interactive
@@ -818,7 +818,7 @@ class MemoryStore:
     def format_live_content(self, target: str) -> str:
         """Return the store's current content, delimiter-joined.
 
-        Unlike ``format_for_system_prompt`` this queries SQLite, so nudge
+        Unlike ``format_for_system_prompt`` this queries SQLite, so background review
         prompts can hand the model the latest state; returns "" when empty.
         """
         entries = self.repo.active_entries_ordered(target)
@@ -1103,8 +1103,8 @@ class MemoryTool(BaseTool):
     # agent/tools/subagent/spawn/inherited_tool_policy.apply_tool_policy).
     metadata: dict = {
         "idempotent": True,
-        "nudge": True,
-        "nudge_memory": True,
+        "background_review": True,
+        "background_review_memory": True,
         "scope": "main_only",
         "side_effect_scope": "session",
     }
