@@ -102,7 +102,7 @@ SERVER_HTTP: ServerHttpConfig = {
     # the .models.example / .network.example templates —
     # the chat model first, then the auxiliary model it delegates simple work to,
     # then TaskFlow / compression. The trailing entries double as the group order
-    # for the network.jsonc groups (GET /network-config): the browser feature's
+    # for the .network groups (GET /network-config): the browser feature's
     # switches and LangSmith tracing render after the model families.
     "env_group_prefixes": (
         "MAIN_LLM_",

@@ -9,10 +9,8 @@
 //! - File (daily rotation, ANSI stripped)
 //! - Per-module level filtering
 //!
-//! Log files are written to:
-//! - Windows: `%TEMP%/ema-ai-agent/app.YYYY-MM-DD.log`
-//! - macOS:   `~/Library/Logs/ema-ai-agent/app.YYYY-MM-DD.log`
-//! - Linux:   `/tmp/ema-ai-agent/app.YYYY-MM-DD.log`
+//! Log files are written under the OS temp directory:
+//! `<temp_dir>/ema-ai-agent/app.YYYY-MM-DD.log`.
 
 use tauri_plugin_tracing::{tracing_appender, tracing_subscriber, Builder, StripAnsiWriter};
 use tracing::Level;

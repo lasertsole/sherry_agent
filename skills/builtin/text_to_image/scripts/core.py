@@ -17,7 +17,7 @@ from models.http_client import verify_tls
 from pub.func import generate_tsid
 from pydantic import validate_call
 
-# .env plus the network.jsonc overlay (network keys outrank the environment file)
+# .env plus the .network overlay (network keys outrank the environment file)
 load_env()
 
 
@@ -46,7 +46,6 @@ def generate_image(prompt: str) -> None:
         if not api_key:
             logger.debug("Error: TTI_API_KEY environment variable not set")
 
-        # Send request.
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         data = {
             "model": api_name,
@@ -62,17 +61,14 @@ def generate_image(prompt: str) -> None:
 
         save_path = STATIC_DIR / "images" / f"{generate_tsid()}.png"
 
-        # Ensure the directory exists
         save_path.parent.mkdir(parents=True, exist_ok=True)
 
         status_code = response.status_code
         if status_code == 200:
-            # Parse the response
             response_data = response.json()
             if "data" in response_data and len(response_data["data"]) > 0:
                 b64_data = response_data["data"][0]["b64_json"]
 
-                # Handle Data URL format
                 if b64_data.startswith("data:"):
                     # Extract the actual base64 portion
                     # data:image/png;base64,iVBORw0KGgoAAA...
@@ -89,7 +85,6 @@ def generate_image(prompt: str) -> None:
                 try:
                     image_data = base64.b64decode(b64_data)
 
-                    # Save the image
                     with open(save_path, "wb") as f:
                         f.write(image_data)
 

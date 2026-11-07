@@ -5,8 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { logUtil } from '~/utils/log';
 
 /**
- * errorCaptured factory function (extracted from doc 03, the "errorCaptured factory
- * function" document; Nuxt 4 adapted version).
+ * errorCaptured factory function (Nuxt 4 adapted; one factory per page).
  *
  * Capture chain:
  *   A child component throws an error
@@ -22,12 +21,11 @@ import { logUtil } from '~/utils/log';
  *
  * Note: onErrorCaptured only captures errors from **descendant components** (Vue
  * walks up from instance.parent); errors in this component itself are captured by an
- * identical hook further up — each page calls this factory, forming layered capture
- * (see doc 03 §3.3 multi-level propagation control).
+ * identical hook further up — each page calls this factory, forming layered capture.
  */
 
 /**
- * Ref type contract for Toast components (doc 03 §4).
+ * Ref type contract for Toast components.
  * Any Toast/Message component is plug-compatible as long as it implements `open`.
  */
 export interface MsgRefType {

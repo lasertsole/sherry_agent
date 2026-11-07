@@ -87,7 +87,7 @@ class PathInput(BaseModel):
 
 
 class _CodeIntelTool(BaseTool):
-    """Shared engine/root/config wiring for the four tools."""
+    """Shared engine/root/config wiring for the five tools."""
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -114,7 +114,7 @@ class _CodeIntelTool(BaseTool):
         self._session_id = session_id
 
     def _session_root(self) -> Path:
-        """The project directory this call runs against (see :func:`_root_for_call`)."""
+        """The project directory this call runs against (see :func:`root_for_call`)."""
         return root_for_call(self._explicit_root, self._session_id, self._root)
 
     def _run(self, **kwargs: Any) -> str:  # pragma: no cover - overridden

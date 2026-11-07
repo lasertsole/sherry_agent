@@ -6,7 +6,7 @@ from server.service import read_network_config, write_network_config
 @app.get("/network-config")
 async def read_network_config_handler(request):
     """
-    Read the project network.jsonc (network service configuration: the search
+    Read the project .network (network service configuration: the search
     backends' file view, the browser agent's switches, LangSmith tracing),
     grouped by prefix.
     Returns: {"groups": [{"name": str, "kind": str, "entries": [{"key", "value"}, ...]}]}
@@ -24,7 +24,7 @@ async def read_network_config_handler(request):
 @app.put("/network-config")
 async def write_network_config_handler(request):
     """
-    Update values of known network.jsonc keys (values are coerced to their
+    Update values of known .network keys (values are coerced to their
     declared types). Body: {"changes": {"KEY": "new value", ...}}
     The Tavily / SearXNG search keys are written through this same endpoint.
     """

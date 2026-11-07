@@ -32,6 +32,6 @@ DEFAULT_CONSOLIDATE = CURATOR_DEFAULTS["default_consolidate"]
 
 # UI-configurable auto-maintenance interval override (in days). The client allows
 # only 1..5 days; anything outside this range is rejected and the file-based
-# `interval_hours` (default 5 days) is used.
+# `interval_hours` (default 7 days) is used.
 DEFAULT_INTERVAL_OVERRIDE_MIN_DAYS = CURATOR_DEFAULTS["interval_override_min_days"]
 DEFAULT_INTERVAL_OVERRIDE_MAX_DAYS = CURATOR_DEFAULTS["interval_override_max_days"]

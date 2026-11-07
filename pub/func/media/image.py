@@ -51,7 +51,6 @@ def validate_and_fix_base64(base64_string: str) -> str | None:
         # Strip whitespace
         base64_data = base64_data.strip()
 
-        # Check and fix padding
         missing_padding = len(base64_data) % 4
         if missing_padding:
             base64_data += "=" * (4 - missing_padding)
@@ -86,7 +85,6 @@ def compress_image_if_needed(
         Compressed image bytes.
     """
     try:
-        # Check original size
         original_size_mb = len(image_data) / (1024 * 1024)
 
         if original_size_mb <= max_size_mb:
@@ -99,13 +97,11 @@ def compress_image_if_needed(
             f"Image too large: {original_size_mb:.2f}MB > {max_size_mb}MB, starting compression..."
         )
 
-        # Open image
         img = Image.open(io.BytesIO(image_data))
         original_width, original_height = img.size
 
         logger.debug(f"Original dimensions: {original_width}x{original_height}")
 
-        # Calculate scale ratio
         scale = min(max_dimension / original_width, max_dimension / original_height, 1.0)
 
         if scale < 1.0:
@@ -168,7 +164,6 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> by
 
             response = requests.get(url, headers=headers, timeout=timeout, stream=True)
 
-            # Check HTTP status code
             if response.status_code == 400:
                 logger.error("HTTP 400 error - URL may require authentication or has expired")
                 logger.error(f"Response headers: {dict(response.headers)}")
@@ -182,7 +177,6 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> by
 
             response.raise_for_status()
 
-            # Read full content
             image_data = response.content
 
             if len(image_data) == 0:
@@ -224,7 +218,6 @@ def clean_and_validate_base64(base64_string: str) -> str | None:
         # Split prefix and data
         if "," in base64_string:
             prefix, base64_data = base64_string.split(",", 1)
-            # Validate prefix format
             if not prefix.startswith("data:image/"):
                 logger.warning(f"Invalid data URI prefix: {prefix[:50]}")
                 return None
@@ -242,7 +235,6 @@ def clean_and_validate_base64(base64_string: str) -> str | None:
             logger.error("base64 data is empty")
             return None
 
-        # Check and fix padding
         # base64 length must be a multiple of 4
         padding_needed = len(base64_data) % 4
         if padding_needed:
@@ -292,7 +284,6 @@ def download_and_convert_to_base64(
             logger.error("Download failed or content is empty")
             return None
 
-        # Check file size
         size_mb = len(image_data) / (1024 * 1024)
         if size_mb > max_size_mb:
             logger.warning(f"Image too large: {size_mb:.2f}MB > {max_size_mb}MB")
@@ -300,7 +291,6 @@ def download_and_convert_to_base64(
 
         logger.debug(f"Image downloaded, size: {len(image_data)} bytes ({size_mb:.2f}MB)")
 
-        # Detect actual format
         detected_format = detect_image_format(image_data)
         if not detected_format:
             logger.warning(f"Unable to identify image format, file header: {image_data[:20].hex()}")
@@ -323,12 +313,10 @@ def download_and_convert_to_base64(
         base64_bytes = base64.b64encode(compressed_data)
         base64_string = base64_bytes.decode("utf-8")
 
-        # Validate base64 string
         if not base64_string or len(base64_string) == 0:
             logger.error("base64 conversion result is empty")
             return None
 
-        # Build data URI format
         mime_type = "image/jpeg"  # Always use JPEG after compression
         data_uri = f"data:{mime_type};base64,{base64_string}"
 

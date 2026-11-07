@@ -28,13 +28,13 @@ pub struct ClearSessionRequest {
 /// | Field | Type | Required | Description |
 /// |-------|------|----------|-------------|
 /// | `session_id` | `string` | Yes | Session to query |
-/// | `last_turn_count` | `number \| null` | No | Number of recent turns (null = all) |
+/// | `last_turn_count` | `number \| null` | No | Number of recent turns (null = default 10) |
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../app/types/backend/")]
 pub struct HistoryRequest {
     /// The session ID to query history for.
     pub session_id: String,
-    /// Number of recent turns to retrieve. `None` = all.
+    /// Number of recent turns to retrieve. `None` = default 10.
     pub last_turn_count: Option<usize>,
 }
 
@@ -74,20 +74,8 @@ pub struct HistoryMessage {
 ///
 /// # Errors
 ///
-/// | Error Code | Description | Retryable |
-/// |------------|-------------|-----------|
-/// | `SESSION_ERROR` | Session not found or already cleared | No |
-/// | `DATABASE_ERROR` | Failed to delete session data from SQLite | Yes |
+/// Transport/backend failures surface as `BACKEND_ERROR`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// await invoke('session_clear', {
-///   request: { session_id: 'default' },
-/// });
-/// ```
 #[tauri::command]
 pub async fn session_clear(
     request: ClearSessionRequest,
@@ -105,7 +93,7 @@ pub async fn session_clear(
 
 /// Retrieve conversation history for a session.
 ///
-/// Returns the last N turns (or all turns if `last_turn_count` is null)
+/// Returns the last N turns (or the default 10 if `last_turn_count` is null)
 /// as an ordered list of messages.
 ///
 /// # Arguments
@@ -119,26 +107,8 @@ pub async fn session_clear(
 ///
 /// # Errors
 ///
-/// | Error Code | Description | Retryable |
-/// |------------|-------------|-----------|
-/// | `SESSION_ERROR` | Session not found | No |
-/// | `DATABASE_ERROR` | Failed to query history from SQLite | Yes |
+/// Transport/backend failures surface as `BACKEND_ERROR`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Get last 10 turns
-/// const messages = await invoke<HistoryMessage[]>('session_history', {
-///   request: { session_id: 'default', last_turn_count: 10 },
-/// });
-///
-/// // Get all history
-/// const allMessages = await invoke<HistoryMessage[]>('session_history', {
-///   request: { session_id: 'default', last_turn_count: null },
-/// });
-/// ```
 #[tauri::command]
 pub async fn session_history(
     request: HistoryRequest,

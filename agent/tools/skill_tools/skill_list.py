@@ -37,7 +37,6 @@ class SkillList(BaseTool):
                     ensure_ascii=False,
                 )
 
-            # Find all skills
             from skills.loader import scan_skills
 
             all_skills = scan_skills(use_cache=False)

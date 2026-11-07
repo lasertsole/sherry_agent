@@ -402,7 +402,9 @@
          Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
          shortcuts 4, safety filter 5, memory settings 6, desktop 7. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6 && activeTab !== 7"
+      v-if="
+        activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6 && activeTab !== 7
+      "
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -816,12 +818,10 @@ const resetSherryState = () => {
 };
 
 // ── Env config load trigger (setup scope) ──────────────
-// Previously loadEnvConfig was called from the PrimeVue TabPanel @show event: event callbacks run in a
-// non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
-// in pure SPA mode and data stayed undefined forever → the || { groups: [] } fallback kicked in and rendered
-// the misleading "No .env file found" message.
-// Instead, the env tab (activeTab===1) is watched in setup scope; the callback runs
-// in a setup context where getCurrentInstance() stays alive → useFetch actually issues GET /env and loads the real .env groups.
+// The env tab (activeTab===1) is watched in setup scope. A PrimeVue TabPanel
+// @show callback runs outside setup, where getCurrentInstance() is null and
+// Nuxt useFetch(server:true) never issues GET /env in SPA mode; the fallback
+// then renders a misleading "No .env file found".
 watch(
   activeTab,
   tab => {

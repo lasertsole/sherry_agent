@@ -66,9 +66,7 @@ from agent.middlewares.output_repetition_guard.repetition_state import (
 )
 from config.features import REPETITION_GUARD
 
-# Reasoning keys used to extract reasoning text from ``additional_kwargs``.
-# Re-exported from the middleware module so the wrapper and middleware stay
-# in sync.
+# Reasoning detection lives in the middleware package.
 __all__ = [
     "RepetitionGuardWrapper",
     "SESSION_STATE_KEYS",

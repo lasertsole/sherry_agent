@@ -109,8 +109,8 @@ export function useSessionLifecycle(chatMessages: Ref<MessageItem[]>) {
    * Load history messages for specified session (local cache first, backend merges server-side increments),
    * merged into `chatMessages` (deduplicated by id), for ChatBox rendering.
    *
-   * Fix: No longer reconstruct entire `currentSession.value` (that would overwrite user's already-sent local messages,
-   * causing 'list cleared after sending'). Only merge history rows into single list, existing messages preserved.
+   * Merge history rows into the existing list instead of rebuilding it: an
+   * already-sent local message must survive a history load.
    * @param sessionId
    * @param options
    */

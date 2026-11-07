@@ -59,15 +59,7 @@ export interface GitGraphPage {
 }
 
 /**
- * Read one page of the session project's git history.
- * @param sessionId Session whose project directory is read.
- * @param options Paging (`limit` commits from `skip`).
- * @param options.limit
- * @param options.skip
- */
-/**
- * One response payload → the page shape (the read route and both write actions
- * answer the same JSON).
+ * One response payload → the page shape.
  * @param res Parsed payload from the backend.
  */
 function toPage(res: Record<string, unknown> & { success?: boolean }): GitGraphPage {

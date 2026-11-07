@@ -7,9 +7,9 @@
 //!
 //! | Module | Commands | Description |
 //! |--------|----------|-------------|
-//! | [`agent`] | `agent_chat` | Send messages and get agent responses |
+//! | [`agent`] | `agent_chat`, `agent_stop` | Send messages / stop the active generation |
 //! | [`session`] | `session_clear`, `session_history` | Session lifecycle management |
-//! | [`system_prompt`] | `system_prompt_read/write/update` | System prompt CRUD |
+//! | [`system_prompt`] | `system_prompt_read`, `system_prompt_read_template`, `system_prompt_write/update` | System prompt CRUD |
 //! | [`system`] | `system_info`, `system_health` | App metadata and health |
 //! | [`cuda`] | `cuda_support`, `cuda_pack_status`, `download_cuda_pack`, `remove_cuda_pack`, `restart_backend` | Optional CUDA pack (model settings tab) |
 //! | [`window`] | `close_ack`, `quit_app` | Close-to-tray acknowledgement / real quit |

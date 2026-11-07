@@ -156,7 +156,7 @@ def _sanitize_fts5_query(query: str) -> str:
 
 
 def _decode_content(content: Any) -> Any:
-    """Reverse :meth:`_encode_content`; returns scalars unchanged."""
+    """Decode a ``\x00json:``-prefixed content cell; returns scalars unchanged."""
     if isinstance(content, str) and content.startswith(_CONTENT_JSON_PREFIX):
         decoded = decode_content(content, prefix=_CONTENT_JSON_PREFIX)
         if decoded is content:

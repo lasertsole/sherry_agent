@@ -1,12 +1,10 @@
 /**
  * Session-page toolbar command registry (`index/[sid].vue`).
  *
- * The page used to dispatch its toolbar with a 4-case `switch` over
- * `handleOperate` (`createSession` / `uploadImage` / `uploadAudio` /
- * `uploadVideo`). It is now a data registry: `SESSION_TOOLBAR_EVENTS` is the
- * vocabulary and `buildSessionToolbarCommands` maps each event to the command it
- * runs. The internal `Record<SessionToolbarEvent, …>` makes a missing entry a
- * compile error, while the returned index-signature type keeps the dispatcher
+ * `SESSION_TOOLBAR_EVENTS` is the event vocabulary and
+ * `buildSessionToolbarCommands` maps each event to the command it runs. The
+ * internal `Record<SessionToolbarEvent, …>` makes a missing entry a compile
+ * error, while the returned index-signature type keeps the dispatcher
  * assertion-free for unknown events.
  */
 

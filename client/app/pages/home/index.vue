@@ -238,9 +238,9 @@
             <SessionPresetButton
               v-if="currentSessionId"
               :session-id="currentSessionId" />
-            <!-- Toolbox: the hammer button. Two working surfaces that are not
-                 settings — the browser and the user's own terminal — open as
-                 tabs in the session group (see toolboxTools). -->
+            <!-- Toolbox: the hammer button. Three working surfaces that are not
+                 settings — the browser, the user's terminal and the whiteboard
+                 — open as tabs in the session group (see toolboxTools). -->
             <Button
               icon="pi pi-hammer"
               :title="t('toolbar.toolbox')"
@@ -382,7 +382,7 @@
 // Page-level error capture: runtime errors from all descendant components on this page
 // (sidebar/toolbar/each dialog, plus child route pages without their own capture)
 // → logUtil logging + global toast; returning false stops further upward propagation
-// (factory function pattern from 03-errorCapturedFactoryFunction.md)
+// (shared errorCaptured factory pattern)
 useErrorCaptured();
 
 // components

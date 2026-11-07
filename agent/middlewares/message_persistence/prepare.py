@@ -1,9 +1,7 @@
 """Batch preparation primitives shared by the persistence middleware.
 
-Moved verbatim from ``agent/middlewares/summarization/compaction_persistence.py``
-when persistence left the compression path: the helpers below are not
-compression-specific, they classify and repair a batch of graph-state messages
-before it is handed to the MesMemory writer.
+These helpers are not compression-specific: they classify and repair a batch of
+graph-state messages before it is handed to the MesMemory writer.
 
 - :func:`_is_persistable` — role filter (human/ai/tool only), minus messages
   already flushed in this process and minus compression artifacts.

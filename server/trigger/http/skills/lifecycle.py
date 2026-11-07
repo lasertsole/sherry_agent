@@ -54,7 +54,6 @@ async def upload_skill_handler(request):
     else:
         content = file_bytes.decode("utf-8", errors="replace")
 
-    # Validate content size.
     if len(content) > _MAX_SKILL_CONTENT_CHARS:
         logger.warning(f"Skill upload rejected: content too large ({len(content)} chars)")
         return Response(
@@ -139,7 +138,6 @@ async def upload_skill_handler(request):
                 description=json.dumps({"success": False, "message": _err}),
             )
 
-    # Write SKILL.md.
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_md = skill_dir / "SKILL.md"
     skill_md.write_text(content, encoding="utf-8")
@@ -226,7 +224,6 @@ async def toggle_skill_handler(request):
             description=json.dumps({"success": False, "message": f"Skill '{name}' not found"}),
         )
 
-    # Update the state file.
     state = _read_skills_state()
     state[name] = {"active": active}
     _write_skills_state(state)

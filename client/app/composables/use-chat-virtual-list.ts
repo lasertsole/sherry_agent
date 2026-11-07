@@ -52,9 +52,6 @@ export const buildChatVirtualRows = (groups: MessageItem[][]): ChatVirtualRow[] 
   groups.map(group => ({ key: `g-${group[0]?.id ?? 'empty'}`, group }));
 
 /**
- * One mark of the turn scrubber: a user message the reader can jump to.
- */
-/**
  * Loaded rows kept in memory. Rows are turn groups (a turn is one or two rows:
  * the user message, then its reply), so this is roughly 200 turns — the oldest
  * rows above the viewport are released past it and paged in again on the way
@@ -81,6 +78,9 @@ export const headRowsToRelease = (rowCount: number, newHeadStart: number, scroll
   return newHeadStart <= scrollTop ? surplus : 0;
 };
 
+/**
+ * One mark of the turn scrubber: a user message the reader can jump to.
+ */
 export interface ChatTurnMark {
   /** Virtual row index of the turn group (what `scrollToIndex` takes). */
   rowIndex: number;

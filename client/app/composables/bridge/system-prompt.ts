@@ -50,7 +50,7 @@ export async function writeSystemPrompt(fileToContent: Record<string, string>): 
 }
 
 /**
- * Partially update system prompt files (merge).
+ * Replace the given system prompt files; files not in the payload are unchanged.
  * @param fileToContent
  */
 export async function updateSystemPrompt(fileToContent: Record<string, string>): Promise<void> {

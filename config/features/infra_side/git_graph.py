@@ -4,8 +4,7 @@ from typing import TypedDict
 
 
 class GitGraphConfig(TypedDict):
-    """Bounds for the git routes — the read-only graph and commit reads plus the
-    two context-menu write actions (``reset`` / ``checkout`` only)."""
+    """Bounds for the read-only git graph and commit-read routes."""
 
     #: Commits served per page when the caller does not ask for a size.
     page_size: int

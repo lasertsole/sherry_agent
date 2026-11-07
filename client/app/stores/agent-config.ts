@@ -7,6 +7,13 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /**
+ * Sentinel id of the "follow the role's model_tier" option. A NON-empty value on
+ * purpose: PrimeVue's Select renders an empty-string value as an empty box, so the
+ * picker would look unset instead of showing its default entry.
+ */
+export const FOLLOW_TIER_ID = 'tier';
+
+/**
  * The state of the preset panel's Agent models / Skills tabs.
  *
  * Two halves:
@@ -21,13 +28,6 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
  * every skill in the index — the backend contract the payload mirrors. Built-in
  * tools and the middleware chain are not configurable at all.
  */
-/**
- * Sentinel id of the "follow the role's model_tier" option. A NON-empty value on
- * purpose: PrimeVue's Select renders an empty-string value as an empty box, so the
- * picker would look unset instead of showing its default entry.
- */
-export const FOLLOW_TIER_ID = 'tier';
-
 export const useAgentConfigStore = defineStore('agentConfig', () => {
   /** The role / skill lists (empty until the first load). */
   const catalog = ref<AgentCatalog>({ subagent_roles: [], skills: [] });

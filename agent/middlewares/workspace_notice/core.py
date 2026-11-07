@@ -5,20 +5,19 @@ about either:
 
 * the **working directory** (the user picks another folder; the choice parks on
   ``PROJECT_DIR_PENDING`` and is promoted at the turn boundary), and
-* the **git branch / HEAD** of that directory (the user switches branches in the
-  sidebar's git panel, checks one out in a terminal, or commits/resets outside
-  the session).
+* the **shadow-checkpoint token** of that directory (the per-project write
+  snapshot moves when the agent or a tool writes outside the turn).
 
 The system prompt always renders the CURRENT root, but nothing in the message
 list says it moved — so the next request arrives with the model still reasoning
-about the old tree, or about files from a branch that is no longer checked out.
+about the old tree, or about files from a tree whose shadow checkpoint has moved.
 
 This middleware closes both gaps at SEND time. On every turn start it compares
 the effective root against the root the agent was last told about
-(``StateKey.PROJECT_DIR_ANNOUNCED``) and the repository's branch+HEAD against the
+(``StateKey.PROJECT_DIR_ANNOUNCED``) and the root's shadow-checkpoint token against the
 token the agent was last told about (``StateKey.GIT_HEAD_ANNOUNCED``); when they
 differ it splices ONE notice per change immediately BEFORE the turn's
-HumanMessage — the model reads "the directory moved" / "the branch moved" and
+HumanMessage — the model reads "the directory moved" / "the workspace changed" and
 then the request that depends on it, in one transcript.
 
 Coalescing is by construction — only the comparison at send time matters:
@@ -150,7 +149,7 @@ class WorkspaceNoticeMiddleware(AgentMiddleware):
                 record_announced_project_dir(session_id, directory)
                 switched = True
 
-            # Git branch/HEAD of that directory. ``None`` covers "not a
+            # Shadow-checkpoint token of that directory. ``None`` covers "not a
             # repository", "no git binary" and a failed read alike: nothing to
             # announce, and the baseline stays unset so a repository that appears
             # later still starts from a silent baseline.

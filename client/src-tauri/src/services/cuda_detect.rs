@@ -6,9 +6,9 @@
 //! "should the model settings tab offer the download at all" — so it is
 //! deliberately shallow:
 //!
-//! * **Windows** — `nvidia-smi` from `PATH`, then the legacy
-//!   `%ProgramFiles%\NVIDIA Corporation\NVSMI` location; the CSV query returns
-//!   the GPU name and driver version.
+//! * **Windows** — `nvidia-smi` from `PATH`, then
+//!   `C:\Windows\System32\nvidia-smi.exe`; the CSV query returns the GPU name
+//!   and driver version.
 //! * **Linux** — the same `nvidia-smi` query; a machine with the kernel module
 //!   but no userland tool still counts (the `/proc/driver/nvidia/version`
 //!   fallback proves the driver, the GPU name stays unknown).

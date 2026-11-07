@@ -244,13 +244,13 @@ def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     backend: SandboxBackend | None = None
     try:
         if system == "Linux":
-            # Lazy import: sandbox_bwrap.py is created by (parallel
-            # wave); ImportError == unavailable, never a crash.
+            # Lazy import: a missing backend module degrades to unavailable
+            # via the ImportError below.
             from agent.tools.pub_base.sandbox_bwrap import BwrapBackend
 
             backend = BwrapBackend()
         elif system == "Darwin":
-            # Lazy import: sandbox_seatbelt.py is created by.
+            # Lazy import: a missing backend module degrades to unavailable.
             from agent.tools.pub_base.sandbox_seatbelt import SeatbeltBackend
 
             backend = SeatbeltBackend()

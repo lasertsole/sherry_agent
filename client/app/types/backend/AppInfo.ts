@@ -20,7 +20,7 @@ export type AppInfo = {
    */
   version: string;
   /**
-   * Rust toolchain / Tauri runtime info.
+   * Tauri runtime version.
    */
   tauri_version: string;
   /**

@@ -916,9 +916,9 @@ def reset_token_budget(session_id: str) -> dict[str, Any]:
 
 
 def _search_env_view() -> dict[str, Any]:
-    """The network.jsonc file as the 模型联网 panel edits it.
+    """The .network file as the 模型联网 panel edits it.
 
-    Those keys live in ``network.jsonc`` (they moved out of ``.env``) and are
+    Those keys live in ``.network`` (they moved out of ``.env``) and are
     WITHHELD from ``GET /env`` / ``GET /network-config`` (a dedicated panel owns
     them), so the panel reads them here instead. They are the FILE values — what
     a save would produce and what the next boot reads — while the sibling

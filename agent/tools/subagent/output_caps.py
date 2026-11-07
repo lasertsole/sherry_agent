@@ -110,7 +110,7 @@ def resolve_child_max_output_tokens(
 ) -> int | None:
     """Resolve the output budget of the model the child will actually run on.
 
-    Mirrors ``spawn/core.py::_build_child_llm`` precedence:
+    Mirrors ``spawn/core.py::_select_child_llm`` precedence:
 
     1. a per-role model profile — its OWN ``max_output_tokens`` field, default
        8192 (the profile builder uses the same value for the request);

@@ -33,7 +33,7 @@ from server.trigger.http.helpers import bad_request, ok, query_int, to_text_resp
 
 
 def _page_payload(session_id: str, page) -> dict:
-    """The one JSON shape both the read route and the write actions answer with."""
+    """The one JSON shape the git graph route answers with."""
     return {
         "success": True,
         "session_id": session_id,

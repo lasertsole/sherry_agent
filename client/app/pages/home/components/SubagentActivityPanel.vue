@@ -58,7 +58,7 @@
         </button>
       </div>
 
-      <!-- Live: the child session's trajectory timeline (HTTP polling for now). -->
+      <!-- Live: the child session's trajectory timeline. -->
       <div
         v-if="activeTab === 'live'"
         class="min-h-0 flex-1 overflow-hidden"

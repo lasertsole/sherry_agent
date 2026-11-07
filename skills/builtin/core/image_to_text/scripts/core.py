@@ -18,7 +18,7 @@ from config.path import load_env
 from pub.func.validator import is_url
 from langchain_core.messages import HumanMessage
 
-# .env plus the network.jsonc overlay (network keys outrank the environment file)
+# .env plus the .network overlay (network keys outrank the environment file)
 load_env()
 
 

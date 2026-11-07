@@ -23,9 +23,9 @@ export const tools: Tool[] = [
 ];
 
 /**
- * The toolbox dialog's entries (the hammer button): the browser and the user's
- * terminal. Deliberately NOT a part of `headerTools` — that grid is the settings
- * menu, and these two are working surfaces.
+ * The toolbox dialog's entries (the hammer button): the browser, the user's
+ * terminal and the whiteboard. Deliberately NOT a part of `headerTools` — that
+ * grid is the settings menu; these three are working surfaces.
  */
 export const toolboxTools: Tool[] = [
   {

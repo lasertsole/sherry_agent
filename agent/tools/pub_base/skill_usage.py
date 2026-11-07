@@ -147,7 +147,7 @@ def _read_bundled_manifest_names() -> set[str]:
 def _read_hub_installed_names() -> set[str]:
     """Return the set of skill names installed via the Skills Hub.
 
-    Reads ``skills/auto/.hub/lock.json`` (see tools/skills_hub.py :: HubLockFile).
+    Reads ``skills/auto/.hub/lock.json``.
     """
     lock_path = AUTO_SKILLS_DIR / ".hub" / "lock.json"
     if not lock_path.exists():

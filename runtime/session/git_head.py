@@ -1,22 +1,15 @@
-"""Git branch/HEAD of a session's working root — read, remembered, announced.
+"""Shadow-checkpoint token of a session's working root — read, remembered, announced.
 
-The workspace notice middleware needs one fact at the start of every turn: which
-branch and HEAD the session's project directory is on RIGHT NOW, so it can tell
-the agent when that moved (the user switched branches in the sidebar's git
-panel, ran a checkout in a terminal, or committed outside the session).
+The workspace notice middleware needs one fact at the start of every turn: the
+per-project shadow checkpoint the session's project directory is on RIGHT NOW,
+so it can tell the agent when that moved. The token is
+``checkpoint@<short-hash>`` from the shadow store; the user's own ``.git`` is
+never consulted.
 
 This module is the shared leaf for that fact, mirroring
-``runtime.session.project_dir``: the reader is mem-only and cheap for the agent
-side (``read_git_head`` runs one bounded git command), while the "what the agent
-was told" baseline lives in the session state register under
+``runtime.session.project_dir``: the reader is mem-only and cheap, while the
+"what the agent was told" baseline lives in the session state register under
 ``StateKey.GIT_HEAD_ANNOUNCED`` with a durable mirror that the boot prime warms.
-
-Why a token rather than two fields: the comparison is equality-only — a notice
-is owed exactly when the (branch, hash) PAIR differs from the announced pair, so
-one string keeps the comparison and the stored value identical. A detached HEAD
-is not special-cased: git answers ``HEAD`` as the branch name and the hash still
-differs when the user checks out another commit, which is precisely the change
-the agent must hear about.
 """
 
 from __future__ import annotations
@@ -40,7 +33,7 @@ __all__ = [
     "record_announced_git_head",
 ]
 
-#: Metadata carried by the git-change notice (the shared workspace-notice shape).
+#: Metadata carried by the workspace-checkpoint notice (shared notice shape).
 GIT_HEAD_NOTICE_METADATA = workspace_notice_metadata(GIT_HEAD_NOTICE_ORIGIN)
 
 #: Characters of the commit hash kept in the token (a row label, not an id).
@@ -61,7 +54,7 @@ def read_git_head(directory: str | Path) -> str | None:
 
 
 def announced_git_head(session_id: str | None) -> str | None:
-    """The branch/HEAD token the agent was last TOLD about (mem tier).
+    """The shadow-checkpoint token the agent was last TOLD about (mem tier).
 
     ``None`` = never told (the first turn of a session baselines silently).
     """
@@ -85,29 +78,28 @@ def record_announced_git_head(session_id: str, token: str) -> None:
 def git_head_notice_text(
     previous: str, current: str, directory: str, *, switched: bool = False
 ) -> str:
-    """The body of a git-change notice.
+    """The body of a workspace-checkpoint notice.
 
-    The root is always named: a notice may follow a directory switch, and
-    "``main@1a2b3c4d`` → ``dev@5e6f7a8b``" alone would not say WHICH tree it is
-    talking about. ``switched`` picks the wording — after a directory switch the
-    previous token came from ANOTHER repository, so "moved from" would be a lie.
+    The root is always named: a notice may follow a directory switch, and a
+    pair of bare checkpoint tokens alone would not say WHICH tree they describe.
+    ``switched`` picks the wording — after a directory switch the previous token
+    came from ANOTHER project, so "moved from" would be a lie.
     """
     if switched:
         return (
-            f"[Git 分支/HEAD / git branch] The working directory moved to `{directory}`, whose "
-            f"repository is on `{current}` (the previous tree was on `{previous}`). Re-read the "
-            "files you were working from: they came from a different branch or revision."
+            f"[Workspace checkpoint / 工作区快照] The working directory moved to `{directory}`, "
+            f"whose shadow checkpoint is `{current}` (the previous tree was on `{previous}`). "
+            "Re-read the files you were working from: they came from a different tree state."
         )
     return (
-        f"[Git 分支/HEAD 已变化 / git branch changed] The repository at `{directory}` moved from "
-        f"`{previous}` to `{current}`. Re-check the checked-out files before editing: the working "
-        "tree now holds a different branch or revision than the one your earlier reads and edits "
-        "were made against."
+        f"[Workspace checkpoint changed / 工作区快照已变化] The project at `{directory}` moved "
+        f"from `{previous}` to `{current}`. Re-check the files before editing: the working tree "
+        "now holds a different state than the one your earlier reads and edits were made against."
     )
 
 
 def prime_git_head_from_store() -> int:
-    """Warm the mem tier with the persisted git baselines (called once at boot).
+    """Warm the mem tier with the persisted checkpoint baselines (called once at boot).
 
     A lost baseline would silently re-baseline on the next message, and the agent
     would never hear about a branch change that predates the restart. Failures are

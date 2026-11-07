@@ -228,7 +228,6 @@ def _write_file(name: str, file_path: str, file_content: str) -> dict[str, Any]:
     if not file_content and file_content != "":
         return {"success": False, "error": "file_content is required."}
 
-    # Check size limits
     content_bytes = len(file_content.encode("utf-8"))
     if content_bytes > _MAX_SKILL_FILE_BYTES:
         return {
@@ -616,7 +615,6 @@ def _validate_file_path(file_path: str) -> str | None:
 
 def _create_skill(name: str, content: str, category: str = None) -> dict[str, Any]:
     """Create a new user skill with SKILL.md content."""
-    # Validate name
     err = _validate_name(name)
     if err:
         return {"success": False, "error": err}
@@ -625,7 +623,6 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
     if err:
         return {"success": False, "error": err}
 
-    # Validate content
     err = _validate_frontmatter(content)
     if err:
         return {"success": False, "error": err}
@@ -642,7 +639,6 @@ def _create_skill(name: str, content: str, category: str = None) -> dict[str, An
             "error": f"A skill named '{name}' already exists at {existing.as_posix()}.",
         }
 
-    # Create the skill directory
     skill_dir = _resolve_skill_dir(name, category)
     skill_dir.mkdir(parents=True, exist_ok=True)
 

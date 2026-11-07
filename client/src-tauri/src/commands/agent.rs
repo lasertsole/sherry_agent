@@ -111,36 +111,8 @@ pub struct StopRequest {
 ///
 /// # Errors
 ///
-/// | Error Code | Description | Retryable |
-/// |------------|-------------|-----------|
-/// | `AGENT_ERROR` | Agent pipeline failure (tool loop, LangGraph error) | No |
-/// | `MODEL_ERROR` | LLM API call failed (timeout, connection refused) | Yes |
-/// | `SESSION_ERROR` | Invalid or expired session ID | No |
-/// | `RAG_ERROR` | Knowledge retrieval failure | No |
+/// Transport/backend failures surface as `BACKEND_ERROR`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// // Simple text chat
-/// const chunks = await invoke<ChatChunk[]>('agent_chat', {
-///   request: {
-///     session_id: 'default',
-///     text: 'Hello!',
-///     image_base64_list: [],
-///   },
-/// });
-///
-/// // Multi-modal chat with images
-/// const chunks = await invoke<ChatChunk[]>('agent_chat', {
-///   request: {
-///     session_id: 'default',
-///     text: 'Describe this image',
-///     image_base64_list: [base64ImageData],
-///   },
-/// });
-/// ```
 #[tauri::command]
 pub async fn agent_chat(
     request: ChatRequest,
@@ -211,12 +183,12 @@ pub async fn agent_chat(
         return Err(fe);
     }
 
-    // 4. Mark the last chunk as done
+    // 5. Mark the last chunk as done
     if let Some(last) = chunks.last_mut() {
         last.done = true;
     }
 
-    // 5. Emit stream end event
+    // 6. Emit stream end event
     let _ = app.emit(
         AGENT_STREAM_END,
         AgentStreamEnd {
@@ -232,14 +204,9 @@ pub async fn agent_chat(
 /// Stop an ongoing agent generation for the given session.
 ///
 /// Sends a cancellation request to the Python backend over the agent
-/// WebSocket (`/sessions/agent/ws`, `{"type":"stop"}`). The SSE
-/// stream will terminate and emit `agent:stream:end`.
+/// WebSocket (`/sessions/agent/ws`, `{"type":"stop"}`). The generation
+/// stream terminates and `agent_chat` emits `agent:stream:end`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// await invoke('agent_stop', { request: { session_id: 'default' } });
-/// ```
 #[tauri::command]
 pub async fn agent_stop(
     request: StopRequest,

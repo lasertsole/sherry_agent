@@ -80,18 +80,6 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
   const isConsecutive = (id: number): boolean => consecutiveIdSet.value.has(id);
 
   /**
-   * Group the rendered messages by "turn" to implement segmented spacing:
-   *  - User messages (USER) each form their own group: both neighbors are turn boundaries, with
-   *    the outer gap-6 (24px) providing the separation;
-   *  - Consecutive AI/TOOL rows after the first message are grouped together: the group is
-   *    tightened with gap-3 (12px) (bubble↔tool card↔bubble compactly joined, including
-   *    tool-call spans).
-   *
-   * Grouping is based on the **render order** (filteredMessages): empty AI placeholder messages
-   * have already been filtered out, so `user → AI placeholder (filtered) → user` become directly
-   * adjacent in render order; the second user row correctly starts a new turn.
-   */
-  /**
    * Injected carrier: a message whose backend origin is an internal source
    * (e.g. "subagent_completion", "project_dir"). Carriers render as a centered,
    * muted system card instead of a bubble — they are neither something the user
@@ -108,6 +96,18 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
   const isBackgroundTask = (message: MessageItem): boolean =>
     (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) && !!message.origin && message.origin !== 'user';
 
+  /**
+   * Group the rendered messages by "turn" to implement segmented spacing:
+   *  - User messages (USER) each form their own group: both neighbors are turn boundaries, with
+   *    the outer gap-6 (24px) providing the separation;
+   *  - Consecutive AI/TOOL rows after the first message are grouped together: the group is
+   *    tightened with gap-3 (12px) (bubble↔tool card↔bubble compactly joined, including
+   *    tool-call spans).
+   *
+   * Grouping is based on the **render order** (filteredMessages): empty AI placeholder messages
+   * have already been filtered out, so `user → AI placeholder (filtered) → user` become directly
+   * adjacent in render order; the second user row correctly starts a new turn.
+   */
   const turnGroups = computed<MessageItem[][]>(() => {
     const groups: MessageItem[][] = [];
     for (const item of filteredMessages.value) {

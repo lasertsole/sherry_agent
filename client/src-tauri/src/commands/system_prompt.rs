@@ -61,19 +61,8 @@ pub struct PromptFileResponse {
 ///
 /// # Errors
 ///
-/// | Error Code | Description | Retryable |
-/// |------------|-------------|-----------|
-/// | `IO_ERROR` | Failed to read prompt files from disk | Yes |
-/// | `CONFIG_ERROR` | Prompt file format is invalid | No |
+/// Transport/backend failures surface as `BACKEND_ERROR`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// const response = await invoke<PromptFileResponse>('system_prompt_read');
-/// console.log(response.file_to_content['AGENTS.md']);
-/// ```
 #[tauri::command]
 pub async fn system_prompt_read(
     bridge: tauri::State<'_, PythonBridge>,
@@ -90,9 +79,7 @@ pub async fn system_prompt_read(
 /// Read the persona template files for one language.
 ///
 /// The Python route is `GET /system_prompt/template?lang=<lang>`; a null
-/// language lets the backend choose its preferred template. This command was
-/// missing from the native bridge, which made the new-session preset dialog fail
-/// inside the packaged Tauri shell even though the browser transport worked.
+/// language lets the backend choose its preferred template.
 #[tauri::command]
 pub async fn system_prompt_read_template(
     payload: PromptTemplatePayload,
@@ -124,25 +111,8 @@ pub async fn system_prompt_read_template(
 ///
 /// # Errors
 ///
-/// | Error Code | Description | Retryable |
-/// |------------|-------------|-----------|
-/// | `IO_ERROR` | Failed to write prompt files to disk | Yes |
-/// | `CONFIG_ERROR` | Invalid file content or filename | No |
+/// Transport/backend failures surface as `BACKEND_ERROR`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// await invoke('system_prompt_write', {
-///   payload: {
-///     file_to_content: {
-///       'AGENTS.md': '# Updated Agents Config',
-///       'SOUL.md': '# Updated Soul',
-///     },
-///   },
-/// });
-/// ```
 #[tauri::command]
 pub async fn system_prompt_write(
     payload: PromptFilePayload,
@@ -159,10 +129,10 @@ pub async fn system_prompt_write(
     Ok(())
 }
 
-/// Partially update system prompt files (merge).
+/// Replace the content of the given system prompt files.
 ///
-/// Updates only the specified fields within the prompt files.
-/// Existing content is merged with the new content.
+/// Each file in the payload is overwritten; files not in the payload are left
+/// unchanged. No field-level merge occurs.
 ///
 /// # Arguments
 ///
@@ -174,24 +144,8 @@ pub async fn system_prompt_write(
 ///
 /// # Errors
 ///
-/// | Error Code | Description | Retryable |
-/// |------------|-------------|-----------|
-/// | `IO_ERROR` | Failed to update prompt files on disk | Yes |
-/// | `CONFIG_ERROR` | Invalid merge operation | No |
+/// Transport/backend failures surface as `BACKEND_ERROR`.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// await invoke('system_prompt_update', {
-///   payload: {
-///     file_to_content: {
-///       'AGENTS.md': '# Appended content...',
-///     },
-///   },
-/// });
-/// ```
 #[tauri::command]
 pub async fn system_prompt_update(
     payload: PromptFilePayload,

@@ -22,7 +22,7 @@ export type AgentStreamError = {
    */
   message_id: string;
   /**
-   * Machine-readable error code (e.g., `"MODEL_ERROR"`).
+   * Machine-readable error code (currently `"BACKEND_ERROR"`).
    */
   code: string;
   /**

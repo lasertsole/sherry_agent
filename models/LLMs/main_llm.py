@@ -20,7 +20,7 @@ from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kw
 #: The level a plain ON maps to (the shared declarative config).
 _DEFAULT_ON_LEVEL = THINKING_LEVEL_CONFIG["default_level"]
 
-# Load environment variables (.env, then the network.jsonc overlay — which wins)
+# Load environment variables (.env, then the .network overlay — which wins)
 load_env()
 # ``model_provider``/``api_name`` are read verbatim (no strip) because the
 # reasoning-payload dispatch consumes them directly; the builder below reads its

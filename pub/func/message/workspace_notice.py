@@ -2,7 +2,7 @@
 
 A notice is a message the agent layer INSERTS to explain that the workspace
 moved under the model — the working directory was switched or unbound, or the
-git branch/HEAD changed while the session was idle. It is a real message in the
+shadow-checkpoint token changed while the session was idle. It is a real message in the
 transcript (the model must read it), not a system directive that vanishes.
 
 The shape is deliberately tiny and dependency-free, because the readers span the
@@ -41,7 +41,7 @@ __all__ = [
 
 #: A working-directory switch / unbinding (``runtime.session.project_dir``).
 PROJECT_DIR_NOTICE_ORIGIN = "project_dir"
-#: A git branch or HEAD change (``runtime.session.git_head``).
+#: A shadow-checkpoint change (legacy stored-origin key ``git_head``).
 GIT_HEAD_NOTICE_ORIGIN = "git_head"
 #: Provenance marker shared by every workspace notice.
 WORKSPACE_NOTICE_PROVENANCE = "workspace_notice"

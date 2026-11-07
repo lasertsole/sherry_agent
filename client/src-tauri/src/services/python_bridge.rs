@@ -1,7 +1,7 @@
 //! HTTP bridge to the Python backend (Robyn server).
 //!
-//! Provides typed REST methods and SSE streaming that map to
-//! the Python backend's HTTP endpoints. All business logic lives
+//! Provides typed REST and WebSocket helpers that map to the Python backend's
+//! HTTP/WebSocket endpoints. All business logic lives
 //! in Python; this module only handles transport.
 //!
 //! # Error Handling
