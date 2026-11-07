@@ -67,7 +67,7 @@ LDW에는 step retry/judge가 없습니다.
 
 - 실패한 DAG 노드는 `None`이 되고 의존 노드는 skip됩니다.
 - 기존 "dag 재실행" L2는 삭제되었습니다. root 실패, 실패율 >50%, 실패 step에 의존 노드가 있으면 **L2 TaskFlow 강등**으로 바로 가고, 그 외 실패 leaf는 partial을 받아들입니다.
-- TaskFlow 강등은 실패 step만 재실행합니다. 성공 step은 journal로 skip하고, 성공 결과는 journal에 씁니다.
+- 도구는 `partial` / `taskflow`를 반환하고 호출자(agent 또는 호스트)가 TaskFlow로 계속합니다. `replay_plan`은 자동 재실행을 연결할 `degrade` 콜백 seam을 제공합니다. journal skip/write-back은 호출자 측 폴백 계약입니다.
 - 수리 추출은 실제 성공 경로와 failed_branches를 plan knowledge에 병합하고, 조건이 맞으면 LDW 스크립트를 재컴파일합니다. `merge_knowledge`, `extract_react_repair_experience`, `extract_failure_experience`, `repair_extraction`을 제공합니다.
 
 ## 🔧 구성

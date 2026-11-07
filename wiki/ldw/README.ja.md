@@ -67,7 +67,7 @@ LDW には step retry/judge がありません。
 
 - 失敗した DAG ノードは `None` になり、依存先は skip されます。
 - 旧「dag 再実行」L2 は削除済みです。root 失敗、失敗率 >50%、失敗 step に依存先がある場合は **L2 TaskFlow 降級**へ直行し、それ以外の失敗 leaf は partial を受け入れます。
-- TaskFlow 降級は失敗 step だけを再実行します。成功 step は journal で skip し、成功結果は journal に書き戻します。
+- ツールは `partial` / `taskflow` を返し、呼び出し側（agent / ホスト）が TaskFlow で継続します。`replay_plan` は自動再実行を接続する `degrade` コールバックの seam を提供します。journal skip / write-back は呼び出し側フォールバックの契約です。
 - 修復抽出は実際の成功経路と failed_branches を plan knowledge にマージし、条件を満たせば LDW スクリプトを再コンパイルします。`merge_knowledge`、`extract_react_repair_experience`、`extract_failure_experience`、`repair_extraction` を提供します。
 
 ## 🔧 設定

@@ -67,7 +67,7 @@ LDW has no step retry/judge gate:
 
 - A failed DAG node is `None` and its dependents are skipped.
 - The old “rerun the dag” L2 level is removed. Failures go directly to the **L2 TaskFlow degradation** when the root failed, the failure rate is over 50%, or a failed step has dependents; otherwise a failed leaf may be accepted as partial.
-- TaskFlow degradation replays only the failed steps; successful steps are skipped via the journal, and successful TaskFlow results are written back.
+- The tool returns `partial` / `taskflow` for the caller (the agent or the host) to continue through TaskFlow; `replay_plan` exposes a `degrade` callback seam for wiring an automatic rerun. The journal-skip/write-back contract is part of that caller-side fallback.
 - Repair extraction merges the actual post-repair success path and failed branches into plan knowledge, then recompiles the LDW script when the plan is eligible. The repair module exposes `merge_knowledge`, `extract_react_repair_experience`, `extract_failure_experience`, and `repair_extraction`.
 
 ## 🔧 Configuration

@@ -67,7 +67,7 @@ LDW 没有 step retry/judge：
 
 - 失败 DAG 节点为 `None`，下游 skip。
 - 旧的“重跑 dag”L2 已删除。根 step 失败、失败率 >50% 或失败 step 有下游依赖时直接进入 **L2 TaskFlow 降级**；否则失败叶子可接受 partial。
-- TaskFlow 降级只重跑失败 step；成功 step 通过 journal 跳过，成功结果写回 journal。
+- 工具返回 `partial` / `taskflow`，由调用方（agent 或宿主）继续走 TaskFlow；`replay_plan` 提供 `degrade` 回调接缝，供宿主接入自动重跑。journal 跳过/写回属于调用侧回退契约。
 - 修补抽取把修补后的真实成功路径与 failed_branches 合并进 plan knowledge；满足条件时重编译 LDW 脚本。模块提供 `merge_knowledge`、`extract_react_repair_experience`、`extract_failure_experience`、`repair_extraction`。
 
 ## 🔧 配置
