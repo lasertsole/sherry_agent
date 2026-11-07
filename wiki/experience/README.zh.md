@@ -58,6 +58,7 @@
 - **write**：评审创建/修补 skill；`set_current_write_origin("background_review")` 使新 skill 标记为 agent-created，供 curator 管理。
 - **judge**：`skill_review.judge_skill_update()` 用辅助模型返回 `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`feedback`。只有 `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable 才通过；no-op 需要 `no_op_justified`。
 - **retry/rollback**：失败尝试恢复 pre-review snapshot，带 judge feedback 重试（默认最多 2 次）。耗尽后再次恢复，记录 `skill_review_failed_hash` + 时间戳，不推进成功指纹；后续回合在 `skill_review_failure_cooldown_s` 后可重试，计划变化立即重试。
+- **可选 PTC 编译（通过后）**：当 `PTC["ptc_prefill_enabled"]` 开启时，同一后台任务会为每个成功的 TaskFlow step 向更新后的 skill 编译 `scripts/ptc__<plan_key>__<step_id>.py`。编译是 best-effort，绝不重跑 judge，也不回滚已通过的 skill。
 
 此路径不再写 knowledge（`task-*.json` / `wave-*.json` / `plan-summary.json`）或 FACTS。旧 knowledge 文件留在磁盘但属于 legacy；面向模型的 prompt block 和 `knowledge` 工具已退役。
 

@@ -58,6 +58,7 @@
 - **write**：レビューが skill を作成/修補。`set_current_write_origin("background_review")` により新規 skill は agent-created として curator の管理対象になる。
 - **judge**：`skill_review.judge_skill_update()` が補助モデルに `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`feedback` を求める。`quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable が通過条件。no-op は `no_op_justified` が必要。
 - **retry/rollback**：拒否された試行は pre-review snapshot に戻し、judge feedback 付きで再試行（既定最大 2 回）。使い切ると再度復元し、`skill_review_failed_hash` と時刻を記録して成功 fingerprint を進めない。後続ターンで `skill_review_failure_cooldown_s` 後に再試行でき、plan が変われば即時再試行。
+- **任意の PTC コンパイル（通過後）**：`PTC["ptc_prefill_enabled"]` が有効なとき、同じバックグラウンドタスクが成功した TaskFlow step ごとに `scripts/ptc__<plan_key>__<step_id>.py` を更新済み skill へコンパイルします。best-effort で、judge を再実行せず、成功済み skill をロールバックしません。
 
 この経路は knowledge（`task-*.json` / `wave-*.json` / `plan-summary.json`）も FACTS も書かない。既存 knowledge ファイルはディスクに残るが legacy 扱い。モデル向け prompt block と `knowledge` ツールは retired。
 

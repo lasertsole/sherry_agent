@@ -11,6 +11,7 @@ Source of truth: `agent/tools/ptc/**`, `config/features/agent_side/ptc.py`, `con
 - [Overview](#-overview)
 - [Design Rationale](#-design-rationale)
 - [Protocol and Artifacts](#-protocol-and-artifacts)
+- [Replay and Prefill](#-replay-and-prefill)
 - [Security Model](#-security-model)
 - [Configuration](#-configuration)
 - [Limitations](#-limitations)
@@ -28,7 +29,7 @@ Programmatic Tool Calling (PTC) is the capability behind the `execute_code` tool
 | Where does the script run? | In a separate Python child process, spawned per invocation with its own process group, so a timeout kills the group |
 | How does the script reach tools? | `from sherry_tools import ...` — a generated stub whose every wrapper is one newline-delimited JSON request over a loopback TCP socket to the parent RPC server |
 | Whose session do tools run in? | The child's own `child_session_key`, bound when the tool is constructed and injected into every RPC dispatch — never a script argument |
-| What comes back? | One JSON envelope with `status` (`ok` / `timeout` / `error` / `budget_exceeded` / `sandbox_unavailable`), `output`, `error`, `exit_code`, and `tool_calls_made` |
+| What comes back? | One JSON envelope with `status` (`ok` / `timeout` / `error` / `budget_exceeded` / `sandbox_unavailable`), `output`, `error`, `exit_code`, `tool_calls_made`, and a bounded `calls_log` of per-call previews |
 
 A script is ordinary Python plus the generated wrappers — no async, no context object, one synchronous call per tool:
 
@@ -63,7 +64,7 @@ executor child agent
 
 ## 🔌 Protocol and Artifacts
 
-Five modules, one responsibility each:
+Seven modules, one responsibility each:
 
 | Artifact | Responsibility |
 |----------|----------------|
@@ -72,6 +73,8 @@ Five modules, one responsibility each:
 | `rpc_server.py` | The loopback TCP listener: parses one JSON request per line, authenticates every frame against the per-run token, enforces the per-script call budget, and dispatches each call onto the parent event loop |
 | `stub_generator.py` | Derives `ToolStub` specs from each tool's `tool_call_schema` and renders the `sherry_tools.py` module — one synchronous wrapper per tool plus local helpers; the RPC call reads the token from `SHERRY_PTC_RPC_TOKEN` rather than embedding it |
 | `builtins.py` | Owns the child's reduced builtin namespace and the import allowlist, and renders both into the wrapper script |
+| `scripts.py` | Resolves `ptc__<plan_key>__<step_id>.py` under a skill's top-level `scripts/`; fail-open on ambiguity, escape, or size |
+| `compiler.py` | Turns one step's verified evidence into replay source; static import/syntax validation only, never executes the script |
 
 The wire protocol is one JSON object per line, in both directions:
 
@@ -86,6 +89,36 @@ The wire protocol is one JSON object per line, in both directions:
 **Artifacts and lifecycle.** Each invocation gets a fresh `sherry_ptc_*` temp directory holding `sherry_tools.py` and the wrapper script; the child's only path addition is `PYTHONPATH=<tmpdir>`. The child environment also carries the per-run RPC token in `SHERRY_PTC_RPC_TOKEN`, which the generated stub reads and sends on every request; the token is generated with `secrets.token_urlsafe`, lives only in memory, and is never written to `sherry_tools.py` or any other file. When a backend is usable the child argv is additionally wrapped by `backend.wrap(argv, env, writable_roots, allow_network=True)` (the sandboxed path in [Tool Sandbox](../sandbox/README.md)); the process is still spawned with `start_new_session=True`, so a timeout SIGKILLs the whole group. The wrapper captures the user script's stdout and stderr into buffers, prints a single JSON envelope to the real stdout, and the runner classifies it into the `status` field. The `finally` block stops the RPC server, joins its thread, removes the temp directory, and re-kills the child if it somehow survived.
 
 **Child session.** `spawn/core.py` passes the run's `child_session_key` as the tool's session, and `rpc_server.py` injects it into each `ainvoke` call via the runnable config. A script cannot supply or spoof a session: `session_id` is not a tool parameter at all.
+
+## 🔁 Replay and Prefill
+
+A second, system-triggered use of `run_ptc` replays a verified TaskFlow step. It is **not** `execute_code`: the LLM does not choose the script, write it at replay time, or run the step.
+
+```text
+plan completion
+  └─ skill review passes
+       └─ (ptc_prefill_enabled) compile one script per successful step:
+            skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
+
+TaskFlow step spawn
+  └─ _execute_subagent_scoped
+       └─ executor only: resolve plan_key + step_id, find exactly one script
+            ├─ run_ptc(role-filtered tools_map, child session, cwd=spawned cwd)
+            │    ├─ ok + exit 0 + non-empty stdout + all calls_log ok + schema ok
+            │    │    → skip _build_child_agent / LLM / goal loop; stdout is the result
+            │    └─ otherwise → render [PTC Pre-run Progress] → normal React
+            └─ no script / ambiguity / unsafe id / non-executor → normal React
+```
+
+**Trigger.** The replay is triggered by the normal TaskFlow step spawn, not by a tool call and not by skill review itself. The prefill hook is in `_execute_subagent_scoped` before `_build_child_agent`; the master switch is `PTC["ptc_prefill_enabled"]` (shipped `False`). It runs only for `functional_role in PTC_ROLES` (executor). The plan key is derived from the **root main session** (`run.controller_session_key`, normalized), because a nested spawn's immediate requester can be a child key.
+
+**Success contract.** `status == "ok"`, `exit_code == 0`, non-empty `output`, a non-empty `calls_log`, and every logged call `ok is True`. If the spawn carries `output_schema`, the output must also pass `validate_structured_output`. A hit does not build a child agent, create a checkpointer, call the completion judge, or run the goal loop; the script's stdout becomes `result_text` and the run finalizes with `handoff=None`.
+
+**Failure contract.** Any miss appends a `[PTC Pre-run Progress]` block to the child's initial user message and starts normal React. The block lists the completed prefix (side effects are real; do not redo) and the first failed call. `calls_log` records both raised tool errors and tools that returned `ToolMessage(status="error")`; entries are bounded, JSON-safe previews, not full results. A script that catches a tool error still counts as failed for replay progress.
+
+**Script ownership and lookup.** The compiler returns source only; the caller validates it statically and writes it through `skill_manage(action="write_file")` into the changed skill's top-level `scripts/`. Lookup is a filesystem scan under `AUTO_SKILLS_DIR/**/scripts/` for the exact basename: zero hits, multiple hits, path escape, a symlink, an unsafe `step_id`, or an oversized file all mean React, never a guess. `compiler.py` owns the prompt/static validation; `scripts.py` owns lookup/read.
+
+**Known limits.** Replay is executor-only, so PTC's role boundary is not widened. The MVP does not journal across a step retry: a re-spawned step may repeat script side effects. A script can be stale after the plan or code changes; the observation switch exists to measure that before enabling the path. PTC handles tool-call-level prefill; LDW, if it lands, owns step/subagent-level journal replay.
 
 ## 🔒 Security Model
 
@@ -111,6 +144,9 @@ The controls below are capability reduction, not an OS boundary — the honest p
 | `ptc_max_stdout_bytes` | 50000 | stdout retained from the child before truncation |
 | `ptc_max_stderr_bytes` | 10000 | stderr retained from the child before truncation |
 | `ptc_allowed_tools` | `read_file`, `write_file`, `patch_file`, `terminal`, `search_files`, `web_search` | Allowlist intersected with the child's available tools |
+| `ptc_prefill_enabled` | `False` | Enables skill-review script compilation and spawn-side PTC prefill; keep off during the observation pass |
+| `ptc_script_max_bytes` | `20480` | Maximum compiled script read from a skill's `scripts/` directory |
+| `ptc_compile_max_attempts` | `2` | Compiler attempts on JSON/syntax misses; compilation never executes the script |
 
 The object lives in `config/features/agent_side/ptc.py`; the shared per-tool registry in `config/features/agent_side/tools_timeouts.py` also declares `ptc_timeout_seconds` with the same 120-second default, while the runner's timeout comes from the `PTC` object. PTC adds no pip dependency: its implementation is the standard library plus the already-present LangChain and loguru packages.
 
@@ -150,9 +186,15 @@ The object lives in `config/features/agent_side/ptc.py`; the shared per-tool reg
 | Runner hardening: per-run token uniqueness, token absent from the generated stub file, backend wrap applied to the child argv, the single degrade warning | `tests/agent/tools/ptc/test_runner_hardening.py` |
 | Child process: end-to-end tool call, restricted builtins, import gate, timeout kill, truncation, env scrubbing, temp-dir cleanup | `tests/agent/tools/ptc/test_runner.py` |
 | Role grid: executor injection, the other four roles, prompt guidance, main-registry isolation | `tests/agent/tools/ptc/test_integration.py` |
+| Replay calls_log: success, raised tool error, error-returning tool, budget failure, JSON-safe previews | `tests/agent/tools/ptc/test_calls_log.py` |
+| Replay lookup: unique/none/ambiguous/nested/symlink/unsafe/size | `tests/agent/tools/ptc/test_replay_scripts.py` |
+| Replay compiler: JSON contract, static validation, retry | `tests/agent/tools/ptc/test_compiler.py` |
+| Skill-review compile handoff: owning skill, skip, disabled flag | `tests/agent/middlewares/test_skill_review_ptc_compile.py` |
+| Spawn prefill: executor gate, success skip, schema miss, React progress | `tests/agent/tools/subagent/test_ptc_prefill.py` |
+| Hermetic replay end to end: a skill-owned script runs through the real PTC child + prefill | `tests/full/test_ptc_replay_e2e.py` |
 | Real-LLM end to end: an executor child chooses `execute_code` and reads a file over RPC | `tests/agent/tools/subagent/test_ptc_executor_e2e.py` |
 
-The five PTC suites run in the hermetic groups (`unit`, `integration`, `module`). The end-to-end file is the only `llm_e2e` test: it is deselected by default, runs in the dedicated real-LLM job, and proves the actual model path — the child must call `execute_code`, the captured envelope must report a dispatched RPC call, and the printed line count must match a count computed from the file at test time, which the sandbox cannot produce without `read_file` because `open` is absent there.
+The PTC suites run in the hermetic groups (`unit`, `integration`, `module`); the replay e2e is hermetic and runs a real PTC child with a fake tool. The end-to-end file is the only `llm_e2e` test: it is deselected by default, runs in the dedicated real-LLM job, and proves the actual model path — the child must call `execute_code`, the captured envelope must report a dispatched RPC call, and the printed line count must match a count computed from the file at test time, which the sandbox cannot produce without `read_file` because `open` is absent there.
 
 ## 🔗 Related Documentation
 

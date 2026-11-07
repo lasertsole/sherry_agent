@@ -51,6 +51,29 @@ PTCCallBudgetExceeded = PtcCallBudgetExceededError
 #: Hosts that would expose the RPC listener beyond the local machine.
 _FORBIDDEN_HOSTS = frozenset({"0.0.0.0", "::", ""})
 
+#: Max characters kept for a tool result/error preview in ``calls_log``.
+_CALL_PREVIEW_CHARS = 8_192
+
+
+def _preview(value: Any) -> str:
+    """A bounded, JSON-safe string preview of a tool result or error."""
+    content = getattr(value, "content", value)
+    if isinstance(content, str):
+        text = content
+    else:
+        try:
+            text = json.dumps(content, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(content)
+    return text[:_CALL_PREVIEW_CHARS]
+
+
+def _is_error_result(result: Any) -> bool:
+    """True when a tool returned an error envelope instead of raising."""
+    if getattr(result, "status", None) == "error":
+        return True
+    return isinstance(result, dict) and str(result.get("status") or "").lower() == "error"
+
 
 class PtcRpcServer:
     """TCP RPC listener that dispatches PTC tool calls onto the parent loop."""
@@ -83,11 +106,20 @@ class PtcRpcServer:
         self._stop = threading.Event()
         self._calls_made = 0
         self._budget_exhausted = False
+        #: One bounded, JSON-safe record per dispatched call, in script order.
+        #: The runner returns this to spawn so a failed PTC prefill can hand the
+        #: completed prefix to the React fallback.
+        self._calls_log: list[dict[str, Any]] = []
 
     # ── introspection (tests / runner) ───────────────────────────────────
     @property
     def calls_made(self) -> int:
         return self._calls_made
+
+    @property
+    def calls_log(self) -> list[dict[str, Any]]:
+        """A copy of the recorded calls (result previews are already bounded)."""
+        return list(self._calls_log)
 
     @property
     def budget_exhausted(self) -> bool:
@@ -207,15 +239,43 @@ class PtcRpcServer:
 
     def _dispatch(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name not in self._tools_map:
+            self._record_call(tool_name, args, error=f"unknown tool: {tool_name}")
             return {"ok": False, "error": f"unknown tool: {tool_name}"}
-        self._check_budget()
+        try:
+            self._check_budget()
+        except PTCCallBudgetExceeded as exc:
+            self._record_call(tool_name, args, error=str(exc))
+            raise
         self._calls_made += 1
         tool = self._tools_map[tool_name]
         try:
             result = self._invoke(tool, args)
-            return {"ok": True, "result": result}
         except Exception as exc:  # tool errors are returned to the child, not raised
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            error = f"{type(exc).__name__}: {exc}"
+            self._record_call(tool_name, args, error=error)
+            return {"ok": False, "error": error}
+        if _is_error_result(result):
+            self._record_call(tool_name, args, error=_preview(result))
+        else:
+            self._record_call(tool_name, args, result=result)
+        return {"ok": True, "result": result}
+
+    def _record_call(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        *,
+        result: Any = None,
+        error: str | None = None,
+    ) -> None:
+        entry: dict[str, Any] = {"tool": tool_name, "args": args}
+        if error is None:
+            entry["result"] = _preview(result)
+            entry["ok"] = True
+        else:
+            entry["error"] = str(error)[:_CALL_PREVIEW_CHARS]
+            entry["ok"] = False
+        self._calls_log.append(entry)
 
     def _check_budget(self) -> None:
         if self._calls_made >= self._max_calls:

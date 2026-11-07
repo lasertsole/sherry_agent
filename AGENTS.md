@@ -413,6 +413,18 @@ User message → Robyn WS → agent.core.built_agent() graph
       as if it were verified
 ```
 
+## PTC Replay (`agent/tools/ptc/`)
+
+`execute_code` is the manual PTC tool (executor-only; the LLM writes and calls the script). The replay path is a second, **system-triggered** use of `run_ptc`, gated by `PTC["ptc_prefill_enabled"]` (shipped `False` for observation):
+
+- After a skill review passes, the same background task may compile one `skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step (`compiler.py`; source is validated statically and written through `skill_manage`, never executed there). Compile failure never rolls back the accepted skill.
+- On a step subagent spawn, `_execute_subagent_scoped` (before `_build_child_agent`) resolves the plan key from the normalized root main session and asks `scripts.py` for the unique script. Only `PTC_ROLES` (executor) runs the prefill, so the role boundary is not widened.
+- The call is `run_ptc` directly with a role-filtered tool map (`PTC["ptc_allowed_tools"]` ∩ the spawn's policy) and the child session id; it is not a tool call.
+- Success = `status=ok`, exit 0, non-empty stdout, a non-empty `calls_log` with every call `ok`, and the step's `output_schema` passing when present. A hit skips child build / LLM / goal loop and returns stdout as `result_text` (`handoff=None`).
+- Any miss appends `[PTC Pre-run Progress]` (completed prefix + first failed call) to the child's initial message and continues with normal React. `calls_log` records raised tool errors and `ToolMessage(status="error")` results, as bounded JSON-safe previews.
+- Lookup is exact-filename under `AUTO_SKILLS_DIR/**/scripts/`; zero/multiple hits, path escape, symlink, unsafe `step_id`, or oversize all fail open to React. No journal across retries; LDW owns step/subagent-level journal replay if it lands.
+- Tests: `tests/agent/tools/ptc/test_calls_log.py`, `test_replay_scripts.py`, `test_compiler.py`, `tests/agent/middlewares/test_skill_review_ptc_compile.py`, `tests/agent/tools/subagent/test_ptc_prefill.py`; four-language docs in `wiki/ptc/`.
+
 ## Queued User Input (`server/service/input_queue_service.py`)
 
 A message sent while the session is busy is persisted as a `QUEUED` row in

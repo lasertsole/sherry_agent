@@ -284,6 +284,9 @@ SPOT_DEFAULTS = [
         "ptc_allowed_tools",
         ["read_file", "write_file", "patch_file", "terminal", "search_files", "web_search"],
     ),
+    (PTC, "ptc_prefill_enabled", False),
+    (PTC, "ptc_script_max_bytes", 20_480),
+    (PTC, "ptc_compile_max_attempts", 2),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]

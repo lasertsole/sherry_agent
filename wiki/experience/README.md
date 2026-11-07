@@ -61,6 +61,7 @@ The review runs as a snapshot/judge transaction:
 - **write**: the review creates/patches skills. `set_current_write_origin("background_review")` marks newly created skills as agent-created for the curator.
 - **judge**: `skill_review.judge_skill_update()` asks the auxiliary model for `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified` and `feedback`. A change passes only with `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`, `trigger_quality >= 6`, grounded and reusable; a no-op needs `no_op_justified`.
 - **retry/rollback**: a rejected attempt restores the pre-review snapshot, then retries with the judge feedback (default max 2 attempts). Exhaustion restores again, records `skill_review_failed_hash` + timestamp, and does not advance the success fingerprint; a later turn can retry after `skill_review_failure_cooldown_s`, and a changed plan retries immediately.
+- **optional PTC compile (after a pass)**: when `PTC["ptc_prefill_enabled"]` is on, the same background task compiles one `scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step into the updated skill. Compilation is best-effort and never reruns the judge or rolls back the accepted skill.
 
 Knowledge files (`task-*.json` / `wave-*.json` / `plan-summary.json`) and the FACTS target are no longer written by this path. Existing knowledge files remain on disk but are legacy; the model-facing prompt block and the `knowledge` tool are retired.
 

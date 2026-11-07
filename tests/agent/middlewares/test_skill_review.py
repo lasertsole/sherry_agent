@@ -214,3 +214,35 @@ async def test_a_failure_cooldown_skips_the_judge_loop(loop_env, monkeypatch):
 
     assert loop_env["prompts"] == []
     assert loop_env["restores"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_passing_review_invokes_the_optional_ptc_compiler(loop_env, monkeypatch):
+    seen: list[tuple] = []
+
+    async def _compile(context, before, after, text):
+        seen.append((context, before, after, text))
+
+    monkeypatch.setattr(reviews, "_compile_ptc_scripts", _compile)
+    loop_env["payloads"].append('{"status":"updated","skills":["alpha"],"reason":"ok"}')
+    loop_env["judgements"].append(_pass())
+
+    await reviews._run_skill_review("s-compile")
+
+    assert len(seen) == 1
+    assert seen[0][0]["plan_name"] == "p"
+
+
+@pytest.mark.asyncio
+async def test_a_compile_failure_does_not_fail_the_skill_review(loop_env, monkeypatch):
+    async def _compile(*_args, **_kwargs):
+        raise RuntimeError("compiler exploded")
+
+    monkeypatch.setattr(reviews, "_compile_ptc_scripts", _compile)
+    loop_env["payloads"].append('{"status":"updated","skills":["alpha"],"reason":"ok"}')
+    loop_env["judgements"].append(_pass())
+
+    await reviews._run_skill_review("s-compile-fail")
+
+    assert loop_env["restores"] == []
+    assert loop_env["db"].get_state("s-compile-fail", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY)

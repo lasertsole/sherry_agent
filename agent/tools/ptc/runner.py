@@ -221,6 +221,7 @@ def _result(
     error: str,
     exit_code: int,
     tool_calls: int,
+    calls_log: list[dict[str, Any]] | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -229,6 +230,7 @@ def _result(
             "error": error,
             "exit_code": exit_code,
             "tool_calls_made": tool_calls,
+            "calls_log": calls_log or [],
         },
         ensure_ascii=False,
     )
@@ -292,7 +294,7 @@ async def run_ptc(
                 allow_network=True,
             )
         except PtcSandboxUnavailableError as exc:
-            return _result("sandbox_unavailable", "", str(exc), -1, 0)
+            return _result("sandbox_unavailable", "", str(exc), -1, 0, server.calls_log)
 
         # fd-direct-write (the terminal tool's contract): the envelope and the
         # stderr fallback go to FILES, never pipes. A pipe must be drained to
@@ -331,6 +333,7 @@ async def run_ptc(
                     ),
                     int(proc.returncode or -1),
                     server.calls_made,
+                    server.calls_log,
                 )
             stdout = stdout_path.read_bytes().decode("utf-8", errors="replace")
             stderr = stderr_path.read_bytes().decode("utf-8", errors="replace")
@@ -352,6 +355,7 @@ async def run_ptc(
             _truncate(error or "", max_stderr),
             exit_code,
             server.calls_made,
+            server.calls_log,
         )
     finally:
         server.stop()

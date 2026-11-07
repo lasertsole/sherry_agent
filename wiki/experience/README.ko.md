@@ -58,6 +58,7 @@
 - **write**: 리뷰가 skill을 생성/수정합니다. `set_current_write_origin("background_review")`로 새 skill이 agent-created로 표시되어 curator 관리 대상이 됩니다.
 - **judge**: `skill_review.judge_skill_update()`가 보조 모델에 `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified`, `feedback`을 요청합니다. `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`, `trigger_quality >= 6`, grounded, reusable이 통과 조건이며 no-op은 `no_op_justified`가 필요합니다.
 - **retry/rollback**: 거부된 시도는 pre-review snapshot으로 복원하고 judge feedback과 함께 재시도합니다(기본 최대 2회). 소진되면 다시 복원하고 `skill_review_failed_hash` + 시각을 기록하며 성공 fingerprint를 진행하지 않습니다. 이후 턴에서 `skill_review_failure_cooldown_s` 후 재시도할 수 있고, plan이 바뀌면 즉시 재시도합니다.
+- **선택적 PTC 컴파일(통과 후)**: `PTC["ptc_prefill_enabled"]`가 켜져 있으면 같은 백그라운드 작업이 성공한 TaskFlow step마다 `scripts/ptc__<plan_key>__<step_id>.py`를 업데이트된 skill에 컴파일합니다. best-effort이며 judge를 다시 실행하지 않고 승인된 skill을 롤백하지 않습니다.
 
 이 경로는 knowledge(`task-*.json` / `wave-*.json` / `plan-summary.json`)도 FACTS도 쓰지 않습니다. 기존 knowledge 파일은 디스크에 남지만 legacy이며, 모델 대상 prompt block과 `knowledge` 도구는 retired입니다.
 
