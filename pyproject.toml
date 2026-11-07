@@ -138,6 +138,7 @@ extend-exclude = [
     "/TODO",             # hand-written plan notes (same rationale as docs)
     "/wiki",             # generated Obsidian code-map vault
     "/graphify-out",     # generated code-graph output
+    "/vendor",           # vendored third-party LDW core
 ]
 
 [tool.ruff.lint]
@@ -189,6 +190,7 @@ exclude = [
     "**/vendored_raganything/**",
     "**/vendored_lightrag/**",
     "**/vendored_kg/**",
+    "/vendor",
 ]
 ignore = [
     # Type-debt registry (Phase 1 rollout): these subtrees predate type checking
@@ -206,6 +208,7 @@ ignore = [
     "channels",
     "runtime",
     "docs",
+    "vendor",
 ]
 [tool.ruff.lint.per-file-ignores]
 # Vendored LightRAG / RAG-Anything code - keep close to upstream, don't chase style

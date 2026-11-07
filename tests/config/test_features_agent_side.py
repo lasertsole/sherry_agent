@@ -51,6 +51,8 @@ from config.features.agent_side import (
     MemoryToolConfig,
     ModelBackendConfig,
     BackgroundReviewConfig,
+    LDW,
+    LdwConfig,
     PTC,
     PtcConfig,
     ReasoningBudgetConfig,
@@ -99,6 +101,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (STEP_JUDGE, StepJudgeConfig),
     (COMPLETION_JUDGE, CompletionJudgeConfig),
     (PTC, PtcConfig),
+    (LDW, LdwConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -287,6 +290,9 @@ SPOT_DEFAULTS = [
     (PTC, "ptc_prefill_enabled", False),
     (PTC, "ptc_script_max_bytes", 20_480),
     (PTC, "ptc_compile_max_attempts", 2),
+    (LDW, "min_replays", 3),
+    (LDW, "script_max_bytes", 65_536),
+    (LDW, "journal_path", "src/data/workflow_runs.db"),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]

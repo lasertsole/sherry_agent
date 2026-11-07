@@ -82,6 +82,7 @@ COLLECT_SUBMODULES = (
     "plugins",
     "pub",
     "runtime",
+    "vendor",
     "server",
     "skills",
     "workspace",
