@@ -13,9 +13,11 @@ from vendor.ldw import (  # noqa: F401  (re-exported public seam)
     InMemoryJournalStore,
     JournalRecord,
     JournalStore,
+    journal_key,
     Roster,
     RosterEntry,
     SqliteWorkflowStore,
+    to_pydantic_model,
     run_workflow,
 )
 
@@ -25,8 +27,10 @@ __all__ = [
     "InMemoryJournalStore",
     "JournalRecord",
     "JournalStore",
+    "journal_key",
     "Roster",
     "RosterEntry",
     "SqliteWorkflowStore",
+    "to_pydantic_model",
     "run_workflow",
 ]

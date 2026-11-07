@@ -219,6 +219,10 @@ ignore = [
 "skills/builtin/**/scripts/*" = ["E402", "S110", "N", "D200", "T20"]
 # Tests do sys.path setup before imports; docstring gate does not apply
 "tests/**" = ["E402", "D100", "D101", "D102", "D103", "D200", "T20"]
+# Vendored LDW entry point installs the deepagents stub BEFORE its package
+# imports (that ordering is the whole point of the file), so the imports after
+# that call are intentional.
+"vendor/ldw/__init__.py" = ["E402"]
 # Vendored FunASR onnxruntime utils (OOXML/feature-array names like pPr, T_lfr are upstream domain terms)
 "models/STT_model/utils/*" = ["E722", "S110", "N", "D200", "T20"]
 

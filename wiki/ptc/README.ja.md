@@ -118,7 +118,7 @@ TaskFlow step spawn
 
 **スクリプトの所有と検索。** コンパイラはソースだけを返し、呼び出し側が静的検証して `skill_manage(action="write_file")` で変更 skill のトップレベル `scripts/` に書きます。検索は `AUTO_SKILLS_DIR/**/scripts/` の正確な basename スキャンで、0 件・複数・パス逸脱・symlink・不正 `step_id`・サイズ超過はすべて React にフォールバックし、推測しません。`compiler.py` が prompt/静的検証、`scripts.py` が検索/読込を担当します。
 
-**既知の制限。** executor 専用で、PTC のロール境界を広げません。MVP は step 再試行をまたぐ journal を持たず、再 spawn で副作用が繰り返される可能性があります。plan/コード変更後にスクリプトが古くなる可能性があり、観測スイッチはそれを先に測るためのものです。PTC はツール呼び出しレベルのプリフィルを担当し、LDW が実装されれば step/subagent レベルの journal リプレイを担当します。
+**既知の制限。** executor 専用で、PTC のロール境界を広げません。MVP は step 再試行をまたぐ journal を持たず、再 spawn で副作用が繰り返される可能性があります。plan/コード変更後にスクリプトが古くなる可能性があり、観測スイッチはそれを先に測るためのものです。PTC はツール呼び出しレベルのプリフィルを担当し、LDW が step レベルの journal リプレイを担当します。
 
 ## 🔒 セキュリティモデル
 

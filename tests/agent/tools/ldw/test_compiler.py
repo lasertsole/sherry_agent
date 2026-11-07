@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
@@ -58,4 +56,43 @@ async def test_orchestrate_passes_variant_and_upstream_results() -> None:
     assert result == {"a": "ok", "b": "ok"}
     assert "variant-x" in prompts[0]
     assert "ok" in prompts[1], "the downstream prompt must carry the predecessor result"
-    assert json.dumps({"a": "ok"}, ensure_ascii=False) in prompts[1]
+    assert "[a]\nok" in prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_schema_call_returns_structured_and_replays() -> None:
+    from langchain.agents.structured_output import ToolStrategy
+
+    from agent.tools.subagent.ldw_shim import to_pydantic_model
+
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    meta = compile_plan_to_workflow(
+        {"plan_key": "k1", "steps": [{"step_id": "a", "task": "do a", "response_schema": schema}]}
+    )
+    model_cls = to_pydantic_model(schema)
+    calls: list[str] = []
+
+    async def _leaf(input, config=None):
+        calls.append(input["messages"][-1].content)
+        return {
+            "messages": [AIMessage(content='{"answer": "ok"}')],
+            "structured_response": model_cls(answer="ok"),
+        }
+
+    def _builder(*, response_format=None):
+        assert isinstance(response_format, ToolStrategy)
+        return RunnableLambda(_leaf)
+
+    roster = Roster().register("general@a", builder=_builder)
+    journal = InMemoryJournalStore()
+    first = await run_workflow(build_orchestrate(meta, "v"), roster=roster, journal=journal)
+    second = await run_workflow(build_orchestrate(meta, "v"), roster=roster, journal=journal)
+
+    assert first["a"].answer == "ok"
+    assert second["a"].answer == "ok"
+    assert len(calls) == 1

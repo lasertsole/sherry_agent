@@ -13,6 +13,8 @@ from agent.tools.todolist.knowledge.identity import resolve_session_plan_identit
 
 from .compiler import compile_plan_to_workflow
 from .replay import plan_knowledge_from_flow, replay_count, replay_plan
+
+from config.features import LDW
 from .scripts import find_ldw_script, write_ldw_script
 
 
@@ -83,12 +85,17 @@ class WorkflowReplayTool(BaseTool):
 
         if action == "status":
             script = find_ldw_script(plan_key)
+            knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
             return json.dumps(
                 {
                     "ok": True,
+                    "enabled": bool(LDW["enabled"]),
                     "plan_key": plan_key,
                     "replay_count": replay_count(plan_key),
+                    "min_replays": int(LDW["min_replays"]),
                     "script": str(script) if script else None,
+                    "has_flow": knowledge is not None,
+                    "flow_id": (knowledge or {}).get("flow_id") or flow_id or None,
                 },
                 ensure_ascii=False,
             )
@@ -116,7 +123,11 @@ class WorkflowReplayTool(BaseTool):
             force=force,
         )
         return json.dumps(
-            {"ok": outcome.get("status") in ("ok", "taskflow"), **outcome}, ensure_ascii=False
+            {
+                "ok": outcome.get("status") in ("ok", "taskflow", "degraded"),
+                **outcome,
+            },
+            ensure_ascii=False,
         )
 
 

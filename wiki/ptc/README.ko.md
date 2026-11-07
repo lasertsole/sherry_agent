@@ -118,7 +118,7 @@ TaskFlow step spawn
 
 **스크립트 소유와 탐색.** 컴파일러는 소스만 반환하고, 호출자가 정적 검증 후 `skill_manage(action="write_file")`로 변경된 skill의 최상위 `scripts/`에 씁니다. 탐색은 `AUTO_SKILLS_DIR/**/scripts/`에서 정확한 basename 스캔이며, 0개·여러 개·경로 이탈·symlink·잘못된 `step_id`·크기 초과는 모두 React로 폴백하고 추측하지 않습니다. `compiler.py`는 prompt/정적 검증, `scripts.py`는 탐색/읽기를 담당합니다.
 
-**알려진 한계.** executor 전용이라 PTC 역할 경계를 넓히지 않습니다. MVP는 step 재시도를 넘는 journal이 없어 재-spawn 시 스크립트 사이드 이펙트가 반복될 수 있습니다. plan/코드 변경 후 스크립트가 낡을 수 있고, 관찰 스위치는 이를 먼저 측정하기 위한 것입니다. PTC는 도구 호출 수준 프리필을 맡고, LDW가 구현되면 step/subagent 수준 journal 리플레이를 맡습니다.
+**알려진 한계.** executor 전용이라 PTC 역할 경계를 넓히지 않습니다. MVP는 step 재시도를 넘는 journal이 없어 재-spawn 시 스크립트 사이드 이펙트가 반복될 수 있습니다. plan/코드 변경 후 스크립트가 낡을 수 있고, 관찰 스위치는 이를 먼저 측정하기 위한 것입니다. PTC는 도구 호출 수준 프리필을 맡고, LDW가 step 수준 journal 리플레이를 맡습니다.
 
 ## 🔒 보안 모델
 

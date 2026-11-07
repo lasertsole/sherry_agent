@@ -16,7 +16,7 @@ from agent.tools.subagent.ldw_shim import InMemoryJournalStore, SqliteWorkflowSt
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.todolist.knowledge.identity import resolve_session_plan_identity
 
-from .compiler import build_orchestrate, compile_plan_to_workflow
+from .compiler import build_orchestrate, compile_plan_to_workflow, render_step_result
 from .leaf import register_roster
 from .scripts import load_ldw_script, write_ldw_script
 
@@ -98,22 +98,40 @@ def plan_knowledge_from_flow(session_id: str, *, flow_id: str = "") -> dict[str,
     if not isinstance(raw_steps, list) or not raw_steps:
         return None
     identity = resolve_session_plan_identity(session_id)
+    contract_keys = (
+        "extra_tools",
+        "response_schema",
+        "step_model",
+        "judge_criteria",
+        "validation_criteria",
+        "step_timeout_seconds",
+        "retry_policy",
+        "skills",
+        "expected_params",
+        "input_bindings",
+        "priority",
+        "file_deps",
+        "aggregate_deps",
+    )
+    steps: list[dict[str, Any]] = []
+    for step in raw_steps:
+        if not isinstance(step, dict):
+            continue
+        item: dict[str, Any] = {
+            "step_id": str(step.get("step_id") or ""),
+            "task": str(step.get("task") or ""),
+            "functional_role": str(step.get("functional_role") or "general"),
+            "depends_on": [str(dep) for dep in (step.get("depends_on") or [])],
+        }
+        for key in contract_keys:
+            if step.get(key) is not None:
+                item[key] = step[key]
+        steps.append(item)
     return {
         "plan_key": identity.key if identity else "",
         "plan_name": identity.plan_name if identity else "",
         "flow_id": flow_id,
-        "steps": [
-            {
-                "step_id": str(step.get("step_id") or ""),
-                "task": str(step.get("task") or ""),
-                "functional_role": str(step.get("functional_role") or "general"),
-                "depends_on": [str(dep) for dep in (step.get("depends_on") or [])],
-                "response_schema": step.get("response_schema"),
-                "step_model": step.get("step_model"),
-            }
-            for step in raw_steps
-            if isinstance(step, dict)
-        ],
+        "steps": steps,
     }
 
 
@@ -124,7 +142,14 @@ async def _run_ldw(
     variant_input: str,
 ) -> dict[str, Any]:
     orchestrate = build_orchestrate(meta, variant_input)
-    roster = register_roster(meta, session_id)
+    leaf_calls: list[str] = []
+    roster = register_roster(meta, session_id, on_leaf_call=leaf_calls.append)
+    step_ids = [str(step.get("step_id")) for step in (meta.get("steps") or [])]
+    structured_ids = {
+        str(step.get("step_id"))
+        for step in (meta.get("steps") or [])
+        if isinstance(step.get("response_schema"), dict)
+    }
     store = None
     try:
         if LDW["journal_path"] and SqliteWorkflowStore is not None:
@@ -141,20 +166,83 @@ async def _run_ldw(
                 journal = InMemoryJournalStore()
         else:
             journal = InMemoryJournalStore()
-        results = await run_workflow(orchestrate, roster=roster, journal=journal)
+
+        run_error = ""
+        try:
+            raw_results = await asyncio.wait_for(
+                run_workflow(orchestrate, roster=roster, journal=journal),
+                timeout=float(LDW["real_replay_timeout_s"]),
+            )
+        except TimeoutError:
+            raw_results = {}
+            run_error = f"LDW replay timed out after {LDW['real_replay_timeout_s']}s"
+            logger.warning("LDW replay: {} ({})", run_error, plan_key)
+        except Exception as exc:  # noqa: BLE001 - a failed workflow degrades, it does not abort
+            raw_results = {}
+            run_error = f"{type(exc).__name__}: {exc}"
+            logger.exception("LDW replay: workflow failed for {}", plan_key)
+
+        results = {
+            step_id: (
+                None
+                if value is None
+                else render_step_result(value, structured=step_id in structured_ids)
+            )
+            for step_id, value in (raw_results or {}).items()
+        }
+        # A failed/timed-out workflow may return no entries at all: every step
+        # that produced no result is a failure candidate for the fallback.
+        failed = [step_id for step_id in step_ids if results.get(step_id) is None]
+        outcome: dict[str, Any] = {
+            "plan_key": plan_key,
+            "status": "partial" if failed else "ok",
+            "results": results,
+            "failed_steps": failed,
+            "journal_hits": max(0, len(step_ids) - len(leaf_calls)),
+            "leaf_calls": len(leaf_calls),
+        }
+        if run_error:
+            outcome["error"] = run_error
+        if failed and LDW["auto_degrade_enabled"]:
+            if len(failed) > int(LDW["max_failed_steps"]):
+                outcome["degrade_skipped"] = (
+                    f"{len(failed)} failed steps exceeds max_failed_steps={LDW['max_failed_steps']}"
+                )
+            else:
+                from .taskflow_adapter import run_taskflow_fallback
+
+                succeeded = {
+                    str(step_id): result
+                    for step_id, result in results.items()
+                    if result is not None
+                }
+                try:
+                    degraded = await run_taskflow_fallback(
+                        session_id,
+                        plan_key,
+                        meta,
+                        succeeded,
+                        variant_input,
+                        journal=journal,
+                        repair=bool(LDW["repair_enabled"]),
+                    )
+                    outcome["degraded"] = degraded
+                    if degraded.get("status") == "ok":
+                        outcome["status"] = "degraded"
+                    else:
+                        outcome["status"] = "partial"
+                        if degraded.get("error"):
+                            outcome["degrade_error"] = str(degraded["error"])
+                except Exception as exc:  # noqa: BLE001 - degrade is fail-open
+                    logger.exception("LDW replay: TaskFlow degradation failed for {}", plan_key)
+                    outcome["degrade_error"] = str(exc)
+        return outcome
     finally:
         if store is not None:
             try:
                 await store.aclose()
             except Exception:
                 logger.debug("LDW replay: sqlite store close failed", exc_info=True)
-    failed = [str(step_id) for step_id, result in results.items() if result is None]
-    return {
-        "plan_key": plan_key,
-        "status": "partial" if failed else "ok",
-        "results": results,
-        "failed_steps": failed,
-    }
 
 
 async def replay_plan(
@@ -172,6 +260,8 @@ async def replay_plan(
     the normal TaskFlow path. A missing script is compiled from the current
     TaskFlow DAG when possible, then retried once.
     """
+    if not LDW["enabled"]:
+        return {"status": "disabled", "plan_key": plan_key}
     sid = normalize_session_key(session_id)
     identity = resolve_session_plan_identity(sid)
     if not plan_key:
@@ -206,7 +296,7 @@ async def replay_plan(
             logger.exception("LDW replay failed for {}", plan_key)
             return {"status": "error", "plan_key": plan_key, "error": str(exc)}
         outcome["replay_count"] = count
-        if outcome.get("status") == "partial" and degrade is not None:
+        if outcome.get("status") == "partial" and "degraded" not in outcome and degrade is not None:
             try:
                 outcome["degraded"] = await degrade(plan_key, outcome)
             except Exception as exc:  # noqa: BLE001

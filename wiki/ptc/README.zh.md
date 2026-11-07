@@ -118,7 +118,7 @@ TaskFlow step spawn
 
 **脚本归属与查找。** 编译器只返回源码；调用方静态校验后通过 `skill_manage(action="write_file")` 写入变更 skill 的顶层 `scripts/`。查找是 `AUTO_SKILLS_DIR/**/scripts/` 下精确 basename 的文件扫描：0 个、多个、路径越界、symlink、非法 `step_id`、超大文件全部回退 React，绝不猜。`compiler.py` 负责 prompt/静态校验，`scripts.py` 负责查找/读取。
 
-**已知限制。** 仅 executor，保持 PTC 角色边界。MVP 不做跨 step 重试的 journal：重新 spawn 可能重复脚本副作用。plan/代码变化后脚本可能过期；观察开关就是为了先量化这一点。PTC 处理工具调用级预跑；LDW 若落地，负责 step/subagent 级 journal 重放。
+**已知限制。** 仅 executor，保持 PTC 角色边界。MVP 不做跨 step 重试的 journal：重新 spawn 可能重复脚本副作用。plan/代码变化后脚本可能过期；观察开关就是为了先量化这一点。PTC 处理工具调用级预跑；LDW 负责 step 级 journal 重放。
 
 ## 🔒 安全模型
 

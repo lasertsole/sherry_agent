@@ -118,7 +118,7 @@ TaskFlow step spawn
 
 **Script ownership and lookup.** The compiler returns source only; the caller validates it statically and writes it through `skill_manage(action="write_file")` into the changed skill's top-level `scripts/`. Lookup is a filesystem scan under `AUTO_SKILLS_DIR/**/scripts/` for the exact basename: zero hits, multiple hits, path escape, a symlink, an unsafe `step_id`, or an oversized file all mean React, never a guess. `compiler.py` owns the prompt/static validation; `scripts.py` owns lookup/read.
 
-**Known limits.** Replay is executor-only, so PTC's role boundary is not widened. The MVP does not journal across a step retry: a re-spawned step may repeat script side effects. A script can be stale after the plan or code changes; the observation switch exists to measure that before enabling the path. PTC handles tool-call-level prefill; LDW, if it lands, owns step/subagent-level journal replay.
+**Known limits.** Replay is executor-only, so PTC's role boundary is not widened. The MVP does not journal across a step retry: a re-spawned step may repeat script side effects. A script can be stale after the plan or code changes; the observation switch exists to measure that before enabling the path. PTC handles tool-call-level prefill; LDW owns step-level journal replay.
 
 ## 🔒 Security Model
 

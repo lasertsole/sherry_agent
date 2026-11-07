@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +65,7 @@ def write_ldw_script(
     *,
     root: Path | None = None,
 ) -> Path | None:
-    """Write JSON metadata as module constants into an owning/auto skill."""
+    """Write the workflow metadata as Python module constants into an owning/auto skill."""
     filename = ldw_filename(plan_key)
     if filename is None:
         return None
@@ -84,10 +83,15 @@ def write_ldw_script(
     scripts = skill_dir / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
     target = scripts / filename
+    # The script is Python, not JSON: ``json.dumps`` emits lowercase
+    # true/false/null, which raises NameError at import (a schema containing
+    # ``additionalProperties: false`` was enough to make every compiled script
+    # unloadable). ``repr`` renders valid Python literals and a file that
+    # ``exec_module`` can actually read back.
     payload = (
         f"PLAN_KEY = {plan_key!r}\n"
-        f"REQUIRED_AGENT_TYPES = {json.dumps(sorted({s['agent_type'] for s in workflow_meta.get('steps', [])}))}\n"
-        f"WORKFLOW_META = {json.dumps(workflow_meta, ensure_ascii=False, indent=2)}\n"
+        f"REQUIRED_AGENT_TYPES = {sorted({s['agent_type'] for s in workflow_meta.get('steps', [])})!r}\n"
+        f"WORKFLOW_META = {workflow_meta!r}\n"
     )
     if len(payload.encode("utf-8")) > int(LDW["script_max_bytes"]):
         logger.warning("LDW replay: workflow script exceeds size cap for {}", plan_key)
