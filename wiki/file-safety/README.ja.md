@@ -35,7 +35,7 @@
 4. `write_file` の読み取り先行ライセンス——既存ファイルを上書きできるのは、それを読んだセッションだけ（後述の専用節）。
 5. `sweep_stale_temp_files`——`kill -9` の置き土産は、そのディレクトリへの次の書き込みが掃除する。
 6. 隔離サブエージェントワークスペース——任意参加の git worktree。変更はロックの下でマージされ、衝突は報告される。
-7. Shadow git チェックポイント——各ターンの最初の書き込みでプロジェクトを `.sherry/shadow-git` にスナップショットし、ユーザーの `.git` には触れません。
+7. Shadow git チェックポイント——各ターンの最初の書き込みでプロジェクトをグローバルな `APP_HOME/checkpoints/store` にスナップショットし、ユーザーの `.git` には触れません。
 
 ## 🧱 各レイヤー
 
@@ -68,11 +68,11 @@
 
 ## 🔒 Shadow git チェックポイント（旧 git 準備ゲートは廃止）
 
-バインドされたプロジェクトは**もう**リポジトリに初期化されません。sherry はユーザーの `.git` で `git init` / `add` / `commit` / `reset` / `checkout` / worktree を実行しません。各ターンの最初の書き込みで `shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）が `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` を分離し、`.sherry/shadow-git/` にスナップショットします。失敗しても書き込みは続行します（fail-open）。
+バインドされたプロジェクトは**もう**リポジトリに初期化されません。sherry はユーザーの `.git` で `git init` / `add` / `commit` / `reset` / `checkout` / worktree を実行しません。各ターンの最初の書き込みで `shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）が `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` を分離し、共有 bare store `APP_HOME/checkpoints/store`（プロジェクトごとに `refs/sherry/<hash>` ブランチ）にスナップショットします。失敗しても書き込みは続行します（fail-open）。
 
-store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、**最新**の `SHADOW_GIT["max_snapshots"]`（100）個だけ保持します——store はプロジェクトルート単位で全セッション（サブエージェント含む）が共有するため、枠が小さいと並行ファンアウトで直近 1〜2 ステップまで縮みました。100 は履歴部分のソフト上限です。各ターンの最初のスナップショットがそのターンの floor（置き換えたチェーンの先端）を記録し、剪枝は有効な floor を決して越えません（1 回のファンアウトや編集メッセージの巻き戻しが 1 ターンで 100 コミットを超えることがあります）。ターンが終わると超過分は解放されます。古い端は `git replace --graft` で切り落とすため、残るコミット（先端を含む）のハッシュは変わりません。メッセージ編集はワークスペースを編集したターンの floor まで巻き戻し、そのターンが作ったファイルを削除します。スナップショットのないターンには floor がなく、ファイルを触らずに編集だけが進みます。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。復元は内部専用です——エージェント向け `checkpoint` ツールとパネルのリセットルートは削除されました。git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
+共有 store はプロジェクトごとに `refs/sherry/<hash>` の `commit-tree` チェーンを持ちます。store の `info/exclude` に秘密情報・大きなディレクトリの除外を `git add -A` の前に書き、各チェーンは**最新**の `SHADOW_GIT["max_snapshots"]`（100）個だけ保持します——チェーンはプロジェクトルート単位で全セッション（サブエージェント含む）が共有するため、枠が小さいと並行ファンアウトで直近 1〜2 ステップまで縮みました。100 は履歴部分のソフト上限です。各ターンの最初のスナップショットがそのターンの floor（置き換えたチェーンの先端）を記録し、剪枝は有効な floor を決して越えません（1 回のファンアウトや編集メッセージの巻き戻しが 1 ターンで 100 コミットを超えることがあります）。ターンが終わると超過分は解放されます。古い端は `git replace --graft` で切り落とすため、残るコミット（先端を含む）のハッシュは変わりません。メッセージ編集はワークスペースを編集したターンの floor まで巻き戻し、そのターンが作ったファイルを削除します。スナップショットのないターンには floor がなく、ファイルを触らずに編集だけが進みます。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。復元は内部専用です——エージェント向け `checkpoint` ツールとパネルのリセットルートは削除されました。git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
 
-読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。 `SHADOW_GIT["store_dir"]`（または `SHERRY_SHADOW_GIT_DIR`）で store をプロジェクト外へ移せます。eval harness は run 単位のディレクトリを使うため、インスタンスの checkout に `.sherry` は現れません。`wait_for_idle()` と `freeze()` が teardown のバリアで、進行中のスナップショットを待ち、遅れて来る書き込みを止めてから revert します。
+読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はグローバルで（プロジェクト内にないため clone にも付いてきません）、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。 `SHADOW_GIT["store_dir"]`（または `SHERRY_SHADOW_GIT_DIR`）で共有 store を別の場所へ向けられます。eval harness は run 単位のディレクトリを使うため、インスタンス同士でスナップショットを共有しません。`wait_for_idle()` と `freeze()` が teardown のバリアで、進行中のスナップショットを待ち、遅れて来る書き込みを止めてから revert します。
 
 ## 📖 読み取り先行ライセンス
 
@@ -105,7 +105,7 @@ store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude
 - **未追跡ファイル**は個別にコピーされます：`git stash create` は決してそれらを運ばないため、この段がなければ子はユーザーが今作ったファイルを見られません；
 - 物化されるのは git が実際に無視しているパスだけであり、キャッシュ（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` など）はコピーもマージもされません。
 
-ベースラインはユーザーリポジトリのコミットではなく、プロジェクトの **shadow チェックポイント** です。拒否パターンは `.sherry/shadow-git/info/exclude` にあり、worktree は shadow store に登録され、`.git` や `.sherry-isolation-repo` マーカーは作りません。sherry は決して push せず、リモートを追加せず、ユーザーの履歴を書き換えません。
+ベースラインはユーザーリポジトリのコミットではなく、プロジェクトの **shadow チェックポイント** です。拒否パターンは共有 store の `info/exclude` にあり、worktree は shadow store に登録され、`.git` や `.sherry-isolation-repo` マーカーは作りません。sherry は決して push せず、リモートを追加せず、ユーザーの履歴を書き換えません。
 
 物化リンクを経由する読み取りは隔離の内側のままです：`resolve_external_path` はその実行のマニフェストが記録したパスだけを免除するので、ツリー内の `src/…` は HITL の「外部ファイル」承認を起こさず、ツリー外への任意のシンボリックリンクは依然として確認を求めます。
 
@@ -215,7 +215,7 @@ store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude
 | `agent/tools/pub_base/path_lock.py` | プロセス内パス単位ロックのレジストリ |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 読み取り先行ライセンスのレジストリ |
-| `agent/tools/pub_base/shadow_git.py` | プロジェクト別 shadow store、自動スナップショット、復元、履歴読み取り |
+| `agent/tools/pub_base/shadow_git.py` | 共有 shadow store + プロジェクト別 ref、自動スナップショット、復元、履歴読み取り |
 | `agent/tools/subagent/isolation/worktree.py` | ダーティなベースライン、auto-init と拒否リスト、worktree ライフサイクル |
 | `agent/tools/subagent/isolation/materialize.py` | 無視・未追跡パスの物化 |
 | `agent/tools/subagent/isolation/tree.py` | ワークスペースの worktree、マニフェスト、破棄 |

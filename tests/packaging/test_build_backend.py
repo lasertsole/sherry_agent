@@ -72,6 +72,14 @@ def test_the_marker_defaults_to_the_installer_version(tmp_path: Path):
     assert marker.read_text(encoding="utf-8") == f"{module.installer_version()}\n"
 
 
+def test_the_qq_sdk_is_bundled_for_frozen_channels():
+    # A frozen backend cannot pip-install at runtime; the QQ plugin must find
+    # botpy already present in the collected tree.
+    module = _load_build_backend()
+
+    assert "botpy" in module.COLLECT_ALL
+
+
 def test_a_missing_version_falls_back_to_a_placeholder(tmp_path: Path, monkeypatch):
     # A malformed config must not crash the build; the shell then treats the
     # tree as stale and refuses to start it, which is the safe direction.

@@ -72,7 +72,7 @@ channels/
 
 - `discover_channel_names() -> list[str]`: `plugins/channels/` のチャネル**ディレクトリ**（サブディレクトリ、単一ファイルではない）のうち `core.py` を含むフォルダをスキャンし、ソートされた名前を返す
 - `load_channel_class(module_name, strict_deps=True) -> type[BaseChannel]`: `plugins/channels/<module_name>/core.py` を動的にインポートし、最初に見つかった `BaseChannel` サブクラスを返す。`strict_deps=False` の場合、依存関係のインストール失敗でも読み込みは中断されず、チャネルは登録されたまま `start()` がインストールをリトライ
-- `_ensure_deps(plugin_dir, plugin_name) -> bool`: 存在する場合はプラグインの `requirements.txt` をインストール（`uv pip install` を優先、`python -m pip` にフォールバック、120 秒タイムアウト）
+- `_ensure_deps(plugin_dir, plugin_name) -> bool`: 存在する場合はプラグインの `requirements.txt` をインストール（`uv pip install` を優先、`python -m pip` にフォールバック、120 秒タイムアウト）。PyInstaller 凍結プロセスでは短絡します：インタープリタはパッケージをインストールできないため、チャネル SDK はビルド時に同梱する必要があります。
 - `discover_plugins() -> dict[str, type[BaseChannel]]`: `entry_points(group="channels")` で登録された外部プラグインをロード
 - `discover_all() -> dict[str, type[BaseChannel]]`: 組み込み（ディレクトリスキャン、`strict_deps=False` でロード）と外部チャネルをマージ — 組み込みが優先され、外部プラグインは組み込み名を上書きできません
 

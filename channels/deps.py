@@ -28,11 +28,19 @@ def install_requirements(
 
     Already-satisfied packages are skipped by pip/uv.
 
+    A frozen PyInstaller process has no virtual environment and no installable
+    interpreter: the third-party SDKs must be bundled at build time. Treat the
+    requirements as satisfied so channel discovery never launches a doomed
+    ``uv pip install``; the channel's own import guard reports a genuinely
+    missing SDK.
+
     Returns:
         ``(ok, timed_out, stderr_summary)`` — ``stderr_summary`` is the
         stripped combined stderr/stdout of a failed run (empty otherwise).
         On success the import-system caches are invalidated.
     """
+    if getattr(sys, "frozen", False):
+        return True, False, ""
     if shutil.which("uv"):
         cmd = ["uv", "pip", "install", "-q", "-r", str(req_file)]
     else:

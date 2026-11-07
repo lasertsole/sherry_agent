@@ -161,14 +161,19 @@ class StateKey(StrEnum):
     SUMMARIZATION_FORCE_RECOVERY = "summarization_force_recovery"
     SUMMARIZATION_COMPACT_REQUESTED = "summarization_compact_requested"
 
-    NUDGE_PLAN_EXTRACTION_LOCK = "nudge_plan_extraction_lock"
-    NUDGE_PLAN_EXTRACTION_FIRED = "nudge_plan_extraction_fired"
+    SKILL_REVIEW_LOCK = "skill_review_lock"
+    SKILL_REVIEW_FIRED = "skill_review_fired"
     # The todo-snapshot fingerprint (id + content + status + plan_ref, hashed) at
-    # the last SUCCESSFUL plan extraction. Plan completion alone cannot dedupe:
+    # the last SUCCESSFUL skill review. Plan completion alone cannot dedupe:
     # the once-per-cycle fired flag misses a plan whose completed todos were
     # edited in place, so a changed fingerprint triggers the re-extraction.
-    NUDGE_PLAN_SNAPSHOT_HASH = "nudge_plan_snapshot_hash"
-    NUDGE_REVIEW_MEMORY_LOCK = "nudge_review_memory_lock"
+    SKILL_REVIEW_SNAPSHOT_HASH = "skill_review_snapshot_hash"
+    #: The plan-completion skill-review pass exhausted its judge/retry budget
+    #: for this snapshot. Kept separately from the success hash so a later turn
+    #: can retry after the cooldown without pretending the plan was extracted.
+    SKILL_REVIEW_FAILED_HASH = "skill_review_failed_hash"
+    SKILL_REVIEW_FAILED_AT = "skill_review_failed_at"
+    BACKGROUND_REVIEW_MEMORY_LOCK = "background_review_memory_lock"
     COMPRESSION_TODO_UPDATE_LOCK = "compression_todo_update_lock"
     PLAN_REF = "plan_ref"
     #: Plan-Then-Execute plan mode: needs_planning / planning / ready /

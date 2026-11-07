@@ -56,7 +56,7 @@ class EnterPlanModeTool(BaseTool):
     # idempotent: entering the mode has no side effects beyond a status write.
     metadata: dict = {
         "idempotent": True,
-        "nudge": True,
+        "background_review": True,
         "side_effect_scope": "session",
     }
 

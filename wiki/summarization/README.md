@@ -205,7 +205,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
 | `tests/agent/middlewares/message_persistence/` | 31 | Per-boundary flush (+ tool return): each message exactly once, no duplicate across boundaries, restart replay via the persistent watermark, sync + async hooks, missing-session_id skip, HITL denial re-pairing, filter semantics; plus T1/T2/T3 compactions proving zero store writes and the summary pair (both halves) proving zero writes |
-| `tests/agent/middlewares/test_compression_nudges.py` | 2 | Compression-time nudge dispatch: memory review + plan extraction fire from the compact path; no-cut compactions dispatch nothing |
+| `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | Compression-time background-review dispatch: memory review + skill review fire from the compact path; no-cut compactions dispatch nothing |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | Persistent watermark store: idempotent marking, session scoping, cleanup on session deletion, empty-input no-ops |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
@@ -214,7 +214,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 ## ⚠️ Honesty & Limitations
 
 - **ModelDownshift runs at the next pre-request check, not as a switch-time hook.** The model override (with its context window) lands at the turn boundary; the following T1/T2 sees the smaller window and compacts if needed.
-- **Microcompact can preempt the LLM summary.** When clearing old tool results alone brings the history under the preserve budget, the compact route is skipped; the memory-review nudge then does not fire (no messages were discarded).
+- **Microcompact can preempt the LLM summary.** When clearing old tool results alone brings the history under the preserve budget, the compact route is skipped; the memory-review pass then does not fire (no messages were discarded).
 - **`compact_now` is a tool, not a client command.** The model calls it when the user asks; there is no `/compact` composer command.
 - **Tail retention is budget-based, not a message count.** The preserve budget is `PRESERVE_RATIO` × window clamped to [2 000, 15 000], plus the router's `TRUNCATABLE_RECENT_SKIP` margin; the constructor takes no `keep` argument.
 - **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.

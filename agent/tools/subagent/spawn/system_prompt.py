@@ -110,14 +110,20 @@ def build_subagent_system_prompt(
         '  "discovered_hard_constraints": ["<hard constraint YOU found>"],\n'
         '  "locked_decisions": [{"decision": "<what you locked in>", '
         '"reason": "<why>"}],\n'
-        '  "failed_paths": [{"path": "<what you tried>", '
-        '"failure_reason": "<why it failed>"}]\n'
+        '  "failed_branches": [{"branch": "<what you tried>", '
+        '"failure_reason": "<why it failed>"}],\n'
+        '  "success_steps": [{"step": "<a DIRECT step to completion>", '
+        '"tool": "<tool used, if any>", "params": "<key parameters>", '
+        '"outcome": "<what it produced>"}]\n'
         "}\n"
         "```\n"
         "Rules for the handoff: fill only what YOU encountered in THIS layer — "
         "do NOT include child subagents' data. Empty lists stay empty "
-        '(``[]``). Do NOT add depth/agent_label/children/outcome: the system '
-        "injects those.\n\n"
+        "(``[]``). `failed_branches` lists abandoned approaches/directions; "
+        "`success_steps` lists ONLY the minimal ordered steps that led straight "
+        "to completion (exclude exploration, debugging and abandoned branches; "
+        "empty when the task failed). Do NOT add depth/agent_label/children/"
+        "outcome: the system injects those.\n\n"
         "Then provide the summary:\n"
         "```\n"
         "## Task Result\n"

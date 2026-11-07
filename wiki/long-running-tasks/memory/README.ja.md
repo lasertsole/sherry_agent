@@ -23,6 +23,12 @@
 
 **グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です：`built_agent()` の呼び出しごとにスレッドごとの最新チェックポイントへ剪定され（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`、`agent/core.py:227`）、`auto_vacuum=0` では DELETE はページを解放するだけでファイルを縮めないため、同じ呼び出しが剪定直後に `PRAGMA freelist_count × page_size` を読み、解放された領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超える場合にのみ `VACUUM` を実行します——フェイルオープン：VACUUM のエラーはログに記録されるだけで、剪定結果はそのまま有効です。
 
+## 🔎 意味検索と整理
+
+どちらもオプトインで、すべて fail-open です。`semantic_recall_enabled`（記憶設定の「意味検索」）を有効にすると、システムプロンプトにはコンパクトな索引（`MemoryStore.format_index_for_system_prompt`）だけが入り、毎ターン `memory_recall` リマインダー（priority 88、cooldown 3）が現在のリクエストに関連するエントリを注入します。`context_engine/store/memory_recall.py` は bge-m3 で `memory_entries.embedding` 索引を自己修復し、bge-reranker で cosine 候補を再ランクし、`semantic_recall_char_budget` で切り詰め、現在の `context_epoch` ベースラインより古いエントリを除外し、`usage_count` を加算します。`memory(action="recall")` と `POST /memory/search` は同じ経路を使い、スイッチがオフの検索は部分文字列にフォールバックします。
+
+`POST /memory/consolidate` は非同期タスクを開始します（`GET /memory/consolidate/:task_id` で照会）。まず決定的な `prune_unused` 老化を実行し、アクティブエントリが `consolidation_min_entries`（10）以上ある場合だけ、メインモデルが memory ツール経由で重複統合・矛盾解消・誤った target の修正・簡潔化を行います。圧縮はメモリレビューの後に同じパスを実行し（15 turns）、セッション削除は 2 回の salvage の後に実行します（5 turns）。失敗はログのみで、圧縮や削除をブロックしません。
+
 ## 🔗 要約 ↔ TaskFlow 連携
 
 圧縮が LLM プロンプトを組み立てるとき、`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:122`）がこのセッションのアクティブな flow を描画し、要約プロンプトの**最後**の部分として追記します（`_build_summary_prompt`、`summarization/summary_generation.py:554`）：
@@ -95,7 +101,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## 🧹 セッション削除時のメモリサルベージ
 
-メインセッションを破棄する前に、`purge_session` は独立した memory review（`nudges.salvage_session_memory`）もスケジュールする。圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、スケジュール後すぐに戻る——削除はモデルを待たない。第 1 波は圧縮が破棄したはずのプレフィックスを、キャプチャした（cache-warm の）モデル/プロンプト/ツール面で review する。メモリエントリ（由来は派生 wave キーではなく削除対象セッションの id）を書いた後、第 2 波は memory を再読み込みし、システムプロンプトを非永続的に再構築して、`memory` のみのツール面で保持尾部を review する。両波は NUDGE レーン、派生セッションキー（`<id>::session-end-salvage:1|2`）、checkpointer なしで走る。`nudge_memory` metadata ゲートが削除後の `knowledge`/plan ツールを拒否する。すべての失敗は fail-open で、プロセス終了は未完了の波を放棄しうる。サイドチャット/サブエージェントの子は対象外。上の continuity は次の会話のために最後の AI 返信を保存し、このサルベージは永続 memory 行を書く。
+メインセッションを破棄する前に、`purge_session` は独立した memory review（`background_reviews.salvage_session_memory`）もスケジュールする。圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、スケジュール後すぐに戻る——削除はモデルを待たない。第 1 波は圧縮が破棄したはずのプレフィックスを、キャプチャした（cache-warm の）モデル/プロンプト/ツール面で review する。メモリエントリ（由来は派生 wave キーではなく削除対象セッションの id）を書いた後、第 2 波は memory を再読み込みし、システムプロンプトを非永続的に再構築して、`memory` のみのツール面で保持尾部を review する。両波は BACKGROUND_REVIEW レーン、派生セッションキー（`<id>::session-end-salvage:1|2`）、checkpointer なしで走る。`background_review_memory` metadata ゲートが削除後の `knowledge`/plan ツールを拒否する。すべての失敗は fail-open で、プロセス終了は未完了の波を放棄しうる。サイドチャット/サブエージェントの子は対象外。上の continuity は次の会話のために最後の AI 返信を保存し、このサルベージは永続 memory 行を書く。
 
 ## ♻️ TaskFlow 自動再開
 

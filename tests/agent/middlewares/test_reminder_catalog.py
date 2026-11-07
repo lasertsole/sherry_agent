@@ -182,7 +182,6 @@ class TestRegistration:
             "continuity_context",
             "project_dir_notice",
             "project_instructions",
-            "knowledge_index",
         } <= set(_isolated_catalog["real"])
 
     def test_the_project_instructions_source_is_change_gated(self, _isolated_catalog):
@@ -196,12 +195,12 @@ class TestRegistration:
         )
         assert source.channel is ReminderChannel.CURRENT_TURN
 
-    def test_only_project_instructions_is_transient(self, _isolated_catalog):
+    def test_transient_sources_are_project_instructions_and_current_time(self, _isolated_catalog):
         transient = {
             source_id for source_id, source in _isolated_catalog["real"].items() if source.transient
         }
 
-        assert transient == {"project_instructions"}
+        assert transient == {"project_instructions", "current_time"}
 
     def test_transient_source_ids_reads_the_live_registry(self, _isolated_catalog):
         from agent.middlewares.reminder_catalog.core import transient_source_ids
@@ -498,6 +497,6 @@ class TestMiddleware:
         def _boom(*_args, **_kwargs):
             raise RuntimeError("registry exploded")
 
-        monkeypatch.setattr(dynamic_mod, "resolve_injections", _boom)
+        monkeypatch.setattr(dynamic_mod, "aresolve_injections", _boom)
 
         assert await mw.abefore_model(self._state(HumanMessage(content="hi"))) is None

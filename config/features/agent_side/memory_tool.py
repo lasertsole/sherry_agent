@@ -5,9 +5,10 @@ Char caps for the three memory stores the ``memory`` tool owns: ``memory``
 CROSS-PROJECT pitfalls and conventions). Char counts — not tokens — because
 char counts are model-independent.
 
-Also holds the aging window and the (Phase-5) semantic-recall switch. The three
-char caps plus ``max_unused_days`` are UI-editable; the memory panel writes its
-overrides to the memory database and these values remain the defaults.
+Also holds the aging window, the semantic-recall switch and the consolidation
+cost gate. The three char caps, ``max_unused_days`` and the semantic settings are
+UI-editable; the memory panel writes its overrides to the memory database and
+these values remain the defaults.
 """
 
 from typing import TypedDict
@@ -21,11 +22,13 @@ class MemoryToolConfig(TypedDict):
     facts_char_limit: int
     #: Idle days before an entry becomes eligible for usage-based pruning.
     max_unused_days: int
-    #: Phase-5 semantic recall (declared here; the recall path itself is not
-    #: implemented in this phase, so the switches stay off).
+    #: Semantic recall: embedding + reranker retrieval of relevant entries.
     semantic_recall_enabled: bool
     semantic_recall_top_k: int
     semantic_recall_char_budget: int
+    #: Minimum active entries before the LLM consolidation pass runs; below it
+    #: only the free usage-based aging pass runs.
+    consolidation_min_entries: int
 
 
 MEMORY_TOOL: MemoryToolConfig = {
@@ -36,4 +39,5 @@ MEMORY_TOOL: MemoryToolConfig = {
     "semantic_recall_enabled": False,
     "semantic_recall_top_k": 5,
     "semantic_recall_char_budget": 4_000,
+    "consolidation_min_entries": 10,
 }

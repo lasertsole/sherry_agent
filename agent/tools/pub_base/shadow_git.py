@@ -1,14 +1,16 @@
-"""Per-project shadow git snapshots.
+"""Shadow git snapshots in one global bare store, one chain per project.
 
-Every sherry write takes a snapshot in ``<project>/.sherry/shadow-git`` using
-``GIT_DIR``/``GIT_WORK_TREE``/``GIT_INDEX_FILE`` isolation. The user's ``.git``
-is never initialized, staged, committed, reset, checked out or used for a
-worktree. Snapshots are fail-open: a broken shadow store never blocks a write.
+Every sherry write takes a snapshot through ``GIT_DIR``/``GIT_WORK_TREE``/
+``GIT_INDEX_FILE`` isolation. The store is ``APP_HOME/checkpoints/store`` (or
+the ``store_dir``/``SHERRY_SHADOW_GIT_DIR`` override); each project owns
+``refs/sherry/<hash>``, ``indexes/<hash>`` and ``projects/<hash>.json``. The
+user's ``.git`` is never initialized, staged, committed, reset, checked out or
+used for a worktree. Snapshots are fail-open: a broken shadow store never blocks
+a write.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -16,6 +18,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any
@@ -23,12 +26,19 @@ from typing import Any
 from loguru import logger
 
 from config.features import SHADOW_GIT, SUBAGENT_ISOLATION
-from pub.git_head import SHADOW_REF, shadow_head
+from pub.git_head import (
+    SHADOW_REF,
+    shadow_hash,
+    shadow_head,
+    shadow_ref,
+    shadow_store_root,
+)
 
 __all__ = [
     "SHADOW_REF",
     "diff_between_commits",
     "diff_between_commits_with_status",
+    "dirty_paths",
     "ensure_checkpoint",
     "floor_for",
     "list_checkpoints",
@@ -40,8 +50,13 @@ __all__ = [
     "restore_to_turn",
     "run_shadow",
     "shadow_env",
+    "shadow_hash",
     "shadow_head",
+    "shadow_index",
+    "shadow_meta",
+    "shadow_ref",
     "shadow_store",
+    "shadow_store_root",
     "take_snapshot",
 ]
 
@@ -71,6 +86,11 @@ _floors_lock = threading.RLock()
 _MAX_RESTORE_DELETIONS = 500
 
 
+#: Serializes the one-time shared-store init / legacy migration. Per-root
+#: writers already serialize snapshots; this guard is for the global directory.
+_store_lock = threading.RLock()
+
+
 #: Per-root writer accounting for the eval teardown: wait_for_idle() must see
 #: every in-flight snapshot/restore, and freeze() must stop late ones.
 _writers_lock = threading.Lock()
@@ -83,18 +103,19 @@ def _root_key(project_root: Path) -> str:
 
 
 def shadow_store(project_root: Path) -> Path:
-    """The shadow-git store for one project.
+    """The GLOBAL shared shadow store (one bare repo for every project)."""
+    del project_root  # kept in the signature for call-site compatibility
+    return shadow_store_root()
 
-    ``SHADOW_GIT["store_dir"]`` (or ``SHERRY_SHADOW_GIT_DIR``) moves the store
-    outside the project — the eval harness uses it so ``git clean`` never sees
-    agent-private state. The default keeps the historical in-project path.
-    """
-    root = project_root.resolve()
-    override = str(SHADOW_GIT.get("store_dir") or os.getenv("SHERRY_SHADOW_GIT_DIR", "")).strip()
-    if override:
-        digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
-        return Path(override).expanduser().resolve() / digest
-    return root / ".sherry" / "shadow-git"
+
+def shadow_index(project_root: Path) -> Path:
+    """This project's private git index inside the shared store."""
+    return shadow_store(project_root) / "indexes" / shadow_hash(project_root)
+
+
+def shadow_meta(project_root: Path) -> Path:
+    """This project's ``projects/<hash>.json`` metadata file."""
+    return shadow_store(project_root) / "projects" / f"{shadow_hash(project_root)}.json"
 
 
 def is_frozen(project_root: Path) -> bool:
@@ -151,26 +172,19 @@ def _writer(project_root: Path) -> Iterator[bool]:
                 _active_writers.pop(key, None)
 
 
-def _ensure_store(project_root: Path) -> Path:
-    store = shadow_store(project_root)
-    if not (store / "HEAD").exists():
-        store.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["git", "init", "--bare", "-q", str(store)],
-            capture_output=True,
-            timeout=15,
-        )
-        subprocess.run(
-            ["git", "--git-dir", str(store), "symbolic-ref", "HEAD", SHADOW_REF],
-            capture_output=True,
-            timeout=10,
-        )
+def _write_exclude(store: Path, *, force: bool = False) -> None:
+    """Write the shared exclude file (force on init; idempotent afterwards)."""
     info = store / "info"
     info.mkdir(parents=True, exist_ok=True)
     exclude = info / "exclude"
+    if not force and exclude.exists():
+        try:
+            if "sherry shadow-git" in exclude.read_text(encoding="utf-8", errors="ignore"):
+                return
+        except OSError:
+            pass
     patterns = [
         ".git/",
-        ".sherry/shadow-git/",
         *SUBAGENT_ISOLATION["deny_patterns"],
     ]
     exclude.write_text(
@@ -179,6 +193,133 @@ def _ensure_store(project_root: Path) -> Path:
         + "\n",
         encoding="utf-8",
     )
+
+
+def _migrate_legacy_store(project_root: Path) -> None:
+    """Import one legacy ``<root>/.sherry/shadow-git`` chain into the shared repo.
+
+    Lazy and fail-open: only called when the project has no
+    ``projects/<hash>.json`` yet. The legacy bare repo is kept as
+    ``.sherry/shadow-git.migrated`` (never deleted). The legacy ``boot`` value is
+    copied verbatim; the next process load discards its floors exactly like any
+    other previous-boot floor set.
+    """
+    if not bool(SHADOW_GIT.get("migrate_legacy", True)):
+        return
+    root = project_root.resolve()
+    meta = shadow_meta(root)
+    if meta.exists():
+        return
+    legacy = root / ".sherry" / "shadow-git"
+    if not (legacy / "HEAD").exists():
+        return
+
+    store = shadow_store(root)
+    ref = shadow_ref(root)
+    try:
+        fetch = subprocess.run(
+            [
+                "git",
+                "--git-dir",
+                str(store),
+                "fetch",
+                "--no-tags",
+                "--force",
+                str(legacy),
+                f"+refs/heads/main:{ref}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SHADOW_GIT["git_timeout_s"],
+        )
+        if fetch.returncode != 0:
+            logger.warning(
+                "shadow git: legacy migration fetch failed for {} (fail-open): {}",
+                root,
+                (fetch.stderr or fetch.stdout or "").strip()[:300],
+            )
+            return
+
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        dates = subprocess.run(
+            ["git", "--git-dir", str(store), "log", "--reverse", "--format=%aI", ref],
+            capture_output=True,
+            text=True,
+            timeout=SHADOW_GIT["git_timeout_s"],
+        )
+        chain_dates = [line.strip() for line in dates.stdout.splitlines() if line.strip()]
+        state: dict[str, Any] = {}
+        try:
+            parsed = json.loads((legacy / "state.json").read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                state = parsed
+        except (OSError, ValueError):
+            pass
+        floors = state.get("floors")
+        payload = {
+            "workdir": str(root),
+            "created_at": chain_dates[0] if chain_dates else now,
+            "last_touch": chain_dates[-1] if chain_dates else now,
+            "boot": str(state.get("boot") or ""),
+            "floors": floors if isinstance(floors, dict) else {},
+        }
+        meta.parent.mkdir(parents=True, exist_ok=True)
+        tmp = meta.with_name(f"{meta.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(meta)
+
+        migrated = legacy.with_name("shadow-git.migrated")
+        if migrated.exists():
+            logger.warning(
+                "shadow git: {} already exists; leaving the legacy store in place",
+                migrated,
+            )
+        else:
+            legacy.rename(migrated)
+        logger.info("shadow git: migrated legacy store for {} -> {}", root, ref)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        logger.warning("shadow git: legacy migration failed for {} (fail-open): {}", root, exc)
+
+
+def _ensure_store(project_root: Path) -> Path:
+    """Initialize the shared bare repo once and migrate this root if needed."""
+    store = shadow_store(project_root)
+    with _store_lock:
+        if not (store / "HEAD").exists():
+            store.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "init", "--bare", "-q", str(store)],
+                capture_output=True,
+                timeout=15,
+            )
+            subprocess.run(
+                ["git", "--git-dir", str(store), "symbolic-ref", "HEAD", "refs/heads/_default"],
+                capture_output=True,
+                timeout=10,
+            )
+            (store / "indexes").mkdir(parents=True, exist_ok=True)
+            (store / "projects").mkdir(parents=True, exist_ok=True)
+            _write_exclude(store, force=True)
+        else:
+            # Worktree operations require HEAD to live under refs/heads; a store
+            # created by an earlier build may still point at refs/sherry/_default.
+            head = subprocess.run(
+                ["git", "--git-dir", str(store), "symbolic-ref", "--quiet", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if head.returncode == 0 and not head.stdout.strip().startswith("refs/heads/"):
+                subprocess.run(
+                    ["git", "--git-dir", str(store), "symbolic-ref", "HEAD", "refs/heads/_default"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            (store / "indexes").mkdir(parents=True, exist_ok=True)
+            (store / "projects").mkdir(parents=True, exist_ok=True)
+            _write_exclude(store)
+        if not shadow_meta(project_root).exists():
+            _migrate_legacy_store(project_root)
     return store
 
 
@@ -188,7 +329,7 @@ def shadow_env(project_root: Path) -> dict[str, str]:
     return {
         "GIT_DIR": str(store),
         "GIT_WORK_TREE": str(root),
-        "GIT_INDEX_FILE": str(store / "index"),
+        "GIT_INDEX_FILE": str(shadow_index(root)),
         "GIT_AUTHOR_NAME": "sherry",
         "GIT_AUTHOR_EMAIL": "sherry@localhost",
         "GIT_COMMITTER_NAME": "sherry",
@@ -216,7 +357,7 @@ def _current_turn(session_id: str) -> int:
 
 
 def _state_path(project_root: Path) -> Path:
-    return shadow_store(project_root) / "state.json"
+    return shadow_meta(project_root)
 
 
 def _load_floors(project_root: Path) -> None:
@@ -249,20 +390,29 @@ def _load_floors(project_root: Path) -> None:
 
 
 def _save_floors(project_root: Path) -> None:
-    """Persist this root's floors atomically; a write failure is fail-open."""
+    """Persist floors + project metadata atomically; fail-open."""
     key = _root_key(project_root)
     with _floors_lock:
         floors = {sid: dict(entry) for (rk, sid), entry in _floors.items() if rk == key}
-    payload = {
-        "boot": _BOOT_ID,
-        "floors": {
-            sid: {"turn": entry.get("turn", -1), "tip": entry.get("tip", "")}
-            for sid, entry in floors.items()
-            if entry.get("tip")
-        },
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    payload: dict[str, Any] = {}
+    path = _state_path(project_root)
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            payload.update(existing)
+    except (OSError, ValueError):
+        pass
+    payload["workdir"] = str(project_root.resolve())
+    payload.setdefault("created_at", now)
+    payload["last_touch"] = now
+    payload["boot"] = _BOOT_ID
+    payload["floors"] = {
+        sid: {"turn": entry.get("turn", -1), "tip": entry.get("tip", "")}
+        for sid, entry in floors.items()
+        if entry.get("tip")
     }
     try:
-        path = _state_path(project_root)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -391,7 +541,8 @@ def _prune_snapshots(project_root: Path) -> None:
     hashes — while ``rev-list``/``log`` stop at it. One tiny commit object per
     prune, no worktree scan.
     """
-    count = run_shadow(project_root, ["rev-list", "--count", SHADOW_REF], timeout=10)
+    ref = shadow_ref(project_root)
+    count = run_shadow(project_root, ["rev-list", "--count", ref], timeout=10)
     try:
         total = int(count.stdout.strip())
     except ValueError:
@@ -401,7 +552,7 @@ def _prune_snapshots(project_root: Path) -> None:
         return
     oldest = run_shadow(
         project_root,
-        ["rev-list", f"--skip={keep - 1}", "-n1", SHADOW_REF],
+        ["rev-list", f"--skip={keep - 1}", "-n1", ref],
         timeout=10,
     )
     boundary = oldest.stdout.strip()
@@ -424,7 +575,7 @@ def _prune_snapshots(project_root: Path) -> None:
 
 
 def _older_of(project_root: Path, *commits: str) -> str:
-    """The commit with the MOST commits after it on ``SHADOW_REF`` (or "")."""
+    """The commit with the MOST commits after it on the project ref (or "")."""
     candidates = [c.strip() for c in commits if c and c.strip()]
     if not candidates:
         return ""
@@ -432,16 +583,17 @@ def _older_of(project_root: Path, *commits: str) -> str:
         # The default boundary comes from rev-list itself: it is on the chain,
         # so no ancestry check / distance measurement is needed.
         return candidates[0]
+    ref = shadow_ref(project_root)
     best = ""
     best_distance = 0
     for candidate in candidates:
         ancestor = run_shadow(
-            project_root, ["merge-base", "--is-ancestor", candidate, SHADOW_REF], timeout=10
+            project_root, ["merge-base", "--is-ancestor", candidate, ref], timeout=10
         )
         if ancestor.returncode != 0:
             continue
         distance = run_shadow(
-            project_root, ["rev-list", "--count", f"{candidate}..{SHADOW_REF}"], timeout=10
+            project_root, ["rev-list", "--count", f"{candidate}..{ref}"], timeout=10
         )
         try:
             behind = int(distance.stdout.strip())
@@ -463,13 +615,15 @@ def take_snapshot(project_root: Path, reason: str, *, session_id: str = "") -> s
 
 def _take_snapshot_locked(root: Path, reason: str, *, session_id: str = "") -> str | None:
     _ensure_store(root)
+    _save_floors(root)
     add = run_shadow(root, ["add", "-A"])
     if add.returncode != 0:
         raise RuntimeError((add.stderr or add.stdout or "git add failed").strip()[:300])
     tree = run_shadow(root, ["write-tree"], timeout=10).stdout.strip()
     if not tree:
         raise RuntimeError("git write-tree returned no tree")
-    parent = run_shadow(root, ["rev-parse", "--verify", SHADOW_REF], timeout=10)
+    ref = shadow_ref(root)
+    parent = run_shadow(root, ["rev-parse", "--verify", ref], timeout=10)
     parent_args = ["-p", parent.stdout.strip()] if parent.returncode == 0 else []
     if parent.returncode == 0:
         # The first snapshot of a turn remembers the tip that preceded it: the
@@ -484,7 +638,7 @@ def _take_snapshot_locked(root: Path, reason: str, *, session_id: str = "") -> s
     sha = commit.stdout.strip()
     if commit.returncode != 0 or not sha:
         raise RuntimeError((commit.stderr or "git commit-tree failed").strip()[:300])
-    update = run_shadow(root, ["update-ref", SHADOW_REF, sha], timeout=10)
+    update = run_shadow(root, ["update-ref", ref, sha], timeout=10)
     if update.returncode != 0:
         raise RuntimeError((update.stderr or "git update-ref failed").strip()[:300])
     _prune_snapshots(root)
@@ -512,7 +666,7 @@ def diff_changed_paths(project_root: Path, *, cap: int = 200) -> list[str]:
     """
     root = project_root.resolve()
     try:
-        result = run_shadow(root, ["diff", "--name-only", SHADOW_REF], timeout=10)
+        result = run_shadow(root, ["diff", "--name-only", shadow_ref(root)], timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("shadow diff failed (fail-open): {}", exc)
         return []
@@ -522,21 +676,55 @@ def diff_changed_paths(project_root: Path, *, cap: int = 200) -> list[str]:
     return paths[:cap]
 
 
+def dirty_paths(project_root: Path, *, cap: int = 200) -> list[str]:
+    """Tracked changes + untracked files relative to the project's snapshot.
+
+    ``git status`` compares against the repo-level HEAD, which is shared (and
+    points at the unborn ``refs/heads/_default``), so it cannot answer this
+    question in the shared store. Comparing the worktree to the project's own
+    ref and adding ``ls-files --others`` is the equivalent, per-project view.
+    Fail-open: a missing ref or git failure yields ``[]``.
+    """
+    root = project_root.resolve()
+    try:
+        changed = run_shadow(root, ["diff", "--name-only", shadow_ref(root)], timeout=10)
+        untracked = run_shadow(root, ["ls-files", "--others", "--exclude-standard"], timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("shadow dirty check failed (fail-open): {}", exc)
+        return []
+    paths: set[str] = set()
+    if changed.returncode == 0:
+        paths.update(line.strip() for line in changed.stdout.splitlines() if line.strip())
+    if untracked.returncode == 0:
+        paths.update(line.strip() for line in untracked.stdout.splitlines() if line.strip())
+    return sorted(paths)[:cap]
+
+
 def _run_shadow_readonly(
     project_root: Path, args: list[str], *, timeout: float = 10
 ) -> subprocess.CompletedProcess[str] | None:
     """Run a read-only git command against an EXISTING shadow store.
 
     Unlike :func:`run_shadow`, this never calls ``_ensure_store``: a read path
-    must not create ``.sherry/shadow-git`` or rewrite its ``info/exclude`` just
-    to ask a question. ``None`` means the store is absent (or unreadable), and
-    the caller must fall back to its non-shadow behaviour.
+    must not create the shared store or rewrite its ``info/exclude`` just to ask
+    a question. ``None`` means the store is absent, THIS project has no ref
+    (the shared store may belong to another project), or git is unreadable; the
+    caller must fall back to its non-shadow behaviour.
     """
     root = project_root.resolve()
     store = shadow_store(root)
     if not (store / "HEAD").exists():
         return None
+    ref = shadow_ref(root)
     try:
+        verify = subprocess.run(
+            ["git", "--git-dir", str(store), "show-ref", "--verify", "--quiet", ref],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if verify.returncode != 0:
+            return None
         return subprocess.run(
             ["git", *args],
             cwd=str(root),
@@ -632,7 +820,7 @@ def list_checkpoints(session_id: str, limit: int = 10, skip: int = 0) -> list[di
         root,
         [
             "log",
-            SHADOW_REF,
+            shadow_ref(root),
             "--date-order",
             f"-n{max(1, min(int(limit), 50))}",
             f"--skip={max(0, int(skip))}",

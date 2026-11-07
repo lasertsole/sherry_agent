@@ -247,7 +247,7 @@ class CompressionMixin:
                 _invalidate_compressed_read_licenses(messages_to_summarize, preserved, session_id)
                 messages_to_summarize = offload_inline_media(messages_to_summarize, session_id)
 
-                self._fire_compression_nudges(session_id, original_messages, messages_to_summarize)
+                self._fire_compression_reviews(session_id, original_messages, messages_to_summarize)
 
                 if skip_llm:
                     filtered = _filter_summary_messages(messages_to_summarize)
@@ -328,7 +328,7 @@ class CompressionMixin:
                     offload_inline_media, messages_to_summarize, session_id
                 )
 
-                self._fire_compression_nudges(session_id, original_messages, messages_to_summarize)
+                self._fire_compression_reviews(session_id, original_messages, messages_to_summarize)
 
                 if skip_llm:
                     filtered = _filter_summary_messages(messages_to_summarize)

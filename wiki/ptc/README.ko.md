@@ -11,6 +11,7 @@
 - [개요](#-개요)
 - [설계 근거](#-설계-근거)
 - [프로토콜과 산출물](#-프로토콜과-산출물)
+- [리플레이와 프리필](#-리플레이와-프리필)
 - [보안 모델](#-보안-모델)
 - [구성](#-구성)
 - [한계](#-한계)
@@ -63,7 +64,7 @@ executor child agent
 
 ## 🔌 프로토콜과 산출물
 
-다섯 모듈이 각각 하나의 책임을 맡습니다:
+일곱 모듈이 각각 하나의 책임을 맡습니다:
 
 | 산출물 | 책임 |
 |--------|------|
@@ -72,6 +73,8 @@ executor child agent
 | `rpc_server.py` | loopback TCP 리스너: 줄마다 JSON 요청 하나를 파싱하고, 모든 프레임을 실행별 토큰으로 인증하며, 스크립트별 호출 예산을 집행하고, 각 호출을 부모 이벤트 루프로 디스패치합니다 |
 | `stub_generator.py` | 각 도구의 `tool_call_schema`에서 `ToolStub` 명세를 도출하고 `sherry_tools.py` 모듈을 렌더링합니다——도구마다 동기 래퍼 하나와 로컬 헬퍼들입니다. RPC 호출은 토큰을 박아 넣지 않고 `SHERRY_PTC_RPC_TOKEN`에서 읽습니다 |
 | `builtins.py` | 자식의 축소된 builtin 네임스페이스와 임포트 허용 목록을 소유하고, 둘 다 래퍼 스크립트로 렌더링합니다 |
+| `scripts.py` | skill 최상위 `scripts/`에서 `ptc__<plan_key>__<step_id>.py`를 해석. 모호·이탈·크기 초과는 fail-open |
+| `compiler.py` | 한 step의 검증된 증거를 리플레이 소스로 변환. 정적 import/구문 검증만 하고 실행하지 않음 |
 
 와이어 프로토콜은 양방향 모두 줄마다 JSON 객체 하나입니다:
 
@@ -86,6 +89,36 @@ executor child agent
 **산출물과 수명주기.** 호출마다 새 `sherry_ptc_*` 임시 디렉터리가 생겨 `sherry_tools.py`와 래퍼 스크립트를 담습니다. 자식에 대한 유일한 경로 추가는 `PYTHONPATH=<tmpdir>`입니다. 자식 환경은 실행별 RPC 토큰(`SHERRY_PTC_RPC_TOKEN`)도 싣고, 생성된 스텁이 이를 읽어 매 요청에 보냅니다. 토큰은 `secrets.token_urlsafe`로 생성되어 메모리에만 존재하며, `sherry_tools.py`나 다른 어떤 파일에도 결코 쓰이지 않습니다. 백엔드를 쓸 수 있으면 자식 argv가 `backend.wrap(argv, env, writable_roots, allow_network=True)`로 한 번 더 감싸집니다([도구 샌드박스](../sandbox/README.ko.md)의 샌드박스 경로). 프로세스는 여전히 `start_new_session=True`로 생성되므로 타임아웃은 그룹 전체를 SIGKILL합니다. 래퍼는 사용자 스크립트의 stdout과 stderr를 버퍼로 캡처해 실제 stdout에 JSON 엔벨로프 하나를 출력하고, runner가 이를 `status` 필드로 분류합니다. `finally` 블록은 RPC 서버를 멈추고 스레드를 join하며 임시 디렉터리를 지우고, 자식이 살아남았다면 다시 종료합니다.
 
 **자식 세션.** `spawn/core.py`는 해당 run의 `child_session_key`를 도구의 세션으로 넘기고, `rpc_server.py`는 runnable config를 통해 이를 모든 `ainvoke` 호출에 주입합니다. 스크립트는 세션을 제공하거나 위조할 수 없습니다: `session_id`는 애초에 도구 파라미터가 아닙니다.
+
+## 🔁 리플레이와 프리필
+
+`run_ptc`에는 **시스템이 트리거하는** 두 번째 용도가 있습니다: 검증된 TaskFlow step의 리플레이입니다. 이것은 `execute_code`가 **아닙니다**——LLM이 스크립트를 고르거나, 리플레이 시점에 작성하거나, step을 실행하지 않습니다.
+
+```text
+plan 완료
+  └─ skill review 통과
+       └─ (ptc_prefill_enabled) 성공한 step마다 스크립트 하나 컴파일:
+            skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
+
+TaskFlow step spawn
+  └─ _execute_subagent_scoped
+       └─ executor만: plan_key + step_id 해석, 유일한 스크립트 탐색
+            ├─ run_ptc(role-filtered tools_map, child session, cwd=spawned cwd)
+            │    ├─ ok + exit 0 + 비어 있지 않은 stdout + calls_log 전부 ok + schema 통과
+            │    │    → _build_child_agent / LLM / goal loop 생략; stdout이 결과
+            │    └─ 그 외 → [PTC Pre-run Progress] → 정상 React
+            └─ 스크립트 없음 / 모호 / 잘못된 id / 비-executor → 정상 React
+```
+
+**트리거.** 리플레이는 정상 TaskFlow step spawn이 트리거하며, 도구 호출도 skill review 자체도 아닙니다. prefill 훅은 `_execute_subagent_scoped`의 `_build_child_agent` 앞에 있고, 마스터 스위치는 `PTC["ptc_prefill_enabled"]`(기본 `False`)입니다. `functional_role in PTC_ROLES`(executor)에서만 동작합니다. `plan_key`는 **루트 main session**의 `run.controller_session_key`를 정규화해 얻습니다(중첩 spawn의 직접 requester는 child key일 수 있음).
+
+**성공 조건.** `status == "ok"`, `exit_code == 0`, 비어 있지 않은 `output`, 비어 있지 않은 `calls_log`, 그리고 모든 항목 `ok is True`. spawn에 `output_schema`가 있으면 `validate_structured_output`도 통과해야 합니다. 성공하면 child agent를 build하지 않고 checkpointer도 만들지 않으며 completion judge / goal loop도 실행하지 않습니다. 스크립트 stdout이 `result_text`가 되고 `handoff=None`으로 run이 끝납니다.
+
+**실패 조건.** 하나라도 빠지면 `[PTC Pre-run Progress]`를 child 초기 메시지에 덧붙이고 정상 React로 갑니다. 완료된 접두사(사이드 이펙트는 실제이며 다시 하지 않음)와 첫 실패 호출을 나열합니다. `calls_log`는 예외를 던진 도구와 `ToolMessage(status="error")`를 반환한 도구를 모두 기록하며, 각 항목은 유계이고 JSON-safe인 미리보기입니다. 스크립트가 도구 오류를 catch해도 실패로 계산합니다.
+
+**스크립트 소유와 탐색.** 컴파일러는 소스만 반환하고, 호출자가 정적 검증 후 `skill_manage(action="write_file")`로 변경된 skill의 최상위 `scripts/`에 씁니다. 탐색은 `AUTO_SKILLS_DIR/**/scripts/`에서 정확한 basename 스캔이며, 0개·여러 개·경로 이탈·symlink·잘못된 `step_id`·크기 초과는 모두 React로 폴백하고 추측하지 않습니다. `compiler.py`는 prompt/정적 검증, `scripts.py`는 탐색/읽기를 담당합니다.
+
+**알려진 한계.** executor 전용이라 PTC 역할 경계를 넓히지 않습니다. MVP는 step 재시도를 넘는 journal이 없어 재-spawn 시 스크립트 사이드 이펙트가 반복될 수 있습니다. plan/코드 변경 후 스크립트가 낡을 수 있고, 관찰 스위치는 이를 먼저 측정하기 위한 것입니다. PTC는 도구 호출 수준 프리필을 맡고, LDW가 구현되면 step/subagent 수준 journal 리플레이를 맡습니다.
 
 ## 🔒 보안 모델
 
@@ -111,6 +144,9 @@ executor child agent
 | `ptc_max_stdout_bytes` | 50000 | 절단 전에 자식에서 보존하는 stdout 바이트 수 |
 | `ptc_max_stderr_bytes` | 10000 | 절단 전에 자식에서 보존하는 stderr 바이트 수 |
 | `ptc_allowed_tools` | `read_file`, `write_file`, `patch_file`, `terminal`, `search_files`, `web_search` | 자식의 사용 가능 도구와 교집합을 취하는 허용 목록 |
+| `ptc_prefill_enabled` | `False` | skill review 스크립트 컴파일과 spawn 측 PTC 프리필을 활성화. 관찰 기간에는 off |
+| `ptc_script_max_bytes` | `20480` | skill `scripts/`에서 읽는 스크립트 크기 상한 |
+| `ptc_compile_max_attempts` | `2` | JSON/구문 실패 시 컴파일 시도 횟수. 컴파일은 실행하지 않음 |
 
 이 객체는 `config/features/agent_side/ptc.py`에 있습니다. `config/features/agent_side/tools_timeouts.py`의 공유 도구별 레지스트리도 같은 120초 기본값으로 `ptc_timeout_seconds`를 선언하지만, runner의 타임아웃은 `PTC` 객체에서 옵니다. PTC는 pip 의존성을 전혀 추가하지 않습니다: 구현은 표준 라이브러리와 이미 있는 LangChain·loguru뿐입니다.
 
@@ -150,9 +186,15 @@ executor child agent
 | runner 강화: 실행별 토큰 고유성, 생성된 스텁에 토큰 없음, 자식 argv에 백엔드 래핑 적용, 유일한 강등 경고 | `tests/agent/tools/ptc/test_runner_hardening.py` |
 | 자식 프로세스: 엔드투엔드 도구 호출, 제한 builtins, 임포트 게이트, 타임아웃 종료, 절단, 환경 스크러빙, 임시 디렉터리 정리 | `tests/agent/tools/ptc/test_runner.py` |
 | 역할 그리드: executor 주입, 나머지 네 역할, 프롬프트 안내, 메인 레지스트리 격리 | `tests/agent/tools/ptc/test_integration.py` |
+| 리플레이 calls_log: 성공, 예외, 오류 결과, 예산 실패, JSON-safe 미리보기 | `tests/agent/tools/ptc/test_calls_log.py` |
+| 리플레이 탐색: 유일/없음/모호/중첩/symlink/잘못된 id/크기 초과 | `tests/agent/tools/ptc/test_replay_scripts.py` |
+| 리플레이 컴파일: JSON 계약, 정적 검증, 재시도 | `tests/agent/tools/ptc/test_compiler.py` |
+| skill-review 컴파일 인계: owning skill, skip, 비활성 플래그 | `tests/agent/middlewares/test_skill_review_ptc_compile.py` |
+| spawn 프리필: executor gate, 성공 생략, schema miss, React 진행 | `tests/agent/tools/subagent/test_ptc_prefill.py` |
+| 밀폐 리플레이 e2e: skill 스크립트가 실제 PTC 자식 + prefill로 실행 | `tests/full/test_ptc_replay_e2e.py` |
 | 실제 LLM 엔드투엔드: executor 자식이 `execute_code`를 선택해 RPC로 파일을 읽음 | `tests/agent/tools/subagent/test_ptc_executor_e2e.py` |
 
-PTC의 다섯 스위트는 밀폐 그룹(`unit`, `integration`, `module`)에서 돕니다. 엔드투엔드 파일만 유일한 `llm_e2e` 테스트로, 기본 선택 해제되고 전용 실제 LLM 작업에서 실행됩니다. 검증하는 것은 실제 모델 경로입니다——자식은 `execute_code`를 호출해야 하고, 캡처된 엔벨로프는 디스패치된 RPC 호출을 보고해야 하며, 출력된 줄 수는 테스트 시점에 파일에서 계산한 수와 일치해야 합니다. 샌드박스에 `open`이 없으므로 `read_file`을 거치지 않고는 이 숫자를 만들 수 없습니다.
+PTC 스위트는 밀폐 그룹(`unit`, `integration`, `module`)에서 돕니다. 엔드투엔드 파일만 유일한 `llm_e2e` 테스트로, 기본 선택 해제되고 전용 실제 LLM 작업에서 실행됩니다. 검증하는 것은 실제 모델 경로입니다——자식은 `execute_code`를 호출해야 하고, 캡처된 엔벨로프는 디스패치된 RPC 호출을 보고해야 하며, 출력된 줄 수는 테스트 시점에 파일에서 계산한 수와 일치해야 합니다. 샌드박스에 `open`이 없으므로 `read_file`을 거치지 않고는 이 숫자를 만들 수 없습니다.
 
 ## 🔗 관련 문서
 

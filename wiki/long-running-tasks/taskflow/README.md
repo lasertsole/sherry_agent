@@ -323,6 +323,12 @@ Resource ceilings (enforced here, refused as `Error:` text): at most `TASKFLOW_I
 
 
 
+### taskflow_flow(action="plan")
+
+Asks the TaskFlow planner for a dependency-ordered step list, creates the flow with the stable `plan-<sha256(session_id + goal)[:10]>` id, binds its todo root, and **auto-dispatches every initial ready step** (the no-dependency siblings) through the same batch dispatch path a manual call uses. Steps with unmet `depends_on` stay `blocked`; a failed spawn is fail-open and leaves its step `ready`. `TASKFLOW_INFRA["auto_dispatch_initial_ready"]` (default true) restores the old review-then-dispatch behavior. The returned plan shows the post-dispatch statuses and names the auto-dispatched ids.
+
+
+
 ### taskflow_step(action="run_task")
 
 
@@ -481,7 +487,7 @@ Injects a completed child session result into the flow state (idempotent). Appen
 
 
 
-**DAG bookkeeping**: a successful gate marks the matching step `done` and calls `unlock_dependents()` to move newly-satisfied `blocked` steps to `ready`; a `failed` step leaves its dependents `blocked`, and a `skipped`/`cancelled` step cascades `skipped` into them. Returns the unlocked step ids. The write re-applies the already-decided verdict onto the freshly-read state on a conflict retry, so two children completing at the same moment both land (see [Conflict Retry with Spawned Children](#conflict-retry-with-spawned-children)). With `auto_dispatch=True` (the default) the newly-ready wave is spawned immediately in a bounded concurrent batch — see [Auto-Dispatch Wave](#auto-dispatch-wave-taskflow_stepactionresume); pass `auto_dispatch=False` to unlock only and dispatch explicitly via `taskflow_step(action="dispatch")`.
+**DAG bookkeeping**: a successful gate marks the matching step `done` and calls `unlock_dependents()` to move newly-satisfied `blocked` steps to `ready`; a `failed` step leaves its dependents `blocked`, and a `skipped`/`cancelled` step cascades `skipped` into them. Returns the unlocked step ids. The write re-applies the already-decided verdict onto the freshly-read state on a conflict retry, so two children completing at the same moment both land (see [Conflict Retry with Spawned Children](#conflict-retry-with-spawned-children)). With `auto_dispatch=True` (the default) the full ready set is spawned immediately in a bounded concurrent batch — see [Auto-Dispatch Wave](#auto-dispatch-wave-taskflow_stepactionresume); pass `auto_dispatch=False` to unlock only and dispatch explicitly via `taskflow_step(action="dispatch")`.
 
 
 
@@ -752,7 +758,7 @@ Validates the entire batch before any spawn (all-or-nothing). The batch then spa
 
 
 
-A resume that unlocks dependents starts them itself (`auto_dispatch=True`, the default): the newly-ready wave spawns concurrently through the same seam and the same `max_parallel_dispatch` bound, and the spawned keys are persisted with the CAS-retried write (`update_flow_with_conflict_retry`) so a concurrent writer cannot drop them. Each step is dispatched exactly like `taskflow_step(action="dispatch")` does it (task bindings + any judge feedback). Failures are reported, never raised: a step that could not spawn stays `ready` and the resume's answer carries `auto_dispatch_failed=<step_id>: <error>` for a manual retry. Because the unlock set is derived from what was actually PERSISTED, two completes racing to unlock the same step spawn it exactly once.
+A resume starts the whole ready set, not only the dependents it unlocked (`auto_dispatch=True`, the default): `newly_ready ∪ all_ready` — the newly unlocked downstream plus sibling steps that were already `ready` but never dispatched — spawns concurrently through the same seam and the same `max_parallel_dispatch` bound. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]` (default true) controls the wider scan; set it false (or pass `auto_dispatch=False`) to keep the historical unlock-only/newly-unlocked behaviour. The spawned keys are persisted with the CAS-retried write (`update_flow_with_conflict_retry`) so a concurrent writer cannot drop them. Each step is dispatched exactly like `taskflow_step(action="dispatch")` does it (task bindings + any judge feedback). Failures are reported, never raised: a step that could not spawn stays `ready` and the resume's answer carries `auto_dispatch_failed=<step_id>: <error>` for a manual retry. Already-dispatched steps are filtered and re-checked under the flow lock, so the wider scan spawns each step exactly once.
 
 
 

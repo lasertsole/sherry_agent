@@ -135,7 +135,7 @@ Two WHITELISTS now stand in front of that surface
 
 | Mode | Rule | Allowed inside sherry's trees |
 |---|---|---|
-| **write** | "changing it must not break the runtime, another session, or leak a credential" | `<project>/.sherry/` (index, shadow-git, attachments), the CURRENT session's `plans/` `attachments/` `uploads/`, `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
+| **write** | "changing it must not break the runtime, another session, or leak a credential" | `<project>/.sherry/` (index, attachments), `APP_HOME/checkpoints/store`, the CURRENT session's `plans/` `attachments/` `uploads/`, `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
 | **read** | "reading it must not leak a credential, private memory, or another session's transcript" | the whole SOURCE TREE (reading source breaks nothing and leaks nothing) plus the write list; denied: `.env` `.models` `.network` `sherry.jsonc` + their `.example`s, `src/data/**`, `src/checkpoints/**`, `workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`, `workspace/memory/**`, `workspace/knowledge/**`, model-weight files, `mcp_servers/**`, the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory ledger, every session directory except the CURRENT session's `plans/` |
 
 Both are enforced on the paths the file tools resolve — and on the IN-ROOT

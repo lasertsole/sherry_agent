@@ -39,7 +39,7 @@ Phase 3: Execute the next checkbox (all scheduling is delegated to TaskFlow)
   -> Steps with unmet dependencies are recorded as blocked by TaskFlow and not dispatched
   -> Call taskflow_step(action="dispatch", flow_id=..., step_ids=[...]) to dispatch ready steps in parallel
   -> taskflow_step(action="wait_all", flow_id=...) waits for the child sessions dispatched by this flow to settle
-  -> taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...) injects the result and unlocks successors
+  -> taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...) injects the result, unlocks successors, and auto-dispatches the whole ready set
   -> DELEGATE EVERYTHING, routing each sub-task through the routing table below
 
 Phase 4: Verify and record evidence
@@ -104,7 +104,7 @@ The orchestration layer only calls TaskFlow; it never rebuilds it:
 - `taskflow_step(action="run_task", flow_id=..., task=..., depends_on=[...])`: register a step and decide whether to dispatch based on dependencies.
 - `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`: batch-dispatch ready steps.
 - `taskflow_step(action="wait_all", flow_id=...)`: wait for the child sessions dispatched by this flow to settle.
-- `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`: inject the result, mark done, unlock successors (idempotent).
+- `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`: inject the result, mark done, unlock successors, auto-dispatch the ready set (idempotent).
 - `taskflow_inspect(action="summary", flow_id=...)`: read-only readback of each step's `status` / `depends_on` and the per-status counts.
 
 The full step state machine (`blocked -> ready -> dispatched -> done`) and the optimistic-lock retry rules are in the `taskflow` skill. Do not implement `depends_on`, wave/DAG projections, or frontier scheduling at the todolist layer.

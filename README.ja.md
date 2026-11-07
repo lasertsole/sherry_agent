@@ -72,7 +72,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く。行の右クリックメニューは 開く / 別のアプリで開く / 内蔵ブラウザーで開く（HTML）/ ファイルマネージャーで表示 / 絶対・相対パスのコピー / チャットに追加 を提供し、行（またはファイルビューアのタブ）はコンポーザーへドラッグできる — どちらの経路もメッセージに載るのは `@./path` メンション chip だけで、ファイル内容は決して載らない（ファイルはエージェント自身が読む）
 - **選択テキストの引用と補助セッション**: 1 つのチャットメッセージ内でテキストを選択して右クリックすると小さなメニューが開く——「現在のセッションに追加」はアトミックな引用 chip をコンポーザーへ挿入し（送信時は markdown 引用ブロック）、「補助セッションで質問」は親セッションの**完全な fork** である通常の子セッションを作成する。最初のターンには親の checkpoint 履歴全体がモデル専用で注入され（補助セッションの表示履歴は空のまま）、親のプリセット・agent 設定・セッション単位のモデル設定・プロジェクトディレクトリを継承する。fork は親の最後に完了した回答で区切られるため、未完了のツール呼び出しが再生されることはない。セッションスコープの右サイドバータブで開いて引用をプリフィルし、そのタブを閉じるのはパネルを閉じるだけ——子セッションとその状態はすべて保持され、セッション一覧に残るので後から開き直せ、親セッションを削除したときにだけ消去される。タブ列の最も左にある下向き矢印メニューは、最近閉じたタブを「現在のセッション / グローバル」ごとに最新 10 件まで一覧し（現在のセッションの履歴はそのセッションだけに属し、セッション削除で消える）、閉じた補助セッションを履歴ごと復元する。「現在のセッション」タブ群はセッションごとに分離され（セッションを切り替えるとそのセッション自身のタブ、または空の状態だけを表示し、前のセッションのページは出ない）、「グローバル」タブは全セッションで共有される。行をまたぐ選択、コントロール/承認カードから始まる選択、8,000 文字を超える選択ではネイティブのコンテキストメニューをそのまま残す
 - **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は browser ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは統合されたメイン専用 `browser` ツール（navigate / snapshot / click / type / press / scroll / screenshot）と、`browser_evaluate`（`SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
-- **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、セッション単位で無効化できます- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`NUDGE`（nudge/永続化呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + nudge` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
+- **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、セッション単位で無効化できます- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`BACKGROUND_REVIEW`（バックグラウンドレビュー呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + background_review` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
 - **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
 - **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_flow(action="create", resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の現在スキーマ列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
 - **TaskFlow の進捗** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 各フローのフラットなステップ一覧（id・タスク・状態）と状態別集計がフローティング進捗パネルに表示される。スケジューラは依然として各ステップの `depends_on` ごとに解錠する。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
@@ -196,7 +196,7 @@ sherry_agent/
 │   ├── subagent/           # サブエージェント spawn パイプラインのベンチマーク
 │   ├── long_running_task/  # TaskFlow DAG 評価
 │   ├── session_memory/     # セッションメモリスタックのチェック
-│   ├── nudge_extraction/   # AI 判定の plan 抽出
+│   ├── skill_review/   # AI 判定の plan 抽出
 │   └── results/            # 実行ごとのレポート（gitignore 済み）
 │
 ├── logs/                   # ロギングシステム
@@ -233,7 +233,7 @@ sherry_agent/
 ├── runtime/                # ランタイム状態、レーン、そして境界を越えるシーム
 │   ├── hooks.py            # プロセスレベルのコールバックレジストリ（agent/skills が解決する server 所有フック）
 │   ├── data_provider.py    # Prompt/スキル書き込みプロバイダーレジストリ（agent 所有、workspace/context_engine が読む）
-│   ├── lane/               # プロセスレベルの並行レーン（MAIN / SUBAGENT / NUDGE / NESTED）
+│   ├── lane/               # プロセスレベルの並行レーン（MAIN / SUBAGENT / BACKGROUND_REVIEW / NESTED）
 │   ├── session/            # セッション単位レジストリ
 │   │   ├── core.py         # シングルトン SessionRegister 基底 + セッション単位のクリーンアップ
 │   │   ├── relation_register.py # セッション/socket 関係レジストリ
@@ -372,7 +372,7 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
 | `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
-| `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、計画抽出は `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
+| `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、スキルレビューは `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
 | `MODEL_PRICING_TABLE` | — | セッション予算のコスト推定用 USD/1M token 価格表（ユーザー編集可能な JSON オブジェクトを JSON 文字列として保存。provider 直返コストとローカル litellm キャッシュがフォールバック） |
@@ -485,7 +485,7 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `subagent` | 実 `spawn_subagent_direct` パイプラインを決定論的タスクのベンチで評価（タスク成功率 + レイテンシ） |
 | `long_running_task` | 依存 DAG 上の TaskFlow オーケストレーションループ（ステップ成功率、フロー完了、wall time） |
 | `session_memory` | セッションメモリスタックの 6 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、セマンティック検索ランキング |
-| `nudge_extraction` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
+| `skill_review` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
 | `coding_capability` | 実メイン agent を小規模な自作コーディングタスク集で評価し、各タスクはそのリポジトリ自身の pytest 実行で判定——ベースラインであり外部ベンチマークではない |
 | `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。agent が見るのは問題文のみ） |
 | `deepswe` | 外部 DeepSWE タスクをベンチマーク自身の Docker イメージで実行：agent は bind mount された checkout を編集し、`terminal` はコンテナ内で実行され、タスク専用の verifier イメージが diff を採点（先に gold patch を自己検査） |

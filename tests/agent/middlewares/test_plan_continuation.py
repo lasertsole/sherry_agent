@@ -266,7 +266,7 @@ async def test_a_reminded_plan_resets_and_does_not_inject_again(
 
 
 @pytest.mark.asyncio
-async def test_all_done_forks_the_plan_extraction(
+async def test_all_done_forks_the_skill_review(
     monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
 ) -> None:
     """The completion hook is the extraction's ONLY entry point.
@@ -275,14 +275,14 @@ async def test_all_done_forks_the_plan_extraction(
     the trigger keeps its own gates (fingerprint, in-flight lock, nudge option),
     so a plan that was already extracted forks nothing.
     """
-    import agent.middlewares.summarization.nudges as nudge_mod
+    import agent.middlewares.summarization.background_reviews as review_mod
 
     forked: list[str] = []
 
     async def _record(session_id: str) -> None:
         forked.append(session_id)
 
-    monkeypatch.setattr(nudge_mod, "maybe_trigger_plan_extraction", _record)
+    monkeypatch.setattr(review_mod, "maybe_trigger_skill_review", _record)
     rows = [_todo("a", "completed"), _todo("b", "completed")]
     _patch_todos(monkeypatch, rows)
     tc._reminded_plans[_SID] = tc._plan_fingerprint(rows, [])
@@ -297,11 +297,11 @@ async def test_all_done_forks_the_plan_extraction(
 async def test_an_incomplete_plan_never_forks_the_extraction(
     monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
 ) -> None:
-    import agent.middlewares.summarization.nudges as nudge_mod
+    import agent.middlewares.summarization.background_reviews as review_mod
 
     forked: list[str] = []
     monkeypatch.setattr(
-        nudge_mod, "maybe_trigger_plan_extraction", lambda session_id: forked.append(session_id)
+        review_mod, "maybe_trigger_skill_review", lambda session_id: forked.append(session_id)
     )
     _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "pending")])
 
@@ -542,7 +542,7 @@ class TestTodowriteAccounting:
     async def test_the_nudge_is_appended_once_the_threshold_is_crossed(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """10 turns without todowrite → the continuation directive gains the nudge."""
+        """10 turns without todowrite → the continuation directive gains the review_mod."""
         sid = "s-nudge"
         _patch_todos(monkeypatch, [_todo("pending work", "pending")])
         st.reset(sid)
@@ -888,7 +888,7 @@ class TestContinuationCapEnforcement:
 # (h) final-verification reminder (one prompt per completed plan, no gate)
 # ============================================================================
 
-import agent.middlewares.summarization.nudges as _nudge_mod  # noqa: E402
+import agent.middlewares.summarization.background_reviews as _review_mod  # noqa: E402
 
 _REMINDER_MARKER = "[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]"
 
@@ -907,7 +907,7 @@ def extraction_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     async def _record(session_id: str) -> None:
         forked.append(session_id)
 
-    monkeypatch.setattr(_nudge_mod, "maybe_trigger_plan_extraction", _record)
+    monkeypatch.setattr(_review_mod, "maybe_trigger_skill_review", _record)
     return forked
 
 

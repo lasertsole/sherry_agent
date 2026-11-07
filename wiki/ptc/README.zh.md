@@ -11,6 +11,7 @@
 - [总览](#-总览)
 - [设计理由](#-设计理由)
 - [协议与产物](#-协议与产物)
+- [重放与预跑](#-重放与预跑)
 - [安全模型](#-安全模型)
 - [配置](#-配置)
 - [限制](#-限制)
@@ -63,7 +64,7 @@ executor child agent
 
 ## 🔌 协议与产物
 
-五个模块，各担一责：
+七个模块，各担一责：
 
 | 产物 | 职责 |
 |------|------|
@@ -72,6 +73,8 @@ executor child agent
 | `rpc_server.py` | loopback TCP 监听器：按行解析 JSON 请求、用每次运行的 token 校验每一帧、执行每脚本调用预算，并把每次调用派发到父事件循环 |
 | `stub_generator.py` | 从每个工具的 `tool_call_schema` 推导 `ToolStub` 规格，并渲染 `sherry_tools.py` 模块——每个工具一个同步包装器，外加本地辅助函数；RPC 调用从 `SHERRY_PTC_RPC_TOKEN` 读取 token，而不是把 token 嵌入其中 |
 | `builtins.py` | 持有子进程的精简 builtin 命名空间与导入白名单，并把两者渲染进包装脚本 |
+| `scripts.py` | 在 skill 顶层 `scripts/` 下解析 `ptc__<plan_key>__<step_id>.py`；歧义、越界、超大都 fail-open |
+| `compiler.py` | 把一个 step 的已验证证据变成重放源码；只做静态导入/语法校验，绝不执行脚本 |
 
 线协议是双向的、每行一个 JSON 对象：
 
@@ -86,6 +89,36 @@ executor child agent
 **产物与生命周期。** 每次调用都会获得全新的 `sherry_ptc_*` 临时目录，内含 `sherry_tools.py` 与包装脚本；子进程唯一的路径增补是 `PYTHONPATH=<tmpdir>`。子进程环境还携带本次运行的一次性 RPC token（`SHERRY_PTC_RPC_TOKEN`），生成的 stub 读取它并在每次请求中发送；token 由 `secrets.token_urlsafe` 生成，仅内存存活，绝不写入 `sherry_tools.py` 或任何其它文件。当后端可用时，子进程 argv 还会经 `backend.wrap(argv, env, writable_roots, allow_network=True)` 包装（即[工具沙箱](../sandbox/README.zh.md)中的沙箱路径）；进程仍以 `start_new_session=True` 派生，超时即对整组发 SIGKILL。包装器把用户脚本的 stdout 与 stderr 捕获进缓冲区，向真实 stdout 打印单个 JSON 信封，runner 据此归类出 `status` 字段。`finally` 块停止 RPC 服务、join 其线程、删除临时目录，并在子进程意外存活时再次击杀。
 
 **子会话。** `spawn/core.py` 把本次运行的 `child_session_key` 作为工具的会话传入，`rpc_server.py` 则通过 runnable config 把它注入每次 `ainvoke` 调用。脚本无法提供或伪造会话：`session_id` 根本不是工具参数。
+
+## 🔁 重放与预跑
+
+`run_ptc` 还有第二种**系统触发**的用法：重放已验证的 TaskFlow step。它**不是** `execute_code`——LLM 不选择脚本、不在重放时写脚本，也不执行该 step。
+
+```text
+plan 完成
+  └─ skill review 通过
+       └─（ptc_prefill_enabled）为每个成功 step 编译一个脚本：
+            skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
+
+TaskFlow step spawn
+  └─ _execute_subagent_scoped
+       └─ 仅 executor：解析 plan_key + step_id，找到唯一脚本
+            ├─ run_ptc(role-filtered tools_map, child session, cwd=spawned cwd)
+            │    ├─ ok + exit 0 + stdout 非空 + calls_log 全 ok + schema 通过
+            │    │    → 跳过 _build_child_agent / LLM / goal loop；stdout 即结果
+            │    └─ 否则 → 渲染 [PTC Pre-run Progress] → 正常 React
+            └─ 无脚本 / 歧义 / 非法 id / 非 executor → 正常 React
+```
+
+**触发点。** 重放由正常的 TaskFlow step spawn 触发，不是工具调用，也不是 skill review 自己执行。prefill 钩子在 `_execute_subagent_scoped` 的 `_build_child_agent` 之前；总开关是 `PTC["ptc_prefill_enabled"]`（默认 `False`）。仅 `functional_role in PTC_ROLES`（executor）生效。`plan_key` 从**根主会话**的 `run.controller_session_key` 归一化后取得，因为嵌套 spawn 的直接 requester 可能是子会话 key。
+
+**成功条件。** `status == "ok"`、`exit_code == 0`、`output` 非空、`calls_log` 非空且每条 `ok is True`；spawn 带 `output_schema` 时还要通过 `validate_structured_output`。成功后不 build child agent、不建 checkpointer、不跑 completion judge 和 goal loop；脚本 stdout 作为 `result_text`，run 以 `handoff=None` 完成。
+
+**失败条件。** 任一不满足都把 `[PTC Pre-run Progress]` 追加到 child 初始消息，再走正常 React。块里列出已完成前缀（副作用真实存在，不要重做）和第一个失败调用。`calls_log` 同时记录工具抛异常和返回 `ToolMessage(status="error")` 的调用；每条是有界、JSON-safe 的预览，不是完整结果。脚本 catch 住工具错误也计为失败。
+
+**脚本归属与查找。** 编译器只返回源码；调用方静态校验后通过 `skill_manage(action="write_file")` 写入变更 skill 的顶层 `scripts/`。查找是 `AUTO_SKILLS_DIR/**/scripts/` 下精确 basename 的文件扫描：0 个、多个、路径越界、symlink、非法 `step_id`、超大文件全部回退 React，绝不猜。`compiler.py` 负责 prompt/静态校验，`scripts.py` 负责查找/读取。
+
+**已知限制。** 仅 executor，保持 PTC 角色边界。MVP 不做跨 step 重试的 journal：重新 spawn 可能重复脚本副作用。plan/代码变化后脚本可能过期；观察开关就是为了先量化这一点。PTC 处理工具调用级预跑；LDW 若落地，负责 step/subagent 级 journal 重放。
 
 ## 🔒 安全模型
 
@@ -111,6 +144,9 @@ executor child agent
 | `ptc_max_stdout_bytes` | 50000 | 截断之前保留的子进程 stdout 字节数 |
 | `ptc_max_stderr_bytes` | 10000 | 截断之前保留的子进程 stderr 字节数 |
 | `ptc_allowed_tools` | `read_file`、`write_file`、`patch_file`、`terminal`、`search_files`、`web_search` | 与子进程可用工具求交的白名单 |
+| `ptc_prefill_enabled` | `False` | 启用 skill review 脚本编译与 spawn 侧 PTC 预跑；观察期保持关闭 |
+| `ptc_script_max_bytes` | `20480` | 从 skill `scripts/` 读取的脚本大小上限 |
+| `ptc_compile_max_attempts` | `2` | JSON/语法失败时的编译尝试次数；编译绝不执行脚本 |
 
 该对象位于 `config/features/agent_side/ptc.py`；`config/features/agent_side/tools_timeouts.py` 中的共享逐工具注册表也声明了 `ptc_timeout_seconds` 并取相同的 120 秒默认值，而 runner 的超时来自 `PTC` 对象。PTC 没有新增任何 pip 依赖：其实现是标准库加上项目既有的 LangChain 与 loguru。
 
@@ -150,9 +186,15 @@ executor child agent
 | runner 加固：每次运行的 token 唯一性、生成的 stub 文件不含 token、子进程 argv 被后端包装、唯一那条降级警告 | `tests/agent/tools/ptc/test_runner_hardening.py` |
 | 子进程：端到端工具调用、受限 builtins、导入门、超时击杀、截断、环境清洗、临时目录清理 | `tests/agent/tools/ptc/test_runner.py` |
 | 角色网格：executor 注入、其余四个角色、提示词指引、主注册表隔离 | `tests/agent/tools/ptc/test_integration.py` |
+| 重放 calls_log：成功、工具异常、错误结果、预算失败、JSON-safe 预览 | `tests/agent/tools/ptc/test_calls_log.py` |
+| 重放查找：唯一/无/歧义/嵌套/symlink/非法/超大 | `tests/agent/tools/ptc/test_replay_scripts.py` |
+| 重放编译：JSON 契约、静态校验、重试 | `tests/agent/tools/ptc/test_compiler.py` |
+| skill-review 编译交接：owning skill、skip、禁用开关 | `tests/agent/middlewares/test_skill_review_ptc_compile.py` |
+| spawn 预跑：executor gate、成功跳过、schema miss、React 进度 | `tests/agent/tools/subagent/test_ptc_prefill.py` |
+| 密闭重放端到端：skill 脚本经真实 PTC 子进程 + prefill 执行 | `tests/full/test_ptc_replay_e2e.py` |
 | 真实 LLM 端到端：executor 子代理选择 `execute_code` 并经 RPC 读取文件 | `tests/agent/tools/subagent/test_ptc_executor_e2e.py` |
 
-PTC 的五个测试套件运行在密闭分组（`unit`、`integration`、`module`）中。端到端文件是唯一的 `llm_e2e` 测试：默认反选，在专用的真实 LLM 作业中运行，验证真实的模型路径——子代理必须调用 `execute_code`，捕获的信封必须报告已派发 RPC 调用，且打印的行数必须与测试时从文件现算的行数一致；由于沙箱内没有 `open`，不经过 `read_file` 就无法产出这个数字。
+PTC 测试套件运行在密闭分组（`unit`、`integration`、`module`）中。端到端文件是唯一的 `llm_e2e` 测试：默认反选，在专用的真实 LLM 作业中运行，验证真实的模型路径——子代理必须调用 `execute_code`，捕获的信封必须报告已派发 RPC 调用，且打印的行数必须与测试时从文件现算的行数一致；由于沙箱内没有 `open`，不经过 `read_file` 就无法产出这个数字。
 
 ## 🔗 相关文档
 

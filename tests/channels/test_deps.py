@@ -176,3 +176,47 @@ class TestQQWiring:
         monkeypatch.setattr(qq, "_record_install_failure", lambda: recorded.append("fail"))
         assert qq._install_deps() is False
         assert recorded[-1] == "fail"
+
+
+def test_frozen_install_is_a_no_op(monkeypatch, tmp_path):
+    monkeypatch.setattr(deps.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        deps.subprocess,
+        "run",
+        lambda *a, **k: pytest.fail("a frozen build must not launch pip/uv"),
+    )
+
+    assert install_requirements(tmp_path / "requirements.txt") == (True, False, "")
+
+
+def test_frozen_registry_treats_requirements_as_bundled(monkeypatch, tmp_path):
+    from channels import registry
+
+    (tmp_path / "requirements.txt").write_text("botpy\n", encoding="utf-8")
+    monkeypatch.setattr(registry.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        registry,
+        "install_requirements",
+        lambda *a, **k: pytest.fail("the registry must not install in a frozen build"),
+    )
+
+    assert registry._ensure_deps(tmp_path, "qq") is True
+
+
+def test_frozen_qq_uses_the_bundled_sdk_without_installing(monkeypatch):
+    import importlib.util
+    import pathlib
+
+    core_path = pathlib.Path("plugins/channels/qq/core.py")
+    spec = importlib.util.spec_from_file_location("channels.plugin.qq_frozen_test", str(core_path))
+    qq = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(qq)
+    monkeypatch.setattr(qq.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(qq, "_try_import_botpy", lambda: True)
+    monkeypatch.setattr(
+        qq,
+        "install_requirements",
+        lambda *a, **k: pytest.fail("a frozen QQ channel must not install"),
+    )
+
+    assert qq._install_deps() is True

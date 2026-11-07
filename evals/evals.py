@@ -23,7 +23,7 @@ SUITES: dict[str, str] = {
     "subagent": "evals.subagent.suite",
     "long_running_task": "evals.long_running_task.suite",
     "session_memory": "evals.session_memory.suite",
-    "nudge_extraction": "evals.nudge_extraction.suite",
+    "skill_review": "evals.skill_review.suite",
     "coding_capability": "evals.coding_capability.suite",
     # External benchmarks: each runs in its own process (they repoint
     # SHERRY_WORKSPACE_DIR); the container suites need Docker, the tool/agent

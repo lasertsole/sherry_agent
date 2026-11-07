@@ -20,8 +20,8 @@ Tool metadata flags:
   repeated identical calls as read-only.
 - ``skip_heartbeat``: while the graph is suspended waiting for the user, the
   HeartbeatStaleness watchdog must not count the wait as a stalled turn.
-- ``nudge``: exempt from skill-review accounting and callable by nudge
-  review sub-agents.
+- ``background_review``: exempt from skill-review accounting and callable by
+  background-review sub-agents.
 """
 
 import json
@@ -176,7 +176,7 @@ class QuestionTool(BaseTool):
     metadata: dict = {
         "idempotent": True,
         "skip_heartbeat": True,
-        "nudge": True,
+        "background_review": True,
         "side_effect_scope": "user_interaction",
     }
 

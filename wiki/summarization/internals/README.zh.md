@@ -45,11 +45,11 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 6. **恢复注入**（`_inject_recovery_context`，compression.py:379）：捕获的文件操作棘轮被改写进摘要的 `## Relevant Files` 段，检查点始终携带最新的读/改文件地图。
 7. **记账**（`_record_compression`，thrash.py:117，最后 `request.override(messages=..., system_message=...)`。
 
-### 💾 压缩时 nudge
+### 💾 压缩时后台评审
 
-消息持久化在压缩路径之外运行：human/AI 消息在每个模型调用边界、工具结果在返回时，都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。一次 compact 只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
+消息持久化在压缩路径之外运行：human/AI 消息在每个模型调用边界、工具结果在返回时，都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。一次 compact 只做压缩并调度下面的后台评审。触发语义详见 `agent/middlewares/README.md`。
 
-**压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_memory_review`）：每次真正丢弃消息的压缩都派发记忆回顾（`_nudge_memory`），交给它的正是那段被丢弃的消息，并以 **cache_warm** 方式运行——原文发在本轮用过的模型配置上，配上会话的系统提示词与工具面，使前缀切点直接命中前缀缓存（`NUDGE["memory_review_mode"] = "digest"` 时改为折叠该段）。它以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用；nudge 锁被持有时压缩完全跳过派发（不排队）。计划提取不在此路径——它在计划完成时从 `PlanContinuationEnforcer.aafter_agent` fork（单发 `nudge_plan_extraction_fired` 标记保证每个完成周期只提取一次）。
+**压缩时记忆复盘**（`agent/middlewares/summarization/background_reviews.py::schedule_memory_review`）：每次真正丢弃消息的压缩都派发记忆回顾（`_execute_memory_review`），交给它的正是那段被丢弃的消息，并以 **cache_warm** 方式运行——原文发在本轮用过的模型配置上，配上会话的系统提示词与工具面，使前缀切点直接命中前缀缓存（`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` 时改为折叠该段）。它以 fire-and-forget 方式在 BACKGROUND_REVIEW 车道上派发，绝不可能阻塞模型调用；评审锁被持有时压缩完全跳过派发（不排队）。技能评审不在此路径——它在计划完成时从 `PlanContinuationEnforcer.aafter_agent` fork（单发 `skill_review_fired` 标记保证每个完成周期只提取一次）。
 
 **切点选择**（`_determine_cutoff`，compression.py:277）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，compression.py:70）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（compression.py:311）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口的 `_plan_model_call` 中调用），切点绝不越过最后一条 `HumanMessage`。
 
@@ -64,7 +64,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 - 该块被替换为文本指针 `[evicted to: <path>]`，与 `pub/func/message/eviction.py` 发出的标记一致，因此 `_collect_evicted_refs` 能收集到它，`_finalize_summary_doc` 会把路径带进 `SummaryDoc.evicted_refs`（渲染为 *Evicted References*）；
 - 无法解码或写入的块变成 `<media error="failed_to_offload" />` —— 媒体失败绝不会弄坏压缩。
 
-保留窗口（`current_messages[cutoff:]`）绝不触碰：媒体只在它的回合真正被摘要时才离开。两条压缩路径都会在 nudge 调度之前对前缀切片调用卸载 —— `_apply_compression_under_lock`（同步）与 `_aapply_compression_under_lock`（异步）。摘要提示词（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）告诉模型这些指针存在、必须原样带进 `evicted_refs`、不得臆测视觉/音频/视频细节，并可按路径取回载荷。
+保留窗口（`current_messages[cutoff:]`）绝不触碰：媒体只在它的回合真正被摘要时才离开。两条压缩路径都会在 后台评审调度之前对前缀切片调用卸载 —— `_apply_compression_under_lock`（同步）与 `_aapply_compression_under_lock`（异步）。摘要提示词（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）告诉模型这些指针存在、必须原样带进 `evicted_refs`、不得臆测视觉/音频/视频细节，并可按路径取回载荷。
 
 媒体文件位于会话目录树内，因此 `clear_session()` 会把它们随 `evicted/` 与 `plans/` 一并删除。
 
@@ -168,7 +168,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 系统提示词刷新
 
-仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（`core.py::_refresh_system_prompt_if_needed`），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / nudge 管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
+仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（`core.py::_refresh_system_prompt_if_needed`），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / 后台评审管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
 
 ## 📌 注册点
 

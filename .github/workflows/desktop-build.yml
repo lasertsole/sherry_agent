@@ -137,6 +137,22 @@ jobs:
           sys.exit(0 if hits else "psutil is MISSING from the frozen backend tree")
           EOF
 
+      - name: Verify botpy made it into the frozen tree (QQ channel)
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" - <<'EOF'
+          import pathlib
+          import sys
+
+          tree = pathlib.Path("client/src-tauri/sherry-backend/_internal")
+          hits = sorted(p for p in tree.rglob("botpy*"))
+          print(f"botpy payload entries: {len(hits)}")
+          for hit in hits[:5]:
+              print(" ", hit.relative_to(tree))
+          sys.exit(0 if hits else "botpy is MISSING from the frozen backend tree")
+          EOF
+
       - name: Audit the bundled backend tree (no tests/docs/wiki)
         run: uv run --no-sync python packaging/check_release.py backend client/src-tauri/sherry-backend
 

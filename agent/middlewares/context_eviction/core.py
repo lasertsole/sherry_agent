@@ -10,16 +10,18 @@ before it reaches graph state:
   to a fixed head plus a recovery notice — no eviction file is written;
 - every other tool in ``excluded_tools`` passes through untouched.
 
-Human messages (P1-9): an oversized plain-text ``HumanMessage`` at the end of
-the transcript is offloaded at ``before_model`` (full text written under the
-same ``evicted/`` directory, ``additional_kwargs["lc_evicted_to"]`` added —
+Human messages (P1-9): an oversized plain-text USER ``HumanMessage`` at the
+end of the transcript is offloaded at ``before_model`` (full text written under
+the same ``evicted/`` directory, ``additional_kwargs["lc_evicted_to"]`` added —
 **content and id unchanged**, so the graph reducer updates the message in
 place) and its model view is replaced by a head/tail preview at
-``wrap_model_call``. This is deliberately the opposite three-state split from
-the tool path: state keeps the **full** text (so MesMemory archives the full
-text and the compression pipeline still sees it), and only the model view is
-truncated. The eviction file is self-healed from the state text whenever it is
-missing.
+``wrap_model_call``. Only messages carrying ``metadata.origin == "user"`` are
+eligible: system reminders, workspace notices and every other injected
+``HumanMessage`` carrier are never evicted. This is deliberately the opposite
+three-state split from the tool path: state keeps the **full** text (so
+MesMemory archives the full text and the compression pipeline still sees it),
+and only the model view is truncated. The eviction file is self-healed from the
+state text whenever it is missing.
 
 Chain position (``agent/core.py``): registered immediately after
 ``ToolGuardrails``, which makes it OUTER relative to ``PathGuard`` /
@@ -66,6 +68,7 @@ from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
 from config.features.agent_side.redaction import REDACTION
 from config.features.agent_side.untrusted_output import UNTRUSTED_OUTPUT
 from context_engine import is_message_persisted, mark_message_ids_persisted
+from pub.func.message.classify import is_user_message
 from pub.func.message.eviction import (
     EVICTED_TO_KEY,
     _build_evicted_content,
@@ -270,6 +273,11 @@ class ContextEvictionMiddleware(AgentMiddleware):
         last = messages[-1]
         if not isinstance(last, HumanMessage):
             return None
+        # Only real user input is evictable. Reminders, workspace notices and
+        # every other injected carrier share the HumanMessage role but are
+        # live-state/agent content — never the user's words.
+        if not is_user_message(last):
+            return None
         session_id = self._resolve_session_id(state)
         if session_id is None:
             return None
@@ -316,7 +324,11 @@ class ContextEvictionMiddleware(AgentMiddleware):
         processed: list[AnyMessage] = []
         for message in request.messages:
             view: AnyMessage = message
-            if isinstance(message, HumanMessage) and message.additional_kwargs.get(EVICTED_TO_KEY):
+            if (
+                isinstance(message, HumanMessage)
+                and is_user_message(message)
+                and message.additional_kwargs.get(EVICTED_TO_KEY)
+            ):
                 try:
                     view = _build_model_view(message, session_id)
                 except Exception:

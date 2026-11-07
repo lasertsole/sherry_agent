@@ -216,7 +216,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` mem 키는 압축 파이프라인과의 계약입니다: `Summarization`이 토큰 추정(`_estimate_system_prompt_tokens`)에 읽고 압축 후 (mem + db에) 다시 씁니다 —— 그래서 캐시 미스 시 항상 이중 기록합니다.
 
-**영속화는 더 이상 압축 파이프라인에 속하지 않습니다.** `MessagePersistenceMiddleware`가 각 모델 경계마다 새 메시지를 MesMemory로 플러시합니다(아래 섹션 참고); 메모리 리뷰 / 플랜 추출 nudge는 여전히 `Summarization`이 compact 접점에서 스케줄합니다. `system_prompt_injection`는 어떤 라이프사이클 후크(`before_agent` / `after_agent` / `before_model` / `after_model`)도 오버라이드하지 않습니다; 역할은 시스템 프롬프트 래핑뿐입니다.
+**영속화는 더 이상 압축 파이프라인에 속하지 않습니다.** `MessagePersistenceMiddleware`가 각 모델 경계마다 새 메시지를 MesMemory로 플러시합니다(아래 섹션 참고); 메모리 리뷰 / 스킬 리뷰 백그라운드 작업는 여전히 `Summarization`이 compact 접점에서 스케줄합니다. `system_prompt_injection`는 어떤 라이프사이클 후크(`before_agent` / `after_agent` / `before_model` / `after_model`)도 오버라이드하지 않습니다; 역할은 시스템 프롬프트 래핑뿐입니다.
 
 > 이 문서의 이전 버전은 지식 그래프 유지관리(`after_turn`)와 `MemoryCache`를 언급했습니다. **현재 코드에는 둘 다 존재하지 않습니다.** 시스템 프롬프트는 상태 레지스터와 `build_system_prompt()`에서 공급되며, 미들웨어 계층 어디에도 지식 그래프 호출은 없습니다.
 
@@ -470,7 +470,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **두 경로가 하나의 워터마크를 공유하며 쓰기는 멱등입니다.** 반환 시 기록된 도구 결과는 이후 모든 경계에서 다시 보이고, 경계에서 기록된 AI 메시지는 다음 경계에서 다시 보입니다. 그래프 상태는 누적되지만 워터마크가 메시지당 한 행을 보장합니다 — 프로세스 재시작을 넘어서도 성립합니다(메시지 id와 내용 지문 모두 체크포인트 직렬화를 견딤). 기록 실패는 로그만 남기고 **무덤 처리하지 않으므로** 다음 경계에서 같은 배치가 재시도됩니다(fail-open — 영속화가 턴이나 도구 결과를 깨뜨리지 않습니다).
 
-> 압축 경로는 이제 아무것도 영속화하지 않습니다: `compaction_persistence.py` 모듈과 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점이 삭제되었습니다. compact는 압축과 압축 시점 nudge 스케줄만 담당합니다(Summarization 섹션 참고).
+> 압축 경로는 이제 아무것도 영속화하지 않습니다: `compaction_persistence.py` 모듈과 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점이 삭제되었습니다. compact는 압축과 압축 시점 백그라운드 리뷰 스케줄만 담당합니다(Summarization 섹션 참고).
 
 ### ContextEvictionMiddleware
 
@@ -595,14 +595,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **구조화 요약:** 보조 호출은 `with_structured_output(SummaryDoc, method="json_mode")`(`summarization/summary_doc.py`)를 통과합니다. Markdown은 문서에서 코드로 렌더링되고, cap 후 문서 본체는 AIMessage의 `additional_kwargs["summary_doc"]`에 저장됩니다(체이닝 재요약은 `<prior-summary-json>`으로 재투입). 파싱 실패는 `json_repair`, 다음으로 레거시 free-form 경로로 강등됩니다. 항목 상한은 배열 슬라이스(`completed[-5:]`, `key_decisions[-5:]`, `active_plan_notes[-20:]`, `evicted_refs[-20:]`)이며 Markdown 재파싱이 아닙니다.
 - `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다. 두 전달 경로(압축 직후, 안티-스래싱 게이트 경로)는 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 주입을 건너뛰고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다.
 - **더 이상 영속화하지 않음:** 압축 경로는 MesMemory에 아무것도 쓰지 않습니다. 메시지 영속화는 각 모델 경계에서 `MessagePersistenceMiddleware`가 수행합니다; 기존 `compaction_persistence.py`의 버려진 프리픽스 플러시와 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점은 삭제되었습니다.
-- **압축 시점 nudge:** `schedule_memory_review`(`summarization/nudges.py`)는 압축마다 **메모리 리뷰**만 디스패치하며, 넘기는 것은 **버려질** 메시지입니다——남길 사실이 거기에 있습니다. 기본 `cache_warm` 모드에서 `_nudge_memory`는 그 슬라이스를 **원문 그대로**, 해당 턴이 실제로 사용한 모델 구성(`_build_session_model`: 세션의 모델 오버라이드와 사고 변형, 또는 환경 기본값)으로 보내고, 세션 자신의 시스템 프롬프트와 도구 면도 재현합니다. 압축 절단은 **프리픽스 절단**이므로 `[도구][시스템 프롬프트][버려질 메시지][리뷰 지시]`가 메인 모델이 방금 처리한 요청 프리픽스를 그대로 재현합니다——제공자는 프리픽스 캐시에서 응답하고, 리뷰는 실제 원문을 읽으면서 캐시 읽기 가격만 지불하며, 새 입력은 지시 하나뿐입니다. `NUDGE["memory_review_mode"] = "digest"`는 먼저 접습니다(`digest_history`: 최근 24개는 원문, 이전은 한 줄로 절단)——캐시가 잘 안 듣는 제공자나 작은 윈도의 리뷰 모델용입니다. 가드는 여전히 두 겹입니다: 리뷰는 정확히 컨텍스트가 가장 가득 찬 순간에 실행되며, 넘겨받는 것은 버려질 슬라이스뿐(전체 대화는 결코 넘기지 않음)이고 턴을 막지 않습니다. NUDGE 레인의 fire-and-forget 작업으로 실행됩니다; nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. 플랜 추출은 이 경로에 없습니다(플랜 완료 시 fork, 아래 참조).
+- **압축 시점 메모리 리뷰:** `schedule_memory_review`(`summarization/background_reviews.py`)는 압축마다 **메모리 리뷰**만 디스패치하며, 넘기는 것은 **버려질** 메시지입니다——남길 사실이 거기에 있습니다. 기본 `cache_warm` 모드에서 `_execute_memory_review`는 그 슬라이스를 **원문 그대로**, 해당 턴이 실제로 사용한 모델 구성(`_build_session_model`: 세션의 모델 오버라이드와 사고 변형, 또는 환경 기본값)으로 보내고, 세션 자신의 시스템 프롬프트와 도구 면도 재현합니다. 압축 절단은 **프리픽스 절단**이므로 `[도구][시스템 프롬프트][버려질 메시지][리뷰 지시]`가 메인 모델이 방금 처리한 요청 프리픽스를 그대로 재현합니다——제공자는 프리픽스 캐시에서 응답하고, 리뷰는 실제 원문을 읽으면서 캐시 읽기 가격만 지불하며, 새 입력은 지시 하나뿐입니다. `BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"`는 먼저 접습니다(`digest_history`: 최근 24개는 원문, 이전은 한 줄로 절단)——캐시가 잘 안 듣는 제공자나 작은 윈도의 리뷰 모델용입니다. 가드는 여전히 두 겹입니다: 리뷰는 정확히 컨텍스트가 가장 가득 찬 순간에 실행되며, 넘겨받는 것은 버려질 슬라이스뿐(전체 대화는 결코 넘기지 않음)이고 턴을 막지 않습니다. BACKGROUND_REVIEW 레인의 fire-and-forget 작업으로 실행됩니다; 리뷰 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. 스킬 리뷰는 이 경로에 없습니다(플랜 완료 시 fork, 아래 참조).
 
-**Nudge 서브에이전트** (`summarization/nudges.py`, 압축 파이프라인이 디스패치): 독립적인 `create_agent` 인스턴스로, 두 경로는 각각 다른 트리거·다른 모델·다른 도구 장벽을 가집니다:
+**백그라운드 리뷰 서브에이전트** (`summarization/background_reviews.py`, 압축 파이프라인이 디스패치): 독립적인 `create_agent` 인스턴스로, 두 경로는 각각 다른 트리거·다른 모델·다른 도구 장벽을 가집니다:
 
-- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 압축 파이프라인이 발화하며 **해당 턴의 구성에서 재구축한 메인 모델**(`_build_session_model`, 위의 cache_warm 이음새)을 쓰고, 도구 면은 세션의 전체 면입니다; 그래프는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`를 지니며, `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 도구를 거부하므로 리뷰가 **실행**할 수 있는 것은 마커된 집합(`memory`, `knowledge`, `question`, 플랜 모드)뿐입니다. 전체 면은 프리픽스 캐시 일치를 위한 것이고, 게이트가 실행 장벽입니다. 스킬 3종은 **의도적으로 미마커**——여기서 스킬 추출이 일어날 수 없습니다.
-- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): **플랜 완료** 훅(`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_plan_extraction`)이 발화하며 **보조 모델**(`_create_plan_extraction_agent`, `temperature=0`)을 쓰고 **대화를 전혀 받지 않습니다**——지시문과 plan context뿐입니다. 도구 면은 **명시적으로 바인딩**되어 있으며——`knowledge` / `skill_list` / `skill_view` / `skill_manage` / `memory`(`_extraction_tool_face`; `memory`는 Part 3의 FACTS.md 기록 경로)——바인딩 목록 자체가 장벽이고 스킬 쓰기는 이 경로만 담당합니다. 두 가지 산출물: **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다; **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(`<module>-notes` 승계 포함). 그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
-- **플랜 추출 중복 제거:** `_detect_todo_all_complete`는 모든 todo가 `completed`/`cancelled`이고 플랜의 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)이 마지막 **성공** 추출 후 `nudge_plan_snapshot_hash`에 저장된 값과 다를 때 발화합니다——완료된 todo의 제자리 수정은 재추출하고, 변하지 않은 플랜은 건너뛰며, 실패한 패스는 다음 완료 턴에 재시도합니다. 앞단 게이트: 세션별 `Summarization → nudge` 스위치, `NUDGE["plan_extraction_enabled"]`, `nudge_plan_extraction_lock`, 실행 중인 이벤트 루프.
-- **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 nudge 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
+- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 압축 파이프라인이 발화하며 **해당 턴의 구성에서 재구축한 메인 모델**(`_build_session_model`, 위의 cache_warm 이음새)을 쓰고, 도구 면은 세션의 전체 면입니다; 그래프는 `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`를 지니며, `_BackgroundReviewLimitTool`은 메타데이터에 `background_review: true`가 없는 도구를 거부하므로 리뷰가 **실행**할 수 있는 것은 마커된 집합(`memory`, `knowledge`, `question`, 플랜 모드)뿐입니다. 전체 면은 프리픽스 캐시 일치를 위한 것이고, 게이트가 실행 장벽입니다. 스킬 3종은 **의도적으로 미마커**——여기서 스킬 리뷰가 일어날 수 없습니다.
+- `_SKILL_REVIEW_PROMPT`(스킬 리뷰): **플랜 완료** 훅(`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_skill_review`)이 발화하며 **보조 모델**(`_create_skill_review_agent`, `temperature=0`)을 쓰고 대화는 받지 않습니다. 도구 면은 `skill_list` / `skill_view` / `skill_manage`만이며 knowledge와 memory는 없습니다. `skills/auto`를 스냅샷하고 리뷰 후 runtime judge(`skill_review.judge_skill_update`)가 grounded / reusable / trigger / quality를 판정합니다. 거부되면 스냅샷으로 복원해 feedback과 함께 재시도하고, 소진되면 실패 마커를 기록하며 성공 fingerprint를 진행하지 않습니다. knowledge와 FACTS를 쓰지 않고 `handoff-tree.json`은 감사용으로 남깁니다.
+- **스킬 리뷰 중복 제거:** `_detect_todo_all_complete`는 모든 todo가 `completed`/`cancelled`이고 플랜의 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)이 마지막 **성공** 리뷰 후 `skill_review_snapshot_hash`에 저장된 값과 다를 때 발화합니다——완료된 todo의 제자리 수정은 재추출하고, 변하지 않은 플랜은 건너뛰며, 실패한 패스는 다음 완료 턴에 재시도합니다. 앞단 게이트: `BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]`, `skill_review_lock`, 실행 중인 이벤트 루프.
+- **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 백그라운드 리뷰 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_BackgroundReviewLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
 
 ▶️ 전체 문서: [wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
@@ -792,9 +792,9 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 | 키                                                                                                                                          | 소유자                                                                             | 레지스터 |
 | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------- |
 | `system_prompt`                                                                                                                             | system_prompt_injection / Summarization                                            | mem + db |
-| `nudge_plan_extraction_fired`                                                                                                               | 플랜 완료 트리거 (PlanContinuationEnforcer → `summarization/nudges.py`)            | db       |
-| `nudge_plan_snapshot_hash`                                                                                                                  | 플랜 완료 트리거——마지막으로 추출한 플랜의 지문 (id + content + status + plan_ref) | db       |
-| `nudge_review_memory_lock`, `nudge_plan_extraction_lock`                                                                                    | nudge fork (압축 메모리 리뷰 / 플랜 완료 추출)                                     | mem      |
+| `skill_review_fired`                                                                                                               | 플랜 완료 트리거 (PlanContinuationEnforcer → `summarization/background_reviews.py`)            | db       |
+| `skill_review_snapshot_hash`                                                                                                                  | 플랜 완료 트리거——마지막으로 추출한 플랜의 지문 (id + content + status + plan_ref) | db       |
+| `background_review_memory_lock`, `skill_review_lock`                                                                                    | 백그라운드 리뷰 fork (압축 메모리 리뷰 / 플랜 완료 스킬 리뷰)                                     | mem      |
 | `iteration_budget`, `iteration_budget_used`                                                                                                 | IterationBudget                                                                    | mem      |
 | `tool_guardrail_state`                                                                                                                      | ToolGuardrails                                                                     | mem      |
 | `summarization_*` 키(압축 카운터, 무효 연속, 마지막 토큰/전략, 스킵 LLM 플래그, 복구 상태, 마지막 사용자 질문)                              | Summarization                                                                      | mem      |
@@ -827,7 +827,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `iteration_budget.py`     | `main_agent_max_iterations=90`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                             |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`(`"true"` / `"false"` / `"auto"`, 그 외 값은 페일세이프 스킬 경로), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
-| `summarization.py`        | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/nudges.py`가 읽는 보존/시도/쿨다운/임계값 상수                                                                                               |
+| `summarization.py`        | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/background_reviews.py`가 읽는 보존/시도/쿨다운/임계값 상수                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, 미리보기 머리/꼬리 5줄, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                         |
 | `tool_guardrails.py`      | ToolGuardrails 섹션에 나열된 다섯 병리 임계값과 복구 기본값                                                                                                                                                       |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                  |
@@ -954,7 +954,7 @@ agent = create_agent(
     · MultimodalProcessor  mutil_temp 청소(7일 초과 / 숫자 아닌 파일명)
     · PlanContinuationEnforcer  미완료 todo가 남아 있으면 연속 프롬프트를 fire-and-forget으로 주입
     · (system_prompt_injection는 라이프사이클 후크를 구현하지 않습니다; 메시지 영속화는
-       자체 after_model 후크에서 실행되고, 메모리 리뷰 / 플랜 추출 nudge는 대신
+       자체 after_model 후크에서 실행되고, 메모리 리뷰 / 스킬 리뷰 백그라운드 작업는 대신
        Summarization의 압축 경로 안에서 발화합니다.)
 ```
 
@@ -1063,8 +1063,8 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── media_offload.py         # 압축 시 인라인 미디어 오프로드
-│   ├── nudges.py                # 압축 시점 nudge 스케줄링 + 프롬프트
-│   ├── plan_context.py          # 플랜 추출 nudge의 활성 플랜 감지
+│   ├── background_reviews.py    # 압축 시점 백그라운드 리뷰 스케줄링 + 프롬프트
+│   ├── plan_context.py          # 스킬 리뷰의 활성 플랜 감지
 │   └── summary_doc.py           # SummaryDoc 스키마 + 결정적 Markdown 렌더러
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # TaskIntentMiddleware 익스포트

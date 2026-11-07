@@ -23,6 +23,15 @@ class PtcConfig(TypedDict):
     ptc_max_stdout_bytes: int
     ptc_max_stderr_bytes: int
     ptc_allowed_tools: list[str]
+    #: Observation gate for the replay path: skill review compiles a per-step
+    #: script, and an executor step subagent may prefill it before React.
+    #: Shipped OFF: enable only after the observation pass (compile hit rate,
+    #: prefill success rate, duplicate-side-effect audit).
+    ptc_prefill_enabled: bool
+    #: Hard cap for a generated script read from a skill's scripts/ directory.
+    ptc_script_max_bytes: int
+    #: Compiler attempts per step (JSON/syntax misses only; never executes).
+    ptc_compile_max_attempts: int
 
 
 PTC: PtcConfig = {
@@ -40,4 +49,7 @@ PTC: PtcConfig = {
         "search_files",
         "web_search",
     ],
+    "ptc_prefill_enabled": False,
+    "ptc_script_max_bytes": 20_480,
+    "ptc_compile_max_attempts": 2,
 }

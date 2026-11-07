@@ -45,6 +45,7 @@ from loguru import logger
 from config import SESSIONS_DIR
 from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
 from config.path import is_safe_session_segment
+from pub.func.message.classify import is_user_message
 
 __all__ = [
     "EVICTED_TO_KEY",
@@ -322,8 +323,11 @@ def _human_file_name(msg: HumanMessage) -> str:
 def evict_human_message(msg: HumanMessage, session_id: str) -> HumanMessage | None:
     """Offload an oversized human message; return the tagged copy or ``None``.
 
-    ``None`` means "keep the original": human eviction is disabled, the text is
-    at or under ``human_evict_threshold_chars``, the message already carries
+    ``None`` means "keep the original": human eviction is disabled, the message
+    is not real user input (``is_user_message``: ``metadata.origin == "user"``;
+    system reminders and every other injected carrier share the HumanMessage
+    role but are never evicted), the text is at or under
+    ``human_evict_threshold_chars``, the message already carries
     ``lc_evicted_to``, even the character-budgeted preview would not be smaller
     than the original (see :func:`_build_preview` — with the capped budgets this
     only trips for a payload barely over the threshold), the session id is
@@ -338,6 +342,8 @@ def evict_human_message(msg: HumanMessage, session_id: str) -> HumanMessage | No
     pointing at a missing file.
     """
     if not TOOL_RESULT_EVICTION["human_evict_enabled"]:
+        return None
+    if not is_user_message(msg):
         return None
     if msg.additional_kwargs.get(EVICTED_TO_KEY):
         return None

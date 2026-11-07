@@ -104,7 +104,7 @@ async def taskflow_run_task(
 
 ### 派发——`taskflow_step(action="dispatch")` 批量语义
 
-`taskflow_step(action="dispatch", flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）在生成任何子 Agent **之前**校验**每一个** id。当步骤状态为 `ready`，或 `blocked` 但依赖已满足时，它就是可派发的。未知 id、重复 id，或已经 `dispatched`/`done` 的步骤，都会整体拒绝该次调用且不产生任何派发。成功后，步骤通过共享的 `_dispatch.dispatch_child` 接缝（`_dispatch.py:10`）顺序派发，并在**一次** `update_flow` 调用中持久化。若批次中途派发失败，循环停止，已派发的子 Agent 会被持久化，确保没有子会话被静默丢弃，错误信息同时列出失败与已派发的 step id。flow 级别的 `child_session_key` 刻意不被改动——每个步骤自己的 child key 才是权威。
+`taskflow_step(action="dispatch", flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）在生成任何子 Agent **之前**校验**每一个** id。当步骤状态为 `ready`，或 `blocked` 但依赖已满足时，它就是可派发的。未知 id、重复 id，或已经 `dispatched`/`done` 的步骤，都会整体拒绝该次调用且不产生任何派发。成功后，步骤通过共享的 `_dispatch.dispatch_child` 接缝（`_dispatch.py:10`）**并发**派发（上限 `TASKFLOW_INFRA["max_parallel_dispatch"]`），并在**一次** `update_flow` 调用中持久化。单个 spawn 失败不再中止兄弟步骤：成功的子 Agent 会被持久化，错误信息同时列出失败与已派发的 step id。flow 级别的 `child_session_key` 刻意不被改动——每个步骤自己的 child key 才是权威。`taskflow_plan` 的初始 ready 集走同一路径，resume 的全 ready 波次共用同一 flow 锁与校验。
 
 ### 合成——`aggregate_deps`
 

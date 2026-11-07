@@ -12,7 +12,7 @@ sources (``ownership.association_plan_refs``) — never from the name:
   listed session resolves the same path -> same key -> collaboration intact.
 
 A session with no resolvable plan file still owns a session-derived fallback
-identity named ``session-<sha1(session_id)[:8]>`` (the nudge's fallback plan
+identity named ``session-<sha1(session_id)[:8]>`` (the review's fallback plan
 name). The full-id hash replaces the old ``session_id[:8]`` slice, so two ids
 sharing an 8-char prefix can no longer collide.
 

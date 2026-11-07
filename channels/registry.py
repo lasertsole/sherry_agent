@@ -13,6 +13,7 @@ contain a ``core.py`` — no ``__init__.py`` is required. Flat single-file modul
 """
 
 import os
+import sys
 import importlib.util
 from pathlib import Path
 from loguru import logger
@@ -32,6 +33,11 @@ def _ensure_deps(plugin_dir: Path, plugin_name: str) -> bool:
     """
     req_file = plugin_dir / "requirements.txt"
     if not req_file.is_file():
+        return True
+
+    # Frozen builds cannot install into the running interpreter; the SDKs are
+    # frozen at build time. Skip the misleading install log entirely.
+    if getattr(sys, "frozen", False):
         return True
 
     logger.info("Installing dependencies for channel '{}'...", plugin_name)

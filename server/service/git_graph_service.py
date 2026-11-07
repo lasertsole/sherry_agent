@@ -165,11 +165,11 @@ def _header(root: Path) -> tuple[bool, str, str, bool, int, bool]:
 
     dirty = 0
     capped = False
-    status = _run(root, ["status", "--porcelain"])
-    if status is not None and status.returncode == 0:
-        lines = [line for line in status.stdout.splitlines() if line.strip()]
-        capped = len(lines) > GIT_GRAPH["max_status_entries"]
-        dirty = min(len(lines), GIT_GRAPH["max_status_entries"])
+    # ``git status`` compares against the shared repo's HEAD, which is not this
+    # project's chain; compare the worktree to the project ref explicitly.
+    paths = shadow_git.dirty_paths(root, cap=GIT_GRAPH["max_status_entries"] + 1)
+    capped = len(paths) > GIT_GRAPH["max_status_entries"]
+    dirty = min(len(paths), GIT_GRAPH["max_status_entries"])
     return True, "", "checkpoint", False, dirty, capped
 
 

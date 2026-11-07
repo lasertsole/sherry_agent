@@ -72,7 +72,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框。行的右键菜单提供 打开 / 打开方式 / 用内置浏览器打开（HTML）/ 在文件管理器中显示 / 复制绝对或相对路径 / 添加到聊天；行（或文件查看器标签）还可拖入输入框——两种方式都只往消息里插入 `@./path` 引用 chip，绝不带文件内容：文件由 agent 自己读取
 - **选区引用与辅助会话**：在单条聊天消息内选中文字后右键会弹出小菜单——「添加到当前会话」把原子引用 chip 插入输入框（发送为 markdown 引用块），「在辅助会话中提问」新建一个父会话的**完整 fork** 子会话：首轮注入父会话 checkpoint 中的完整历史（仅模型可见，辅助会话自身的可见历史仍为空），并复制父会话的预设、agent 配置、会话级模型设置与项目目录；fork 截止到父会话最后一个完成的回答，未完成的工具调用绝不会被重放。它在「当前会话」右栏标签页中打开并预填引用；关闭该标签页只会收起面板，子会话及其全部状态都会保留，并继续出现在会话列表中以便重新打开，只有删除父会话时才会清除。标签条最左侧的下箭头菜单会按「当前会话 / 全局」列出最近关闭的 10 个标签页（当前会话的记录只属于该会话，随会话销毁而清除），恢复已关闭的辅助会话时历史对话原样保留。「当前会话」标签组按会话隔离——切换会话只显示该会话自己的标签（没有则为空），不会带出上一个会话的页面；「全局」标签则跨会话共享。跨消息行、从控件/审批卡片开始、或超过 8,000 字符的选区不弹菜单，保留浏览器原生右键
 - **智能体可控浏览器（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py))：需显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED=1` 加一次重启）——关闭时不注册任何 browser 工具、每个 `/browser/*` 路由都答 404，也不会派生任何 Chromium。开启后，主智能体通过合并后的主代理专用 `browser` 工具（navigate / snapshot / click / type / press / scroll / screenshot），以及 `browser_evaluate`（还需 `SHERRY_BROWSER_ALLOW_EVALUATE=1`）驱动真实的 loopback Chromium；工具箱的浏览器面板作为第二个 CDP 客户端观看同一页面（`/browser/ws` 截图流 + 输入）；调试端口从不离开后端进程
-- **用户生命周期 Hook** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/))：`sherry.jsonc` 的 `hooks` 段让运维者自配的命令挂到回合上——`PostToolUse` / `PostToolUseFailure`（载荷含 `toolName`、`toolCallId`、有界的结果/错误预览与 `durationMs`）与 `Stop`（`responsePreview`、`toolCallCount`）。设计上只读：hook 只能审计、通知、计量，不能阻断工具、改写参数或注入上下文。默认关闭（入库的配置文件不能自行让 agent 执行命令）；命令经 `shlex` 拆分、不经 shell、环境已擦洗，每个 hook 有超时且超时会杀进程，stdout 有上限并按可选 JSON 解析（非 JSON 输出视为成功）。注册在工具护栏之后，可按会话关闭- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
+- **用户生命周期 Hook** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/))：`sherry.jsonc` 的 `hooks` 段让运维者自配的命令挂到回合上——`PostToolUse` / `PostToolUseFailure`（载荷含 `toolName`、`toolCallId`、有界的结果/错误预览与 `durationMs`）与 `Stop`（`responsePreview`、`toolCallCount`）。设计上只读：hook 只能审计、通知、计量，不能阻断工具、改写参数或注入上下文。默认关闭（入库的配置文件不能自行让 agent 执行命令）；命令经 `shlex` 拆分、不经 shell、环境已擦洗，每个 hook 有超时且超时会杀进程，stdout 有上限并按可选 JSON 解析（非 JSON 输出视为成功）。注册在工具护栏之后，可按会话关闭- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`BACKGROUND_REVIEW`（后台评审调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + background_review`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
 - **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
 - **并行步骤派发与血缘指针** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py))：一波派发以并发方式 spawn，上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（2；设为 1 即还原顺序行为）——部分失败时已 spawn 的子代理全部持久化、失败的步骤 id 逐个点名；两个子代理同时完成时两个结果都会落地（resume 的写入经 `update_flow_with_conflict_retry` 重新应用已判定的结论，结果不会因冲突丢失，同一步骤也不会被派发两次）。`taskflow_flow(action="create", resumed_from=…)` 记录血缘（`resumed_from` / `superseded_by` 两列，属于当前 schema）；被取代的流退出 active 读取，但仍留在看板上
 - **TaskFlow 进度** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py))：每个流程的扁平步骤列表（id、任务、状态）与按状态计数会进入浮动进度面板；调度器仍按各自的 `depends_on` 逐个解锁步骤。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
@@ -196,7 +196,7 @@ sherry_agent/
 │   ├── subagent/           # 子代理派生管线基准
 │   ├── long_running_task/  # TaskFlow DAG 评估
 │   ├── session_memory/     # 会话内存栈检查
-│   ├── nudge_extraction/   # AI 评判的 plan 抽取
+│   ├── skill_review/   # AI 评判的 plan 抽取
 │   └── results/            # 每次运行的报告（已 gitignore）
 │
 ├── logs/                   # 日志系统
@@ -233,7 +233,7 @@ sherry_agent/
 ├── runtime/                # Runtime state, lanes & cross-boundary seams
 │   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
 │   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
-│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / NUDGE / NESTED)
+│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / BACKGROUND_REVIEW / NESTED)
 │   ├── session/            # 会话级寄存器
 │   │   ├── core.py         # 单例 SessionRegister 基类 + 按会话清理
 │   │   ├── relation_register.py # 会话/socket 关系注册表
@@ -485,7 +485,7 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `subagent` | 真实 `spawn_subagent_direct` 管线在一组确定性任务上的表现（任务成功率 + 延迟） |
 | `long_running_task` | TaskFlow 编排环在有依赖的 DAG 上的表现（步骤成功率、流程完成度、墙钟时间） |
 | `session_memory` | 会话内存栈的 6 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、语义搜索排序 |
-| `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
+| `skill_review` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
 | `coding_capability` | 真实主 agent 在一小批自设计编码任务上的表现，每道题由该任务仓库自己的 pytest 运行判定——是基线，不是外部基准 |
 | `swebench` | 外部 SWE-bench_Lite 实例，走同一套 harness（钉住 base commit + 每实例独立 venv + 该实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定；agent 只看到问题描述） |
 | `deepswe` | 外部 DeepSWE 任务，在基准自己的 Docker 镜像中运行：agent 编辑绑定挂载的 checkout，`terminal` 在容器内执行，任务独立的 verifier 镜像对 agent 的 diff 判分（先跑 gold patch 自检） |

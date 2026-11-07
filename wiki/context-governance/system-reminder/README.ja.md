@@ -6,7 +6,7 @@
 
 ---
 
-システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、プロジェクト指示（`AGENTS.md`、フォールバック `CLAUDE.md`）、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
+システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、プロジェクト指示（`AGENTS.md`、フォールバック `CLAUDE.md`）、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。最低優先度の `current_time` ソースが同じブロックに毎ターンローカル時計を追加します。英語の 1 行で、例: `Current local time: 2026-11-06 09:41:07 (Friday) (CST, UTC+08:00)`。`transient=True` なので前ターンの行は取り除かれ、累積しません。また意図的に `only_if_changed` を使いません — 時計は進む必要があるためです。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
 
 凍結されたメモリスナップショットには意図的な例外が 1 つあります。セッションのモデル切替は新しい provider キャッシュ名前空間に入り、思考モード切替は同一プレフィックスで `cache_read` が 0 になることを実測済みです——どちらもキャッシュは元々冷えます。`ThinkingControlMiddleware` の `before_model` フックは、そのターンの `(thinking key, profile fingerprint, mapping fingerprint)` を最後に適用した値と比較し（グラフは毎ターン再構築されるためプロセスレベルで保持）、変化があれば `system_prompt_injection` より前に `MemoryStore` のスナップショットを再読み込みし、両レジスタから `StateKey.SYSTEM_PROMPT` を削除します。切替後のターンの最初のモデル呼び出しは、セッション途中に書かれたメモリエントリ（SQLite バックエンド。旧 Markdown ファイルは起動時に一度だけインポート）を見ます。初回ターン、変化なし、再読み込み失敗ではキャッシュを保持し、送信なしでは発火しません。
 
@@ -25,10 +25,11 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 
 ## 📋 登録ソース
 
-カタログは 8 個のソースを登録します（`agent/middlewares/reminder_catalog/sources.py::register_default_sources`）。すべて同じチャネル（`CURRENT_TURN`）に乗り、すべて `only_if_changed=True` を持ちます——前回注入と**バイト同一**のペイロードは、クールダウンが過ぎていても再注入**されません**。カタログは**1 ターンにつき 1 回のみ、最初のモデル呼び出しで**解決されます（最後のメッセージが本物のユーザーメッセージのとき）。再開ターンがユーザーメッセージより前に既にブロックを持っていれば再注入をスキップします。
+カタログは 10 個のソースを登録します（`agent/middlewares/reminder_catalog/sources.py::register_default_sources`）。すべて同じチャネル（`CURRENT_TURN`）に乗り、`current_time` と `memory_recall` を除き、すべて `only_if_changed=True` を持ちます——前回注入と**バイト同一**のペイロードは、クールダウンが過ぎていても再注入**されません**。カタログは**1 ターンにつき 1 回のみ、最初のモデル呼び出しで**解決されます（最後のメッセージが本物のユーザーメッセージのとき）。再開ターンがユーザーメッセージより前に既にブロックを持っていれば再注入をスキップします。
 
 | ソース（`source_id`） | 優先度 | 予算（文字） | クールダウン | Transient | 注入内容 |
 |---|---|---|---|---|
+| `memory_recall` | 88 | 4 000 | 3 ターン | No | 現在のリクエストに関連する意味メモリのヒット（スイッチがオンのときのみ） |
 | `plan_mode_block` | 85 | 2 000 | 0 —— 毎ターン | No | プランモード状態 / 指示（エージェントがプランモード中か） |
 | `todo_block` | 80 | 1 500 | 0 —— 毎ターン | No | エージェントの現在の todo / 作業プランリスト |
 | `taskflow_status` | 75 | 2 000 | 5 ターン | No | TaskFlow ボード状態（ステア済みボード） |
@@ -37,12 +38,13 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 | `project_instructions` | 62 | 8 000 | 0 —— 毎ターン | Yes | プロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`） |
 | `project_dir_notice` | 60 | 500 | 0 —— 毎ターン | No | 作業ディレクトリ通知 |
 | `knowledge_index` | 50 | 1 000 | 0 —— 毎ターン | No | 知識索引 |
+| `current_time` | 10 | 120 | 0 —— 毎ターン | Yes | ローカル時計（英語、日付・曜日・秒・UTC オフセット） |
 
-**頻度の読み方。** `cooldown_turns = 0` は*毎ターン対象*——前回注入から内容が変化すれば再注入されます; 内容がめったに変わらないソース（`project_instructions` など）は毎ターン対象でも注入はまれで、頻繁に変わるソース（`todo_block` など）はほとんどのターンで注入されます。`cooldown_turns = 5`（TaskFlow ボード、boulder）は*最大でも 5 ターンに 1 回*、かつ内容も変化したときのみ。変化していないボードは対象であっても 5 ターン沈黙します。スロットル管理状態は実際に注入されたソースだけ進み、抑制されたソースはクールダウンを「無駄に消費」しません。
+**頻度の読み方。** `cooldown_turns = 0` は*毎ターン対象*——前回注入から内容が変化すれば再注入されます; 内容がめったに変わらないソース（`project_instructions` など）は毎ターン対象でも注入はまれで、頻繁に変わるソース（`todo_block` など）はほとんどのターンで注入されます。`cooldown_turns = 5`（TaskFlow ボード、boulder）は*最大でも 5 ターンに 1 回*、かつ内容も変化したときのみ。変化していないボードは対象であっても 5 ターン沈黙します。スロットル管理状態は実際に注入されたソースだけ進み、抑制されたソースはクールダウンを「無駄に消費」しません。`current_time` は例外です: 内容に秒を含み `only_if_changed` をオフにしているため、毎ターン現れます。
 
 **圧縮フィルタ。** 各 source は `compress_exclude`（デフォルト `True`）を宣言し、`DynamicReminderMiddleware` がそれをメッセージ metadata に刻み、`_filter_summary_messages` が要約 prompt を組み立てる前にそれらの reminder を落とします。live view は毎ターン再派生されるため、圧縮前のスナップショットはノイズです。`continuity_context` だけが `compress_exclude=False` を設定し、`[Continuity]` としてシリアライズされます。タグ導入前に注入された古い reminder はキーを持たず、従来の挙動を保ちます。実際のユーザーターンは `pub.func.message.classify.is_user_message`（`metadata.origin == "user"`、fail-closed）で判定されるため、注入された HumanMessage が要約で `[User]` とラベルされることはありません。
 
-**ターン間の持続。** 非 transient のリマインダーはトランスクリプト内の `HumanMessage` であり、ミドルウェアの whole-list rewrite が後続ターンで `messages[:-1]` 経由で再送するため、圧縮で破棄されるまでコンテキストウィンドウに留まります（圧縮後の `reset_session` が変化検出ハッシュをクリアし、次ターンに live state から再注入します）。**Transient ソース**（`transient=True`）は例外です: 再解決されないターンでは、rewrite が `messages[:-1]` から古いリマインダーを剥がすため、`project_instructions` は内容が変化したターン（および圧縮後の最初のターン）にだけ現れます。モデルは一度読めば十分で、以後の全ターンを占有しません。
+**ターン間の持続。** 非 transient のリマインダーはトランスクリプト内の `HumanMessage` であり、ミドルウェアの whole-list rewrite が後続ターンで `messages[:-1]` 経由で再送するため、圧縮で破棄されるまでコンテキストウィンドウに留まります（圧縮後の `reset_session` が変化検出ハッシュをクリアし、次ターンに live state から再注入します）。**Transient ソース**（`transient=True`）は例外です: 再解決されないターンでは、rewrite が `messages[:-1]` から古いリマインダーを剥がすため、`project_instructions` は内容が変化したターン（および圧縮後の最初のターン）にだけ現れます。`current_time` は毎ターン再解決され、前ターンの行を剥がすことでコンテキスト内の時計行を常に 1 行に保ちます。モデルは一度読めば十分で、以後の全ターンを占有しません。
 
 **注入ゲートチェーン。** ソースが特定のターンに注入されるには、以下のチェックを順番にすべて通過する必要があります（`core.py` の `resolve_injections` + `dynamic.py` のミドルウェアゲート）:
 

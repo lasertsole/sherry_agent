@@ -544,7 +544,7 @@ class TestTodolistFullPipeline:
         # Plan completion may fork the real extraction pass; this test only
         # covers the todo/taskflow lifecycle and has no auxiliary model.
         monkeypatch.setattr(
-            "agent.middlewares.summarization.nudges._PLAN_EXTRACTION_ENABLED", False
+            "agent.middlewares.summarization.background_reviews._SKILL_REVIEW_ENABLED", False
         )
 
         tools = _tools()

@@ -68,6 +68,7 @@ from models import build_auxiliary_llm
 from pub.func.build_agent_config import build_agent_config
 from pub.func.message.eviction import EVICTED_TO_KEY, _READ_FILE_SLICE_NOTICE
 from pub.func.message.overflow_clip import CLIP_MARKER
+from pub.func.message.system_reminder import is_system_reminder
 from runtime import clear_all_register_sessions, state_register_mem
 
 pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
@@ -177,7 +178,12 @@ async def _run_until_tool(
         sid = _new_sid(f"{tag}-{attempt}")
         out = await _invoke_with_retry(
             graph,
-            {"messages": [HumanMessage(content=prompt, id=f"h-{sid}")], "session_id": sid},
+            {
+                "messages": [
+                    HumanMessage(content=prompt, id=f"h-{sid}", metadata={"origin": "user"})
+                ],
+                "session_id": sid,
+            },
             build_agent_config(sid),
         )
         tool_messages = [
@@ -240,7 +246,12 @@ async def test_p1_9_human_eviction_real_graph_three_state_split() -> None:
         graph = await _real_graph()
         out = await _invoke_with_retry(
             graph,
-            {"messages": [HumanMessage(content=content, id=f"h-{sid}")], "session_id": sid},
+            {
+                "messages": [
+                    HumanMessage(content=content, id=f"h-{sid}", metadata={"origin": "user"})
+                ],
+                "session_id": sid,
+            },
             build_agent_config(sid),
         )
 
@@ -702,5 +713,54 @@ async def test_p1_9_and_p0_2_evictions_coexist_in_one_session() -> None:
                 f"reported input_tokens={input_tokens} suggests the full "
                 f"{len(content)}-char human payload reached the model"
             )
+    finally:
+        await _purge_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_current_time_reminder_reaches_the_real_agent() -> None:
+    """The lowest-priority clock source is visible to the live model."""
+    from datetime import datetime
+
+    sid = _new_sid("current-time")
+    try:
+        graph = await _real_graph()
+        out = await _invoke_with_retry(
+            graph,
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            "What is the current local date and time? "
+                            "Include the date, 24-hour time, weekday and UTC offset."
+                        ),
+                        id=f"h-{sid}",
+                        metadata={"origin": "user"},
+                    )
+                ],
+                "session_id": sid,
+            },
+            build_agent_config(sid),
+        )
+
+        reminders = [
+            m
+            for m in out["messages"]
+            if isinstance(m, HumanMessage)
+            and is_system_reminder(m)
+            and (getattr(m, "metadata", None) or {}).get("origin") == "current_time"
+        ]
+        assert reminders, "the current_time reminder was not injected"
+        reminder_text = str(reminders[-1].content)
+        match = re.search(
+            r"Current local time: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", reminder_text
+        )
+        assert match is not None, reminder_text
+        injected = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+        assert abs((datetime.now() - injected).total_seconds()) < 300, reminder_text
+
+        answer = _assistant_text(out["messages"])
+        logger.info("current_time reminder={!r} answer={!r}", reminder_text, answer)
+        assert match.group(1)[:10] in answer or match.group(1)[11:13] in answer, answer
     finally:
         await _purge_session(sid)

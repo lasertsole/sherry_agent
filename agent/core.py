@@ -467,7 +467,7 @@ async def _build_graph(
     auxiliary_llm = build_auxiliary_llm()
     # COMPRESSION_LLM_* when configured, else an auxiliary instance (the
     # factory's fallback) — the auxiliary build above stays for the other
-    # consumers, notably the summary's memory-review nudges.
+    # consumers, notably the summary's background reviews.
     compression_llm = build_compression_llm()
     fallback_chain = build_fallback_chain()
 

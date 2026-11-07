@@ -53,11 +53,11 @@ class TestDrainAll:
 
         results = await manager.drain_all(timeout=0.2)
 
-        assert set(results) == {"main", "subagent", "nudge", "nested"}
+        assert set(results) == {"main", "subagent", "background_review", "nested"}
         assert results["nested"] is False
         assert results["main"] is True
         assert results["subagent"] is True
-        assert results["nudge"] is True
+        assert results["background_review"] is True
 
         nested_lane.release()
         assert all((await manager.drain_all(timeout=0.5)).values())

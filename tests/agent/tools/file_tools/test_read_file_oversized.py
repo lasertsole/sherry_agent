@@ -15,7 +15,6 @@ not proof the whole file was seen).
 
 from __future__ import annotations
 
-import codecs
 import json
 import time
 import tracemalloc

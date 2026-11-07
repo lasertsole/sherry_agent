@@ -124,14 +124,15 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 
 ## 🤝 하위 에이전트 핸드오프(Phase 1)
 
-각 하위 에이전트는 답변 끝에 **자기 계층**의 경험 필드 4개를 담은 ```json
+각 하위 에이전트는 답변 끝에 **자기 계층**의 경험 필드 5개를 담은 ```json
 블록을 출력합니다 — `task_understanding`, `discovered_hard_constraints`,
-`locked_decisions`({decision, reason}), `failed_paths`({path,
-failure_reason}). 블록은 **맨 앞**에 둡니다. 저장 결과 상한과 전달 상한이 모두
+`locked_decisions`({decision, reason}), `failed_branches`({branch,
+failure_reason}), `success_steps`({step, tool, params, outcome} — 완료까지의
+curated 직행 경로). 블록은 **맨 앞**에 둡니다. 저장 결과 상한과 전달 상한이 모두
 꼬리에서 잘라내기 때문입니다. 이는 **prompt 계약**이며(`response_format` 아님)
 사고 모드는 켜진 채로 유지됩니다.
 
-완료 시 `_extract_handoff_json`이 마지막 블록을 파싱하고(실패 시 None) 네 필드를
+완료 시 `_extract_handoff_json`이 마지막 블록을 파싱하고(실패 시 None) 다섯 필드를
 `run.completion.handoff`에 저장합니다. 메타데이터
 (`depth`/`agent_label`/`outcome`/`children`)는 모델이 채우지 않으며 코드가
 주입합니다. run 레코드는 spawn 시점의 TaskFlow 좌표(`step_id`/`flow_id`)도
@@ -141,17 +142,19 @@ plan 추출은 모든 하위 run의 핸드오프를 읽고 **현재** plan 스�
 필터링합니다(cancelled todo / superseded flow의 run은 제외하고,
 `resolved_position`은 `step_id`를 todo의 **현재** 위치로 다시 매핑하며
 `step_id - 1`은 쓰지 않습니다). 계층별 트리로 조립하고(부모가 필터된 고아
-노드는 루트로 승격), 깊이 우선으로 `failed_paths` / `hard_constraints` /
+노드는 루트로 승격), 깊이 우선으로 `failed_branches` / `success_steps` / `hard_constraints` /
 `locked_decisions`에 평탄화하며 각 항목에 `source` 라벨
 (`depth-1:label > depth-2:label`)을 붙입니다. 원본 병합 트리는 추출 LLM **전에**
 `handoff-tree.json`에 기록되므로(원자적·멱등 덮어쓰기) 중단되어도 잃지 않습니다.
 LLM의 `plan-summary.json`은 그 위의 두 번째(손실) 계층입니다.
 `knowledge(action="read", layer="handoff")`가 원본 트리를 반환하고, 시스템
-프롬프트의 지식 블록에는 한 줄 카운트(실패 경로 / 하드 제약)가 추가됩니다.
+프롬프트의 지식 블록에는 한 줄 카운트(실패 브랜치 / 성공 단계 / 하드 제약)가 추가됩니다.
 
 하위 에이전트의 요약기는 핸드오프를 압축 너머로 유지합니다: `SummaryDoc`에
-`failed_paths` 추가(`failed_paths_max_items` 상한), `constraints` 규칙은 HARD
-제약을 먼저 쓰도록 지시하며, 각 하위 요약은 **깊이 연동** 예산을 씁니다 —
+`failed_branches`(`failed_branches_max_items` 상한)와 `success_steps`
+(`success_steps_max_items` 상한; 탐색 중 임시 항목은 방향이 정해지면 최종
+curated 직행 경로로 교체)를 추가하고, `constraints` 규칙은 HARD 제약을 먼저
+쓰도록 지시하며, 각 하위 요약은 **깊이 연동** 예산을 씁니다 —
 `summary_total_max_tokens_base`(5000)에 가장 깊은 층보다 위의 각 층마다
 `summary_total_max_tokens_depth_step`(1000)을 더하며, 메인 에이전트는 기존
 4000을 유지합니다.

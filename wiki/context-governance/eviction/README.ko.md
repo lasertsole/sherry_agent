@@ -99,9 +99,9 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 사용자는 어떤 도구도 만들지 않은 페이로드를 붙여넣을 수 있다: 로그, 문서, 전사록, 코드베이스 전체. `ContextEvictionMiddleware`는 DeepAgents의 인간 메시지 축출을 Sherry 고유의 분할로 이식했다.
 
-- **트리거**(`before_model` / `abefore_model`): `human_evict_enabled`가 참이고 **마지막** 메시지가 `HumanMessage`이며 `lc_evicted_to`가 없고 추출 텍스트가 **`human_evict_threshold_chars`(200 000자)를 초과**할 때. 마지막 메시지만 검사하므로 과거 사용자 턴은 다시 들여다보지 않는다.
+- **트리거**(`before_model` / `abefore_model`): `human_evict_enabled`가 참이고 **마지막** 메시지가 `HumanMessage`이며 실제 사용자 입력(`is_user_message`: `metadata.origin == "user"`)이고 `lc_evicted_to`가 없고 추출 텍스트가 **`human_evict_threshold_chars`(200 000자)를 초과**할 때. 마지막 메시지만 검사하므로 과거 사용자 턴은 다시 들여다보지 않는다. system reminder, workspace notice, task-intent/continuation 지시, 서브에이전트 완료 캐리어는 HumanMessage 역할을 공유하지만 다른 origin 또는 provenance를 가진다. 긍정 origin 검사는 fail-closed이므로 태깅도 프리뷰 절단도 되지 않는다.
 - **태깅 + 오프로드**(`evict_human_message`): 전문이 `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|timestamp>.md`에 기록된 뒤, 훅이 부분 state 업데이트 `{"messages": [tagged]}`를 반환한다. `tagged`는 **id와 내용이 그대로**이고 `additional_kwargs["lc_evicted_to"]`만 추가된다. 표준 `add_messages` reducer가 메시지를 **id로 제자리 갱신**한다 — 메시지 리스트 재작성 없음, `DeltaChannel` 의존 없음, state 측에서의 프리픽스 캐시 무효화 없음. 파일이 태그보다 먼저 기록되므로 쓰기 실패가 매달린 포인터를 남기는 일은 없다.
-- **모델 뷰**(`wrap_model_call` / `awrap_model_call`): `lc_evicted_to`를 가진 모든 `HumanMessage`는 **요청 안에서만**(`request.override(messages=...)`) state 텍스트로 만든 프리뷰로 대체된다: 축출 경로, head/tail 각 5줄, `read_file` 복구 안내. 비텍스트 블록(이미지/오디오/비디오)은 원문 그대로 유지된다(`_build_evicted_content`) — 미디어가 텍스트 파일로 오프로드되는 일은 없다.
+- **모델 뷰**(`wrap_model_call` / `awrap_model_call`): `lc_evicted_to`를 가진 모든 **사용자** `HumanMessage`는 **요청 안에서만**(`request.override(messages=...)`) state 텍스트로 만든 프리뷰로 대체된다: 축출 경로, head/tail 각 5줄, `read_file` 복구 안내. 비텍스트 블록(이미지/오디오/비디오)은 원문 그대로 유지된다(`_build_evicted_content`) — 미디어가 텍스트 파일로 오프로드되는 일은 없다.
 - **자가 치유**: 축출 파일이 없으면(세션 디렉터리 정리, 디스크 문제) `_heal_eviction_file`이 다음 모델 호출에서 state 텍스트로 다시 쓴다 — 단 대상이 해당 세션 자신의 `evicted/` 디렉터리일 때만. 태그 안의 외부 경로는 경고와 함께 거부된다.
 
 ### 도구 결과와 반대인 3-상태 분할인 이유

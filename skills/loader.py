@@ -164,7 +164,7 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
             name = str(meta.get("name", skill_file.parent.name))
             desc = str(meta.get("description", ""))
             # Trigger / exclusion signals (optional — a skill without them
-            # renders exactly as before). Written by the summarization nudge and
+            # renders exactly as before). Written by the skill review and
             # the curator for skills they create; see ``get_skills_text``.
             when_to_use = str(meta.get("when_to_use", "") or "").strip()
             when_not_to_use = str(meta.get("when_not_to_use", "") or "").strip()

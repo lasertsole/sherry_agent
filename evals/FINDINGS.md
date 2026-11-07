@@ -187,12 +187,12 @@ measurement run cannot perturb the unit suite it sits next to.
 **Symptom.** While adapting the memory-review tests, a test that used to run on
 the (faked) main model now builds the REAL auxiliary model — and the provider
 answered `429 {'code': '1113', 'message': '余额不足或无可用资源包'}`. Every
-auxiliary-backed pass (memory review, plan extraction, step/completion judges,
-the summarization call itself) degrades under that: the two nudge forks are
+auxiliary-backed pass (memory review, skill review, step/completion judges,
+the summarization call itself) degrades under that: the two background-review forks are
 fail-open, so reviews simply stop happening; the summarizer's call is not.
 (Update 2026-10-14, later the same day: the memory review no longer runs on the
 auxiliary model — it was moved to a cache-warm pass on the session's own main
-model, so this finding now covers plan extraction, the judges and the
+model, so this finding now covers skill review, the judges and the
 summarizer.)
 
 **Evidence.** `tests/agent/middlewares/test_memory_review_facts.py` failure
@@ -201,13 +201,13 @@ output, 2026-10-14.
 **Improvement.** Top up the auxiliary provider (or point `AUXILIARY_LLM_*` at a
 local model) before the next measurement run; the eval reports must keep
 classifying provider failures as `invalid_run` when they surface there. The
-nudge forks' fail-open behaviour is correct (a broken provider must not break a
+background-review forks' fail-open behaviour is correct (a broken provider must not break a
 turn) but means the degradation is SILENT — worth a log at warning level.
 
 **Resolved 2026-10-14.** The auxiliary family was pointed at DeepSeek
 (`.models`: `AUXILIARY_LLM_PROVIDER=deepseek`, `AUXILIARY_LLM_API_NAME=deepseek-flash`,
 `AUXILIARY_LLM_API_BASE=https://api.deepseek.com/v1`), verified with a live call;
-the live nudge-cadence e2e then passes end-to-end (real compaction → real
+the live background-review cadence e2e then passes end-to-end (real compaction → real
 summary → real memory review, 21k prefix tokens served from cache).
 
 **Status.** RESOLVED (account). The silent-degradation log stays TODO.

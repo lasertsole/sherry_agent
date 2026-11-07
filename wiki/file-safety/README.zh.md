@@ -35,7 +35,7 @@
 4. `write_file` 的先读后写许可证——已存在的文件只能被读过它的会话覆盖（见下文对应小节）。
 5. `sweep_stale_temp_files`——`kill -9` 的残留由下一次写入该目录时清扫。
 6. 隔离子代理工作区——可选的 git worktree，改动在锁下合并回主树，冲突被如实报告。
-7. Shadow git 快照——每轮第一次写入把项目快照到 `.sherry/shadow-git`；用户的 `.git` 完全不被触碰。
+7. Shadow git 快照——每轮第一次写入把项目快照到全局 `APP_HOME/checkpoints/store`；用户的 `.git` 完全不被触碰。
 
 ## 🧱 各层机制
 
@@ -68,11 +68,11 @@
 
 ## 🔒 Shadow git 快照（原 git 就绪门已移除）
 
-绑定项目目录**不再**被初始化成仓库：sherry 不在用户 `.git` 里执行 `git init` / `add` / `commit` / `reset` / `checkout` / worktree。每轮第一次写入时，`shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）通过 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` 隔离，把项目快照到 `.sherry/shadow-git/`。快照是 fail-open 的：store 坏了只记 warning，写入继续。
+绑定项目目录**不再**被初始化成仓库：sherry 不在用户 `.git` 里执行 `git init` / `add` / `commit` / `reset` / `checkout` / worktree。每轮第一次写入时，`shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）通过 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` 隔离，把项目快照到共享 bare store `APP_HOME/checkpoints/store`（每个项目一条 `refs/sherry/<hash>` 分支）。快照是 fail-open 的：store 坏了只记 warning，写入继续。
 
-store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` 在 `git add -A` 之前写入密钥、体积目录和 shadow store 自身的排除规则，只保留**最新**的 `SHADOW_GIT["max_snapshots"]`（100）个——store 按项目根共享（含子代理），名额过小时并发扇出会把它压到最近一两步。100 是历史部分的软上限：每轮第一个快照会记下该轮的 floor（被替换掉的链尖），剪枝绝不越过仍生效的 floor（一次扇出或一次编辑消息的回滚都可能在一轮内产生超过 100 个提交），轮次结束后多保留的部分随之释放。旧的一端用 `git replace --graft` 丢弃，存活提交（含链尖）的哈希保持不变。编辑消息时把工作区回滚到被编辑轮的 floor，并删除该轮新建的文件；该轮没有快照就没有 floor，编辑照常进行、文件不动。恢复前先拍 `pre-restore` 快照（撤销的撤销），支持单文件或整棵树；该恢复仅供内部使用——面向 agent 的 `checkpoint` 工具与面板的回退路由均已移除。侧栏 git graph 读取这条快照链（分支标签 `checkpoint`），不再读用户历史。
+共享 store 为每个项目保存一条 `refs/sherry/<hash>` 的 `commit-tree` 快照链；store 的 `info/exclude` 在 `git add -A` 之前写入密钥、体积目录的排除规则，每条链只保留**最新**的 `SHADOW_GIT["max_snapshots"]`（100）个——链按项目根共享（含子代理），名额过小时并发扇出会把它压到最近一两步。100 是历史部分的软上限：每轮第一个快照会记下该轮的 floor（被替换掉的链尖），剪枝绝不越过仍生效的 floor（一次扇出或一次编辑消息的回滚都可能在一轮内产生超过 100 个提交），轮次结束后多保留的部分随之释放。旧的一端用 `git replace --graft` 丢弃，存活提交（含链尖）的哈希保持不变。编辑消息时把工作区回滚到被编辑轮的 floor，并删除该轮新建的文件；该轮没有快照就没有 floor，编辑照常进行、文件不动。恢复前先拍 `pre-restore` 快照（撤销的撤销），支持单文件或整棵树；该恢复仅供内部使用——面向 agent 的 `checkpoint` 工具与面板的回退路由均已移除。侧栏 git graph 读取这条快照链（分支标签 `checkpoint`），不再读用户历史。
 
-读取路径不设门，非 git 目录也是正常结果。shadow store 随项目走（clone 也会带上）；`SHADOW_GIT["enabled"]=False` 时所有钩子退化为 no-op。 `SHADOW_GIT["store_dir"]`（或 `SHERRY_SHADOW_GIT_DIR`）可把 store 移到项目之外；eval harness 使用 run 级目录，实例 checkout 里不会出现 `.sherry`。`wait_for_idle()` 与 `freeze()` 是它的 teardown 屏障：先等正在写的快照结束，再阻止迟到的写者，然后才 revert。
+读取路径不设门，非 git 目录也是正常结果。shadow store 是全局的（不在项目内，因此不会随 clone 走）；`SHADOW_GIT["enabled"]=False` 时所有钩子退化为 no-op。 `SHADOW_GIT["store_dir"]`（或 `SHERRY_SHADOW_GIT_DIR`）可把共享 store 指到别处；eval harness 使用 run 级目录，实例之间不会共享快照。`wait_for_idle()` 与 `freeze()` 是它的 teardown 屏障：先等正在写的快照结束，再阻止迟到的写者，然后才 revert。
 
 ## 📖 先读后写许可证
 
@@ -105,7 +105,7 @@ store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` �
 - **未跟踪文件**逐个复制：`git stash create` 从不携带它们，少了这一步子代理就看不到用户刚建的文件；
 - 只有 git 真正忽略的路径才会被物化；缓存（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` 等）既不复制也不合并。
 
-基线不是用户仓库的提交，而是项目的 **shadow 检查点**：拒入规则写在 `.sherry/shadow-git/info/exclude`，worktree 注册在 shadow store 中，不创建 `.git`，也不写 `.sherry-isolation-repo` 标记。sherry 永不 push、不加 remote、不改写用户历史。
+基线不是用户仓库的提交，而是项目的 **shadow 检查点**：拒入规则写在共享 store 的 `info/exclude`，worktree 注册在 shadow store 中，不创建 `.git`，也不写 `.sherry-isolation-repo` 标记。sherry 永不 push、不加 remote、不改写用户历史。
 
 经物化链接的读取仍算隔离内部：`resolve_external_path` 只豁免该运行清单里记录过的路径，所以树内 `src/…` 不会触发 HITL「外部文件」审批，而树外任意软链依然会问。
 
@@ -206,7 +206,7 @@ store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` �
 | `agent/tools/pub_base/path_lock.py` | 进程内按路径锁注册表 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 先读后写许可证注册表 |
-| `agent/tools/pub_base/shadow_git.py` | 按项目的 shadow store、自动快照、恢复与快照历史读取 |
+| `agent/tools/pub_base/shadow_git.py` | 共享 shadow store + 每项目 ref、自动快照、恢复与快照历史读取 |
 | `agent/tools/subagent/isolation/worktree.py` | 脏基线、auto-init 与拒入清单、worktree 生命周期 |
 | `agent/tools/subagent/isolation/materialize.py` | 忽略/未跟踪路径物化 |
 | `agent/tools/subagent/isolation/tree.py` | 工作区 worktree、清单、销毁 |

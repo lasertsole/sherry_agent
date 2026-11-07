@@ -99,9 +99,9 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ユーザーはどのツールも生み出さないペイロードを貼り付け得る：ログ、文書、文字起こし、コードベース全体。`ContextEvictionMiddleware` は DeepAgents の人間メッセージ退避を、Sherry 固有の分割で移植している。
 
-- **トリガ**（`before_model` / `abefore_model`）：`human_evict_enabled` が真、かつ**最後の**メッセージが `HumanMessage`、かつ `lc_evicted_to` を持たず、かつ抽出テキストが **`human_evict_threshold_chars`（200 000 文字）を超える**。検査されるのは最後のメッセージだけなので、過去のユーザーターンが再訪されることはない。
+- **トリガ**（`before_model` / `abefore_model`）：`human_evict_enabled` が真、かつ**最後の**メッセージが `HumanMessage`、かつ実際のユーザー入力（`is_user_message`：`metadata.origin == "user"`）、かつ `lc_evicted_to` を持たず、かつ抽出テキストが **`human_evict_threshold_chars`（200 000 文字）を超える**。検査されるのは最後のメッセージだけなので、過去のユーザーターンが再訪されることはない。system reminder、workspace notice、task-intent/continuation 指令、サブエージェント完了キャリアは HumanMessage の役割を共有するが、別の origin または provenance を持つ。肯定側の origin 検査は fail-closed なので、タグ付けもプレビュー切り詰めもされない。
 - **タグ付け + 退避**（`evict_human_message`）：全文が `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|timestamp>.md` に書かれ、フックは部分 state 更新 `{"messages": [tagged]}` を返す。`tagged` は **id と内容が不変**で、`additional_kwargs["lc_evicted_to"]` だけが追加される。標準 `add_messages` reducer がメッセージを **id によりその場で更新**する —— メッセージリストの書き換えなし、`DeltaChannel` 依存なし、state 側からのプレフィックスキャッシュ無効化なし。ファイルはタグより先に書かれるので、書き込み失敗が宙ぶらりんのポインタを残すことはない。
-- **モデルビュー**（`wrap_model_call` / `awrap_model_call`）：`lc_evicted_to` を持つすべての `HumanMessage` は、**リクエスト内でのみ**（`request.override(messages=...)`）state テキストから構築されたプレビューへ置き換えられる：退避パス、head/tail 各 5 行、`read_file` 回復通知。非テキストブロック（画像／音声／動画）はそのまま保持される（`_build_evicted_content`）—— メディアがテキストファイルへ退避されることはない。
+- **モデルビュー**（`wrap_model_call` / `awrap_model_call`）：`lc_evicted_to` を持つすべての**ユーザー** `HumanMessage` は、**リクエスト内でのみ**（`request.override(messages=...)`）state テキストから構築されたプレビューへ置き換えられる：退避パス、head/tail 各 5 行、`read_file` 回復通知。非テキストブロック（画像／音声／動画）はそのまま保持される（`_build_evicted_content`）—— メディアがテキストファイルへ退避されることはない。
 - **自己修復**：退避ファイルが欠けている場合（セッションディレクトリの削除、ディスク障害）、`_heal_eviction_file` が次のモデル呼び出しで state テキストから書き直す —— ただし対象がそのセッション自身の `evicted/` ディレクトリにある場合に限る。タグ内の外部パスは警告とともに拒否される。
 
 ### ツール結果と逆の三状態分割になる理由

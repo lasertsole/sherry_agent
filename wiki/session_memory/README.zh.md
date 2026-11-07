@@ -27,15 +27,15 @@ SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev 
 
 三个长期记忆目标（`memory`、`user`、`facts`）是 MesMemory `memory_entries` 表中的 SQLite 行，每个 `§` 条目一行，通过 `MemoryEntryRepository`（`context_engine/store/memory_entry_repository.py`）读写。旧的 `workspace/memory/{MEMORY,USER,FACTS}.md` 只是遗留种子：`memory_migration.migrate_legacy_memory_files()` 在 `agent_core.init()` 时用单个事务导入一次，提交成功后才把每个文件改名为 `*.md.bak`。只要表里已有任意一行，导入就跳过，因此改名失败也不会重复导入；事务失败则保留原文件，下次启动重试。
 
-`MemoryStore.load_from_store()` 按 `created_at ASC, id ASC`（即旧文件从上到下的顺序）读取活跃行，并把渲染结果冻结为系统提示快照。会话中途的写入会持久化，但不会重新渲染快照，从而保持 provider 前缀缓存稳定；快照会在下次会话启动、压缩后重建、模型/思考切换以及子代理完成回流时重载。不存在 per-project FACTS；遗留的 `<project>/.sherry/memory/FACTS.md` 被忽略。FACTS 仍只记录系统级 / 跨项目的坑，memory review / plan extraction nudge 会执行该路由。
+`MemoryStore.load_from_store()` 按 `created_at ASC, id ASC`（即旧文件从上到下的顺序）读取活跃行，并把渲染结果冻结为系统提示快照。会话中途的写入会持久化，但不会重新渲染快照，从而保持 provider 前缀缓存稳定；快照会在下次会话启动、压缩后重建、模型/思考切换以及子代理完成回流时重载。不存在 per-project FACTS；遗留的 `<project>/.sherry/memory/FACTS.md` 被忽略。FACTS 仍只记录系统级 / 跨项目的坑，memory review / 技能评审 会执行该路由。
 
 每行记录 `origin_session`、`usage_count` 和 `last_used`。渲染块会在来源已知的条目后追加 `[origin: <sid>, created: <date>, used: <n>x]`。`memory(action="read")` 返回匹配条目并累加使用次数；`facts` 溢出时归档**最不活跃**的条目（先 `COALESCE(last_used, created_at)`，再 `usage_count`），所有删除都是可恢复的软删除。记忆面板使用 `/memory/entries*`、`/memory/settings` 和 `/memory/consolidate`；旧的 `GET/PUT /memory` 仍保持 `§` 分隔格式。
 
 | 目标 | 用途 | 上限 | 维护者 |
 |---|---|---|---|
-| `memory` | Agent 侧笔记：环境事实、项目约定、工具怪癖 | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`，可在面板覆盖） | `memory` 工具 / memory review nudge |
-| `user` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`，可在面板覆盖） | `memory` 工具 / memory review nudge |
-| `facts` | 系统级 / 跨项目坑，注入每次系统提示 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`，可在面板覆盖），最不活跃者先滚动 | `memory` 工具 / memory review、plan extraction nudge |
+| `memory` | Agent 侧笔记：环境事实、项目约定、工具怪癖 | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`，可在面板覆盖） | `memory` 工具 / memory review |
+| `user` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`，可在面板覆盖） | `memory` 工具 / memory review |
+| `facts` | 系统级 / 跨项目坑，注入每次系统提示 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`，可在面板覆盖），最不活跃者先滚动 | `memory` 工具 / memory review、技能评审 |
 
 ## MesMemory schema
 

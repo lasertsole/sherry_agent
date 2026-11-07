@@ -168,3 +168,59 @@ def test_legacy_write_is_all_or_nothing_on_validation(repo):
         service.write_memory_files({"MEMORY.md": "replacement", "BAD.md": "x"})
 
     assert service.read_memory_files() == {"MEMORY.md": "keep me"}
+
+
+def test_semantic_search_returns_full_rows(repo, monkeypatch):
+    alpha = service.create_memory_entry("memory", "alpha deployment")
+    beta = service.create_memory_entry("user", "prefers terse replies")
+    repo.set_embedding(int(alpha["id"]), [1.0, 0.0], model="bge-m3")
+    repo.set_embedding(int(beta["id"]), [0.8, 0.2], model="bge-m3")
+    memory_module.memory_store.semantic_recall_enabled = True
+    monkeypatch.setattr(
+        "context_engine.embeddings.indexer._embed_fn",
+        lambda texts: [[1.0, 0.0] for _ in texts],
+    )
+    import importlib
+
+    reranker_module = importlib.import_module("models.reranker_model")
+
+    monkeypatch.setattr(
+        reranker_module,
+        "build_reranker_model",
+        lambda: type("R", (), {"rank": lambda self, *a, **k: []})(),
+    )
+
+    result = service.search_memory("deployment", limit=5)
+    assert result["mode"] == "semantic"
+    assert result["total"] == 2
+    assert all("char_count" in row and "score" in row for row in result["entries"])
+
+
+def test_consolidation_task_runs_in_background(repo, monkeypatch):
+    import asyncio
+
+    async def _fake(_session_id, **_kwargs):
+        return {"status": "completed", "archived": 2, "entries_before": 10, "entries_after": 8}
+
+    monkeypatch.setattr(
+        "agent.middlewares.summarization.background_reviews.run_memory_consolidation", _fake
+    )
+
+    async def _run():
+        started = service.start_memory_consolidation("s1")
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            status = service.consolidation_status(started["task_id"])
+            assert status is not None
+            if status["status"] != "running":
+                return status
+        raise AssertionError("task did not settle")
+
+    status = asyncio.run(_run())
+    assert status["status"] == "completed"
+    assert status["result"]["archived"] == 2
+
+
+def test_consolidation_requires_a_session():
+    with pytest.raises(ValueError, match="session_id"):
+        service.start_memory_consolidation("")

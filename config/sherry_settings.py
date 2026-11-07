@@ -24,9 +24,12 @@ from typing import Any
 
 import json5
 
-from config._home import resolve_app_home
+from config._home import resolve_app_home, resolve_code_root
 
 _CODE_ROOT = Path(__file__).resolve().parents[1]
+#: Shipped templates live under ``_MEIPASS`` in a frozen onedir build; the
+#: frozen module's synthetic ``__file__`` is not a reliable anchor.
+_TEMPLATE_ROOT = resolve_code_root(_CODE_ROOT)
 # APP_HOME honours the shell's ``--sherry-home`` CLI flag (and the transitional
 # SHERRY_HOME env): the packaged shell passes the flag only, so reading the
 # environment alone sent this file to the READ-ONLY bundle. Shared resolver —
@@ -47,11 +50,18 @@ def ensure_sherry_config_file() -> None:
     """
     if SHERRY_CONFIG_PATH.exists():
         return
-    template = _CODE_ROOT / "sherry.jsonc"
-    if template == SHERRY_CONFIG_PATH or not template.is_file():
+    template = _TEMPLATE_ROOT / "sherry.jsonc"
+    if template == SHERRY_CONFIG_PATH:
         return
     from loguru import logger
 
+    if not template.is_file():
+        logger.warning(
+            "sherry.jsonc template not found at {} (code_root={}); seeding skipped",
+            template,
+            _TEMPLATE_ROOT,
+        )
+        return
     try:
         SHERRY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         SHERRY_CONFIG_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")

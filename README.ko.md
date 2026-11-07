@@ -72,7 +72,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **읽기 전용 파일 탐색**: `GET /project/tree`와 `GET /project/file`는 지연 로드 트리와 뷰어를 제공하며, 세션 루트 밖은 강하게 거부한다(에이전트의 외부 파일 승인 흐름을 의도적으로 우회한다). `FILE_BROWSER`가 읽기 크기, 인코딩, 깊이, 레벨당 항목 수를 제한한다. 인앱 디렉터리 선택기(`GET /system/dirs`, 단일 절대 경로의 **직접 하위 디렉터리만** 나열하는 의도적 예외)는 브라우저 빌드를 지원하고, 데스크톱 빌드는 OS 폴더 대화상자를 연다. 행 우클릭 메뉴는 열기 / 연결 프로그램 / 내장 브라우저로 열기(HTML) / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가를 제공하고, 행(또는 파일 뷰어 탭)은 컴포저로 드래그할 수 있다 — 어느 경로든 메시지에 실리는 것은 `@./path` 멘션 chip뿐이며 파일 내용은 절대 실리지 않는다(파일은 에이전트가 직접 읽는다)
 - **선택 텍스트 인용과 보조 세션**: 하나의 채팅 메시지 안에서 텍스트를 선택해 우클릭하면 작은 메뉴가 열린다 — 「현재 세션에 추가」는 원자적 인용 chip을 컴포저에 삽입하고(markdown 인용 블록으로 전송), 「보조 세션에서 질문」은 부모 세션의 **완전한 fork**인 일반 자식 세션을 만든다. 첫 턴에는 부모의 checkpoint 전체 이력이 모델 전용으로 주입되며(보조 세션의 표시 이력은 비어 있음), 부모의 프리셋·agent 설정·세션별 모델 설정·프로젝트 디렉터리를 상속한다. fork는 부모의 마지막으로 완료된 답변에서 잘리므로 미완료 도구 호출이 재생되지 않는다. 세션 범위 오른쪽 사이드바 탭에서 열고 인용을 미리 채우며, 그 탭을 닫는 것은 패널만 닫을 뿐이다 — 자식 세션과 모든 상태는 유지되고 세션 목록에 남아 다시 열 수 있으며, 부모 세션을 삭제할 때만 제거된다. 탭 줄 가장 왼쪽의 아래 화살표 메뉴는 최근 닫은 탭을 「현재 세션 / 전역」별로 최신 10개까지 나열하며(현재 세션 기록은 해당 세션에만 속하고 세션 삭제 시 사라짐), 닫은 보조 세션을 이력과 함께 복원한다. 「현재 세션」 탭 그룹은 세션별로 격리되어 세션을 전환하면 해당 세션 자신의 탭(없으면 빈 상태)만 보이고 이전 세션의 페이지는 표시되지 않으며, 「전역」 탭은 모든 세션에서 공유된다. 행을 넘는 선택, 컨트롤/승인 카드에서 시작하는 선택, 8,000자를 넘는 선택은 네이티브 컨텍스트 메뉴를 그대로 둔다
 - **에이전트 제어 브라우저(CDP)** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 명시적으로 켜기 전에는 꺼져 있음(`SHERRY_BROWSER_AGENT_ENABLED=1` 과 재시작) — 꺼져 있으면 browser 도구가 등록되지 않고, 모든 `/browser/*` 경로가 404를 답하며, Chromium도 실행되지 않는다. 켜면 메인 에이전트가 병합된 메인 전용 `browser` 도구(navigate / snapshot / click / type / press / scroll / screenshot)와 `browser_evaluate`(`SHERRY_BROWSER_ALLOW_EVALUATE=1`도 필요)로 루프백 실 Chromium을 조작하고, 툴박스의 브라우저 패널이 두 번째 CDP 클라이언트로 같은 페이지를 시청한다(`/browser/ws` 스크린캐스트 + 입력). 디버그 포트는 백엔드 프로세스를 벗어나지 않는다
-- **사용자 수명 주기 훅** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc`의 `hooks` 섹션으로 운영자가 제공한 명령을 턴에 연결합니다 — `PostToolUse` / `PostToolUseFailure`(`toolName`, `toolCallId`, 유계 결과/오류 프리뷰, `durationMs`)와 `Stop`(`responsePreview`, `toolCallCount`). 설계상 읽기 전용이라 훅은 감사·알림·계측만 하고 도구를 차단하거나 인자를 바꾸거나 컨텍스트를 주입할 수 없습니다. 기본 비활성(추적되는 설정 파일이 스스로 명령을 실행하게 두지 않음). 명령은 `shlex`로 분리(셸 없음), 환경은 scrub, 훅별 타임아웃이 프로세스를 kill하며, stdout은 상한을 두고 선택적 JSON으로 파싱합니다(비 JSON 출력 = 성공). 도구 가드레일 뒤에 등록되며 세션 단위로 끌 수 있습니다- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `NUDGE`(nudge/영속화 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + nudge`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
+- **사용자 수명 주기 훅** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc`의 `hooks` 섹션으로 운영자가 제공한 명령을 턴에 연결합니다 — `PostToolUse` / `PostToolUseFailure`(`toolName`, `toolCallId`, 유계 결과/오류 프리뷰, `durationMs`)와 `Stop`(`responsePreview`, `toolCallCount`). 설계상 읽기 전용이라 훅은 감사·알림·계측만 하고 도구를 차단하거나 인자를 바꾸거나 컨텍스트를 주입할 수 없습니다. 기본 비활성(추적되는 설정 파일이 스스로 명령을 실행하게 두지 않음). 명령은 `shlex`로 분리(셸 없음), 환경은 scrub, 훅별 타임아웃이 프로세스를 kill하며, stdout은 상한을 두고 선택적 JSON으로 파싱합니다(비 JSON 출력 = 성공). 도구 가드레일 뒤에 등록되며 세션 단위로 끌 수 있습니다- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `BACKGROUND_REVIEW`(백그라운드 리뷰 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + background_review`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
 - **대기 중인 사용자 입력**: 턴이 실행되는 동안 보낸 메시지는 `QUEUED` 행으로 영속화되고(`client_msg_id`로 중복 제거, `INPUT_QUEUE["max_active_per_session"]`이 상한), FIFO 위치와 함께 응답된다. 턴 러너는 **턴마다 한 행만** 꺼내므로, 대기 중인 N개의 메시지는 N개의 턴과 N개의 응답을 만든다 — 하나로 합쳐지지 않는다 — 그리고 HITL 대기 중인 세션은 재개가 완료될 때까지 아무것도 꺼내지 않는다. 클라이언트는 대기 행에 `cancel_queued`, `edit_queued`, `send_now`를 적용할 수 있다
 - **병렬 단계 디스패치와 플로우 계보** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): 디스패치 웨이브는 동시에 spawn하며, `TASKFLOW_INFRA["max_parallel_dispatch"]`(2; 1이면 순차 동작 복원)로 제한된다 — 웨이브 일부가 실패해도 spawn된 자식은 모두 영속화되고 실패한 단계 id는 개별적으로 명시된다. 두 자식이 동시에 완료해도 두 결과 모두 착지한다(resume의 쓰기가 `update_flow_with_conflict_retry`를 통해 확정된 판정을 재적용하므로 결과가 충돌로 유실되거나 같은 단계가 두 번 spawn되는 일이 없다). `taskflow_flow(action="create", resumed_from=…)`는 플로우 계보(`resumed_from` / `superseded_by` 현재 스키마 컬럼)를 기록하며, 대체된 플로우는 active 읽기에서 빠지되 보드에는 남는다
 - **TaskFlow 진행** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 각 흐름의 플랫 단계 목록(id, 작업, 상태)과 상태별 집계가 플로팅 진행 패널에 표시된다. 스케줄러는 여전히 각 단계의 `depends_on`에 따라 단계별로 해제한다. 흐름이 변경될 때마다 `taskflow_updated` 프레임을 최선 effort로 푸시하며, 재접속한 클라이언트는 `taskflow_refresh`로 완전히 동일한 페이로드를 다시 요청할 수 있다
@@ -196,7 +196,7 @@ sherry_agent/
 │   ├── subagent/           # 서브에이전트 스폰 파이프라인 벤치마크
 │   ├── long_running_task/  # TaskFlow DAG 평가
 │   ├── session_memory/     # 세션 메모리 스택 점검
-│   ├── nudge_extraction/   # AI 판정 plan 추출
+│   ├── skill_review/   # AI 판정 plan 추출
 │   └── results/            # 실행별 리포트(gitignore됨)
 │
 ├── logs/                   # 로깅 시스템
@@ -233,7 +233,7 @@ sherry_agent/
 ├── runtime/                # Runtime state, lanes & cross-boundary seams
 │   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
 │   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
-│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / NUDGE / NESTED)
+│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / BACKGROUND_REVIEW / NESTED)
 │   ├── session/            # 세션 단위 레지스트리
 │   │   ├── core.py         # 싱글톤 SessionRegister 기반 + 세션별 정리
 │   │   ├── relation_register.py # 세션/socket 관계 레지스트리
@@ -372,7 +372,7 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 자체 호스팅 SearXNG를 웹 검색의 백엔드(또는 Tavily의 대안)로 사용. `TAVILY_API_KEY`가 없으면 유일한 백엔드입니다. 「모델 검색」 패널에서 설정하며, Tavily 실패 시 자동으로 이쪽으로 폴백합니다 |
 | `AUXILIARY_LLM_*` | — | 요약/단순 작업용 경량 모델(기본값은 클라우드 API. `AUXILIARY_LLM_MODEL_LOCAL=true`로 로컬 GGUF 모델 사용); `AUXILIARY_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
 | `TASKFLOW_LLM_*` | — | TaskFlow 결정 모델(plan / replan / 단계 판정 / 목표 달성 판정). Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따르고, 로컬 모드는 보조 모델의 GGUF를 재사용합니다. `TASKFLOW_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
-| `COMPRESSION_LLM_*` | — | 압축 모델(LLM 요약). 메모리 리뷰는 `MAIN_LLM`, 계획 추출은 `AUXILIARY_LLM_*`을 사용. Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따릅니다 |
+| `COMPRESSION_LLM_*` | — | 압축 모델(LLM 요약). 메모리 리뷰는 `MAIN_LLM`, 스킬 리뷰는 `AUXILIARY_LLM_*`을 사용. Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따릅니다 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
 | `MODEL_PRICING_TABLE` | — | 세션 예산 비용 추정용 USD/1M token 가격표(사용자 편집 가능한 JSON 객체를 JSON 문자열로 저장; provider 직접 반환 cost와 로컬 litellm 캐시가 폴백) |
@@ -485,7 +485,7 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 | `subagent` | 실제 `spawn_subagent_direct` 파이프라인의 결정적 작업 벤치(작업 성공률 + 지연) |
 | `long_running_task` | 의존성 DAG에 대한 TaskFlow 오케스트레이션 루프(스텝 성공률, 흐름 완료, wall time) |
 | `session_memory` | 세션 메모리 스택 6개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 시맨틱 검색 랭킹 |
-| `nudge_extraction` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
+| `skill_review` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
 | `coding_capability` | 실제 메인 agent를 소규모 자체 설계 코딩 작업 세트로 평가하고, 각 작업은 해당 저장소 자체의 pytest 실행으로 판정——베이스라인이며 외부 벤치마크가 아님 |
 | `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. agent는 문제 설명만 봄) |
 | `deepswe` | 외부 DeepSWE 작업을 벤치마크 자체 Docker 이미지에서 실행: agent는 bind mount된 checkout을 편집하고 `terminal`은 컨테이너 안에서 실행되며, 작업 전용 verifier 이미지가 diff를 채점(먼저 gold patch 자체 점검) |

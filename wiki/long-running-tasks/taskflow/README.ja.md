@@ -323,6 +323,12 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
+### taskflow_flow(action="plan")
+
+TaskFlow プランナーに依存順のステップ一覧を生成させ、安定 id `plan-<sha256(session_id + goal)[:10]>` でフローを作成して todo ルートを束縛し、**初期 ready ステップをすべて自動 dispatch** します（依存のない兄弟）。手動 `taskflow_step(action="dispatch")` と同じバッチ経路を使います。`depends_on` が未充足のステップは `blocked` のままです。個々の spawn 失敗は fail-open で、そのステップは `ready` のまま残ります。`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（既定 true）で従来の「レビューしてから dispatch」に戻せます。返される plan は dispatch 後の状態と自動 dispatch された id を示します。
+
+
+
 ### taskflow_step(action="run_task")
 
 
@@ -479,7 +485,7 @@ async def taskflow_step(action="resume",
 
 
 
-**DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。書き込みは競合リトライ時に既に確定した判定を新読みの状態へ再適用するため、2 つの子が同時に完了しても両方の結果が着地します（[生成済み子エージェントを伴う競合リトライ](#生成済み子エージェントを伴う競合リトライ)参照）。`auto_dispatch=True`（既定）では新たに ready になった波が直ちに有界の同時バッチで spawn されます——[自動ディスパッチの波](#自動ディスパッチの波taskflow_stepactionresume)参照。`auto_dispatch=False` ならアンロックのみで、呼び出し側が `taskflow_step(action="dispatch")` で明示的に行います。
+**DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。書き込みは競合リトライ時に既に確定した判定を新読みの状態へ再適用するため、2 つの子が同時に完了しても両方の結果が着地します（[生成済み子エージェントを伴う競合リトライ](#生成済み子エージェントを伴う競合リトライ)参照）。`auto_dispatch=True`（既定）では ready 集合全体が直ちに有界の同時バッチで spawn されます——[自動ディスパッチの波](#自動ディスパッチの波taskflow_stepactionresume)参照。`auto_dispatch=False` ならアンロックのみで、呼び出し側が `taskflow_step(action="dispatch")` で明示的に行います。
 
 ### taskflow_flow(action="set_waiting")
 
@@ -720,7 +726,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 
 
-依存側をアンロックした resume はそれを自分で起動します（`auto_dispatch=True`、既定）：新たに ready になった波は同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn し、spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_step(action="dispatch")` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライできます。アンロック集合は**実際に永続化された**状態から導出されるため、2 つの完了が同じステップのアンロックを競合しても spawn は正確に 1 回です。
+resume はアンロックした依存側だけでなく、**ready 集合全体**を起動します（`auto_dispatch=True`、既定）：`newly_ready ∪ all_ready` —— 今回 unlock した下流と、以前から `ready` だが未 dispatch だった兄弟 —— を同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）が広い走査を制御し、false（または `auto_dispatch=False`）で従来の「unlock のみ/新規 unlock のみ」動作に戻せます。spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_step(action="dispatch")` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライできます。既に dispatched のステップは除外されフローロック内で再確認されるため、広い走査でも spawn は正確に 1 回です。
 
 
 

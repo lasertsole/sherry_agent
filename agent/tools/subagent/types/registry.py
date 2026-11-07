@@ -138,7 +138,7 @@ class SubagentRunRecord(BaseModel):
     recovery_attempts_persisted: int = 0
 
     #: TaskFlow coordinates this run executes (spawn-time context). They let
-    #: plan extraction map a run to its todo DETERMINISTICALLY instead of
+    #: skill review map a run to its todo DETERMINISTICALLY instead of
     #: guessing from task text; None for a free-form spawn.
     step_id: str | None = None
     flow_id: str | None = None

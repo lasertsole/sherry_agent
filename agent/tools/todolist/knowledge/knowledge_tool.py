@@ -1,6 +1,6 @@
 """The ``knowledge`` tool: plan-aware knowledge write / read / list.
 
-Writes happen during plan extraction (nudge agent, on todo completion); reads
+Writes happen during skill review (background-review agent, on todo completion); reads
 are on-demand lookups by the main agent before similar work. Access is isolated
 per plan identity: a session may only read / write / list knowledge for plans
 it is associated with (state ``plan_ref``, todos ``plan_ref``, or a boulder work
@@ -9,8 +9,8 @@ storage key derives from the canonical plan path (``identity.py``), so
 same-named plan files in different sessions are physically isolated while
 collaborators of one plan file share a directory. Invalid input and ownership
 denials are returned as ``"Error: ..."`` text — the repo's error-as-text
-contract — never raised. The tool carries ``nudge``/``main_only`` metadata so
-the nudge allowlist accepts it and the subagent tool policy keeps it on the
+contract — never raised. The tool carries ``background_review``/``main_only`` metadata so
+the background-review allowlist accepts it and the subagent tool policy keeps it on the
 main agent.
 """
 
@@ -67,7 +67,7 @@ async def knowledge(
     every listed session.
 
     Actions:
-      - write: Write knowledge data (nudge agent during plan extraction)
+      - write: Write knowledge data (background-review agent during skill review)
       - read:  Read knowledge for a plan (main agent, on-demand)
       - list:  List this session's plans that have knowledge files
 
@@ -82,11 +82,14 @@ async def knowledge(
         -> Returns full plan summary
       knowledge(action="read", plan_name="implement-auth", layer="handoff")
         -> Returns the RAW code-merged handoff tree (per-layer experience data)
+      knowledge(action="read", plan_name="implement-auth", layer="success")
+        -> Returns the plan-level aggregate success steps (replayable order)
 
     Write examples:
       knowledge(action="write", plan_name="...", layer="task", position=0, data={...})
       knowledge(action="write", plan_name="...", layer="wave", wave_index=0, data={...})
       knowledge(action="write", plan_name="...", layer="plan", data={...})
+      knowledge(action="write", plan_name="...", layer="success", data={"aggregate_success_steps": [...]})
     """
     sid = session_id if isinstance(session_id, str) else ""
 
@@ -145,10 +148,10 @@ async def knowledge(
             return f"Unknown action: {action}"
 
 
-# Nudge allowlist + subagent tool-policy tags (mirrors skill_manage).
+# Background-review allowlist + subagent tool-policy tags (mirrors skill_manage).
 knowledge.metadata = {
     **(knowledge.metadata or {}),
-    "nudge": True,
+    "background_review": True,
     "scope": "main_only",
     "idempotent": False,
     # read/list are lookups; write mutates the plan's knowledge file.

@@ -72,12 +72,14 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
-- `taskflow_flow(action="plan")` 自动生成的 id 现在是**稳定**的：`plan-<sha256(session_id + goal)[:10]>`；同一 session 重复规划同一 goal 会返回已有的**非终态** flow，作为幂等成功，不再创建第二个。终态 flow 仍返回错误（换一个 id，或用后继 flow）。种子包含 session id，因为 `flow_id` 是全局主键而归属于 session。
+- `taskflow_flow(action="plan")` 自动生成的 id 现在是**稳定**的：`plan-<sha256(session_id + goal)[:10]>`；同一 session 重复规划同一 goal 会返回已有的**非终态** flow，作为幂等成功，不再创建第二个。终态 flow 仍返回错误（换一个 id，或用后继 flow）。种子包含 session id，因为 `flow_id` 是全局主键而归属于 session。创建后它会**自动派发所有初始 ready step**（无依赖的兄弟分支）；`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（默认 true）可恢复旧的「先审查再派发」行为，单个 spawn 失败是 fail-open（该 step 留 `ready`）。打印的 plan 显示派发后的状态。
+- `taskflow_step(action="resume")` 的 auto-dispatch 会扫描**整个 flow**，不只本次解锁的下游：`newly_ready ∪ all_ready` 作为一个有界并发波次派发。这样一直 ready 但没被点名的兄弟分支也会启动；`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（默认 true）可限制回只派发本次解锁集。已派发 step 会被过滤并在 flow 锁内重新确认，因此扩大扫描不会重复 spawn。
+- TaskFlow board reminder 会列出**所有 ready step**（`ready_to_dispatch: s3(...), s4(...)`），多于一个时追加 `[N steps ready — parallelize via taskflow_dispatch!]`。存在未派发 ready 时，cooldown 使用 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）；否则恢复正常的 5 轮（`only_if_changed` 仍会抑制逐字节相同的 board）。
 - `taskflow_flow(action="create")` 对重复的**非终态** `flow_id` 返回幂等成功（revision + status）；终态 flow 或属于其他 session 的 id 仍返回错误。
-- 手动 `taskflow_step(action="dispatch")` 与 `taskflow_step(action="resume")` 的 auto-dispatch wave 共用 `_dispatch.flow_dispatch_lock(flow_id)`：完整的 read → validate → spawn → persist 序列按 flow 串行化，wave 拿到锁后会重新确认每个 step 仍为 `ready`。锁是**进程内**的（单后端进程、TaskFlow 工具 main-only）；多进程部署需要 DB lease。
+- 手动 `taskflow_step(action="dispatch")`、plan 的初始 ready 波次，以及 `taskflow_step(action="resume")` 的 auto-dispatch wave 共用 `_dispatch.flow_dispatch_lock(flow_id)`：完整的 read → validate → spawn → persist 序列按 flow 串行化，wave 拿到锁后会重新确认每个 step 仍为 `ready`。锁是**进程内**的（单后端进程、TaskFlow 工具 main-only）；多进程部署需要 DB lease。
 - **Mutating 重复测量（2026-10-22）：** 225 个 checkpoint 线程、204 次工具调用——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——**没有出现**连续同工具 + 同参数且成功的 mutating 调用。因此没有新增 `ToolCallSignature` 中间件；`ToolGuardrails` 继续负责循环检测，只有遥测出现真实重复时才考虑增加 mutating 计数。
 
-来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`。
+来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
 
 ## ⚙️ 配置注册表
 
@@ -85,13 +87,13 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **58** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
+| `config/features/agent_side/` | **59** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
 | `config/features/infra_side/` | **30** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、联网搜索、模型定价、本地模型下载、日志保留、WS 限流） |
 | `config/features/_env.py` | 唯一的共享环境辅助函数 |
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **88 个 feature 对象**——Agent 侧 58 + 基础设施侧 30——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **89 个 feature 对象**——Agent 侧 59 + 基础设施侧 30——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -181,7 +183,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | `taskflow_step(action="run_task")` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | 已派发步骤，或带待满足依赖的 `blocked` |
 | `taskflow_step(action="dispatch")` | `(flow_id, step_ids, expected_revision=None, session_id)` | 已派发的 step id + 版本 |
 | `taskflow_step(action="wait_all")` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 每个步骤的落定报告（完整或部分；对策略步骤自动重试） |
-| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 恢复后的状态、解锁的步骤、步骤状态计数、标准回显、判别器判定、重试说明 |
+| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 恢复后的状态、解锁的 id、所有 ready step 自动派发（下游 + 兄弟）、步骤状态计数、标准回显、判别器判定、重试说明 |
 | `taskflow_flow(action="set_waiting")` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting 状态 + 版本 |
 | `taskflow_inspect(action="summary")` | `(flow_id, session_id)` | 完整 flow 状态，含等待/截止状态 |
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 完成度 %、分解、后续步骤、预计剩余 |
@@ -189,7 +191,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | 本会话面板（`active` / `all` / 状态名） |
 | `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 终态 `done`（四道门、失败开放） |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 用目标 + 已完成结果 + 失败原因重新生成**未完成**步骤（已完成/在跑的保留，被改步骤的下游重新 blocked，每流程 ≤ 3 次） |
-| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 把一个目标分解成依赖有序的新流程，只注册不派发 |
+| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 把一个目标分解成依赖有序的新流程；初始 ready 兄弟 step 会自动派发 |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `failed` |
 | `taskflow_flow(action="cancel")` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `cancelled` |
 
@@ -242,6 +244,9 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（二十四个 `unit` 测试
 | `test_step_graph.py` | `deps_satisfied`、`mark_step_done`、`unlock_dependents`、旧状态推导、自依赖保护 |
 | `test_summary_dag.py` | `taskflow_inspect(action="summary")` 的 DAG 渲染 |
 | `test_resume_dag.py` | 恢复标记 done、解锁后继、部分完成、幂等空操作 |
+| `test_taskflow_resume_all_ready.py` | resume 扫描全 flow：解锁的下游 + 一直 ready 的兄弟、关闭开关、不重复 spawn、部分失败 |
+| `test_taskflow_plan_auto_dispatch.py` | plan 自动派发初始 ready 集、依赖 step 保持 blocked、开关关闭、fail-open、finish Gate A 兜底 |
+| `tests/agent/middlewares/test_taskflow_reminder_ready.py` | ready 集 reminder 渲染/冷却、可调用冷却、就绪过滤 |
 | `test_taskflow_tools.py` | 跨重启的完整 create→run→resume→finish、冲突、终态转换 |
 | `test_taskflow_dispatch.py` | 批量派发、全有或全无校验、批次中途失败的持久化 |
 | `test_dag_e2e.py` | 跨进程重启的完整并行 DAG flow |
@@ -283,11 +288,11 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 88。** 配置注册表包含 88 个 feature 对象（Agent 侧 58 + 基础设施侧 30）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOGS` 和 `WS_RATE_LIMIT`（其默认值由专门的测试或各 feature 自己的测试套件覆盖）。
+- **注册表规模是 89。** 配置注册表包含 89 个 feature 对象（Agent 侧 59 + 基础设施侧 30）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOGS` 和 `WS_RATE_LIMIT`（其默认值由专门的测试或各 feature 自己的测试套件覆盖）。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_step(action="dispatch")` 与 `taskflow_step(action="wait_all")` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_step(action="resume")` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。
 - **有标准时结果校验由判别器执行。** 携带标准的步骤在恢复时由 TaskFlow 决策模型的步骤判别器（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）审查：`retry` 会在步骤自身重试预算内重新派发；`block`（或预算耗尽）会把步骤标记为 `blocked`。判别器失败开放，因此模型报错或响应无法解析时降级为 `pass`——并不存在“结果一定满足标准”的硬保证，只有在步骤被接受前的一次尽力而为判定。
 - **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_step(action="wait_all")` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。
 - **`taskflow_inspect(action="list")` 是会话作用域的。** 不存在全局跨会话面板：所有读取都在 SQL 层按所属 `session_id` 过滤，因此一个会话无法枚举另一个会话的 flow。隔离前写入的行（`session_id = ''`）对会话读取不可见，但 sweeper 的跨会话截止/空闲扫描仍能看到它们。
-- **知识存储以计划身份为键，而非计划名。** 访问由归属校验把关（`ownership.is_plan_associated()`：本会话的 `plan_ref`、todo 的 `plan_ref`，或 `session_ids` 含本会话的 boulder work），存储目录由规范化计划路径派生——`workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的路径)[:12]`，目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。**计划文件不同**的同名计划在两个会话中**物理隔离**（各自写自己的 key 目录）；通过 boulder `session_ids` 协同**同一计划文件**的会话解析出同一路径，共享同一目录。计划文件无法解析的会话写入兜底身份 `session-<sha1(session_id)[:8]>`（全 id 哈希让前 8 字符相同的会话 id 不再相撞）。旧的名称为键目录保持可读；写入总是落在 key 目录；`clear_session` 删除本会话私有身份目录，保留与其他会话共享的计划。子 Agent 边界依旧绝对——`knowledge` 是 `main_only`。 子代理的 handoff 确定性地喂给这个存储：每个子 run 保存 4 字段 handoff（`run.completion.handoff`），plan 抽取按**当前** plan 快照过滤 run（cancelled/superseded 分支剔除、`resolved_position` 重映射），把逐层树深度优先扁平化，并在抽取 LLM **之前**写入 `handoff-tree.json`（LLM 综合中断也不丢原始数据）；task/plan 级知识新增 `hard_constraints` / `failed_paths_tree`，子代理的 `SummaryDoc` 以按深度递增的预算把 `failed_paths` 带过压缩。
+- **知识存储以计划身份为键，而非计划名。** 访问由归属校验把关（`ownership.is_plan_associated()`：本会话的 `plan_ref`、todo 的 `plan_ref`，或 `session_ids` 含本会话的 boulder work），存储目录由规范化计划路径派生——`workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的路径)[:12]`，目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。**计划文件不同**的同名计划在两个会话中**物理隔离**（各自写自己的 key 目录）；通过 boulder `session_ids` 协同**同一计划文件**的会话解析出同一路径，共享同一目录。计划文件无法解析的会话写入兜底身份 `session-<sha1(session_id)[:8]>`（全 id 哈希让前 8 字符相同的会话 id 不再相撞）。旧的名称为键目录保持可读；写入总是落在 key 目录；`clear_session` 删除本会话私有身份目录，保留与其他会话共享的计划。子 Agent 边界依旧绝对——`knowledge` 是 `main_only`。 子代理的 handoff 确定性地喂给这个存储：每个子 run 保存 5 字段 handoff（`run.completion.handoff`），plan 抽取按**当前** plan 快照过滤 run（cancelled/superseded 分支剔除、`resolved_position` 重映射），把逐层树深度优先扁平化，并在抽取 LLM **之前**写入 `handoff-tree.json`（LLM 综合中断也不丢原始数据）；task/plan 级知识新增 `hard_constraints` / `failed_branches_tree` / `success_steps`（plan 级 `aggregate_success_steps`），子代理的 `SummaryDoc` 以按深度递增的预算把 `failed_branches` / `success_steps` 带过压缩。

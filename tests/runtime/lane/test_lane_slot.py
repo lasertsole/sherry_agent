@@ -58,12 +58,12 @@ class TestLaneSlot:
 
     @pytest.mark.asyncio
     async def test_nested_same_lane_acquires_two_slots(self, manager: LaneManager):
-        manager.set_concurrency(LaneType.NUDGE, 2)
-        lane = manager.get_lane(LaneType.NUDGE)
+        manager.set_concurrency(LaneType.BACKGROUND_REVIEW, 2)
+        lane = manager.get_lane(LaneType.BACKGROUND_REVIEW)
 
-        async with lane_slot(LaneType.NUDGE):
+        async with lane_slot(LaneType.BACKGROUND_REVIEW):
             assert lane.active_count == 1
-            async with lane_slot(LaneType.NUDGE):
+            async with lane_slot(LaneType.BACKGROUND_REVIEW):
                 assert lane.active_count == 2
             assert lane.active_count == 1
 

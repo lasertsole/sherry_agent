@@ -20,7 +20,7 @@ import uuid
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-import agent.middlewares.summarization.nudges as nudge_mod
+import agent.middlewares.summarization.background_reviews as review_mod
 from agent.middlewares.summarization.digest import (
     DIGEST_ASSISTANT_MAX,
     DIGEST_TAIL,
@@ -156,7 +156,7 @@ def _descriptor(monkeypatch, config):
         calls["agent_kwargs"] = kwargs
         return object()
 
-    monkeypatch.setattr(nudge_mod, "create_agent", _create_agent)
+    monkeypatch.setattr(review_mod, "create_agent", _create_agent)
     monkeypatch.setattr("agent.get_agent_tools", lambda: [])
     return calls
 
@@ -182,7 +182,7 @@ async def test_the_review_agent_rebuilds_the_turns_model_config(monkeypatch):
         },
     )
 
-    await nudge_mod._create_memory_review_agent("sess-x", "sys")
+    await review_mod._create_memory_review_agent("sess-x", "sys")
 
     assert profile_kwargs == {
         "provider": "openai",
@@ -212,7 +212,7 @@ async def test_the_review_agent_rebuilds_the_env_default_config(monkeypatch):
         {"override": None, "thinking_kwargs": {"thinking": False}, "temperature": 0.8},
     )
 
-    await nudge_mod._create_memory_review_agent("sess-y", "sys")
+    await review_mod._create_memory_review_agent("sess-y", "sys")
 
     assert env_kwargs == {"temperature": 0.8, "custom_mapping": None, "thinking": False}
     assert calls["agent_kwargs"]["model"] is sentinel
@@ -227,7 +227,7 @@ async def test_the_review_agent_without_a_descriptor_builds_the_env_default(monk
     monkeypatch.setattr(models, "build_main_llm", lambda *args, **kwargs: sentinel)
     calls = _descriptor(monkeypatch, None)
 
-    await nudge_mod._create_memory_review_agent("sess-z", "sys")
+    await review_mod._create_memory_review_agent("sess-z", "sys")
 
     assert calls["agent_kwargs"]["model"] is sentinel
 
@@ -248,7 +248,7 @@ async def test_the_review_agent_binds_the_process_wide_tool_face(monkeypatch):
         lambda: [_Tool("a"), _Tool("b"), _Tool("c")],
     )
 
-    await nudge_mod._create_memory_review_agent("sess-t", "sys")
+    await review_mod._create_memory_review_agent("sess-t", "sys")
 
     names = [tool.name for tool in calls["agent_kwargs"]["tools"]]
     assert names == ["a", "b", "c"], "the process-wide face, in the same order"
@@ -261,7 +261,7 @@ async def test_the_review_gets_the_discarded_slice_not_the_whole_conversation(mo
     async def _recorder(session_id: str, system_prompt: str, messages: list) -> None:
         captured.append(list(messages))
 
-    monkeypatch.setattr(nudge_mod, "_nudge_memory", _recorder)
+    monkeypatch.setattr(review_mod, "_execute_memory_review", _recorder)
     monkeypatch.setattr(
         "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
         lambda session_id: "sys",
@@ -269,7 +269,7 @@ async def test_the_review_gets_the_discarded_slice_not_the_whole_conversation(mo
     discarded = [HumanMessage(content="the message about to be dropped")]
     session_id = "mr-" + uuid.uuid4().hex[:8]
 
-    await nudge_mod._run_memory_review(session_id, discarded)
+    await review_mod._run_memory_review(session_id, discarded)
 
     assert len(captured) == 1
     assert captured[0] == discarded
@@ -282,11 +282,11 @@ async def test_the_scheduler_passes_the_discarded_slice_through(monkeypatch):
     async def _runner(session_id: str, messages: list) -> None:
         recorded.append((session_id, list(messages)))
 
-    monkeypatch.setattr(nudge_mod, "_run_memory_review", _runner)
+    monkeypatch.setattr(review_mod, "_run_memory_review", _runner)
     session_id = "mr-" + uuid.uuid4().hex[:8]
     discarded = [HumanMessage(content="bye")]
 
-    scheduled = nudge_mod.schedule_memory_review(session_id, discarded)
+    scheduled = review_mod.schedule_memory_review(session_id, discarded)
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
@@ -311,12 +311,12 @@ def test_the_cache_read_reads_every_provider_shape():
     )
     silent = AIMessage(content="ok")
 
-    assert nudge_mod._cache_hit_tokens(openai_shaped) == 900
-    assert nudge_mod._cache_hit_tokens(deepseek_shaped) == 640
-    assert nudge_mod._cache_hit_tokens(silent) is None
+    assert review_mod._cache_hit_tokens(openai_shaped) == 900
+    assert review_mod._cache_hit_tokens(deepseek_shaped) == 640
+    assert review_mod._cache_hit_tokens(silent) is None
 
 
-def test_the_skill_tools_carry_no_nudge_marker():
+def test_the_skill_tools_carry_no_background_review_marker():
     """Skills belong to the plan-completion extraction, never to the review."""
     from agent.tools.skill_tools import (
         build_skill_list_tool,
@@ -326,10 +326,10 @@ def test_the_skill_tools_carry_no_nudge_marker():
 
     for builder in (build_skill_list_tool, build_skill_manage_tool, build_skill_view_tool):
         tool = builder()
-        assert not (tool.metadata or {}).get("nudge"), tool.name
+        assert not (tool.metadata or {}).get("background_review"), tool.name
 
 
-def test_the_nudge_gate_refuses_the_skill_tools():
+def test_the_background_review_gate_refuses_the_skill_tools():
     """The review may EXECUTE only the tagged set; skill tools are out."""
 
     class _Tool:
@@ -337,7 +337,7 @@ def test_the_nudge_gate_refuses_the_skill_tools():
             self.name = name
             self.metadata = metadata or {}
 
-    gate = nudge_mod._NudgeLimitTool()
+    gate = review_mod._BackgroundReviewLimitTool()
     from agent.tools.memory import build_memory_tool
 
     assert gate._is_allowed(build_memory_tool()) is True
@@ -358,11 +358,11 @@ async def test_cache_warm_sends_the_discarded_messages_verbatim(monkeypatch):
     async def _factory(session_id: str, system_prompt: str) -> _CapturingAgent:
         return _CapturingAgent()
 
-    monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _factory)
-    monkeypatch.setitem(nudge_mod.NUDGE, "memory_review_mode", "cache_warm")
+    monkeypatch.setattr(review_mod, "_create_memory_review_agent", _factory)
+    monkeypatch.setitem(review_mod.BACKGROUND_REVIEW_CONFIG, "memory_review_mode", "cache_warm")
     discarded = _history(50)
 
-    await nudge_mod._nudge_memory("mr-" + uuid.uuid4().hex[:8], "sys", discarded)
+    await review_mod._execute_memory_review("mr-" + uuid.uuid4().hex[:8], "sys", discarded)
 
     messages = captured["messages"]
     assert len(messages) == len(discarded) + 1
@@ -382,11 +382,11 @@ async def test_the_digest_mode_folds_the_history_before_the_agent(monkeypatch):
     async def _factory(session_id: str, system_prompt: str) -> _CapturingAgent:
         return _CapturingAgent()
 
-    monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _factory)
-    monkeypatch.setitem(nudge_mod.NUDGE, "memory_review_mode", "digest")
+    monkeypatch.setattr(review_mod, "_create_memory_review_agent", _factory)
+    monkeypatch.setitem(review_mod.BACKGROUND_REVIEW_CONFIG, "memory_review_mode", "digest")
     session_id = "mr-" + uuid.uuid4().hex[:8]
 
-    await nudge_mod._nudge_memory(session_id, "sys", _history(50))
+    await review_mod._execute_memory_review(session_id, "sys", _history(50))
 
     messages = captured["messages"]
     # digest + tail + the review prompt

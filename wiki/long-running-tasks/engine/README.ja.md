@@ -104,7 +104,7 @@ async def taskflow_run_task(
 
 ### ディスパッチ——`taskflow_step(action="dispatch")` の一括意味論
 
-`taskflow_step(action="dispatch", flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）は、何かを生成する**前に****すべての** id を検証します。ステップが `ready` であるか、`blocked` でも依存が満たされていればディスパッチ可能です。未知の id、重複 id、すでに `dispatched`/`done` のステップは、呼び出し全体を拒否し、生成を一切行いません。成功時、ステップは共有の `_dispatch.dispatch_child` シーム（`_dispatch.py:10`）を通じて順次生成され、**1 回**の `update_flow` 呼び出しで永続化されます。バッチ途中で生成が失敗するとループは停止し、すでに生成済みの子は永続化されるため、子が黙って失われることはありません。エラーは失敗した step id とディスパッチ済み step id の両方を示します。flow レベルの `child_session_key` は意図的に変更しません——各ステップ自身の child key が権威です。
+`taskflow_step(action="dispatch", flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）は、何かを生成する**前に****すべての** id を検証します。ステップが `ready` であるか、`blocked` でも依存が満たされていればディスパッチ可能です。未知の id、重複 id、すでに `dispatched`/`done` のステップは、呼び出し全体を拒否し、生成を一切行いません。成功時、ステップは共有の `_dispatch.dispatch_child` シーム（`_dispatch.py:10`）を通じて**同時**に生成され（`TASKFLOW_INFRA["max_parallel_dispatch"]` が上限）、**1 回**の `update_flow` 呼び出しで永続化されます。個々の spawn 失敗は兄弟を中断しません：成功した子は永続化され、エラーは失敗した step id とディスパッチ済み step id の両方を示します。flow レベルの `child_session_key` は意図的に変更しません——各ステップ自身の child key が権威です。`taskflow_plan` の初期 ready 集合もこの経路を通り、resume の全 ready 波は同じ flow ロックと検証を共有します。
 
 ### 合成——`aggregate_deps`
 

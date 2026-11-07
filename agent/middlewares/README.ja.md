@@ -217,7 +217,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` の mem キーは圧縮パイプラインとの契約です：`Summarization` がトークン見積もり（`_estimate_system_prompt_tokens`）に読み、圧縮後に（mem + db へ）書き戻します —— そのためキャッシュミス時は必ず二重書き込みします。
 
-**永続化は圧縮パイプラインから出ました。** `MessagePersistenceMiddleware` が各モデル境界で新規メッセージを MesMemory へフラッシュします（下のセクション参照）；メモリレビュー / プラン抽出の nudge は引き続き `Summarization` が compact 接縫からスケジュールします。`system_prompt_injection` はどのライフサイクルフック（`before_agent` / `after_agent` / `before_model` / `after_model`）もオーバーライドしません；役割はシステムプロンプトのラップだけです。
+**永続化は圧縮パイプラインから出ました。** `MessagePersistenceMiddleware` が各モデル境界で新規メッセージを MesMemory へフラッシュします（下のセクション参照）；メモリレビュー / スキルレビューのバックグラウンドタスク は引き続き `Summarization` が compact 接縫からスケジュールします。`system_prompt_injection` はどのライフサイクルフック（`before_agent` / `after_agent` / `before_model` / `after_model`）もオーバーライドしません；役割はシステムプロンプトのラップだけです。
 
 > 本ドキュメントの旧版はナレッジグラフ保守（`after_turn`）と `MemoryCache` を主張していました。**現在のコードにはどちらも存在しません。** システムプロンプトは状態レジスタと `build_system_prompt()` から供給され、ミドルウェア層のどこにもナレッジグラフ呼び出しはありません。
 
@@ -471,7 +471,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **2 経路は 1 つのウォーターマークを共有し、書き込みは冪等です。** 復帰時に書かれたツール結果は後続の各境界で再び見え、境界で書かれた AI メッセージは次の境界で再び見えます。グラフ状態は蓄積しますが、ウォーターマークが各メッセージを 1 行に保ちます — プロセス再起動をまたいでも成立します（メッセージ id と内容フィンガープリントはチェックポイント直列化を生き延びます）。書き込みエラーはログのみで**トゥームストーンされず**、次の境界で同じバッチが再試行されます（fail-open — 永続化がターンやツール結果を壊すことはありません）。
 
-> 圧縮パスはもう何も永続化しません：`compaction_persistence.py` モジュールと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。compact は圧縮と圧縮時 nudge のスケジュールだけを行います（Summarization セクション参照）。
+> 圧縮パスはもう何も永続化しません：`compaction_persistence.py` モジュールと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。compact は圧縮と圧縮時バックグラウンドレビューのスケジュールだけを行います（Summarization セクション参照）。
 
 ### ContextEvictionMiddleware
 
@@ -596,14 +596,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **構造化要約：** 補助呼び出しは `with_structured_output(SummaryDoc, method="json_mode")`（`summarization/summary_doc.py`）を通ります。Markdown はドキュメントからコードでレンダリングされ、cap 後のドキュメント本体は AIMessage の `additional_kwargs["summary_doc"]` に保存されます（チェイニング再要約は `<prior-summary-json>` として再入力）。解析失敗は `json_repair`、次にレガシー free-form パスへ降格します。項目上限は配列スライス（`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`、`evicted_refs[-20:]`）で、Markdown の再解析ではありません。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
 - **永続化は行いません：** 圧縮パスは MesMemory へ何も書き込みません。メッセージ永続化は各モデル境界で `MessagePersistenceMiddleware` が実行します；旧 `compaction_persistence.py` の破棄プレフィックスフラッシュと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。
-- **圧縮時 nudge：** `schedule_memory_review`（`summarization/nudges.py`）は圧縮のたびに**メモリレビュー**だけを派遣し、渡すのは**破棄される**メッセージです——残すべき事実はそこにあります。既定の `cache_warm` モードでは `_nudge_memory` がそのスライスを**原文のまま**、そのターンが実際に使ったモデル構成（`_build_session_model`：セッションのモデル上書きと思考バリアント、または環境既定）で送り、セッション自身のシステムプロンプトとツール面も再現します。圧縮の切れ目は**プレフィックス切断**なので、`[ツール][システムプロンプト][破棄メッセージ][レビュー指示]` はメインモデルが直前に処理したリクエストのプレフィックスをそのまま再現します——プロバイダはプレフィックスキャッシュから応答し、レビューは実テキストを読みつつキャッシュ読み込み価格で済み、新規入力は指示だけです。`NUDGE["memory_review_mode"] = "digest"` は先に折り畳みます（`digest_history`：直近 24 件は原文、以前は 1 行に切詰め）——キャッシュが効きにくいプロバイダや小窓のレビューモデル向け。ガードは二段のまま：レビューはちょうどコンテキストが最も満ちている時に走り、渡されるのは破棄スライスのみ（会話全体は決して渡しません）で、ターンをブロックしません。NUDGE レーン上の fire-and-forget タスクとして走ります；nudge ロックが保持されている間、圧縮は派遣を完全にスキップします。プラン抽出はこの経路にはありません（プラン完了時に fork、下記参照）。
+- **圧縮時メモリレビュー：** `schedule_memory_review`（`summarization/background_reviews.py`）は圧縮のたびに**メモリレビュー**だけを派遣し、渡すのは**破棄される**メッセージです——残すべき事実はそこにあります。既定の `cache_warm` モードでは `_execute_memory_review` がそのスライスを**原文のまま**、そのターンが実際に使ったモデル構成（`_build_session_model`：セッションのモデル上書きと思考バリアント、または環境既定）で送り、セッション自身のシステムプロンプトとツール面も再現します。圧縮の切れ目は**プレフィックス切断**なので、`[ツール][システムプロンプト][破棄メッセージ][レビュー指示]` はメインモデルが直前に処理したリクエストのプレフィックスをそのまま再現します——プロバイダはプレフィックスキャッシュから応答し、レビューは実テキストを読みつつキャッシュ読み込み価格で済み、新規入力は指示だけです。`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` は先に折り畳みます（`digest_history`：直近 24 件は原文、以前は 1 行に切詰め）——キャッシュが効きにくいプロバイダや小窓のレビューモデル向け。ガードは二段のまま：レビューはちょうどコンテキストが最も満ちている時に走り、渡されるのは破棄スライスのみ（会話全体は決して渡しません）で、ターンをブロックしません。BACKGROUND_REVIEW レーン上の fire-and-forget タスクとして走ります；レビューロックが保持されている間、圧縮は派遣を完全にスキップします。スキルレビューはこの経路にはありません（プラン完了時に fork、下記参照）。
 
-**Nudge サブエージェント**（`summarization/nudges.py`、圧縮パイプラインが派遣）：独立した `create_agent` インスタンスで、2 つのパスはそれぞれ別のトリガー・別のモデル・別のツール障壁を持ちます：
+**バックグラウンドレビュー サブエージェント**（`summarization/background_reviews.py`、圧縮パイプラインが派遣）：独立した `create_agent` インスタンスで、2 つのパスはそれぞれ別のトリガー・別のモデル・別のツール障壁を持ちます：
 
-- `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：圧縮パイプラインが起動し、**そのターンの構成から再構築したメインモデル**（`_build_session_model`、上記の cache_warm 継ぎ目）を使い、ツール面はセッションのフル面です；グラフは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]` を携え、`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールを拒否するため、レビューが**実行**できるのはマークされた組（`memory`、`knowledge`、`question`、プランモード）だけです。フル面はプレフィックスキャッシュ一致のためで、ゲートが実行障壁です。スキル三点セットは**意図的に未マーク**——ここでスキル抽出が起きることはありません。
-- `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：**プラン完了**フック（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_plan_extraction`）が起動し、**補助モデル**（`_create_plan_extraction_agent`、`temperature=0`）を使い、**会話を一切受け取りません**——指示と plan context だけです。ツール面は**明示的にバインド**されており——`knowledge` / `skill_list` / `skill_view` / `skill_manage` / `memory`（`_extraction_tool_face`。`memory` は Part 3 の FACTS.md 書き込み経路）——バインド一覧そのものが障壁で、スキル書き込みはこのパスだけが担います。2 つの成果物：**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます；**Part 2** は `skill_manage` でスキルライブラリを更新します（`<module>-notes` の引き継ぎを含む）。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
-- **プラン抽出の重複排除：** `_detect_todo_all_complete` は、全 todo が `completed`/`cancelled` で、かつプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）が最後に**成功**した抽出後に `nudge_plan_snapshot_hash` へ保存した値と異なるときに発火します——完了済み todo のその場編集は再抽出し、変化のないプランはスキップし、失敗したパスは次の完了ターンで再試行します。手前のゲート：セッション単位の `Summarization → nudge` スイッチ、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、実行中のイベントループ。
-- **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用 nudge エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
+- `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：圧縮パイプラインが起動し、**そのターンの構成から再構築したメインモデル**（`_build_session_model`、上記の cache_warm 継ぎ目）を使い、ツール面はセッションのフル面です；グラフは `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]` を携え、`_BackgroundReviewLimitTool` はメタデータに `background_review: true` を持たないツールを拒否するため、レビューが**実行**できるのはマークされた組（`memory`、`knowledge`、`question`、プランモード）だけです。フル面はプレフィックスキャッシュ一致のためで、ゲートが実行障壁です。スキル三点セットは**意図的に未マーク**——ここでスキルレビューが起きることはありません。
+- `_SKILL_REVIEW_PROMPT`（スキルレビュー）：**プラン完了**フック（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_skill_review`）が起動し、**補助モデル**（`_create_skill_review_agent`、`temperature=0`）を使い、会話は渡しません。ツール面は `skill_list` / `skill_view` / `skill_manage` のみで、knowledge と memory はありません。`skills/auto` をスナップショットし、レビューの後に runtime judge（`skill_review.judge_skill_update`）が grounded / reusable / trigger / quality を判定します。拒否時はスナップショットへ戻して feedback 付きで再試行し、使い切ると失敗マーカーを記録して成功 fingerprint を進めません。knowledge も FACTS も書かず、`handoff-tree.json` は監査用に残します。
+- **スキルレビューの重複排除：** `_detect_todo_all_complete` は、全 todo が `completed`/`cancelled` で、かつプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）が最後に**成功**したレビュー後に `skill_review_snapshot_hash` へ保存した値と異なるときに発火します——完了済み todo のその場編集は再抽出し、変化のないプランはスキップし、失敗したパスは次の完了ターンで再試行します。手前のゲート：`BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]`、`skill_review_lock`、実行中のイベントループ。
+- **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用バックグラウンドレビュー エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_BackgroundReviewLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
 
 ▶️ 詳細：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
@@ -798,9 +798,9 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 | キー                                                                                                                                        | 所有者                                                                           | レジスタ |
 | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------- |
 | `system_prompt`                                                                                                                             | system_prompt_injection / Summarization                                          | mem + db |
-| `nudge_plan_extraction_fired`                                                                                                               | プラン完了トリガ（PlanContinuationEnforcer → `summarization/nudges.py`）         | db       |
-| `nudge_plan_snapshot_hash`                                                                                                                  | プラン完了トリガ——最後に抽出したプランの指紋（id + content + status + plan_ref） | db       |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock`                                                                                    | nudge fork（圧縮メモリレビュー / プラン完了抽出）                                | mem      |
+| `skill_review_fired`                                                                                                               | プラン完了トリガ（PlanContinuationEnforcer → `summarization/background_reviews.py`）         | db       |
+| `skill_review_snapshot_hash`                                                                                                                  | プラン完了トリガ——最後に抽出したプランの指紋（id + content + status + plan_ref） | db       |
+| `background_review_memory_lock`、`skill_review_lock`                                                                                    | バックグラウンドレビュー fork（圧縮メモリレビュー / プラン完了スキルレビュー）                                | mem      |
 | `iteration_budget`、`iteration_budget_used`                                                                                                 | IterationBudget                                                                  | mem      |
 | `tool_guardrail_state`                                                                                                                      | ToolGuardrails                                                                   | mem      |
 | `summarization_*` キー（圧縮カウンター、無効連続、直近トークン/戦略、スキップ LLM フラグ、リカバリ状態、直近ユーザー質問）                  | Summarization                                                                    | mem      |
@@ -833,7 +833,7 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                    |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`。それ以外はフェイルセーフのスキルパス）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
-| `summarization.py`        | `compression_trigger_ratio=0.80` に加え、`Summarization` と `summarization/nudges.py` が読む保持/試行/クールダウン/しきい値の各定数                                                                                      |
+| `summarization.py`        | `compression_trigger_ratio=0.80` に加え、`Summarization` と `summarization/background_reviews.py` が読む保持/試行/クールダウン/しきい値の各定数                                                                                      |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、プレビュー先頭/末尾 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
 | `tool_guardrails.py`      | ToolGuardrails セクションに列挙した 5 病理のしきい値と復帰デフォルト                                                                                                                                                     |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                         |
@@ -960,7 +960,7 @@ agent = create_agent(
     · MultimodalProcessor  mutil_temp を清掃（7 日超 / 非数値ファイル名）
     · PlanContinuationEnforcer  未完了の todo が残っていれば継続プロンプトを fire-and-forget で注入
     · （system_prompt_injection はライフサイクルフックを実装しません；メッセージ永続化は
-       専用の after_model フックで走り、メモリレビュー / プラン抽出 nudge は代わりに
+       専用の after_model フックで走り、メモリレビュー / スキルレビューは代わりに
        Summarization の圧縮パス内で発火します。）
 ```
 
@@ -1069,8 +1069,8 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
 │   ├── media_offload.py         # 圧縮時のインラインメディア退避
-│   ├── nudges.py                # 圧縮時 nudge のスケジューリング + プロンプト
-│   ├── plan_context.py          # プラン抽出 nudge のアクティブプラン検出
+│   ├── background_reviews.py    # 圧縮時バックグラウンドレビューのスケジューリング + プロンプト
+│   ├── plan_context.py          # スキルレビューのアクティブプラン検出
 │   └── summary_doc.py           # SummaryDoc スキーマ + 決定論的 Markdown レンダラー
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # TaskIntentMiddleware をエクスポート

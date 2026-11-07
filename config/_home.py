@@ -66,3 +66,14 @@ def resolve_app_home(code_root: Path) -> Path:
     """
     raw = resolve_sherry_home_raw()
     return Path(raw).expanduser().resolve() if raw else code_root
+
+
+def resolve_code_root(code_root: Path) -> Path:
+    """The code root that owns SHIPPED data files (templates, not user data).
+
+    Under PyInstaller, shipped data lives under ``sys._MEIPASS`` (onedir =
+    ``_internal``), NOT under the synthetic ``__file__`` of a frozen module.
+    A checkout (no ``_MEIPASS``) keeps the historical ``code_root`` exactly.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    return Path(meipass).resolve() if meipass else code_root

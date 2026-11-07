@@ -84,7 +84,9 @@ def test_transitive_dependents_terminates_on_a_cycle():
 
 
 @pytest.mark.asyncio
-async def test_plan_creates_the_flow_without_dispatching(isolated_db, planner):
+async def test_plan_dispatches_the_initial_ready_set_and_keeps_dependents_blocked(
+    isolated_db, planner, _isolated_child_dispatch
+):
     planner(
         [
             {"step_id": "step-1", "task": "collect", "depends_on": []},
@@ -97,19 +99,21 @@ async def test_plan_creates_the_flow_without_dispatching(isolated_db, planner):
     )
 
     assert "TaskFlow planned" in out, out
-    assert "nothing dispatched" in out
+    assert "auto_dispatch: TaskFlow steps auto-dispatched" in out, out
+    assert len(_isolated_child_dispatch) == 1, "only the no-dependency step starts"
     flow = await store_sqlite.get_flow("flow-plan", _SESSION)
     assert flow is not None
     steps = flow["state"]["steps"]
     assert [step["step_id"] for step in steps] == ["step-1", "step-2"]
-    # No dependencies -> ready; with dependencies -> blocked until unlocked.
-    assert step_status(steps[0]) == StepStatus.READY
+    # No dependencies -> dispatched by the plan; with dependencies -> blocked.
+    assert step_status(steps[0]) == StepStatus.DISPATCHED
     assert step_status(steps[1]) == StepStatus.BLOCKED
-    assert not [s for s in steps if step_status(s) == StepStatus.DISPATCHED]
 
 
 @pytest.mark.asyncio
-async def test_plan_drops_dependencies_on_unknown_steps(isolated_db, planner):
+async def test_plan_drops_dependencies_on_unknown_steps(
+    isolated_db, planner, _isolated_child_dispatch
+):
     planner([{"step_id": "step-1", "task": "x", "depends_on": ["ghost"]}])
 
     await plan_mod.taskflow_plan.coroutine(goal="g", flow_id="flow-ghost", session_id=_SESSION)
@@ -118,7 +122,7 @@ async def test_plan_drops_dependencies_on_unknown_steps(isolated_db, planner):
     assert flow is not None
     step = flow["state"]["steps"][0]
     assert step["depends_on"] == []
-    assert step_status(step) == StepStatus.READY
+    assert step_status(step) == StepStatus.DISPATCHED
 
 
 @pytest.mark.asyncio

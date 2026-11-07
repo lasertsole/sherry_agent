@@ -267,7 +267,10 @@ class TaskflowStepInput(BaseModel):
         description="success / failure / partial / skipped; outranks the result gates (resume).",
     )
     auto_dispatch: bool | None = Field(
-        default=None, description="Dispatch newly unlocked steps after resume; default true."
+        default=None,
+        description=(
+            "Dispatch every ready step after resume (unlocked downstream + siblings); default true."
+        ),
     )
     steps: list[dict] | None = Field(
         default=None,
@@ -422,6 +425,7 @@ class TaskflowFlowTool(_MergedTaskflowTool):
         "TaskFlow lifecycle and budget. Choose action, then pass that action's fields. "
         "Required: create→flow_id; plan→goal; finish/fail/cancel/set_waiting/replan→flow_id; "
         "budget→flow_id (use budget_action=query|set, plus token_budget when set). "
+        "plan registers the steps AND auto-dispatches its initial ready set; dependents stay blocked. "
         "Pass expected_revision on mutations to fail fast; a conflict returns the latest revision to inspect. "
         "create/plan warn about a similar ACTIVE flow in this session: reuse it, or re-call with ack_dup=true "
         "when it is genuinely a different task. Terminal actions reject later mutations."
@@ -438,7 +442,9 @@ class TaskflowStepTool(_MergedTaskflowTool):
         "Required: run_task→flow_id,task; update_steps→flow_id,steps (COMPLETE list); "
         "dispatch→flow_id,step_ids; resume→flow_id,child_session_key or result; wait_all→flow_id. "
         "run_task dispatches a detached child; depends_on blocks until prerequisites are done; "
-        "response_schema/judge_criteria gate the result on resume; wait_all polls only this flow's children."
+        "response_schema/judge_criteria gate the result on resume; resume auto-dispatches every ready "
+        "step (unlocked downstream + ready siblings) unless auto_dispatch=false; wait_all polls only "
+        "this flow's children."
     )
     args_schema: type[BaseModel] = TaskflowStepInput
     action_tools: ClassVar[dict[str, BaseTool]] = _STEP_TOOLS

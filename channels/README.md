@@ -72,7 +72,7 @@ Auto-discovers available channels:
 
 - `discover_channel_names() -> list[str]`: scans `plugins/channels/` for channel **folders** (subdirectories, not single files) that contain a `core.py`; returns sorted names
 - `load_channel_class(module_name, strict_deps=True) -> type[BaseChannel]`: dynamically imports `plugins/channels/<module_name>/core.py` and returns the first `BaseChannel` subclass found. With `strict_deps=False`, a failed dependency install does not abort the load — the channel stays registered and `start()` retries the install
-- `_ensure_deps(plugin_dir, plugin_name) -> bool`: installs the plugin's `requirements.txt` if present (`uv pip install` preferred, `python -m pip` fallback, 120 s timeout)
+- `_ensure_deps(plugin_dir, plugin_name) -> bool`: installs the plugin's `requirements.txt` if present (`uv pip install` preferred, `python -m pip` fallback, 120 s timeout). In a PyInstaller-frozen process it short-circuits: the interpreter cannot install packages, so channel SDKs must be bundled at build time.
 - `discover_plugins() -> dict[str, type[BaseChannel]]`: loads external plugins registered via `entry_points(group="channels")`
 - `discover_all() -> dict[str, type[BaseChannel]]`: merges built-in (directory scan, loaded with `strict_deps=False`) and external channels — built-ins take priority, an external plugin cannot shadow a built-in name
 

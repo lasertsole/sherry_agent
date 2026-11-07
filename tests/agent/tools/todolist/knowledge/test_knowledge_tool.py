@@ -74,7 +74,7 @@ def tool():
 
 
 def test_metadata_marks_nudge_and_main_only(tool):
-    assert tool.metadata["nudge"] is True
+    assert tool.metadata["background_review"] is True
     assert tool.metadata["scope"] == "main_only"
     assert tool.handle_tool_error is True
 

@@ -336,7 +336,7 @@ class TestFirstRunSeeding:
         (template_root / "sherry.jsonc").write_text(SAMPLE, encoding="utf-8")
 
         monkeypatch.setattr("config.sherry_settings.SHERRY_CONFIG_PATH", target)
-        monkeypatch.setattr("config.sherry_settings._CODE_ROOT", template_root)
+        monkeypatch.setattr("config.sherry_settings._TEMPLATE_ROOT", template_root)
         monkeypatch.setattr("server.service.sherry_config.SHERRY_CONFIG_PATH", target)
 
         write_sherry_config({"LOG_LEVEL": "DEBUG"})

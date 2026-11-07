@@ -71,7 +71,7 @@ def baseline_revision(project_root: Path) -> str:
     """The shadow chain's current tip (creating a first snapshot if needed)."""
     if shadow_git.shadow_head(project_root) is None:
         shadow_git.take_snapshot(project_root, "manual:isolation baseline")
-    head = run_git(project_root, ["rev-parse", shadow_git.SHADOW_REF])
+    head = run_git(project_root, ["rev-parse", shadow_git.shadow_ref(project_root)])
     sha = head.stdout.strip()
     if head.returncode != 0 or not sha:
         raise OSError(f"shadow git has no baseline for {project_root}")

@@ -86,6 +86,31 @@ def _isolated_prompt_data_provider():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_shadow_store(tmp_path, monkeypatch):
+    """Point every test at its own shared shadow store.
+
+    The store moved out of the project (``APP_HOME/checkpoints/store``); without
+    this fixture a write-path test would snapshot into the developer's real app
+    home and share refs with unrelated tests. A test that needs a different
+    store patches ``store_dir`` itself (its patch lands after this one).
+    """
+    try:
+        import agent.tools.pub_base.shadow_git as shadow_git
+        from config.features import SHADOW_GIT
+    except Exception:  # noqa: BLE001 - unrelated suites must still run
+        yield None
+        return
+    monkeypatch.setitem(SHADOW_GIT, "store_dir", str(tmp_path / "shadow-store"))
+    monkeypatch.setattr(shadow_git, "_dedup", set())
+    monkeypatch.setattr(shadow_git, "_turn_counts", {})
+    monkeypatch.setattr(shadow_git, "_floors", {})
+    monkeypatch.setattr(shadow_git, "_floors_loaded", set())
+    monkeypatch.setattr(shadow_git, "_frozen", set())
+    monkeypatch.setattr(shadow_git, "_active_writers", {})
+    yield shadow_git
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_sandbox_policy(monkeypatch):
     """Pin the sandbox policy for every test (CI parity).
 

@@ -45,11 +45,11 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 6. **復帰コンテキストの注入**（`_inject_recovery_context`、compression.py:379）: 捕捉したファイル操作ラチェットが要約の `## Relevant Files` セクションに書き込まれ、チェックポイントが常に最新の読み取り/変更ファイルマップを運ぶようにします。
 7. **帳簿記録**（`_record_compression`、thrash.py:117）し、最後に `request.override(messages=..., system_message=...)`。
 
-### 💾 圧縮時 nudge
+### 💾 圧縮時バックグラウンドレビュー
 
-メッセージ永続化は圧縮パスとは別に動作します: `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/AI メッセージをモデル呼び出しの各境界で、ツール結果を返却時に MesMemory へフラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。compact は圧縮と下記 nudge のスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
+メッセージ永続化は圧縮パスとは別に動作します: `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/AI メッセージをモデル呼び出しの各境界で、ツール結果を返却時に MesMemory へフラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。compact は圧縮と下記バックグラウンドレビューのスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
 
-**圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_memory_review`）: メッセージを実際に破棄する圧縮のたびにメモリレビュー（`_nudge_memory`）がディスパッチされ、渡されるのはまさにその破棄スライス。**cache_warm** 方式で走ります——そのターンが使ったモデル構成に原文のまま、セッションのシステムプロンプトとツール面も添えて送るため、プレフィックス切断がそのままプレフィックスキャッシュ命中になります（`NUDGE["memory_review_mode"] = "digest"` のときは折り畳み）。NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません；nudge ロックが保持されている間、圧縮はディスパッチを完全にスキップします（キューイングなし）。プラン抽出はこの経路にはありません——プラン完了時に `PlanContinuationEnforcer.aafter_agent` から fork します（単発の `nudge_plan_extraction_fired` フラグは完了サイクルごとに 1 回の抽出を保証）。
+**圧縮時メモリレビュー**（`agent/middlewares/summarization/background_reviews.py::schedule_memory_review`）: メッセージを実際に破棄する圧縮のたびにメモリレビュー（`_execute_memory_review`）がディスパッチされ、渡されるのはまさにその破棄スライス。**cache_warm** 方式で走ります——そのターンが使ったモデル構成に原文のまま、セッションのシステムプロンプトとツール面も添えて送るため、プレフィックス切断がそのままプレフィックスキャッシュ命中になります（`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` のときは折り畳み）。BACKGROUND_REVIEW レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません；レビューロックが保持されている間、圧縮はディスパッチを完全にスキップします（キューイングなし）。スキルレビューはこの経路にはありません——プラン完了時に `PlanContinuationEnforcer.aafter_agent` から fork します（単発の `skill_review_fired` フラグは完了サイクルごとに 1 回の抽出を保証）。
 
 **カットポイント選択**（`_determine_cutoff`、compression.py:277）: 履歴をターンに分割し、**最新から逆方向**に歩きながら保持予算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`、compression.py:70）に照らして累積します; 丸ごと入らないターンはターン途中で割られることがあります。`_adjust_for_orphan_pairs`（compression.py:311）がカットポイントを逆に歩き、`ToolMessage` が `AIMessage` のツール呼び出しから分離する状態がなくなるまで調整します。最終ターン比率ゲートが発火しない限り（最後のユーザーターン ≥ 全トークンの `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`、wrap 入口の `_plan_model_call` で呼び出し）、カットポイントが最後の `HumanMessage` を超えることはありません。
 
@@ -64,7 +64,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 - ブロックはテキストポインタ `[evicted to: <path>]` に置き換わります。`pub/func/message/eviction.py` が出すのと同じマーカーなので、`_collect_evicted_refs` が拾い、`_finalize_summary_doc` がパスを `SummaryDoc.evicted_refs` に運びます（*Evicted References* として描画）;
 - デコードまたは書き込みに失敗したブロックは `<media error="failed_to_offload" />` になります —— メディアの失敗が圧縮を壊すことはありません。
 
-保持ウィンドウ（`current_messages[cutoff:]`）は決して触りません: メディアはそのターンが実際に要約されるまで残ります。両方の圧縮経路が nudge スケジュールの前にプレフィックススライスに対してオフロードを呼びます —— `_apply_compression_under_lock`（同期）と `_aapply_compression_under_lock`（非同期）。要約プロンプト（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）は、ポインタが存在すること、`evicted_refs` に逐語で持ち越すこと、視覚/音声/動画の詳細を捏造しないこと、ペイロードはパスから取得できることをモデルに伝えます。
+保持ウィンドウ（`current_messages[cutoff:]`）は決して触りません: メディアはそのターンが実際に要約されるまで残ります。両方の圧縮経路が バックグラウンドレビューのスケジュール前にプレフィックススライスに対してオフロードを呼びます —— `_apply_compression_under_lock`（同期）と `_aapply_compression_under_lock`（非同期）。要約プロンプト（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）は、ポインタが存在すること、`evicted_refs` に逐語で持ち越すこと、視覚/音声/動画の詳細を捏造しないこと、ペイロードはパスから取得できることをモデルに伝えます。
 
 メディアファイルはセッションツリー内にあるため、`clear_session()` が `evicted/` と `plans/` とともに削除します。
 
@@ -168,7 +168,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 システムプロンプト更新
 
-メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（`core.py::_refresh_system_prompt_if_needed`）。`@dynamic_prompt` システムプロンプトミドルウェアを持たないチェーン（サブエージェント / nudge パイプライン）はこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
+メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（`core.py::_refresh_system_prompt_if_needed`）。`@dynamic_prompt` システムプロンプトミドルウェアを持たないチェーン（サブエージェント / バックグラウンドレビュー パイプライン）はこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
 
 ## 📌 登録箇所
 

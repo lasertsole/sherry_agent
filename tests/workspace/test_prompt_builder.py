@@ -34,10 +34,17 @@ class FakeStateDB:
 class FakeMemoryStore:
     """Stand-in for agent.tools.memory.memory_store."""
 
-    def __init__(self, memory: str = "MEMORY-V1", user: str = "USER-V1", facts: str | None = None):
+    def __init__(
+        self,
+        memory: str = "MEMORY-V1",
+        user: str = "USER-V1",
+        facts: str | None = None,
+        semantic_recall_enabled: bool = False,
+    ):
         self.memory = memory
         self.user = user
         self.facts = facts
+        self.semantic_recall_enabled = semantic_recall_enabled
 
     def format_for_system_prompt(self, target: str, session_id: str | None = None):
         if target == "memory":
@@ -47,6 +54,11 @@ class FakeMemoryStore:
         if target == "facts":
             return self.facts
         return None
+
+    def format_index_for_system_prompt(self, target: str):
+        if not self.semantic_recall_enabled:
+            return None
+        return f"INDEX-{target}"
 
 
 pytestmark = [pytest.mark.unit]
@@ -72,9 +84,11 @@ def workspace(tmp_path, monkeypatch):
     return fakes
 
 
-def _set_memory_store(monkeypatch, *, memory="MEMORY-V1", user="USER-V1", facts=None):
+def _set_memory_store(monkeypatch, *, memory="MEMORY-V1", user="USER-V1", facts=None, semantic=False):
     """Patch prompt_builder's lazy memory_store import target."""
-    fake_mem = FakeMemoryStore(memory=memory, user=user, facts=facts)
+    fake_mem = FakeMemoryStore(
+        memory=memory, user=user, facts=facts, semantic_recall_enabled=semantic
+    )
     monkeypatch.setattr("agent.tools.memory.memory_store", fake_mem)
     return fake_mem
 
@@ -239,6 +253,16 @@ class TestMemoryNotCached:
         fake_mem.facts = None
         without_facts = build_system_prompt(session_id="sess-facts-empty")
         assert "FACTS-V1" not in without_facts
+
+    def test_semantic_mode_injects_the_compact_index(self, workspace, monkeypatch):
+        from workspace.prompt_builder import build_system_prompt
+
+        _set_memory_store(monkeypatch, memory="MEMORY-FULL", semantic=True)
+
+        prompt = build_system_prompt(session_id="sess-semantic")
+        assert "INDEX-memory" in prompt
+        assert "INDEX-user" in prompt
+        assert "MEMORY-FULL" not in prompt
 
 
 class TestSessionSkillSelection:

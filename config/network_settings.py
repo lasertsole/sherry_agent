@@ -43,15 +43,17 @@ from typing import Any
 
 import json5
 
-from config._home import resolve_app_home
+from config._home import resolve_app_home, resolve_code_root
 
 _CODE_ROOT = Path(__file__).resolve().parents[1]
+#: Shipped templates live under ``_MEIPASS`` in a frozen onedir build.
+_TEMPLATE_ROOT = resolve_code_root(_CODE_ROOT)
 # Honours ``--sherry-home`` (the packaged shell's only home channel) — see
 # config/_home.py. Reading the env alone pointed this file into the bundle.
 APP_HOME = resolve_app_home(_CODE_ROOT)
 
 NETWORK_CONFIG_PATH = APP_HOME / ".network"
-NETWORK_CONFIG_TEMPLATE = _CODE_ROOT / ".network.example"
+NETWORK_CONFIG_TEMPLATE = _TEMPLATE_ROOT / ".network.example"
 
 # Single source of truth for accepted keys and their typed defaults. The keys
 # mirror the historical .env / sherry.jsonc spelling one-for-one, so a migration
@@ -183,7 +185,15 @@ def _seed_text() -> str:
     """
     try:
         text = NETWORK_CONFIG_TEMPLATE.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        from loguru import logger
+
+        logger.warning(
+            ".network template not found at {} (code_root={}): {}; seeding skipped",
+            NETWORK_CONFIG_TEMPLATE,
+            _TEMPLATE_ROOT,
+            exc,
+        )
         return ""
     legacy = {**_legacy_env_values(), **_legacy_langsmith_values()}
     if not legacy:

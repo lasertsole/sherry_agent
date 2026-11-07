@@ -40,7 +40,7 @@ The defense is layered by altitude, so a failure that slips one layer lands in t
 
 ### Turn level: `ToolGuardrails`, tool-call pathology detection
 
-Active on the main agent, worker agents, and nudge sub-agents. Every tool call record is appended to per-turn state (`tool_guardrail_state` in `state_register_mem`) *before* evaluation, so thresholds are self-inclusive: "after 2" means the current call is the 2nd, and the 5th identical no-progress call itself reaches np=5 and blocks. Escalation ladder: ALLOW → WARN (a nudge is appended to the transcript) → BLOCK (the call is rejected with an explanatory message) → HALT (the turn ends gracefully with a terminal message, same pattern as the iteration budget).
+Active on the main agent, worker agents, and background-review sub-agents. Every tool call record is appended to per-turn state (`tool_guardrail_state` in `state_register_mem`) *before* evaluation, so thresholds are self-inclusive: "after 2" means the current call is the 2nd, and the 5th identical no-progress call itself reaches np=5 and blocks. Escalation ladder: ALLOW → WARN (a nudge is appended to the transcript) → BLOCK (the call is rejected with an explanatory message) → HALT (the turn ends gracefully with a terminal message, same pattern as the iteration budget).
 
 | Pathology | Signal | WARN after | BLOCK after | hard-stop mode |
 |---|---|---|---|---|

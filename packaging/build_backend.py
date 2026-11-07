@@ -54,8 +54,10 @@ DATA = (
     ("context_engine", "context_engine"),  # read by path, not imported
 )
 
-#: Packages whose data files PyInstaller's built-in hooks miss.
-COLLECT_ALL = ("robyn", "sniffio", "httpx", "websockets", "onnxruntime")
+#: Packages whose data files PyInstaller's built-in hooks miss. ``botpy`` is the
+#: QQ channel SDK imported lazily by ``plugins/channels/qq``; a frozen process
+#: cannot install it at runtime, so it must be collected here.
+COLLECT_ALL = ("robyn", "sniffio", "httpx", "websockets", "onnxruntime", "botpy")
 
 #: Imported LAZILY inside a function (the load gate's sampler), so the freezer's
 #: static analysis cannot see them from the entry point. ``psutil`` also ships a
@@ -80,6 +82,7 @@ COLLECT_SUBMODULES = (
     "plugins",
     "pub",
     "runtime",
+    "vendor",
     "server",
     "skills",
     "workspace",

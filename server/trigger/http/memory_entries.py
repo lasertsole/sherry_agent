@@ -9,7 +9,7 @@ from loguru import logger
 from context_engine.store.memory_entry_repository import ARCHIVE_REASONS
 from server.service.memory_entries import (
     archive_memory_entry,
-    consolidate_memory,
+    consolidation_status,
     create_memory_entry,
     get_memory_entry,
     list_memory_entries,
@@ -17,6 +17,7 @@ from server.service.memory_entries import (
     read_memory_settings,
     restore_memory_entry,
     search_memory,
+    start_memory_consolidation,
     update_memory_entry,
     write_memory_settings,
 )
@@ -109,9 +110,15 @@ async def memory_entries_archive_handler(request, path_params):
     if reason not in ARCHIVE_REASONS:
         return bad_request(f"Invalid archive reason: {reason!r}")
     try:
-        return ok(archive_memory_entry(_entry_id(path_params), reason))
+        entry_id = _entry_id(path_params)
+    except (KeyError, TypeError, ValueError):
+        return bad_request("entry_id must be an integer")
+    try:
+        return ok(archive_memory_entry(entry_id, reason))
     except LookupError as exc:
         return not_found(str(exc))
+    except ValueError as exc:
+        return bad_request(str(exc))
 
 
 @app.post("/memory/entries/:entry_id/restore")
@@ -133,6 +140,7 @@ async def memory_search_handler(request):
                 str(body.get("query") or ""),
                 target=body.get("target") or None,
                 limit=int(body.get("limit") or 50),
+                session_id=str(body.get("session_id") or "") or None,
             )
         )
     except (TypeError, ValueError) as exc:
@@ -141,8 +149,21 @@ async def memory_search_handler(request):
 
 @app.post("/memory/consolidate")
 async def memory_consolidate_handler(request):
-    logger.info("memory consolidate requested")
-    return ok(consolidate_memory())
+    body = read_body(request) or {}
+    session_id = str(body.get("session_id") or request.query_params.get("session_id", "") or "")
+    logger.info("memory consolidate requested: session={}", session_id or "-")
+    try:
+        return ok(start_memory_consolidation(session_id))
+    except ValueError as exc:
+        return bad_request(str(exc))
+
+
+@app.get("/memory/consolidate/:task_id")
+async def memory_consolidate_status_handler(request, path_params):
+    record = consolidation_status(str(path_params["task_id"]))
+    if record is None:
+        return not_found("Memory consolidation task not found")
+    return ok(record)
 
 
 @app.get("/memory/settings")

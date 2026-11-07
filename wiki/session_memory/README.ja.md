@@ -27,15 +27,15 @@ SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-m
 
 3 つの長期メモリターゲット（`memory`、`user`、`facts`）は MesMemory の `memory_entries` テーブルに 1 行 1 `§` エントリとして保存され、`MemoryEntryRepository`（`context_engine/store/memory_entry_repository.py`）経由で読み書きされます。旧 `workspace/memory/{MEMORY,USER,FACTS}.md` はレガシーなシードに過ぎません: `memory_migration.migrate_legacy_memory_files()` が `agent_core.init()` で 1 トランザクションとして 1 回だけインポートし、コミット後にのみ各ファイルを `*.md.bak` に改名します。既存行が 1 つでもあればインポートはスキップされるため、改名失敗でも重複しません。トランザクション失敗時はファイルを残し、次回起動で再試行します。
 
-`MemoryStore.load_from_store()` は `created_at ASC, id ASC`（旧ファイルの上から下の順）でアクティブ行を読み、レンダリング結果をシステムプロンプトスナップショットとして凍結します。セッション中の書き込みは永続化されますがスナップショットは再描画せず、provider の prefix キャッシュを安定させます。スナップショットは次回セッション開始時、圧縮後の再構築時、モデル/思考切替時、サブエージェント完了の取り込み時に再読み込みされます。per-project FACTS は存在せず、旧 `<project>/.sherry/memory/FACTS.md` は無視されます。FACTS は引き続きシステムレベル / プロジェクト横断の落とし穴のみを保持し、memory review / plan extraction nudge がそのルーティングを徹底します。
+`MemoryStore.load_from_store()` は `created_at ASC, id ASC`（旧ファイルの上から下の順）でアクティブ行を読み、レンダリング結果をシステムプロンプトスナップショットとして凍結します。セッション中の書き込みは永続化されますがスナップショットは再描画せず、provider の prefix キャッシュを安定させます。スナップショットは次回セッション開始時、圧縮後の再構築時、モデル/思考切替時、サブエージェント完了の取り込み時に再読み込みされます。per-project FACTS は存在せず、旧 `<project>/.sherry/memory/FACTS.md` は無視されます。FACTS は引き続きシステムレベル / プロジェクト横断の落とし穴のみを保持し、memory review / スキルレビュー がそのルーティングを徹底します。
 
 各行は `origin_session`、`usage_count`、`last_used` を記録します。レンダリングブロックは由来が分かるエントリの後ろに `[origin: <sid>, created: <date>, used: <n>x]` を付けます。`memory(action="read")` は一致するエントリを返し使用回数を増やします。`facts` が溢れると**最も使われていない**エントリをアーカイブし（`COALESCE(last_used, created_at)`、次に `usage_count`）、削除はすべて復元可能なソフト削除です。記憶パネルは `/memory/entries*`、`/memory/settings`、`/memory/consolidate` を使い、旧 `GET/PUT /memory` は `§` 区切り形式を維持します。
 
 | ターゲット | 用途 | 上限 | 保守 |
 |---|---|---|---|
-| `memory` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`、パネルで上書き可） | `memory` ツール / memory review nudge |
-| `user` | ユーザープロファイル：好み、コミュニケーション様式、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`、パネルで上書き可） | `memory` ツール / memory review nudge |
-| `facts` | システムレベル / プロジェクト横断の落とし穴。毎回のシステムプロンプトに注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`、パネルで上書き可）、最も使われていないものからロールオフ | `memory` ツール / memory review・plan extraction nudge |
+| `memory` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`、パネルで上書き可） | `memory` ツール / memory review |
+| `user` | ユーザープロファイル：好み、コミュニケーション様式、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`、パネルで上書き可） | `memory` ツール / memory review |
+| `facts` | システムレベル / プロジェクト横断の落とし穴。毎回のシステムプロンプトに注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`、パネルで上書き可）、最も使われていないものからロールオフ | `memory` ツール / memory review・スキルレビュー |
 
 ## MesMemory スキーマ
 

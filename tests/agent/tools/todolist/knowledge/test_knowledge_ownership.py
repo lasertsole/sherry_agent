@@ -4,11 +4,12 @@ Covers the three association sources (state ``plan_ref``, todos ``plan_ref``,
 boulder ``session_ids``), the fail-open behavior on a missing/corrupt boulder
 file, the tool-level read / write / list convergence, multi-session
 collaboration on one plan, the empty-session safe denial, and the nudge
-plan-extraction path that supplies ``session_id`` through ``InjectedState``.
+skill-review path that supplies ``session_id`` through ``InjectedState``.
 """
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,8 +18,8 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
 
-from agent.middlewares.summarization import nudges as nudge_mod
-from agent.middlewares.summarization.nudges import StateSchema
+from agent.middlewares.summarization import background_reviews as review_mod
+from agent.middlewares.summarization.background_reviews import StateSchema
 from agent.tools.todolist.knowledge import build_knowledge_tools, identity, ownership
 
 pytestmark = [pytest.mark.unit]
@@ -320,7 +321,7 @@ class TestToolPlanIsolation:
 
 class TestNudgeSessionIdSupply:
     @pytest.mark.asyncio
-    async def test_plan_extraction_nudge_seeds_session_id_into_agent_input(
+    async def test_skill_review_nudge_seeds_session_id_into_agent_input(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         captured: list[dict[str, Any]] = []
@@ -333,14 +334,29 @@ class TestNudgeSessionIdSupply:
         async def _create(system_prompt: str):
             return _RecordingAgent()
 
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", _create)
+        async def _judge(*_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                passed=True,
+                verdict="pass",
+                grounded_in_run=True,
+                reusable=True,
+                trigger_quality=8,
+                quality=8,
+                no_op_justified=False,
+                feedback="",
+            )
+
+        monkeypatch.setattr(review_mod, "judge_skill_update", _judge)
+        monkeypatch.setattr(
+            review_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"}
+        )
+        monkeypatch.setattr(review_mod, "_create_skill_review_agent", _create)
         monkeypatch.setattr(
             "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
             lambda session_id: "sys",
         )
 
-        await nudge_mod._run_plan_extraction("sess-nudge")
+        await review_mod._run_skill_review("sess-nudge")
 
         assert len(captured) == 1
         assert captured[0]["session_id"] == "sess-nudge"
@@ -352,7 +368,7 @@ class TestNudgeSessionIdSupply:
     async def test_nudge_style_agent_write_succeeds_with_injected_session(
         self, sources: _Sources, knowledge_root: Path
     ):
-        """Same construction as ``_create_nudge_agent`` (StateSchema + tools)."""
+        """Same construction as ``_create_background_review_agent`` (StateSchema + tools)."""
         _associate_state(sources, "sess-nudge", "extract-plan")
 
         class _ToolCallingFakeModel(GenericFakeChatModel):

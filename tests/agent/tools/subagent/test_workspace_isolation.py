@@ -322,7 +322,7 @@ def test_auto_init_never_commits_secrets_and_writes_its_marker(project):
 
     assert (project / ".git").exists() is False
     committed = shadow_git.run_shadow(
-        project, ["ls-tree", "-r", "--name-only", shadow_git.SHADOW_REF]
+        project, ["ls-tree", "-r", "--name-only", shadow_git.shadow_ref(project)]
     ).stdout.split()
     assert "a.txt" in committed
     assert ".env.example" in committed  # the intentional sample stays

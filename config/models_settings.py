@@ -43,15 +43,17 @@ from typing import Any
 
 import json5
 
-from config._home import resolve_app_home
+from config._home import resolve_app_home, resolve_code_root
 
 _CODE_ROOT = Path(__file__).resolve().parents[1]
+#: Shipped templates live under ``_MEIPASS`` in a frozen onedir build.
+_TEMPLATE_ROOT = resolve_code_root(_CODE_ROOT)
 # Honours ``--sherry-home`` (the packaged shell's only home channel) — see
 # config/_home.py. Reading the env alone pointed this file into the bundle.
 APP_HOME = resolve_app_home(_CODE_ROOT)
 
 MODELS_CONFIG_PATH = APP_HOME / ".models"
-MODELS_CONFIG_TEMPLATE = _CODE_ROOT / ".models.example"
+MODELS_CONFIG_TEMPLATE = _TEMPLATE_ROOT / ".models.example"
 
 # Single source of truth for accepted keys and their typed defaults. The keys
 # mirror the historical ``.env`` spelling one-for-one, so a migration is a value
@@ -293,7 +295,15 @@ def _seed_text() -> str:
     """The template's text with legacy ``.env`` values overlaid (empty = keep)."""
     try:
         text = MODELS_CONFIG_TEMPLATE.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        from loguru import logger
+
+        logger.warning(
+            ".models template not found at {} (code_root={}): {}; seeding skipped",
+            MODELS_CONFIG_TEMPLATE,
+            _TEMPLATE_ROOT,
+            exc,
+        )
         return ""
     legacy = _legacy_env_values()
     if not legacy:

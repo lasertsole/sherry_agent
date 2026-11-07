@@ -2,10 +2,11 @@
 
 The plan half of the loop closure: instead of hand-authoring a step list, the
 model states the goal and this tool asks an auxiliary LLM (temperature 0) for a
-dependency-ordered decomposition, creates the flow, and registers every step
-BLOCKED/READY — nothing is dispatched. The model reviews (and may fix) the plan
-with ``taskflow_update_steps`` and then starts it with ``taskflow_dispatch`` or
-``taskflow_run_task``, so the plan is always seen before it spends tokens.
+dependency-ordered decomposition, creates the flow, registers every step
+BLOCKED/READY, and dispatches the initial ready set (the no-dependency siblings)
+through the same batch dispatch path a manual call uses. The model reviews the
+printed plan while those children run; a step left ``ready`` (for example by
+``taskflow_update_steps``) can still be started with ``taskflow_dispatch``.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from ._shared import (
     is_terminal,
     new_step,
     requester_session_key,
+    step_status,
 )
 
 #: Steps beyond this are dropped (the planner is told, but never trusted).
@@ -132,12 +134,18 @@ async def taskflow_plan(
     ack_dup: bool = False,
     session_id: SessionId = "",
 ) -> str:
-    """Decompose a goal into a dependency-ordered TaskFlow (nothing is started).
+    """Decompose a goal into a dependency-ordered TaskFlow and start its ready set.
 
     Creates the flow, registers every planned step (blocked, or ready when it
-    has no dependencies) and returns the plan for review. Start it afterwards
-    with ``taskflow_dispatch`` (batch) or ``taskflow_run_task`` (reminder / full
-    task text), or fix the plan first with ``taskflow_update_steps``.
+    has no dependencies), then auto-dispatches every initial ready step through
+    the batch dispatch path. The no-dependency siblings therefore start in
+    parallel without the model naming each one, while steps with unmet
+    dependencies stay blocked for a later resume/dispatch. A failed spawn is
+    fail-open and leaves that step ready.
+
+    The printed plan reflects the post-dispatch statuses. Fix it with
+    ``taskflow_update_steps`` (new steps must be dispatched explicitly) or
+    dispatch a remaining ready step with ``taskflow_dispatch``.
 
     An active same-session flow with a similar goal is reported as a possible
     duplicate; pass ``ack_dup=True`` to confirm this is a different task.
@@ -165,8 +173,8 @@ async def taskflow_plan(
         return (
             f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
             f"revision={existing['expected_revision']}, status={existing['status']}; "
-            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch with "
-            "taskflow_step(action='dispatch') if it is still pending."
+            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch any "
+            "step that is still ready with taskflow_step(action='dispatch')."
         )
 
     # Refuse BEFORE spending a planner call: the flow could not be created anyway.
@@ -233,8 +241,8 @@ async def taskflow_plan(
         return (
             f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
             f"revision={existing['expected_revision']}, status={existing['status']}; "
-            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch with "
-            "taskflow_step(action='dispatch') if it is still pending."
+            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch any "
+            "step that is still ready with taskflow_step(action='dispatch')."
         )
 
     # Same entry defense as taskflow_create: a planned flow must own a GC root
@@ -249,9 +257,42 @@ async def taskflow_plan(
             "outlive its root. Retry the plan."
         )
 
+    # Auto-dispatch the initial ready set: the sibling branches with no
+    # dependencies start together instead of waiting for the model to name each
+    # id. This is the same batch path a manual dispatch uses, so it takes the
+    # flow lock, validates every id and persists every spawned child. Fail-open:
+    # a failed spawn leaves its step ready and the plan still returns.
+    auto_dispatch_note = ""
+    ready_ids = [str(step["step_id"]) for step in steps if step_status(step) == StepStatus.READY]
+    if not TASKFLOW_INFRA["auto_dispatch_initial_ready"]:
+        auto_dispatch_note = "disabled by config; ready steps remain for a manual dispatch"
+    elif not ready_ids:
+        auto_dispatch_note = "no initial ready steps (every step has dependencies)"
+    else:
+        from .taskflow_dispatch import _dispatch_batch
+
+        try:
+            auto_dispatch_note = await _dispatch_batch(
+                flow_id=flow_id,
+                step_ids=ready_ids,
+                session_id=session_id,
+                auto=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - the plan is already durable
+            auto_dispatch_note = (
+                f"Error: auto-dispatch failed ({type(exc).__name__}: {exc}); "
+                "the ready steps remain for a manual dispatch"
+            )
+            logger.warning("taskflow_plan: auto-dispatch failed for {}: {}", flow_id, exc)
+        fresh = await store_sqlite.get_flow(flow_id, session_id)
+        if fresh is not None:
+            flow = fresh
+            steps = list((flow.get("state") or {}).get("steps") or [])
+
     lines = [
         f"TaskFlow planned: flow_id={flow_id}, revision={flow['expected_revision']}, "
-        f"steps={len(steps)} (nothing dispatched); todo bound: {goal}",
+        f"steps={len(steps)}; todo bound: {goal}",
+        f"  auto_dispatch: {auto_dispatch_note}",
     ]
     for step in steps:
         deps = ",".join(step.get("depends_on") or []) or "-"
@@ -265,8 +306,9 @@ async def taskflow_plan(
             f"  [{step['step_id']}] ({step['status']}) deps={deps}{gate_text} {step['task']}"
         )
     lines.append(
-        "Review the plan, then taskflow_step(action='dispatch', flow_id=..., step_ids=[...]) to start "
-        "(or taskflow_step(action='update_steps') to change it first)."
+        "Review the plan; dispatch any step that is still ready with "
+        "taskflow_step(action='dispatch', flow_id=..., step_ids=[...]), or change the plan first "
+        "with taskflow_step(action='update_steps')."
     )
     return "\n".join(lines)
 

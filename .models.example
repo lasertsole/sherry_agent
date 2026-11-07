@@ -71,7 +71,7 @@
 
   // ── 压缩模型 Compression model ──────────────────────────────────────────
   // Used by: SummarizationMiddleware (LLM summary).
-  // Memory review uses MAIN_LLM (cache-warm); plan extraction uses AUXILIARY.
+  // Memory review uses MAIN_LLM (cache-warm); skill review uses AUXILIARY.
   // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
   // true = local GGUF: reuses the auxiliary model's weights (no second download).
   // MUST be >= 200000 (200K): the prompt carries the discarded slice verbatim.

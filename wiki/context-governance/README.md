@@ -58,7 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 |---|---|---|---|
 | **Tool return** | `ContextEvictionMiddleware` (P0-2 / P2-4) | none | generic > 20 000 chars → head/tail preview + file pointer; `read_file` → 4 000-char slice + notice |
 | **Model boundary** | `MessagePersistenceMiddleware` `after_model` | none | full text written to MesMemory (state untouched) |
-| **Human message** | `ContextEvictionMiddleware` (P1-9) | none | request view truncated to a preview; state/MesMemory keep the full text |
+| **Human message** | `ContextEvictionMiddleware` (P1-9) | none | only user-origin messages: request view truncated to a preview; injected carriers untouched; state/MesMemory keep the full text |
 | **Overflow (first move)** | `clip_overflow_tail` (P1-2) | none | trailing tool results stubbed; message identity and pairing intact |
 | **Overflow (existing routes)** | `summarization` 4-route dispatch | one auxiliary-LLM call on compact routes | truncation and/or history compaction |
 | **Overflow (provider error)** | T4/T5 forced recovery | one call per compact step | clip → compact + budget truncate, retried up to 3 times |
@@ -79,7 +79,7 @@ secret redaction like any other remote content (see the threat model).
 
 ## 🗂️ Information Sources
 
-Everything that reaches graph state or MesMemory enters from one of the sources below. The `origin` column is being upgraded into a full-coverage source marker: `NULL` is a legacy user row written before tagging (the read side treats it as `user`), and a message carrying `internal=True` is **not a user request** — the summary's Unresolved list accepts only user-sent messages (positive identification). Non-message sources (eviction files, plan knowledge) are listed too: they never become a `messages` row but are still injectable context. Rows marked `planned` / `reserved` are not implemented yet.
+Everything that reaches graph state or MesMemory enters from one of the sources below. The `origin` column is being upgraded into a full-coverage source marker: `NULL` is a legacy user row written before tagging (the read side treats it as `user`), and a message carrying `internal=True` is **not a user request** — the summary's Unresolved list accepts only user-sent messages (positive identification). Non-message sources (eviction files, legacy plan knowledge) are listed too: they never become a `messages` row, and the legacy plan-knowledge directory is no longer model-injected. Rows marked `planned` / `reserved` are not implemented yet.
 
 | Information source | origin / marker | internal | Produced when | Persistence | Injection behavior |
 |---|---|---|---|---|---|
@@ -92,8 +92,8 @@ Everything that reaches graph state or MesMemory enters from one of the sources 
 | Compression summary pair | `lc_source='summarization'` (in `additional_kwargs`, not the origin column) | — | a compaction artifact (`_build_new_messages`) | **never persisted to MesMemory**; a state summary pair | `<summary>` resident in the model view; carried forward as `<prior-summary>` |
 | Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers in the structured summary doc |
 | Media file | non-message — disk file | — | upload processing (`MultimodalProcessor`), native history stripping, or compression-time offload (`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/` (durable copies; compression-time offload names by `sha256[:16]` and dedups); a payload over `max_media_bytes` is never written | media blocks when native; skill-path hints and per-request scrub placeholders carry the path; the summary chain keeps offloaded paths in `evicted_refs[]` |
-| Plan knowledge | non-message — disk directory | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | injected as a `<knowledge>` block via `plan_ref` |
-| `facts` target | MesMemory `memory_entries` rows (one global target) | — | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions: compression-time memory review + completed-plan extraction | memory target (1 375-char limit; overflow archives the LEAST-ACTIVE entries) | injected into every system prompt as a resident FACTS memory block |
+| Legacy plan knowledge | non-message — disk directory | — | retired from model-facing reads | `workspace/knowledge/plans/<plan_key>/` | not injected; only the raw `handoff-tree.json` audit file remains |
+| `facts` target | MesMemory `memory_entries` rows (one global target) | — | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions: compression-time memory review + completed-plan skill review | memory target (1 375-char limit; overflow archives the LEAST-ACTIVE entries) | injected into every system prompt as a resident FACTS memory block |
 
 ## 🧵 Turn Identity on Message Rows
 

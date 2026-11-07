@@ -23,6 +23,12 @@
 
 **그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다: `built_agent()` 호출마다 스레드별 최신 체크포인트로 정리되고(`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), `auto_vacuum=0`에서는 DELETE가 페이지를 해제할 뿐 파일을 줄이지 않으므로, 같은 호출이 정리 직후 `PRAGMA freelist_count × page_size`를 읽고 해제된 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 초과할 때만 `VACUUM`을 실행합니다 — 페일오픈: VACUUM 오류는 로그만 남기고 정리 결과는 그대로 유지됩니다.
 
+## 🔎 의미 검색과 정리
+
+둘 다 선택형이며 모든 경로가 fail-open입니다. `semantic_recall_enabled`(기억 설정의 "의미 검색")를 켜면 시스템 프롬프트에는 간단한 색인(`MemoryStore.format_index_for_system_prompt`)만 들어가고, 매 턴 `memory_recall` 알림(priority 88, cooldown 3)이 현재 요청과 관련된 항목을 주입합니다. `context_engine/store/memory_recall.py`는 bge-m3로 `memory_entries.embedding` 색인을 자가 복구하고, bge-reranker로 cosine 후보를 재정렬하며, `semantic_recall_char_budget`으로 자르고, 현재 `context_epoch` 기준선보다 오래된 항목을 건너뛰고, `usage_count`를 올립니다. `memory(action="recall")`과 `POST /memory/search`는 같은 경로를 사용하며, 스위치가 꺼져 있으면 검색은 부분 문자열로 폴백합니다.
+
+`POST /memory/consolidate`는 비동기 작업을 시작합니다(`GET /memory/consolidate/:task_id`로 조회). 항상 결정적인 `prune_unused` 노화를 실행하고, 활성 항목이 `consolidation_min_entries`(10) 이상일 때만 메인 모델이 memory 도구로 중복 병합, 모순 해소, 잘못된 target 교정, 문장 압축을 수행합니다. 압축은 기억 리뷰 뒤에 같은 경로를 실행하고(15 turns), 세션 삭제는 두 번의 salvage 뒤에 실행합니다(5 turns). 실패는 로그만 남기며 압축이나 삭제를 막지 않습니다.
+
 ## 🔗 요약 ↔ TaskFlow 조정
 
 압축이 LLM 프롬프트를 구성할 때, `_get_taskflow_context_sync(session_id)`(`agent/middlewares/summarization/core.py:122`)가 이 세션의 활성 flow를 렌더링하여 요약 프롬프트의 **마지막** 부분으로 덧붙입니다(`_build_summary_prompt`, `summarization/summary_generation.py:554`):
@@ -95,7 +101,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## 🧹 세션 삭제 시 메모리 구제
 
-메인 세션을 파기하기 전에 `purge_session`은 독립 memory review(`nudges.salvage_session_memory`)도 예약합니다. 압축 후 checkpoint transcript, 모델, 시스템 프롬프트, 도구 면을 스냅샷하고 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 예약 직후 반환합니다. 삭제는 모델을 기다리지 않습니다. 1파는 압축이 버렸을 프리픽스를 캡처한(cache-warm) 모델/프롬프트/도구 면으로 review합니다. 메모리 항목(출처는 파생 wave 키가 아니라 삭제 대상 세션 id)을 기록한 뒤 2파는 memory를 다시 읽고 시스템 프롬프트를 비영속적으로 재구축하며 `memory` 전용 도구 면으로 보존 꼬리를 review합니다. 두 파 모두 NUDGE 레인, 파생 세션 키(`<id>::session-end-salvage:1|2`), checkpointer 없이 실행됩니다. `nudge_memory` metadata 게이트가 삭제 후 `knowledge`/plan 도구를 거부합니다. 모든 실패는 fail-open이며 프로세스 종료는 미완료 파를 포기할 수 있습니다. 사이드 채팅/서브에이전트 자식은 포함되지 않습니다. 위 continuity는 다음 대화를 위해 마지막 AI 응답을 저장하고, 이 구제는 영속 memory 행을 씁니다.
+메인 세션을 파기하기 전에 `purge_session`은 독립 memory review(`background_reviews.salvage_session_memory`)도 예약합니다. 압축 후 checkpoint transcript, 모델, 시스템 프롬프트, 도구 면을 스냅샷하고 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 예약 직후 반환합니다. 삭제는 모델을 기다리지 않습니다. 1파는 압축이 버렸을 프리픽스를 캡처한(cache-warm) 모델/프롬프트/도구 면으로 review합니다. 메모리 항목(출처는 파생 wave 키가 아니라 삭제 대상 세션 id)을 기록한 뒤 2파는 memory를 다시 읽고 시스템 프롬프트를 비영속적으로 재구축하며 `memory` 전용 도구 면으로 보존 꼬리를 review합니다. 두 파 모두 BACKGROUND_REVIEW 레인, 파생 세션 키(`<id>::session-end-salvage:1|2`), checkpointer 없이 실행됩니다. `background_review_memory` metadata 게이트가 삭제 후 `knowledge`/plan 도구를 거부합니다. 모든 실패는 fail-open이며 프로세스 종료는 미완료 파를 포기할 수 있습니다. 사이드 채팅/서브에이전트 자식은 포함되지 않습니다. 위 continuity는 다음 대화를 위해 마지막 AI 응답을 저장하고, 이 구제는 영속 memory 행을 씁니다.
 
 ## ♻️ TaskFlow 자동 재개
 

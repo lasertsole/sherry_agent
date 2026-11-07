@@ -23,7 +23,7 @@ from config.features.agent_side import (
     MEDIA_PIPELINE,
     MEMORY_TOOL,
     MODEL_BACKEND,
-    NUDGE,
+    BACKGROUND_REVIEW_CONFIG,
     REASONING_BUDGET,
     REPETITION_GUARD,
     STEP_JUDGE,
@@ -50,7 +50,9 @@ from config.features.agent_side import (
     MediaPipelineConfig,
     MemoryToolConfig,
     ModelBackendConfig,
-    NudgeConfig,
+    BackgroundReviewConfig,
+    LDW,
+    LdwConfig,
     PTC,
     PtcConfig,
     ReasoningBudgetConfig,
@@ -88,7 +90,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (TOOLS_TIMEOUTS, ToolsTimeoutsConfig),
     (HITL_DEFAULTS, HitlDefaultsConfig),
     (MEDIA_PIPELINE, MediaPipelineConfig),
-    (NUDGE, NudgeConfig),
+    (BACKGROUND_REVIEW_CONFIG, BackgroundReviewConfig),
     (MEMORY_TOOL, MemoryToolConfig),
     (CONTEXT_GUARD, ContextGuardConfig),
     (LLM_CLIENT_DEFAULTS, LlmClientDefaultsConfig),
@@ -99,6 +101,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (STEP_JUDGE, StepJudgeConfig),
     (COMPLETION_JUDGE, CompletionJudgeConfig),
     (PTC, PtcConfig),
+    (LDW, LdwConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -209,9 +212,9 @@ SPOT_DEFAULTS = [
     # auto_edit never asks for a file change; the ask-once reminder is opt-in
     # (the confirm_all mode gates every change regardless of this flag).
     (HITL_DEFAULTS, "first_call_confirmation_enabled", False),
-    (NUDGE, "plan_extraction_enabled", True),
-    (NUDGE, "session_end_review_enabled", True),
-    (NUDGE, "session_end_review_timeout_s", 120),
+    (BACKGROUND_REVIEW_CONFIG, "skill_review_enabled", True),
+    (BACKGROUND_REVIEW_CONFIG, "session_end_review_enabled", True),
+    (BACKGROUND_REVIEW_CONFIG, "session_end_review_timeout_s", 120),
     (MEMORY_TOOL, "memory_char_limit", 2_200),
     (MEMORY_TOOL, "user_char_limit", 1_375),
     (MEMORY_TOOL, "facts_char_limit", 1_375),
@@ -284,6 +287,12 @@ SPOT_DEFAULTS = [
         "ptc_allowed_tools",
         ["read_file", "write_file", "patch_file", "terminal", "search_files", "web_search"],
     ),
+    (PTC, "ptc_prefill_enabled", False),
+    (PTC, "ptc_script_max_bytes", 20_480),
+    (PTC, "ptc_compile_max_attempts", 2),
+    (LDW, "min_replays", 3),
+    (LDW, "script_max_bytes", 65_536),
+    (LDW, "journal_path", "src/data/workflow_runs.db"),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]

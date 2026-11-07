@@ -10,10 +10,15 @@ const bridge = vi.hoisted(() => ({
   readMemorySettings: vi.fn(),
   writeMemorySettings: vi.fn(),
   readMemoryStats: vi.fn(),
-  consolidateMemory: vi.fn()
+  consolidateMemory: vi.fn(),
+  readConsolidationStatus: vi.fn()
 }));
 
 vi.mock('~/composables/bridge', () => bridge);
+vi.mock('vue-router', async importOriginal => {
+  const actual = await importOriginal<typeof import('vue-router')>();
+  return { ...actual, useRoute: () => ({ params: { sid: 's1' } }) };
+});
 
 const settings = {
   memory_char_limit: 2200,
@@ -42,10 +47,10 @@ const stubs = {
     template: '<button class="btn" :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>'
   },
   InputNumber: {
-    props: ['modelValue', 'min', 'max'],
+    props: ['modelValue', 'min', 'max', 'disabled'],
     emits: ['update:modelValue'],
     template:
-      '<input class="num" type="number" :value="modelValue" :min="min" :max="max" @input="$emit(\'update:modelValue\', Number($event.target.value))" />'
+      '<input class="num" type="number" :value="modelValue" :min="min" :max="max" :disabled="disabled" @input="$emit(\'update:modelValue\', Number($event.target.value))" />'
   },
   ToggleSwitch: {
     props: ['modelValue', 'disabled'],
@@ -59,7 +64,12 @@ describe('MemorySettingsSection', () => {
     bridge.readMemorySettings.mockResolvedValue(settings);
     bridge.readMemoryStats.mockResolvedValue(stats);
     bridge.writeMemorySettings.mockImplementation(async body => ({ ...settings, ...body }));
-    bridge.consolidateMemory.mockResolvedValue({ archived: 2, max_unused_days: 90, stats });
+    bridge.consolidateMemory.mockResolvedValue({
+      task_id: 't1',
+      status: 'completed',
+      result: { archived: 2, entries_after: 1 }
+    });
+    bridge.readConsolidationStatus.mockResolvedValue({ task_id: 't1', status: 'completed' });
   });
 
   it('shows the persisted limits and usage', async () => {
@@ -86,7 +96,7 @@ describe('MemorySettingsSection', () => {
     );
   });
 
-  it('runs the aging pass and reports the archived count', async () => {
+  it('runs the consolidation task and reports the result', async () => {
     const wrapper = mount(MemorySettingsSection, { global: { stubs } });
     await flushPromises();
 
@@ -94,15 +104,18 @@ describe('MemorySettingsSection', () => {
     await consolidate!.trigger('click');
     await flushPromises();
 
-    expect(bridge.consolidateMemory).toHaveBeenCalled();
-    expect(wrapper.text()).toContain('已归档 2 条');
+    expect(bridge.consolidateMemory).toHaveBeenCalledWith('s1');
+    expect(wrapper.text()).toContain('已整理：归档 2 条，剩余 1 条');
   });
 
-  it('keeps the semantic-recall switch disabled until Phase 5', async () => {
+  it('exposes the semantic-recall switch and its budget controls', async () => {
     const wrapper = mount(MemorySettingsSection, { global: { stubs } });
     await flushPromises();
 
-    expect(wrapper.find('button.switch').attributes('disabled')).toBeDefined();
-    expect(wrapper.text()).toContain('Phase 5');
+    expect(wrapper.find('button.switch').exists()).toBe(true);
+    expect(wrapper.text()).toContain('语义召回');
+    const numbers = wrapper.findAll('input.num');
+    expect((numbers[4].element as HTMLInputElement).disabled).toBe(true);
+    expect((numbers[5].element as HTMLInputElement).disabled).toBe(true);
   });
 });

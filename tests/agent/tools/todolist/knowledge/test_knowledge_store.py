@@ -378,13 +378,22 @@ class TestHandoffTree:
     """The code-merged tree is a sidecar file, readable as its own layer."""
 
     _AGGREGATED = {
-        "failed_paths": [{"path": "p1", "failure_reason": "r1", "source": "depth-1:a"}],
+        "failed_branches": [{"branch": "p1", "failure_reason": "r1", "source": "depth-1:a"}],
+        "success_steps": [
+            {
+                "step": "write",
+                "tool": "write_file",
+                "params": "a.py",
+                "outcome": "ok",
+                "source": "depth-1:a",
+            }
+        ],
         "hard_constraints": ["no network"],
         "locked_decisions": [{"decision": "d1", "reason": "why", "source": "depth-1:a"}],
         "handoff_forest": [
             {
                 "task_understanding": "root",
-                "failed_paths": [],
+                "failed_branches": [],
                 "discovered_hard_constraints": [],
                 "locked_decisions": [],
                 "depth": 1,
@@ -408,7 +417,7 @@ class TestHandoffTree:
         assert not list(written.parent.glob("*.tmp"))
 
         all_data = KnowledgeStore.read_all(_identity("p"))
-        assert all_data["handoff"]["failed_paths"][0]["path"] == "p1"
+        assert all_data["handoff"]["failed_branches"][0]["branch"] == "p1"
         text = KnowledgeStore.read_formatted(_identity("p"), layer="handoff")
         assert "# Handoff Tree" in text
         assert '"handoff_forest"' in text
@@ -421,7 +430,7 @@ class TestHandoffTree:
 
         text = KnowledgeStore.read_formatted(identity)
 
-        assert "Handoff tree: 1 failed paths, 1 hard constraints" in text
+        assert "Handoff tree: 1 failed branches, 1 success steps, 1 hard constraints" in text
 
 
 class TestPromptBlockHandoff:
@@ -436,7 +445,7 @@ class TestPromptBlockHandoff:
 
         block = prompt_block.build_knowledge_block("s")
 
-        assert "Handoff: 1 failed paths, 1 hard constraints" in block
+        assert "Handoff: 1 failed branches, 1 success steps, 1 hard constraints" in block
         assert "layer='handoff'" in block
 
     @pytest.mark.asyncio
@@ -449,4 +458,6 @@ class TestPromptBlockHandoff:
         await KnowledgeStore.write_handoff_tree(identity, TestHandoffTree._AGGREGATED)
         monkeypatch.setattr(prompt_block, "_resolve_identity", lambda _sid: identity)
 
-        assert "Handoff: 1 failed paths" in prompt_block.build_knowledge_block("s")
+        assert "Handoff: 1 failed branches, 1 success steps" in prompt_block.build_knowledge_block(
+            "s"
+        )

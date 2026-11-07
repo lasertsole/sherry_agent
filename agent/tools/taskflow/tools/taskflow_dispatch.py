@@ -73,12 +73,37 @@ async def taskflow_dispatch(
     flow_id = (flow_id or "").strip()
     if not flow_id:
         return "Error: flow_id is required"
+    return await _dispatch_batch(
+        flow_id=flow_id,
+        step_ids=step_ids,
+        expected_revision=expected_revision,
+        session_id=session_id,
+    )
+
+
+async def _dispatch_batch(
+    *,
+    flow_id: str,
+    step_ids: list[str],
+    expected_revision: int | None = None,
+    session_id: SessionId = "",
+    auto: bool = False,
+) -> str:
+    """Serialize one dispatch batch on the flow-local lock.
+
+    ``auto=True`` is the system's own wave (plan's initial ready set); the
+    answer says so, which distinguishes it from a model-named manual batch.
+    Both paths take the same lock, validate the same way and persist the same
+    records, so an auto wave and a concurrent manual dispatch cannot both spawn
+    the same step.
+    """
     async with _dispatch.flow_dispatch_lock(flow_id):
         return await _taskflow_dispatch_locked(
             flow_id=flow_id,
             step_ids=step_ids,
             expected_revision=expected_revision,
             session_id=session_id,
+            auto=auto,
         )
 
 
@@ -87,6 +112,7 @@ async def _taskflow_dispatch_locked(
     step_ids: list[str],
     expected_revision: int | None = None,
     session_id: SessionId = "",
+    auto: bool = False,
 ) -> str:
     """Body of the dispatch tool; the caller already holds the flow lock."""
     flow_id = (flow_id or "").strip()
@@ -233,7 +259,8 @@ async def _taskflow_dispatch_locked(
         failed_text = "; ".join(f"{sid} ({type(exc).__name__}: {exc})" for sid, exc in failures)
         return f"Error: dispatch failed for step_id(s) {failed_text}; dispatched={dispatched_ids}"
 
+    prefix = "TaskFlow steps auto-dispatched" if auto else "TaskFlow steps dispatched"
     return (
-        f"TaskFlow steps dispatched: flow_id={flow_id}, step_ids={dispatched_ids}, "
+        f"{prefix}: flow_id={flow_id}, step_ids={dispatched_ids}, "
         f"revision={updated['expected_revision']}"
     )

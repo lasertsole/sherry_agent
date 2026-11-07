@@ -556,8 +556,8 @@ _OTHER_SESSION = "sess-other"
 
 
 def test_subagent_policy_drops_main_only_planning_families(build_main_tools_real):
-    """The real main toolset carries taskflow/todolist/knowledge; a subagent
-    policy pass drops every one of them."""
+    """The real main toolset carries taskflow/todolist; a subagent policy pass
+    drops every main-only planning family."""
     from agent.tools.subagent.spawn.inherited_tool_policy import apply_tool_policy
 
     tools = build_main_tools_real()
@@ -568,14 +568,13 @@ def test_subagent_policy_drops_main_only_planning_families(build_main_tools_real
         "taskflow_inspect",
         "todowrite",
         "todoread",
-        "knowledge",
     } <= main_names
+    assert "knowledge" not in main_names
 
     kept = {t.name for t in apply_tool_policy(tools, None, None)}
 
     assert not any(name.startswith("taskflow_") for name in kept), sorted(kept)
     assert "todowrite" not in kept and "todoread" not in kept
-    assert "knowledge" not in kept
 
 
 @pytest.mark.asyncio

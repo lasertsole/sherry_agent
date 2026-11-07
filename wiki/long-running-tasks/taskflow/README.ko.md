@@ -323,6 +323,12 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
+### taskflow_flow(action="plan")
+
+TaskFlow 플래너에게 의존성 순서의 단계 목록을 요청하고, 안정 id `plan-<sha256(session_id + goal)[:10]>`로 플로우를 생성해 todo 루트를 바인딩한 뒤 **모든 초기 ready 단계를 자동 dispatch**합니다(의존성 없는 형제). 수동 `taskflow_step(action="dispatch")`와 같은 배치 경로를 사용합니다. `depends_on`이 충족되지 않은 단계는 `blocked`로 남습니다. 개별 spawn 실패는 fail-open이며 해당 단계는 `ready`로 남습니다. `TASKFLOW_INFRA["auto_dispatch_initial_ready"]`(기본 true)로 기존의 "검토 후 dispatch" 동작으로 되돌릴 수 있습니다. 반환되는 plan은 dispatch 이후 상태와 자동 dispatch된 id를 보여줍니다.
+
+
+
 ### taskflow_step(action="run_task")
 
 
@@ -479,7 +485,7 @@ async def taskflow_step(action="resume",
 
 
 
-**DAG 기록**: 게이트를 통과하면 해당 단계를 `done`으로 만들고 `unlock_dependents()`를 호출해 의존성이 충족된 `blocked` 단계를 `ready`로 옮깁니다. `failed` 단계는 의존 단계를 `blocked`로 남기고, `skipped`/`cancelled` 단계는 `skipped`를 의존 단계로 전파합니다. 언락된 단계 id를 반환합니다. 쓰기는 충돌 재시도 시 이미 확정된 판정을 새로 읽은 상태에 재적용하므로 두 자식이 동시에 완료해도 두 결과 모두 착지합니다([이미 생성된 자식 에이전트를 동반한 충돌 재시도](#이미-생성된-자식-에이전트를-동반한-충돌-재시도) 참조). `auto_dispatch=True`(기본)이면 새로 ready가 된 웨이브가 즉시 유계 동시 배치로 spawn됩니다——[자동 디스패치 웨이브](#자동-디스패치-웨이브-taskflow_stepactionresume) 참조. `auto_dispatch=False`면 언락만 하고 호출자가 `taskflow_step(action="dispatch")`로 명시적으로 처리합니다.
+**DAG 기록**: 게이트를 통과하면 해당 단계를 `done`으로 만들고 `unlock_dependents()`를 호출해 의존성이 충족된 `blocked` 단계를 `ready`로 옮깁니다. `failed` 단계는 의존 단계를 `blocked`로 남기고, `skipped`/`cancelled` 단계는 `skipped`를 의존 단계로 전파합니다. 언락된 단계 id를 반환합니다. 쓰기는 충돌 재시도 시 이미 확정된 판정을 새로 읽은 상태에 재적용하므로 두 자식이 동시에 완료해도 두 결과 모두 착지합니다([이미 생성된 자식 에이전트를 동반한 충돌 재시도](#이미-생성된-자식-에이전트를-동반한-충돌-재시도) 참조). `auto_dispatch=True`(기본)이면 ready 집합 전체가 즉시 유계 동시 배치로 spawn됩니다——[자동 디스패치 웨이브](#자동-디스패치-웨이브-taskflow_stepactionresume) 참조. `auto_dispatch=False`면 언락만 하고 호출자가 `taskflow_step(action="dispatch")`로 명시적으로 처리합니다.
 
 ### taskflow_flow(action="set_waiting")
 
@@ -720,7 +726,7 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 
 
-의존 단계를 언락한 resume은 스스로 그것들을 시작합니다(`auto_dispatch=True`, 기본값): 새로 ready가 된 웨이브는 같은 시임과 같은 `max_parallel_dispatch` 상한으로 동시에 spawn하며, spawn된 자식 키는 CAS 재시도 쓰기(`update_flow_with_conflict_retry`)로 영속화되므로 동시 쓰기가 그것들을 떨어뜨릴 수 없습니다. 각 단계의 디스패치 방식은 `taskflow_step(action="dispatch")`와 완전히 동일합니다(작업 바인딩 + 판정 피드백). 실패는 보고될 뿐 예외가 되지 않습니다: spawn하지 못한 단계는 `ready`로 남고 resume의 응답에 `auto_dispatch_failed=<step_id>: <error>`가 붙어 수동 재시도할 수 있습니다. 언락 집합은 **실제로 영속화된** 상태에서 도출되므로, 두 완료가 같은 단계의 언락을 경쟁해도 spawn은 정확히 한 번입니다.
+resume은 언락한 의존 단계뿐 아니라 **ready 집합 전체**를 시작합니다(`auto_dispatch=True`, 기본값): `newly_ready ∪ all_ready` — 이번에 unlock한 하류와 이전부터 `ready`였지만 dispatch되지 않은 형제 — 를 같은 시임과 같은 `max_parallel_dispatch` 상한으로 동시에 spawn합니다. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`(기본 true)가 넓은 스캔을 제어하며, false(또는 `auto_dispatch=False`)면 기존의 "unlock만/새로 unlock된 집합만" 동작으로 돌아갑니다. spawn된 자식 키는 CAS 재시도 쓰기(`update_flow_with_conflict_retry`)로 영속화되므로 동시 쓰기가 그것들을 떨어뜨릴 수 없습니다. 각 단계의 디스패치 방식은 `taskflow_step(action="dispatch")`와 완전히 동일합니다(작업 바인딩 + 판정 피드백). 실패는 보고될 뿐 예외가 되지 않습니다: spawn하지 못한 단계는 `ready`로 남고 resume의 응답에 `auto_dispatch_failed=<step_id>: <error>`가 붙어 수동 재시도할 수 있습니다. 이미 dispatched된 단계는 걸러지고 플로우 락 안에서 다시 확인되므로 넓은 스캔에서도 spawn은 정확히 한 번입니다.
 
 
 

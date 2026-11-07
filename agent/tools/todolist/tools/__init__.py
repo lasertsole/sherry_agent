@@ -90,7 +90,7 @@ def build_todolist_tools() -> list[BaseTool]:
             metadata["idempotent_actions"] = tuple(sorted(actions))
         t.metadata = metadata
     # ``todowrite`` is the only todo-MUTATING tool: the post-compression todo
-    # nudge admits tools by this metadata marker, so ``todoread`` stays untagged
+    # background review admits tools by this metadata marker, so ``todoread`` stays untagged
     # on purpose (the fork receives the current list in its prompt).
     todowrite.metadata = {**(todowrite.metadata or {}), "todo_update": True}
     if _TODOWRITE_FORMAT_RULES not in todowrite.description:

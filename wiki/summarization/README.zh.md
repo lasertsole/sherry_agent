@@ -202,7 +202,7 @@ session 模型 profile 可以声明 `context_window`（客户端 descriptor 中�
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
 | `tests/agent/middlewares/message_persistence/` | 31 | 边界 + 工具返回增量落库：每条消息恰好一次、跨边界不重复、重启重放靠持久水位不增行、同步 + 异步钩子、缺 session_id 跳过、HITL 拒绝配对重挂、过滤语义；另有 T1/T2/T3 压缩路径零写库证明，以及摘要对（两条）零写库证明 |
-| `tests/agent/middlewares/test_compression_nudges.py` | 2 | 压缩时 nudge 派发：memory review + plan extraction 从 compact 路径触发；无切点压缩不派发 |
+| `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | 压缩时后台评审派发：memory review + skill review 从 compact 路径触发；无切点压缩不派发 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
@@ -211,7 +211,7 @@ session 模型 profile 可以声明 `context_window`（客户端 descriptor 中�
 ## ⚠️ 诚实与局限
 
 - **ModelDownshift 在下一次 pre-request 检查时执行，而不是切换时的 hook。** 模型 override（含其 context window）在 turn 边界生效；随后的 T1/T2 看到更小窗口并在需要时压缩。
-- **Microcompact 可能抢先于 LLM 摘要。** 当仅清理旧工具结果就把历史降到保留预算以下时，compact 路径会被跳过；此时不会触发 memory-review nudge（没有消息被丢弃）。
+- **Microcompact 可能抢先于 LLM 摘要。** 当仅清理旧工具结果就把历史降到保留预算以下时，compact 路径会被跳过；此时不会触发 memory-review 评审（没有消息被丢弃）。
 - **`compact_now` 是工具，不是客户端命令。** 用户要求时由模型调用；输入框没有 `/compact` 命令。
 - **尾部保留由预算决定，不是消息条数。** 保留预算为 `PRESERVE_RATIO` × 窗口、夹在 [2 000, 15 000]，再加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距；构造函数不接受 `keep` 参数。
 - **纯装饰性导入。** `summarization/core.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。

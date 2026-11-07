@@ -13,17 +13,22 @@ actively steering by is expensive and high (todo list, plan mode).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+
+from langchain_core.messages import HumanMessage
+
+from config.features import TASKFLOW_INFRA
 
 from workspace.prompt_builder import (
     _build_boulder_block,
     _build_continuity_block,
-    _build_knowledge_block,
     _build_plan_mode_block,
     _build_project_dir_block,
     _build_project_instructions_block,
     _build_taskflow_block,
     _build_todo_block,
+    has_undispatched_ready_steps,
 )
 
 from .core import ReminderChannel, ReminderSource, register
@@ -41,8 +46,108 @@ def _as_builder(builder: Any) -> Any:
     return _source_builder
 
 
+#: English weekday names, independent of the process locale (``strftime("%A")``
+#: follows the C locale and can return a localized name).
+_WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def _local_time_builder(_session_id: str, _state: dict[str, Any]) -> str:
+    """One English, local-time line with date, weekday, seconds and UTC offset."""
+    now = datetime.now().astimezone()
+    offset = now.strftime("%z")
+    offset_fmt = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset or "+00:00"
+    zone = now.tzname() or "local"
+    return (
+        f"Current local time: {now.strftime('%Y-%m-%d %H:%M:%S')} "
+        f"({_WEEKDAYS[now.weekday()]}) ({zone}, UTC{offset_fmt})"
+    )
+
+
+def _last_user_text(state: dict[str, Any]) -> str:
+    """The current turn's user request, excluding injected carriers."""
+    messages = state.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for message in reversed(messages):
+        if not isinstance(message, HumanMessage):
+            continue
+        meta = getattr(message, "metadata", None) or {}
+        if isinstance(meta, dict) and meta.get("internal"):
+            continue
+        content = message.content
+        text = content if isinstance(content, str) else str(content)
+        text = text.strip()
+        if text.startswith("[SYSTEM DIRECTIVE") or text.startswith("<system-reminder"):
+            continue
+        return text[:2000]
+    return ""
+
+
+async def _memory_recall_builder(session_id: str, state: dict[str, Any]) -> str | None:
+    """Per-turn semantic recall, only while the switch is on and a query exists."""
+    from agent.tools.memory import memory_store
+
+    if not memory_store.semantic_recall_enabled:
+        return None
+    query = _last_user_text(state)
+    if not query:
+        return None
+    try:
+        from context_engine.store.memory_recall import semantic_recall
+
+        entries = await semantic_recall(
+            query,
+            limit=memory_store.semantic_recall_top_k,
+            char_budget=memory_store.semantic_recall_char_budget,
+            session_id=session_id,
+            repo=memory_store.repo,
+        )
+    except Exception:  # noqa: BLE001 - recall is advisory, never load-bearing
+        return None
+    if not entries:
+        return None
+    lines = [
+        "[MEMORY RECALL — entries relevant to the current request. "
+        "Full entries remain available via memory(action='read').]"
+    ]
+    for entry in entries:
+        tags = str(entry.get("target") or "memory")
+        if entry.get("stale"):
+            tags += ", stale"
+        lines.append(
+            f"- ({tags}, id {entry.get('id')}, used {entry.get('usage_count', 0)}x, "
+            f"score {entry.get('score', 0):.3f}) {entry.get('content', '')}"
+        )
+    return "\n".join(lines)
+
+
+#: The board's normal throttle when no dispatch decision is outstanding.
+_TASKFLOW_IDLE_COOLDOWN = 5
+
+
+def _taskflow_cooldown(session_id: str, _state: dict[str, Any]) -> int:
+    """Shorten the board cooldown while ready work is waiting for dispatch.
+
+    A ready-but-undispatched step is a decision the model must make now; a
+    running board with nothing to start keeps the historical 5-turn throttle.
+    ``only_if_changed`` still suppresses a byte-identical board, so this changes
+    WHEN a changed board is eligible, not whether duplicates are repeated.
+    """
+    if has_undispatched_ready_steps(session_id):
+        return int(TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"])
+    return _TASKFLOW_IDLE_COOLDOWN
+
+
 def register_default_sources() -> None:
-    """Register the seven live views (idempotent — a re-register replaces)."""
+    """Register the live views, semantic recall and the local clock (idempotent)."""
     register(
         ReminderSource(
             source_id="plan_mode_block",
@@ -73,8 +178,10 @@ def register_default_sources() -> None:
             budget_chars=2000,
             priority=75,
             # A steered board is worth a nudge, but not every single turn: at
-            # most once per 5 turns, and only when it actually moved.
-            cooldown_turns=5,
+            # most once per 5 turns, and only when it actually moved. The
+            # cooldown shortens to 1 while a ready step awaits dispatch (see
+            # _taskflow_cooldown); once work is in flight it returns to 5.
+            cooldown_turns=_taskflow_cooldown,
             only_if_changed=True,
         )
     )
@@ -127,13 +234,29 @@ def register_default_sources() -> None:
             transient=True,
         )
     )
+    # Semantic recall sits ABOVE plan mode: when the switch is on, the entries
+    # relevant to the current request outrank the static live views. The
+    # builder is async (embedding + reranker); the sync path skips it.
     register(
         ReminderSource(
-            source_id="knowledge_index",
+            source_id="memory_recall",
             channel=ReminderChannel.CURRENT_TURN,
-            builder=_as_builder(_build_knowledge_block),
-            budget_chars=1000,
-            priority=50,
-            only_if_changed=True,
+            builder=_memory_recall_builder,
+            budget_chars=4000,
+            priority=88,
+            cooldown_turns=3,
+        )
+    )
+    # Local wall-clock time: always injected, always last in the budget order.
+    # ``transient`` strips yesterday's copy from the transcript, so exactly one
+    # current line rides the context instead of accumulating one per turn.
+    register(
+        ReminderSource(
+            source_id="current_time",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=_local_time_builder,
+            budget_chars=120,
+            priority=10,
+            transient=True,
         )
     )
