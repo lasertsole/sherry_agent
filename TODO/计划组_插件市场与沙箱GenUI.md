@@ -6,7 +6,7 @@
 - **硬约束**：每个阶段独立可交付（不跳阶段也可用）；沙箱隔离是安全红线（插件 UI 不能拿到宿主权限）；现有 Channels 功能不破坏；后端改动 additive。
 - 关联代码：
   - sherry 现状（起点）：
-    - `client/app/pages/home/components/ExtendPanel.vue:62-145`（Channels tab 已实现 + MCP tab 纯占位）
+    - `client/app/pages/home/components/ExtendPanel.vue:62-145`（Channels tab 与 MCP tab 均已实现，Phase 1-3 仍待做）
     - `server/trigger/channels/`（channel 子系统——已实现）
     - `server/service/skill_scan_*.py`（技能扫描后端——最接近的插件发现先例）
     - `server/service/browser_manager.py` + `browser_cdp.py`（CDP 浏览器子系统——沙箱先例）
@@ -25,9 +25,9 @@
 
 sherry 的"扩展"面板（`ExtendPanel.vue`）有两个 tab：
 - **Channels tab**（`:66-130`）——**已实现**：加载 channel 列表、渲染卡片、打开 `ChannelSettingsDialog`。后端有完整 REST（`GET/PUT /channels`、`GET/PUT /channels/:name/config`），配置持久到 `plugins/channels/<name>/config.json`
-- **MCP tab**（`:132-145`）——**纯占位符**：一个虚线空状态框 + "Nothing here yet" + "No MCP servers configured"。无列表、无配置、无 store 调用
+- **MCP tab**（`ExtendPanel.vue:177-264`）——✅ Phase 0 已落地：server 列表、错误标记、source badge、打开文件夹/刷新/重启按钮
 
-客户端**无 MCP store**（22 个 Pinia store 里没有 mcpStore/pluginStore）。后端**无 MCP 服务配置**（grep `server/` 无 mcp/model context protocol/marketplace 命中）。sherry 已有的 `skill_scan_*.py` 后端是最接近的"插件发现"先例，`browser_cdp.py` 是最接近的"嵌入式浏览器"沙箱先例。
+客户端已有 `use-mcp-servers.ts`，后端已有 `server/service/mcp_service.py` + `GET /mcp/servers`（Phase 0）；插件市场与 Gen-UI 仍未实现。sherry 已有的 `skill_scan_*.py` 后端是最接近的"插件发现"先例，`browser_cdp.py` 是最接近的"嵌入式浏览器"沙箱先例。
 
 ### 0.2 ZCode 全链路
 

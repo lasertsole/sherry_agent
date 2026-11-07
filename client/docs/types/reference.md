@@ -24,6 +24,7 @@ export type ChatRequest = {
   session_id: string;
   text: string | null;
   image_base64_list: Array<string>;
+  image_path_list: Array<string>;
 };
 ```
 

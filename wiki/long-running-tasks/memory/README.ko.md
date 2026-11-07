@@ -21,7 +21,7 @@
 
 `memory` 도구는 `scope="main_only"`로 태그되어 서브에이전트는 절대 볼 수 없습니다.
 
-**그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다: `built_agent()` 호출마다 스레드별 최신 체크포인트로 정리되고(`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), `auto_vacuum=0`에서는 DELETE가 페이지를 해제할 뿐 파일을 줄이지 않으므로, 같은 호출이 정리 직후 `PRAGMA freelist_count × page_size`를 읽고 해제된 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 초과할 때만 `VACUUM`을 실행합니다 — 페일오픈: VACUUM 오류는 로그만 남기고 정리 결과는 그대로 유지됩니다.
+**그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다. 전역 keep-latest 정리는 부팅 시 한 번만 실행되고(`server/service/checkpoint_maintenance.py`), `built_agent()` 호출마다 수행하지 않습니다(매 턴 공유 DB에 경쟁 쓰기를 만들기 때문). 스레드별 정리는 child 해제와 session purge에서 계속됩니다. `auto_vacuum=0`에서는 DELETE가 페이지만 해제하므로, 유지보수 패스가 `PRAGMA freelist_count × page_size`를 읽고 해제 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 넘을 때만 `VACUUM`합니다 — 페일오픈: VACUUM 오류는 로그만 남고 정리 결과는 유지됩니다.
 
 ## 🔎 의미 검색과 정리
 
@@ -109,7 +109,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 | 판독기 | 위치 | 목적 |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 시스템 프롬프트의 `## Pending TaskFlows` |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 매 턴 reminder 블록의 `## Pending TaskFlows` |
 | `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 압축 요약 프롬프트의 TaskFlow 블록 |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | 영속 연속성 상태의 `taskflow_ids` |
 

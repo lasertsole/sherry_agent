@@ -10,7 +10,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 2 | LLM → 도구 | 도구 호출 | HITL 승인 게이트, `agent/middlewares/humanInTheLoop/detection.py` 위험 명령 목록 |
 | 3 | 도구 출력 → 모델 컨텍스트 | 도구 결과 | **신뢰 불가 출력 펜스**, Prompt 주입 스캐너, 도구 결과 축출 |
 | 4 | 하위 에이전트 → 상위 에이전트 | announce 파이프라인 | 완료 게이트, `SubagentCompletionDrain` |
-| 5 | MCP 서버 → 에이전트 프로세스 | 도구 결과 | 신뢰 불가 출력 펜스(`mcp_` 접두 규칙; MCP 도구는 아직 없음) |
+| 5 | MCP 서버 → 에이전트 프로세스 | 도구 결과 | 신뢰 불가 출력 펜스(`mcp_` 접두 규칙, 번들로 제공되는 모든 MCP 도구에 적용) |
 | 6 | HTTP 클라이언트 → 게이트웨이 | HTTP 경로 | 게이트웨이 인증 미들웨어, 쿼리 파라미터 타입 변환. 로그인 보호가 켜져 있으면 세션 게이트(`server/trigger/auth_user.py`, fail-closed, loopback 예외)도 함께 |
 | 7 | 파일 시스템 → 에이전트 | 파일 도구 | `PathGuard`, `O_NOFOLLOW`, 가상 경로 해석 |
 | 8 | 샌드박스 자식 프로세스 → 호스트 프로세스 | 자식 프로세스 생성 | `scrub_env`, `bwrap`/`seatbelt` 격리 |
@@ -37,7 +37,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 로그 / 도구 출력으로의 키 유출 | **마스킹 엔진**: 로그 경로(항상 켜짐, 예외 텍스트 포함)와 유출되기 쉬운 도구 출력, 자식 프로세스는 `scrub_env` | 규칙이 인식하는 형태만 지웁니다. 그 이상은 아닙니다 |
 | URL 자격 증명 유출 | **URL 마스킹**: 스킴 확대, 중첩 퍼센트 디코딩(깊이 8), 쿼리 및 서명 파라미터 | — |
 | 경로 탈출 | `PathGuard` + `O_NOFOLLOW` | — |
-| Shell 주입 | `agent/middlewares/humanInTheLoop/detection.py` 목록(hardline 12개 + dangerous 59개) | — |
+| Shell 주입 | `agent/middlewares/humanInTheLoop/detection.py` 목록(hardline 12개 + dangerous 61개) | — |
 | 샌드박스 탈출 | `bwrap` / `seatbelt` | — |
 | 추론 블록의 스트림 유출 | **인라인 CoT 전환**: 사고 내용을 버리지 않고 추론 채널로 옮깁니다 | 태그를 아예 내보내지 않는 모델은 정의상 영향받지 않습니다 |
 | 터미널 출력의 제어 시퀀스 | **제어 시퀀스 제거**: `terminal` 의 두 spawn 지점 모두에 적용 | — |

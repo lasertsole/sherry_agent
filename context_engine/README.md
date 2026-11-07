@@ -24,7 +24,7 @@
 
 ### Design Position
 
-MesMemory is a **short-term, per-session message store**. It is deliberately simple: all storage and retrieval is SQL/FTS5-based — there are no vector embeddings, no graph algorithms, and no rerankers in this package.
+MesMemory is a **short-term, per-session message store**. It is deliberately simple: this message store is deliberately SQL/FTS5-only; semantic embeddings live in the separate `embeddings/` subpackage, and there are no graph algorithms or rerankers here.
 
 | | MesMemory |
 |---|-----------|
@@ -53,11 +53,15 @@ context_engine/
 ├── __init__.py          # Package exports (re-exports store + core APIs)
 ├── core.py              # Business layer: history prompt formatting, FTS5 search
 ├── content_codec.py     # Shared JSON content-cell decoder
+├── embeddings/          # Optional semantic index (bge-m3 + reranker)
+├── events/              # Session event helpers
 ├── store/
 │   ├── __init__.py      # Store-layer exports
 │   ├── db.py            # SQLite connection, WAL mode, complete current schema (tables, indexes, FTS5 triggers)
 │   ├── core.py          # Message CRUD: add/query/delete + session listing (lazy shared connection)
-│   └── message_repository.py # Turn-range & identity reads over the messages table
+│   ├── message_repository.py # Turn-range & identity reads over the messages table
+│   ├── memory_entry_repository.py # Long-term memory_entries rows
+│   └── memory_embeddings.py / memory_recall.py # Semantic memory index + recall
 └── curator/             # Background skill maintenance orchestrator (has its own README)
 ```
 
@@ -94,7 +98,7 @@ from .core import retrieve_history_by_last_n_prompt, search_messages
 
 ## Data Model
 
-### Database Schema
+### Core messages table (excerpt)
 
 ```sql
 CREATE TABLE IF NOT EXISTS messages (
@@ -121,6 +125,8 @@ CREATE TABLE IF NOT EXISTS messages (
     origin        TEXT                -- Injected-message origin: "user" (WS/channel user input), "task_intent" (steering injection), "subagent_completion" (completion carrier), "cron" (cron-delivered turn), "heartbeat" (reserved), "project_dir" (working-directory notice); NULL = legacy human row or a plain AI/tool row
 );
 ```
+
+> This excerpt shows the core messages columns; the complete current schema (all columns incl. token/cache/compaction fields, `memory_entries`, `message_embeddings`, `persisted_message_ids`, and the FTS5 triggers) lives in `context_engine/store/db.py` and is recreated with `IF NOT EXISTS`; no migration chain exists.
 
 **Indexes:**
 
@@ -252,7 +258,7 @@ Verified consumers of the `context_engine` package:
 
 | Entry point | Imports | Purpose |
 |-------------|---------|---------|
-| `agent/middlewares/message_persistence/` (`MessagePersistenceMiddleware`) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | Every model boundary flushes the new human/ai messages to MesMemory incrementally (human at the turn's first boundary, AI right after it is produced), and tool results are flushed at tool return; the persistent `persisted_message_ids` watermark keeps the flush write-once across state accumulation and process restarts. The compression path no longer persists anything — `compaction_persistence.py` was removed; `system_prompt_injection` (the `@dynamic_prompt` middleware) only injects the system prompt (`wrap_model_call`/`awrap_model_call`), and the memory-review / skill reviews are still scheduled by `summarization/background_reviews.py` at compression time. See `agent/middlewares/README.md`. |
+| `agent/middlewares/message_persistence/` (`MessagePersistenceMiddleware`) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | Every model boundary flushes the new human/ai messages to MesMemory incrementally (human at the turn's first boundary, AI right after it is produced), and tool results are flushed at tool return; the persistent `persisted_message_ids` watermark keeps the flush write-once across state accumulation and process restarts. The compression path no longer persists anything — `compaction_persistence.py` was removed; `system_prompt_injection` (the `@dynamic_prompt` middleware) only injects the system prompt (`wrap_model_call`/`awrap_model_call`), the memory review is scheduled by `summarization/background_reviews.py` at compression time, while the skill review runs on plan completion at a turn boundary. See `agent/middlewares/README.md`. |
 | `agent/tools/message_search.py` → `message_search` tool | `get_db`, `search_messages`, `get_turns_by_turn_num_scope` | Cross-session recall tool: FTS5 search (limit 50) → per-match turn-range fetch → LLM session summaries; with no query it returns recent-session metadata instead |
 | `server/service/messages.py` | `get_session_ids`, `get_history_by_turn_page`, and `reset_idle_for_seconds` (from `context_engine.curator`) | Client-facing session list (top-level sessions with derived titles), paginated history, and curator idle-time reset on every user turn |
 | `server/service/session_cleanup_service.py` | `delete_messages_by_session` | "Clear session" operation |

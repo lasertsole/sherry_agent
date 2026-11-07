@@ -25,13 +25,13 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
 - **컨텍스트 거버넌스**: 과대한 도구 결과와 인간 메시지는 복구 가능한 디스크 사본을 남기고 프롬프트에서 축출되며, `read_file` 결과는 슬라이스되고, 어떤 압축보다도 먼저 LLM 없는 테일 클립이 돌며, 체인 요약은 대화 페이로드에서 제외됩니다
 - **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
-- **경험 추출(Experience Extraction)**: 세 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(압축마다), 압축 시 todo가 전부 완료일 때의 plan 추출, 압축 후 todo fork. 이들은 메모리 저장소(SQLite `memory_entries` 테이블의 `memory` / `user` 대상), plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
+- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(압축마다), 계획이 턴 경계에서 완료될 때의 스킬 리뷰(압축 시점 아님), 압축 후 todo fork, MAIN 세션 삭제 전 기억 구조 작업입니다. 이들은 메모리 저장소(SQLite `memory_entries` 테이블의 `memory` / `user` / `facts` 대상), `skills/auto/`, `todos.db`, 그리고 원본 `handoff-tree.json` 감사 파일에 기록합니다. 모델 대상 `knowledge` 도구와 프롬프트 블록은 폐기되었습니다
 - ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
 - ▶️ _세 개 추출 경로와 스킬 큐레이션은 [Experience README](wiki/experience/README.ko.md) 참조_
 
 ### 2. 🛠️ 동적 스킬 시스템
-- **SKILL.md 표준**: 스킬은 YAML 프론트매터(`name`, `description`, 선택적 `scope: all | main_only | subagent_only`)를 가진 Markdown 파일이며, 로더가 `skills/` 하위의 모든 `SKILL.md`를 자동으로 발견합니다
-- **내장 스킬**([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub`(GitHub 스킬 설치기), `skill_creator`(새 스킬 생성), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `code_wiki`, `llm_wiki`
+- **SKILL.md 표준**: 스킬은 YAML 프론트매터(`name`, `description`, 선택적 `scope: all | main_only | subagent_only`)를 가진 Markdown 파일이며, 로더는 `skills/` 하위의 `builtin/`, `auto/`, `plugins/` 세 루트만 스캔합니다
+- **내장 스킬**([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub`(GitHub 스킬 설치기), `skill_creator`(새 스킬 생성), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `bugfix-contract`, `code_wiki`, `llm_wiki`, 그리고 기능 게이트가 있는 `browser` 스킬
 - **스킬 관리 도구**: 에이전트가 런타임에 스킬을 나열, 조회, 관리할 수 있습니다. 서드파티 업로드 스킬(`skills/plugins/`)은 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다
 - **SkillSpector 보안 스캔**([server/service/skill_scanner.py](server/service/skill_scanner.py)): 서드파티 스킬은 활성화 전에 NVIDIA SkillSpector로 스캔됩니다(정적 YARA/룰 분석 + auxiliary LLM을 통한 선택적 LLM 시맨틱 분석). 플래그가 지정된 스킬은 설치가 차단됩니다
 - **스킬 큐레이터**: context engine의 curator 스레드가 `skills/auto/` 하위의 자동 학습 스킬을 관리 — 자세한 내용은 [Experience README](wiki/experience/README.ko.md)
@@ -39,11 +39,11 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - ▶️ _미들웨어 파이프라인(가드레일, 반복 예산, HITL, 정규화, 요약, 멀티모달 처리)은 [Middlewares README](agent/middlewares/README.md) 참조_
 
 ### 3. 🤖 멀티레벨 서브에이전트 시스템
-- **7개 런타임 도구**: `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
+- **8개 런타임 도구**: `sessions_spawn`, `sessions_messages`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
 - **계층적 역할**: 깊이 제한 중첩(기본 최대 2단계, 하드 상한 2), MAIN → ORCHESTRATOR → LEAF 역할과 최소 권한 도구 스코프
 - **독립 컨텍스트**: 모든 서브에이전트는 새롭고 독립된 컨텍스트에서 실행 — 부모 트랜스크립트는 결코 상속하지 않음. 파일 첨부 지원
 - **신뢰성 있는 전달**: 결과는 멱등성 검사와 지수 백오프 재시도를 갖춘 EventBus announce 파이프라인을 통해 반환
-- **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 런 타임아웃이 설정된 경우에만 이를 강제 (기본값: 없음)
+- **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 기본 600초 런 타임아웃을 강제 (`run_timeout_seconds=0`이면 비활성)
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
 - **검증된 완료**: 모든 spawn이 자식 턴 사이에 보조 LLM 완료 판정기를 실행합니다; `continue` 판정은 판정기의 후속 프롬프트를 다음 턴으로 주입하며, 설정된 `COMPLETION_JUDGE["goal_max_turns"]` 예산(기본 5)으로 상한이 정해집니다
 - **기능 역할(옵트인)**: `sessions_spawn(functional_role=...)`로 워커를 전문화(general / researcher / executor / reviewer / librarian)합니다. 역할이 LLM 계층, 도구 allow-list, 자식 시스템 프롬프트 섹션을 결정합니다
@@ -64,15 +64,16 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **문서 파싱**: 지식 그래프 RAG 파이프라인을 위한 MinerU 기반 멀티모달 문서 수집
 
 ### 6. ⏰ 예약 및 능동적 행동
-- **Cron 서비스**([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): 1회성(`at`), 간격(`every`), cron 표현식(`cron`, croniter + 타임존 기반) 에이전트 작업을 JSON 작업 스토어에 영구 저장하고, 작업별 실행 이력과 채널 전달 지원
+- **Cron 서비스**([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): 1회성(`at`), 간격(`every`), cron 표현식(`cron`, croniter + 타임존 기반) 에이전트 작업을 JSON 작업 스토어(마지막 실행 상태만)에 영구 저장하고, 실행 로그를 `logs/output/cron/<job_id>.log`에 쓰며 채널 전달 지원
 - **Heartbeat 서비스**([skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)): 주기적 웨이크업(기본 30분)으로 `HEARTBEAT.md`의 미완료 작업을 확인하고, LLM이 skip/run을 판단하며, 결과는 알림 게이트를 통과
 
 ### 7. ⚙️ 런타임, 동시성 및 세션 제어
-- **프로젝트 디렉터리 바인딩** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): 모든 세션에는 프로젝트 디렉터리가 있으며, 도구는 이를 기준으로 상대 경로를 해석한다 — 세션 바인딩 → `SHERRY_PROJECT_DIR` → `sherry.jsonc`의 `project_dir` → `ROOT_DIR`. `PUT /sessions/project`로 바인딩하거나(`null`로) 해제하며, 턴 도중에 내린 선택은 보류되었다가 턴 경계에서 승격된다. 루트는 **호출마다** 해석되고 캐시되지 않으므로, 프로세스 레벨 도구 싱글턴이 어떤 세션을 첫 호출자의 디렉터리에 고정시키는 일이 없다. 서브에이전트는 생성 시 부모의 바인딩을 상속하고 시작 시점의 루트에 고정된다. 프롬프트에는 유효한 루트를 밝히는 `## Current Working Directory` 블록이 추가된다. 루트의 `AGENTS.md`(폴백 `CLAUDE.md`)는 내용이 바뀔 때마다 `project_instructions` 리마인더로 주입되며, 명시적으로 바인딩된 프로젝트는 첫 메시지에서 통합 `.sherry/` 디렉터리 — 코드 인덱스와 shadow git — 를 얻는다(바인딩 시점에는 만들지 않음)
+- **프로젝트 디렉터리 바인딩** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): 모든 세션에는 프로젝트 디렉터리가 있으며, 도구는 이를 기준으로 상대 경로를 해석한다 — 세션 바인딩 → `SHERRY_PROJECT_DIR` → `sherry.jsonc`의 `project_dir` → `ROOT_DIR`. `PUT /sessions/project`로 바인딩하거나(`null`로) 해제하며, 턴 도중에 내린 선택은 보류되었다가 턴 경계에서 승격된다. 루트는 **호출마다** 해석되고 캐시되지 않으므로, 프로세스 레벨 도구 싱글턴이 어떤 세션을 첫 호출자의 디렉터리에 고정시키는 일이 없다. 서브에이전트는 생성 시 부모의 바인딩을 상속하고 시작 시점의 루트에 고정된다. 프롬프트에는 유효한 루트를 밝히는 `## Current Working Directory` 블록이 추가된다. 루트의 `AGENTS.md`(폴백 `CLAUDE.md`)는 내용이 바뀔 때마다 `project_instructions` 리마인더로 주입되며, 명시적으로 바인딩된 프로젝트는 첫 메시지에서 프로젝트별 코드 인덱스용 통합 `.sherry/` 디렉터리를 얻는다. 쓰기 스냅샷 shadow git은 전역 `APP_HOME/checkpoints/store`에 있다(바인딩 시점에는 만들지 않음)
 - **읽기 전용 파일 탐색**: `GET /project/tree`와 `GET /project/file`는 지연 로드 트리와 뷰어를 제공하며, 세션 루트 밖은 강하게 거부한다(에이전트의 외부 파일 승인 흐름을 의도적으로 우회한다). `FILE_BROWSER`가 읽기 크기, 인코딩, 깊이, 레벨당 항목 수를 제한한다. 인앱 디렉터리 선택기(`GET /system/dirs`, 단일 절대 경로의 **직접 하위 디렉터리만** 나열하는 의도적 예외)는 브라우저 빌드를 지원하고, 데스크톱 빌드는 OS 폴더 대화상자를 연다. 행 우클릭 메뉴는 열기 / 연결 프로그램 / 내장 브라우저로 열기(HTML) / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가를 제공하고, 행(또는 파일 뷰어 탭)은 컴포저로 드래그할 수 있다 — 어느 경로든 메시지에 실리는 것은 `@./path` 멘션 chip뿐이며 파일 내용은 절대 실리지 않는다(파일은 에이전트가 직접 읽는다)
 - **선택 텍스트 인용과 보조 세션**: 하나의 채팅 메시지 안에서 텍스트를 선택해 우클릭하면 작은 메뉴가 열린다 — 「현재 세션에 추가」는 원자적 인용 chip을 컴포저에 삽입하고(markdown 인용 블록으로 전송), 「보조 세션에서 질문」은 부모 세션의 **완전한 fork**인 일반 자식 세션을 만든다. 첫 턴에는 부모의 checkpoint 전체 이력이 모델 전용으로 주입되며(보조 세션의 표시 이력은 비어 있음), 부모의 프리셋·agent 설정·세션별 모델 설정·프로젝트 디렉터리를 상속한다. fork는 부모의 마지막으로 완료된 답변에서 잘리므로 미완료 도구 호출이 재생되지 않는다. 세션 범위 오른쪽 사이드바 탭에서 열고 인용을 미리 채우며, 그 탭을 닫는 것은 패널만 닫을 뿐이다 — 자식 세션과 모든 상태는 유지되고 세션 목록에 남아 다시 열 수 있으며, 부모 세션을 삭제할 때만 제거된다. 탭 줄 가장 왼쪽의 아래 화살표 메뉴는 최근 닫은 탭을 「현재 세션 / 전역」별로 최신 10개까지 나열하며(현재 세션 기록은 해당 세션에만 속하고 세션 삭제 시 사라짐), 닫은 보조 세션을 이력과 함께 복원한다. 「현재 세션」 탭 그룹은 세션별로 격리되어 세션을 전환하면 해당 세션 자신의 탭(없으면 빈 상태)만 보이고 이전 세션의 페이지는 표시되지 않으며, 「전역」 탭은 모든 세션에서 공유된다. 행을 넘는 선택, 컨트롤/승인 카드에서 시작하는 선택, 8,000자를 넘는 선택은 네이티브 컨텍스트 메뉴를 그대로 둔다
 - **에이전트 제어 브라우저(CDP)** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 명시적으로 켜기 전에는 꺼져 있음(`SHERRY_BROWSER_AGENT_ENABLED=1` 과 재시작) — 꺼져 있으면 browser 도구가 등록되지 않고, 모든 `/browser/*` 경로가 404를 답하며, Chromium도 실행되지 않는다. 켜면 메인 에이전트가 병합된 메인 전용 `browser` 도구(navigate / snapshot / click / type / press / scroll / screenshot)와 `browser_evaluate`(`SHERRY_BROWSER_ALLOW_EVALUATE=1`도 필요)로 루프백 실 Chromium을 조작하고, 툴박스의 브라우저 패널이 두 번째 CDP 클라이언트로 같은 페이지를 시청한다(`/browser/ws` 스크린캐스트 + 입력). 디버그 포트는 백엔드 프로세스를 벗어나지 않는다
-- **사용자 수명 주기 훅** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc`의 `hooks` 섹션으로 운영자가 제공한 명령을 턴에 연결합니다 — `PostToolUse` / `PostToolUseFailure`(`toolName`, `toolCallId`, 유계 결과/오류 프리뷰, `durationMs`)와 `Stop`(`responsePreview`, `toolCallCount`). 설계상 읽기 전용이라 훅은 감사·알림·계측만 하고 도구를 차단하거나 인자를 바꾸거나 컨텍스트를 주입할 수 없습니다. 기본 비활성(추적되는 설정 파일이 스스로 명령을 실행하게 두지 않음). 명령은 `shlex`로 분리(셸 없음), 환경은 scrub, 훅별 타임아웃이 프로세스를 kill하며, stdout은 상한을 두고 선택적 JSON으로 파싱합니다(비 JSON 출력 = 성공). 도구 가드레일 뒤에 등록되며 세션 단위로 끌 수 있습니다- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `BACKGROUND_REVIEW`(백그라운드 리뷰 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + background_review`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
+- **사용자 수명 주기 훅** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc`의 `hooks` 섹션으로 운영자가 제공한 명령을 턴에 연결합니다 — `PostToolUse` / `PostToolUseFailure`(`toolName`, `toolCallId`, 유계 결과/오류 프리뷰, `durationMs`)와 `Stop`(`responsePreview`, `toolCallCount`). 설계상 읽기 전용이라 훅은 감사·알림·계측만 하고 도구를 차단하거나 인자를 바꾸거나 컨텍스트를 주입할 수 없습니다. 기본 비활성(추적되는 설정 파일이 스스로 명령을 실행하게 두지 않음). 명령은 `shlex`로 분리(셸 없음), 환경은 scrub, 훅별 타임아웃이 프로세스를 kill하며, stdout은 상한을 두고 선택적 JSON으로 파싱합니다(비 JSON 출력 = 성공). 도구 가드레일 뒤에 등록되며 전역 `hooks.enabled`로만 켤 수 있습니다(체인 멤버십은 빌드 시점 계약이며 세션별 스위치가 아님)
+- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `BACKGROUND_REVIEW`(백그라운드 리뷰 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + background_review`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
 - **대기 중인 사용자 입력**: 턴이 실행되는 동안 보낸 메시지는 `QUEUED` 행으로 영속화되고(`client_msg_id`로 중복 제거, `INPUT_QUEUE["max_active_per_session"]`이 상한), FIFO 위치와 함께 응답된다. 턴 러너는 **턴마다 한 행만** 꺼내므로, 대기 중인 N개의 메시지는 N개의 턴과 N개의 응답을 만든다 — 하나로 합쳐지지 않는다 — 그리고 HITL 대기 중인 세션은 재개가 완료될 때까지 아무것도 꺼내지 않는다. 클라이언트는 대기 행에 `cancel_queued`, `edit_queued`, `send_now`를 적용할 수 있다
 - **병렬 단계 디스패치와 플로우 계보** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): 디스패치 웨이브는 동시에 spawn하며, `TASKFLOW_INFRA["max_parallel_dispatch"]`(2; 1이면 순차 동작 복원)로 제한된다 — 웨이브 일부가 실패해도 spawn된 자식은 모두 영속화되고 실패한 단계 id는 개별적으로 명시된다. 두 자식이 동시에 완료해도 두 결과 모두 착지한다(resume의 쓰기가 `update_flow_with_conflict_retry`를 통해 확정된 판정을 재적용하므로 결과가 충돌로 유실되거나 같은 단계가 두 번 spawn되는 일이 없다). `taskflow_flow(action="create", resumed_from=…)`는 플로우 계보(`resumed_from` / `superseded_by` 현재 스키마 컬럼)를 기록하며, 대체된 플로우는 active 읽기에서 빠지되 보드에는 남는다
 - **TaskFlow 진행** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 각 흐름의 플랫 단계 목록(id, 작업, 상태)과 상태별 집계가 플로팅 진행 패널에 표시된다. 스케줄러는 여전히 각 단계의 `depends_on`에 따라 단계별로 해제한다. 흐름이 변경될 때마다 `taskflow_updated` 프레임을 최선 effort로 푸시하며, 재접속한 클라이언트는 `taskflow_refresh`로 완전히 동일한 페이로드를 다시 요청할 수 있다
@@ -127,7 +128,7 @@ sherry_agent/
 │       ├── subagent/       # 멀티레벨 서브에이전트 시스템(spawn/registry/swarm 등)
 │       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
 │       ├── todolist/       # 세션 범위 todo 계획 레이어
-│       │   └── knowledge/  # Plan 지식 베이스 + `knowledge` 도구
+│       │   └── knowledge/  # KnowledgeStore + handoff-tree 감사(모델 도구 폐기)
 │       ├── file_tools/     # 파일 I/O 도구(읽기, 쓰기, 패치, 검색)
 │       ├── skill_tools/    # 스킬 관리 도구(나열, 조회, 관리)
 │       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
@@ -190,13 +191,13 @@ sherry_agent/
 │   └── auth/               # 선택형 로그인 보호(계정과 세션)
 │
 ├── evals/                  # 평가 프레임워크(dispatcher + 11개 스위트)
-│   ├── evals.py            # 스위트 러너: uv run python evals/evals.py [suite]
+│   ├── evals.py            # 스위트 러너: uv run --group evals python evals/evals.py [suite]
 │   ├── sandbox.py          # 실행 중 저장소 쓰기를 리디렉션하는 샌드박스
 │   ├── graph_rag/          # 그래프 RAG 파이프라인의 RAGAS 지표
 │   ├── subagent/           # 서브에이전트 스폰 파이프라인 벤치마크
 │   ├── long_running_task/  # TaskFlow DAG 평가
 │   ├── session_memory/     # 세션 메모리 스택 점검
-│   ├── skill_review/   # AI 판정 plan 추출
+│   ├── skill_review/   # AI 판정 스킬 리뷰
 │   └── results/            # 실행별 리포트(gitignore됨)
 │
 ├── logs/                   # 로깅 시스템
@@ -267,7 +268,7 @@ sherry_agent/
 │   └── builtin/            # 내장 스킬
 │       ├── core/           # cron, heartbeat, clawhub, skill_creator, image_to_text,
 │       │                   # speech_to_text, video_text_to_text, multimodal_rag,
-│       │                   # taskflow, todolist, ulw-execute
+│       │                   # taskflow, todolist, ulw-execute, bugfix-contract, browser
 │       ├── text_to_image/  # Text-to-image 스킬
 │       ├── code_wiki/      # 코드베이스 wiki 생성 스킬
 │       └── llm_wiki/       # Markdown 지식베이스 스킬
@@ -393,7 +394,7 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 > 첫 다운로드 시 huggingface.co 접근이 필요합니다(중국 본토 사용자는 프록시나 미러가 필요할 수 있습니다). 중단된 다운로드는 다음 시작 시 재개되며, `models/<model>/model_weight/`를 삭제하면 강제로 다시 다운로드합니다.
 
 ### 4. 백엔드 시작
-`start.sh`는 uv가 관리하는 `.venv`를 활성화하고 Robyn 백엔드를 실행합니다(Ollama나 프런트엔드를 시작하지 않습니다):
+`start.sh`는 `pnpm`이 있으면 Nuxt 개발 서버를 백그라운드로 먼저 시작한 뒤 Robyn 백엔드를 실행합니다(Ollama는 시작하지 않습니다):
 
 ```bash
 chmod +x start.sh
@@ -428,13 +429,13 @@ uv run --no-sync python packaging/build_backend.py   # 백엔드 → client/src-
 cd client && pnpm tauri build                         # 백엔드 + SPA + 셸을 함께 패키징
 ```
 
-`.github/workflows/desktop-build.yml`이 세 플랫폼에서 통합 설치 파일을 빌드합니다. 백엔드 빌드와 설치 파일 생성 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env` / `.models` / `.network`——는 OS 앱 데이터 디렉터리(`SHERRY_HOME`, 셸이 주입)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
+`.github/workflows/desktop-build.yml`이 세 플랫폼에서 통합 설치 파일을 빌드합니다. 백엔드 빌드와 설치 파일 생성 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env` / `.models` / `.network`——는 OS 앱 데이터 디렉터리(셸이 `--sherry-home`으로 전달; `SHERRY_HOME`은 폴백)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
 
 ---
 
 ## 🧪 테스트
 
-테스트는 `tests/` 아래에 **소스 트리를 미러링**하며(`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), uv를 통해 **pytest**로 실행합니다(단일 테스트 파일이나 소규모 선택은 `uv run pytest`). 모든 테스트 파일은 모듈 수준 `pytestmark`(`unit` / `integration` / `module` / `system` / `regression`)를 가지며, 이것이 어느 runner 그룹에서 실행될지 결정합니다.
+테스트는 `tests/` 아래에 **소스 트리를 미러링**하며(`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), uv를 통해 **pytest**로 실행합니다(단일 테스트 파일이나 소규모 선택은 `uv run pytest`). 대부분의 테스트 파일은 모듈 수준 `pytestmark`(`unit` / `integration` / `module` / `system` / `regression`)를 가지며, 이것이 어느 runner 그룹에서 실행될지 결정합니다.
 
 ### 권장: 프로세스 격리 runner
 
@@ -475,8 +476,8 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pyt
 `evals/`는 pytest와 나란히 있는 자체 제작 샌드박스 평가 프레임워크입니다. 등록된 모든 스위트를 실행하거나 이름으로 하나만 실행할 수 있습니다:
 
 ```bash
-uv run python evals/evals.py                # 등록된 모든 스위트
-uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실행
+uv run --group evals python evals/evals.py                # 등록된 모든 스위트
+uv run --group evals python evals/evals.py graph_rag      # 이름으로 단일 스위트 실행
 ```
 
 | 스위트 | 평가 내용 |
@@ -485,9 +486,9 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 | `subagent` | 실제 `spawn_subagent_direct` 파이프라인의 결정적 작업 벤치(작업 성공률 + 지연) |
 | `long_running_task` | 의존성 DAG에 대한 TaskFlow 오케스트레이션 루프(스텝 성공률, 흐름 완료, wall time) |
 | `session_memory` | 세션 메모리 스택 6개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 시맨틱 검색 랭킹 |
-| `skill_review` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
+| `skill_review` | 계획 완료 시 스킬 리뷰를 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
 | `coding_capability` | 실제 메인 agent를 소규모 자체 설계 코딩 작업 세트로 평가하고, 각 작업은 해당 저장소 자체의 pytest 실행으로 판정——베이스라인이며 외부 벤치마크가 아님 |
-| `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. agent는 문제 설명만 봄) |
+| `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. 평가 테스트 패치는 프롬프트에 노출되고 실행 전 checkout에 미리 적용되며, 채점 시 초기화 후 다시 적용됨) |
 | `deepswe` | 외부 DeepSWE 작업을 벤치마크 자체 Docker 이미지에서 실행: agent는 bind mount된 checkout을 편집하고 `terminal`은 컨테이너 안에서 실행되며, 작업 전용 verifier 이미지가 diff를 채점(먼저 gold patch 자체 점검) |
 | `terminal_bench` | 외부 Terminal-Bench 작업: 작업 이미지를 빌드하고 agent가 컨테이너 안에서 작업하며, 작업 자체의 `run-tests.sh` pytest 판정으로 평가(먼저 oracle 자체 점검, 다중 서비스 작업은 미지원으로 명시) |
 | `agentbench` | 외부 [AgentBench](https://github.com/THUDM/AgentBench) DBBench 테스트 세트: 고정 commit의 공식 질문과 테이블을 SQLite로 materialize하고 AgentBench 자체 비교 규칙으로 판정(INSERT/DELETE/UPDATE 행은 미지원으로 명시, MySQL→SQLite 방언 차이는 기록) |
@@ -495,7 +496,7 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 
 각 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기는 임시 샌드박스로 리디렉션), 보고서는 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 보고서는 커밋하지 않습니다.
 
-`deepswe`와 `terminal_bench`는 컨테이너 기반이며 동작하는 Docker daemon이 필요합니다. `toolbench`는 `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY`, OpenAI 호환 ToolEval judge key가 필요합니다. `agentbench`는 `MAIN_LLM_API_KEY`가 필요합니다. 전제 조건이 없으면 **명시적으로 SKIP하고 0이 아닌 코드로 종료**합니다(건너뛴 스위트는 통과가 아님). 작업 트리와 벤치마크 데이터는 `~/.cache/sherry_evals`에 clone/다운로드하며(`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`로 재정의 가능) 저장소 안에는 두지 않습니다. `--dry-run`은 Docker, 모델, ToolBench 대용량 다운로드 없이 선택을 검증합니다.
+`terminal_bench`는 Docker가 필요합니다. `deepswe`는 기본적으로 Docker를 쓰지만 `deepswe --local`은 Docker 없이 호스트에서 실행됩니다. `toolbench`는 `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY`, OpenAI 호환 ToolEval judge key가 필요합니다. `agentbench`는 `MAIN_LLM_API_KEY`가 필요합니다. 전제 조건이 없으면 **명시적으로 SKIP하고 0이 아닌 코드로 종료**합니다(건너뛴 스위트는 통과가 아님). 작업 트리와 벤치마크 데이터는 `~/.cache/sherry_evals`에 clone/다운로드하며(`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`로 재정의 가능) 저장소 안에는 두지 않습니다. `--dry-run`은 Docker, 모델, ToolBench 대용량 다운로드 없이 선택을 검증합니다.
 
 `coding_capability`, `swebench`, `deepswe`, `terminal_bench`, `agentbench`, `toolbench`는 각각 버전 관리되는 베이스라인(각 스위트 디렉터리 내)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
 
@@ -519,9 +520,9 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 
 Issue와 Pull Request를 환영합니다! 새 스킬을 추가하는 방법:
 
-1. `skills/` 아래에 폴더를 생성합니다(서드파티 스킬은 `skills/plugins/`).
+1. `skills/builtin/` 아래에 폴더를 생성합니다(또는 `skills/auto/` / `skills/plugins/`, 서드파티는 후자).
 2. YAML 프론트매터(`name`, `description`, 선택적 `scope`)가 있는 `SKILL.md`에 스킬의 사용법과 절차를 작성합니다.
-3. 에이전트를 재시작하세요 — 로더가 모든 `SKILL.md`를 자동으로 발견하여 모델에 노출합니다.(실행 중인 에이전트에게 내장 `skill_creator` 스킬로 생성해 달라고 요청할 수도 있습니다.)
+3. 에이전트를 재시작하세요 — 로더는 이 세 루트의 `SKILL.md`만 스캔하여 모델에 노출합니다.(실행 중인 에이전트에게 내장 `skill_creator` 스킬로 생성해 달라고 요청할 수도 있습니다.)
 
 `skills/plugins/` 아래의 서드파티 스킬은 SkillSpector로 스캔되며, 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다.
 

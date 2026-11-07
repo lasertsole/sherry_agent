@@ -8,7 +8,7 @@ This module provides a unified interface for integrating with chat platforms. It
 
 ## Overview
 
-The channels module implements a plugin-based architecture that allows easy addition of new chat platform integrations. Each channel is implemented as a class that extends `BaseChannel` and communicates with the system through the `MessageBus` (`bus/core.py`), which exposes two unbounded `asyncio.Queue`s (inbound and outbound). Channel implementations live as separate folders (directories) under `plugins/channels/` (discovered at runtime by scanning for a `core.py`), not within this package.
+The channels module implements a plugin-based architecture that allows easy addition of new chat platform integrations. Each channel is implemented as a class that extends `BaseChannel` and communicates with the system through the `MessageBus` (`bus/core.py`), which exposes two bounded `asyncio.Queue`s (`BUS_QUEUE_MAXSIZE`, inbound and outbound) whose producers await free space instead of dropping messages. Channel implementations live as separate folders (directories) under `plugins/channels/` (discovered at runtime by scanning for a `core.py`), not within this package.
 
 ## Main Features
 

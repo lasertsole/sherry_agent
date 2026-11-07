@@ -8,7 +8,7 @@ single file is written. The alternative — running straight at a multi-file
 change — is where the agent drifts, and the user gets no chance to redirect it.
 
 Source of truth: `agent/tools/plan_mode/` (the two tools + the shared state
-helpers), `agent/middlewares/tool_selection/core.py` (the whitelist),
+helpers), `agent/middlewares/plan_mode_gate/core.py` (the whitelist),
 `workspace/prompt_builder.py::_build_plan_mode_block` (the reminder),
 `config/features/agent_side/plan_mode.py` (the tunables).
 
@@ -53,7 +53,7 @@ execution with "Plan mode is active". The gate is the only tool-face filter left
 — every built-in tool is always available otherwise (the per-session tool
 selection was removed). The default whitelist is
 `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]`; it is
-still bounded by the session's own tool selection, except that the two plan
+still bounded by the plan-mode whitelist, except that the two plan
 tools always stay reachable — a mode the model cannot leave would be a trap.
 
 Subagents are the one deliberate hole closed: `sessions_spawn` is NOT on the

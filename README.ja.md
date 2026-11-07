@@ -25,13 +25,13 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
 - **コンテキスト統治**：過大なツール結果と人間メッセージは回収可能なディスクコピーを残してプロンプトから退避され、`read_file` 結果はスライスされ、あらゆる圧縮の前に LLM なしのテールクリップが走り、チェーン要約は会話ペイロードから除外されます
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
-- **経験抽出（Experience Extraction）**：3 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、圧縮時に todo が全完了したときの plan 抽出、圧縮後の todo fork です。それぞれメモリストア（SQLite `memory_entries` テーブルの `memory` / `user` ターゲット）、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
+- **経験抽出（Experience Extraction）**：4 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、プランがターン境界で完了したときのスキルレビュー（圧縮時ではない）、圧縮後の todo fork、MAIN セッション削除前の記憶サルベージです。それぞれメモリストア（SQLite `memory_entries` テーブルの `memory` / `user` / `facts` ターゲット）、`skills/auto/`、`todos.db`、および生の `handoff-tree.json` 監査ファイルに書き込みます。モデル向け `knowledge` ツールとプロンプトブロックは廃止されました
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
 - ▶️ _3 本の抽出経路とスキルキュレーションは [Experience README](wiki/experience/README.ja.md) を参照_
 
 ### 2. 🛠️ 動的スキルシステム
-- **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
-- **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
+- **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーは `skills/` 配下の `builtin/`・`auto/`・`plugins/` の 3 ルートだけをスキャンします
+- **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`bugfix-contract`、`code_wiki`、`llm_wiki`、および機能ゲート付きの `browser` スキル
 - **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
 - **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
 - **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](wiki/experience/README.ja.md)
@@ -39,11 +39,11 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
 
 ### 3. 🤖 マルチレベルサブエージェントシステム
-- **7 つのランタイムツール**：`sessions_spawn`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
+- **8 つのランタイムツール**：`sessions_spawn`、`sessions_messages`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
 - **階層ロール**：深度制限付きネスト（デフォルト最大 2 深度、ハード上限 2）、MAIN → ORCHESTRATOR → LEAF ロールと最小権限のツールスコープ
 - **独立コンテキスト**：すべてのサブエージェントは新規の独立したコンテキストで実行 —— 親トランスクリプトは決して継承しない。ファイル添付に対応
 - **信頼性の高い配信**：結果は冪等チェックと指数バックオフリトライを備えた EventBus announce パイプラインで返却
-- **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーはランタイムアウトが設定された場合のみ強制（デフォルト: なし）
+- **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーは既定の 600 秒ランタイムアウトを強制（`run_timeout_seconds=0` で無効）
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
 - **検証された完了**：すべての spawn が子ターン間に補助 LLM の完了判定器を実行します；`continue` 判定は判定器のフォローアッププロンプトを次のターンとして注入し、設定された `COMPLETION_JUDGE["goal_max_turns"]` 予算（既定 5）で上限が決まります
 - **機能ロール（オプトイン）**：`sessions_spawn(functional_role=...)` でワーカーを特化（general / researcher / executor / reviewer / librarian）。ロールが LLM 層、ツール allow-list、子のシステムプロンプトセクションを決定します
@@ -64,15 +64,16 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **ドキュメント解析**：MinerU ベースのマルチモーダルドキュメント取り込み（ナレッジグラフ RAG パイプライン向け）
 
 ### 6. ⏰ 定時実行と能動的行動
-- **Cron サービス**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：一回限り（`at`）、間隔（`every`）、cron 式（`cron`、croniter + タイムゾーン）の 3 種類のエージェントタスクをスケジュール。JSON ジョブストアに永続化し、実行履歴とチャンネル配信に対応
+- **Cron サービス**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：一回限り（`at`）、間隔（`every`）、cron 式（`cron`、croniter + タイムゾーン）の 3 種類のエージェントタスクをスケジュール。JSON ジョブストア（最終実行状態のみ）に永続化し、実行ログを `logs/output/cron/<job_id>.log` に書き、チャンネル配信に対応
 - **Heartbeat サービス**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：定期的なウェイクアップ（デフォルト 30 分）で `HEARTBEAT.md` の未完了タスクを確認し、LLM が skip/run を判断、結果は通知ゲートを通過
 
 ### 7. ⚙️ ランタイム・並行性・セッション制御
-- **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される。ルートの `AGENTS.md`（フォールバック `CLAUDE.md`）は内容が変わるたびに `project_instructions` リマインダーとして注入され、明示的にバインドされたプロジェクトは最初のメッセージ時に統一された `.sherry/` ディレクトリ——コードインデックスと shadow git——を得る（バインド時には作らない）
+- **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される。ルートの `AGENTS.md`（フォールバック `CLAUDE.md`）は内容が変わるたびに `project_instructions` リマインダーとして注入され、明示的にバインドされたプロジェクトは最初のメッセージ時に統一された `.sherry/` ディレクトリをプロジェクト単位コードインデックス用に得る。書き込みスナップショットの shadow git は `APP_HOME/checkpoints/store` にグローバル保存される（バインド時には作らない）
 - **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く。行の右クリックメニューは 開く / 別のアプリで開く / 内蔵ブラウザーで開く（HTML）/ ファイルマネージャーで表示 / 絶対・相対パスのコピー / チャットに追加 を提供し、行（またはファイルビューアのタブ）はコンポーザーへドラッグできる — どちらの経路もメッセージに載るのは `@./path` メンション chip だけで、ファイル内容は決して載らない（ファイルはエージェント自身が読む）
 - **選択テキストの引用と補助セッション**: 1 つのチャットメッセージ内でテキストを選択して右クリックすると小さなメニューが開く——「現在のセッションに追加」はアトミックな引用 chip をコンポーザーへ挿入し（送信時は markdown 引用ブロック）、「補助セッションで質問」は親セッションの**完全な fork** である通常の子セッションを作成する。最初のターンには親の checkpoint 履歴全体がモデル専用で注入され（補助セッションの表示履歴は空のまま）、親のプリセット・agent 設定・セッション単位のモデル設定・プロジェクトディレクトリを継承する。fork は親の最後に完了した回答で区切られるため、未完了のツール呼び出しが再生されることはない。セッションスコープの右サイドバータブで開いて引用をプリフィルし、そのタブを閉じるのはパネルを閉じるだけ——子セッションとその状態はすべて保持され、セッション一覧に残るので後から開き直せ、親セッションを削除したときにだけ消去される。タブ列の最も左にある下向き矢印メニューは、最近閉じたタブを「現在のセッション / グローバル」ごとに最新 10 件まで一覧し（現在のセッションの履歴はそのセッションだけに属し、セッション削除で消える）、閉じた補助セッションを履歴ごと復元する。「現在のセッション」タブ群はセッションごとに分離され（セッションを切り替えるとそのセッション自身のタブ、または空の状態だけを表示し、前のセッションのページは出ない）、「グローバル」タブは全セッションで共有される。行をまたぐ選択、コントロール/承認カードから始まる選択、8,000 文字を超える選択ではネイティブのコンテキストメニューをそのまま残す
 - **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は browser ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは統合されたメイン専用 `browser` ツール（navigate / snapshot / click / type / press / scroll / screenshot）と、`browser_evaluate`（`SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
-- **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、セッション単位で無効化できます- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`BACKGROUND_REVIEW`（バックグラウンドレビュー呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + background_review` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
+- **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、グローバル `hooks.enabled` でのみ有効化できます（チェーン membership はビルド時契約で、セッション単位スイッチではありません）
+- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`BACKGROUND_REVIEW`（バックグラウンドレビュー呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + background_review` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
 - **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
 - **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_flow(action="create", resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の現在スキーマ列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
 - **TaskFlow の進捗** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 各フローのフラットなステップ一覧（id・タスク・状態）と状態別集計がフローティング進捗パネルに表示される。スケジューラは依然として各ステップの `depends_on` ごとに解錠する。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
@@ -127,7 +128,7 @@ sherry_agent/
 │       ├── subagent/       # マルチレベルサブエージェントシステム（spawn/registry/swarm など）
 │       │   └── isolation/  # オプトインの git ワークツリー隔離バックエンド（spawn された子用）
 │       ├── todolist/       # セッションスコープの todo 計画レイヤー
-│       │   └── knowledge/  # Plan ナレッジベース + `knowledge` ツール
+│       │   └── knowledge/  # KnowledgeStore + handoff-tree 監査（モデル向けツールは廃止）
 │       ├── file_tools/     # ファイル I/O ツール（読み・書き・パッチ・検索）
 │       ├── skill_tools/    # スキル管理ツール（一覧・閲覧・管理）
 │       ├── code_intel/     # コード検索（ripgrep、tree-sitter、ast-grep、LSP、セマンティック）
@@ -190,13 +191,13 @@ sherry_agent/
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
 ├── evals/                  # 評価フレームワーク（dispatcher + 11 スイート）
-│   ├── evals.py            # スイートランナー: uv run python evals/evals.py [suite]
+│   ├── evals.py            # スイートランナー: uv run --group evals python evals/evals.py [suite]
 │   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
 │   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
 │   ├── subagent/           # サブエージェント spawn パイプラインのベンチマーク
 │   ├── long_running_task/  # TaskFlow DAG 評価
 │   ├── session_memory/     # セッションメモリスタックのチェック
-│   ├── skill_review/   # AI 判定の plan 抽出
+│   ├── skill_review/   # AI 判定のスキルレビュー
 │   └── results/            # 実行ごとのレポート（gitignore 済み）
 │
 ├── logs/                   # ロギングシステム
@@ -267,7 +268,7 @@ sherry_agent/
 │   └── builtin/            # 内蔵スキル
 │       ├── core/           # cron、heartbeat、clawhub、skill_creator、image_to_text、
 │       │                   # speech_to_text、video_text_to_text、multimodal_rag、
-│       │                   # taskflow、todolist、ulw-execute
+│       │                   # taskflow、todolist、ulw-execute、bugfix-contract、browser
 │       ├── text_to_image/  # Text-to-Image スキル
 │       ├── code_wiki/      # コードベース wiki 生成スキル
 │       └── llm_wiki/       # Markdown ナレッジベーススキル
@@ -393,7 +394,7 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 > 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
 
 ### 4. バックエンドの起動
-`start.sh` は uv 管理の `.venv` をアクティブ化し、Robyn バックエンドを起動します（Ollama やフロントエンドは起動しません）：
+`start.sh` は `pnpm` がある場合に Nuxt 開発サーバーをバックグラウンド起動してから Robyn バックエンドを起動します（Ollama は起動しません）：
 
 ```bash
 chmod +x start.sh
@@ -428,13 +429,13 @@ uv run --no-sync python packaging/build_backend.py   # バックエンド → cl
 cd client && pnpm tauri build                         # バックエンド + SPA + シェルを同梱
 ```
 
-`.github/workflows/desktop-build.yml` が 3 プラットフォームで統合インストーラーをビルドします。バックエンド構築とインストーラー作成はどちらも対象 OS ごとに実行が必要です（PyInstaller はクロスコンパイル不可）。アプリが所有するデータ——セッション、メモリ、ログ、学習したスキル、`.env` / `.models` / `.network`——は OS のアプリデータディレクトリ（`SHERRY_HOME`、シェルが注入）に書き込まれ、読み取り専用のインストール先には書き込みません。初回起動ではモデル未設定のままウィンドウが開き、「モデル設定」でキーを入力して再起動すると有効になります。
+`.github/workflows/desktop-build.yml` が 3 プラットフォームで統合インストーラーをビルドします。バックエンド構築とインストーラー作成はどちらも対象 OS ごとに実行が必要です（PyInstaller はクロスコンパイル不可）。アプリが所有するデータ——セッション、メモリ、ログ、学習したスキル、`.env` / `.models` / `.network`——は OS のアプリデータディレクトリ（シェルが `--sherry-home` で渡す。`SHERRY_HOME` はフォールバックのみ）に書き込まれ、読み取り専用のインストール先には書き込みません。初回起動ではモデル未設定のままウィンドウが開き、「モデル設定」でキーを入力して再起動すると有効になります。
 
 ---
 
 ## 🧪 テスト
 
-テストは `tests/` 配下にあり、**ソースツリーをミラー**しています（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`）。uv 経由で **pytest** で実行します（単一ファイルや小規模な選択は `uv run pytest`）。すべてのテストファイルはモジュールレベルの `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`）を持ち、どの runner グループで実行されるかを決定します。
+テストは `tests/` 配下にあり、**ソースツリーをミラー**しています（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`）。uv 経由で **pytest** で実行します（単一ファイルや小規模な選択は `uv run pytest`）。ほとんどのテストファイルはモジュールレベルの `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`）を持ち、どの runner グループで実行されるかを決定します。
 
 ### 推奨：プロセス分離 runner
 
@@ -475,8 +476,8 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数�
 `evals/` は pytest と並ぶ自製のサンドボックス評価フレームワークです。登録済みの全スイート、または名前で 1 つを実行できます：
 
 ```bash
-uv run python evals/evals.py                # 登録済みの全スイート
-uv run python evals/evals.py graph_rag      # 名前で単一スイートを実行
+uv run --group evals python evals/evals.py                # 登録済みの全スイート
+uv run --group evals python evals/evals.py graph_rag      # 名前で単一スイートを実行
 ```
 
 | スイート | 評価内容 |
@@ -485,9 +486,9 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `subagent` | 実 `spawn_subagent_direct` パイプラインを決定論的タスクのベンチで評価（タスク成功率 + レイテンシ） |
 | `long_running_task` | 依存 DAG 上の TaskFlow オーケストレーションループ（ステップ成功率、フロー完了、wall time） |
 | `session_memory` | セッションメモリスタックの 6 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、セマンティック検索ランキング |
-| `skill_review` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
+| `skill_review` | プラン完了時のスキルレビューを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
 | `coding_capability` | 実メイン agent を小規模な自作コーディングタスク集で評価し、各タスクはそのリポジトリ自身の pytest 実行で判定——ベースラインであり外部ベンチマークではない |
-| `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。agent が見るのは問題文のみ） |
+| `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。評価テストパッチはプロンプトに含まれ、実行前に checkout へ適用され、採点時にリセットして再適用される） |
 | `deepswe` | 外部 DeepSWE タスクをベンチマーク自身の Docker イメージで実行：agent は bind mount された checkout を編集し、`terminal` はコンテナ内で実行され、タスク専用の verifier イメージが diff を採点（先に gold patch を自己検査） |
 | `terminal_bench` | 外部 Terminal-Bench タスク：タスクイメージをビルドし、agent がコンテナ内で作業し、タスク自身の `run-tests.sh` の pytest 判定で評価（先に oracle を自己検査。マルチサービス構成のタスクは非対応と明示） |
 | `agentbench` | 外部 [AgentBench](https://github.com/THUDM/AgentBench) DBBench テストセット：固定 commit の公式問題とテーブルを SQLite に materialize し、AgentBench 自身の比較ルールで判定（INSERT/DELETE/UPDATE 行は非対応と明示。MySQL→SQLite の方言差は記録） |
@@ -495,7 +496,7 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 
 各スイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスへリダイレクト）、レポートは `evals/results/<suite>/<run_id>/` に書き出されます。このディレクトリは **gitignore** 済みで、実行ごとのレポートはコミットしません。
 
-`deepswe` と `terminal_bench` はコンテナベースで、動作する Docker daemon が必要です。`toolbench` は `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY`、OpenAI 互換の ToolEval judge key が必要です。`agentbench` は `MAIN_LLM_API_KEY` が必要です。前提条件が無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーとベンチマークデータは `~/.cache/sherry_evals` に clone / ダウンロードし（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` で上書き可能）、リポジトリ内には置きません。`--dry-run` は Docker・モデル・ToolBench の大容量ダウンロード無しで選択を検証できます。
+`terminal_bench` は Docker が必要です。`deepswe` は既定で Docker を使いますが、`deepswe --local` は Docker なしでホスト上で動作します。`toolbench` は `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY`、OpenAI 互換の ToolEval judge key が必要です。`agentbench` は `MAIN_LLM_API_KEY` が必要です。前提条件が無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーとベンチマークデータは `~/.cache/sherry_evals` に clone / ダウンロードし（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` で上書き可能）、リポジトリ内には置きません。`--dry-run` は Docker・モデル・ToolBench の大容量ダウンロード無しで選択を検証できます。
 
 `coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench`、`toolbench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
 
@@ -519,9 +520,9 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 
 Issue と Pull Request を歓迎します！新しいスキルの追加方法：
 
-1. `skills/` 配下にフォルダを作成（サードパーティスキルは `skills/plugins/`）。
+1. `skills/builtin/` 配下にフォルダを作成（または `skills/auto/` / `skills/plugins/`、サードパーティは後者）。
 2. YAML フロントマター（`name`、`description`、オプションの `scope`）を持つ `SKILL.md` に、スキルの使い方と手順を記述。
-3. エージェントを再起動 —— ローダーがすべての `SKILL.md` を自動検出し、モデルに公開します。（実行中のエージェントに内蔵の `skill_creator` スキルで生成させることもできます。）
+3. エージェントを再起動 —— ローダーはこれら 3 ルートの `SKILL.md` だけをスキャンし、モデルに公開します。（実行中のエージェントに内蔵の `skill_creator` スキルで生成させることもできます。）
 
 `skills/plugins/` 配下のサードパーティスキルは SkillSpector でスキャンされ、明示的に有効化されるまで非アクティブのままです。
 

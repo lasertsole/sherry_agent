@@ -23,8 +23,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 - 报告位于 `evals/results/swebench/<run_id>/eval_report.json`；各实例 diff 在同目录。
 
 - 自 2026-11-04 起，任务 prompt 会附带实例的 test patch 和 FAIL_TO_PASS 名称
-  （只读）。checkout 不会预先打补丁；官方 test patch 仍在判题时应用，实例报告
-  记录 `target_tests_exposed`。
+  （只读）。checkout 会在运行前预先打上 test patch；判题时先重置这些文件再重新应用补丁，实例报告记录 `target_tests_exposed`。
 
 ## 失败历史（2026-11-01）
 

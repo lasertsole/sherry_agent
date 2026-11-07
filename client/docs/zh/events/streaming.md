@@ -7,9 +7,9 @@ Agent 使用 Tauri 事件系统向前端实时流式传输响应。
 在混合架构中，流式传输的工作流程如下：
 
 1. 前端通过 Tauri IPC 调用 `invoke('agent_chat', ...)`
-2. Rust 后端向 Python 后端发送 `POST /sessions/agent/sse`
-3. Python 后端返回 SSE 流
-4. Rust 解析每个 SSE `data:` 行并发出 Tauri Event (`agent:stream:chunk`)
+2. Rust 连接 Python 后端的 WebSocket `/sessions/agent/ws`
+3. Python 通过该 socket 推送 `chunk` 帧
+4. Rust 为每个帧发出 Tauri Event (`agent:stream:chunk`)
 5. 前端监听 Tauri Events 并实时更新 UI
 
 `bridge.ts` 组合式在 Tauri 和浏览器模式下透明地处理这一过程。

@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> エージェントが両方の LLM に 200K コンテキストウィンドウの下限をどう強制するか: 共有の述語が 4 つの適用ポイントで例外を投げ（サーバー起動、グラフ構築、サブエージェントのスポーン、`.env` 書き込み）、フロントエンドはブロックする前に警告し、`GET /model-config` が現在の判定を公開します。
+> エージェントが両方の LLM に 200K コンテキストウィンドウの下限をどう強制するか: 共有の述語が 4 つの適用ポイントで例外を投げ（サーバー起動、グラフ構築、サブエージェントのスポーン、`.models` 書き込み）、フロントエンドはブロックする前に警告し、`GET /model-config` が現在の判定を公開します。
 
 事実の出典: `config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、`server/service/models_config.py`、そして `.models`。本文書中のすべての行番号と定数は、そのコードに照らして検証済みです。
 
@@ -129,9 +129,9 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 | :------ | :---- | :-- |
 | サーバーが即終了し、ログに `STARTUP ABORTED: ...` | キーが未設定か `200000` 未満 | 両キーを `>= 200000` にして再起動 |
 | ログに `AUXILIARY_LLM_MAX_TOKEN = 121072 ...` | 補助キーが未設定で `121072` にフォールバック | `AUXILIARY_LLM_MAX_TOKEN` を明示設定 |
-| 返信ではなく WebSocket エラーチャンク | 実行中の環境編集で値が下限を下回った | `.env` を直してターンを再試行 |
+| 返信ではなく WebSocket エラーチャンク | 実行中の環境編集で値が下限を下回った | `.models` を直してターンを再試行 |
 | 環境タブの保存で maxToken エラー | 値が非整数または `< 200000` | `>= 200000` の整数を入力 |
-| 送信時に「モデル設定が最小値未満」toast | `GET /model-config` が `valid: false` を報告 | `.env` を直す。保存成功後にキャッシュは再取得される |
+| 送信時に「モデル設定が最小値未満」toast | `GET /model-config` が `valid: false` を報告 | `.models` を直す。保存成功後にキャッシュは再取得される |
 
 ## 🧪 テスト
 
@@ -139,7 +139,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 | :---- | :----- | :----- |
 | `tests/config/test_token_guard.py` | `unit` | しきい値は `200_000`。`None` と下限未満は例外。エラーはキー名を明示。下限以上は通過 |
 | `tests/agent/core/test_built_agent_guard.py` | `unit` | `built_agent()` がメイン下限未満・メイン未設定・補助未設定フォールバックを拒否。有効な env では構築 |
-| `tests/server/service/test_env_guard.py` | `unit` | `write_env_file()` が**書き込まずに**下限未満と非整数を拒否。有効値と非トークンキーは通過 |
+| `tests/server/test_env_service.py` + `tests/server/test_models_config_service.py` | `unit` | `write_models_config()` が**書き込まずに**下限未満と非整数を拒否。有効値と非トークンキーは通過 |
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` の形状と `valid`: 両方最小、メイン未満、補助未設定、メイン未設定 |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | 取得のキャッシュ破壊、一度だけのキャッシュ、invalidate 後の再取得、デフォルト無効フォールバック |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend` は無効時のみ警告。有効時と取得失敗時は静か |
@@ -148,7 +148,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 ```bash
 # Python (unit + integration)
 uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent_guard.py \
-  tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
+  tests/server/test_env_service.py tests/server/test_models_config_service.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
 cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token

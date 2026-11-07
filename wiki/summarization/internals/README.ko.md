@@ -40,8 +40,8 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
    ```
 
    비 LLM 축소가 첫 기회를 얻습니다; 히스토리가 여전히 보존 예산의 두 배를 넘을 때(또는 거버너가 LLM 요약을 비활성했거나, 비 LLM 전략이 아무것도 줄이지 못했을 때)에만 보조 LLM을 씁니다.
-4. **공격적 백스톱**(`_aggressive_truncate`, compression.py:360): 결과가 *그래도* 너무 크면, `AGGRESSIVE_TRUNCATE_CHARS (1 000)`자를 넘는 모든 `ToolMessage`가 마커와 함께 하드 컷됩니다 — 같은 상한을 넘는 모든 도구 호출 인자 JSON도 마찬가지입니다(머리만, `PROTECTED_TOOLS` 면제, `{"_truncated_args": ...}`로 대체).
-5. **요약 자체 절단**(`_truncate_summary_messages`, compression.py:417): `SUMMARY_TOTAL_MAX_CHARS (16 000)`자를 넘는 기존 요약 메시지(`lc_source == "summarization"`)는 머리 30% / 꼬리 30%로 재절단됩니다(`_truncate_content`, compression.py:414).
+4. **공격적 백스톱**(`_aggressive_truncate`, compression.py:360): 결과가 *그래도* 너무 크면, `AGGRESSIVE_TRUNCATE_TOKENS (250)`자를 넘는 모든 `ToolMessage`가 마커와 함께 하드 컷됩니다 — 같은 상한을 넘는 모든 도구 호출 인자 JSON도 마찬가지입니다(머리만, `PROTECTED_TOOLS` 면제, `{"_truncated_args": ...}`로 대체).
+5. **요약 자체 절단**(`_truncate_summary_messages`, compression.py:417): `SUMMARY_TOTAL_MAX_TOKENS (4 000)`자를 넘는 기존 요약 메시지(`lc_source == "summarization"`)는 머리 30% / 꼬리 30%로 재절단됩니다(`_truncate_content`, compression.py:414).
 6. **복구 주입**(`_inject_recovery_context`, compression.py:379): 캡처한 파일 작업 래칫이 요약의 `## Relevant Files` 섹션으로 재작성되어, 체크포인트가 항상 최신 읽기/수정 파일 맵을 품도록 합니다.
 7. **장부 기록**(`_record_compression`, thrash.py:117), 마지막으로 `request.override(messages=..., system_message=...)`.
 
@@ -148,7 +148,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 - **AIMessage**, `additional_kwargs={"lc_source": "summarization"}` 포함 — 이후 턴들이 (a) 이전 체크포인트를 찾아 체이닝하고, (b) 체이닝 재요약 입력에서 이 쌍을 제거하고 프루닝이 체크포인트에서 멈추게 하며, (c) 테스트가 대체된 후 요약이 모델 뷰에서 삼켜질 수 있음을 단증하는 마커.
 - 이 쌍은 MesMemory에 절대 들어가지 않습니다: `MessagePersistenceMiddleware._is_persistable`이 `lc_source="summarization"` 양쪽 절반을 건너뜁니다(human 행 빌더도 같은 게이트를 가집니다).
 - AIMessage는 구조화 문서 본체도 보관합니다: `additional_kwargs["summary_doc"]`(cap 후 `SummaryDoc`, JSON 직렬화 가능한 순수 dict — 체인 캐리어, `<prior-summary-json>`으로 재투입). free-form 폴백 회차는 이 페이로드가 없고 `_extract_previous_summary`가 `<summary>` 본문 파싱으로 폴백합니다.
-- 전체 콘텐츠는 `SUMMARY_TOTAL_MAX_CHARS (16 000)`으로 봉인되고, 머리/꼬리 30/30 보존.
+- 전체 콘텐츠는 `SUMMARY_TOTAL_MAX_TOKENS (4 000)`으로 봉인되고, 머리/꼬리 30/30 보존.
 
 ## 🛡️ 안티-스래싱 가드 매트릭스와 성능 저하 복구
 
@@ -177,18 +177,18 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 # InvalidToolCallRepairMiddleware. Summarization은 LLMRetry 바로 안쪽)
 Summarization(
     need_update_system_prompt=True,
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
-    trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+    trigger=[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])],
 )
 
 # agent/tools/subagent/spawn/core.py:1106 — 워커 에이전트 (첫 미들웨어)
 Summarization(
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
     trigger=[
         ("messages", 40),
-        ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0]),
     ],
 )
 ```

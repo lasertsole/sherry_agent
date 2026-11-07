@@ -21,7 +21,7 @@
 
 `memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
 
-**グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です：`built_agent()` の呼び出しごとにスレッドごとの最新チェックポイントへ剪定され（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`、`agent/core.py:227`）、`auto_vacuum=0` では DELETE はページを解放するだけでファイルを縮めないため、同じ呼び出しが剪定直後に `PRAGMA freelist_count × page_size` を読み、解放された領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超える場合にのみ `VACUUM` を実行します——フェイルオープン：VACUUM のエラーはログに記録されるだけで、剪定結果はそのまま有効です。
+**グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です。グローバルな keep-latest 剪定は起動時に 1 回だけ実行され（`server/service/checkpoint_maintenance.py`）、`built_agent()` 呼び出しごとには行いません（毎ターン共有 DB に競合書き込みを作るため）。スレッド単位の剪定は child 解放と session purge で続きます。`auto_vacuum=0` では DELETE はページを解放するだけなので、保守処理が `PRAGMA freelist_count × page_size` を読み、解放領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超えるときだけ `VACUUM` します——フェイルオープン：VACUUM エラーはログのみで、剪定結果は有効です。
 
 ## 🔎 意味検索と整理
 
@@ -109,7 +109,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 | 読み取り | 場所 | 目的 |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | システムプロンプトの `## Pending TaskFlows` |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 毎ターンの reminder ブロックの `## Pending TaskFlows` |
 | `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 圧縮要約プロンプトの TaskFlow ブロック |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | 永続化された継続性状態の `taskflow_ids` |
 

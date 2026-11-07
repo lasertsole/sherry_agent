@@ -311,7 +311,7 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
-创建持久化流，初始 `INITIAL_REVISION = 1`，状态为 `running`。返回流 id、状态和版本号。如果 id 已被占用则抛出 `FlowExistsError`（返回错误字符串，含当前版本号以便重读）。
+创建持久化流，初始 `INITIAL_REVISION = 1`，状态为 `running`。返回流 id、状态和版本号。同一 id 的非终态流会返回幂等成功（`TaskFlow already exists ...`）；终态流返回错误，要求换 id 或传 `resumed_from`。
 
 
 
@@ -597,10 +597,7 @@ async def taskflow_inspect(action="list", status_filter: str = "active") -> str
 
 ```python
 
-async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None,
-                          todo: dict | None = None, plan_path: str | None = None,
-
-                          checkbox_label: str | None = None) -> str
+async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
 
 async def taskflow_flow(action="fail", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
@@ -608,7 +605,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子会话会继续运行；在流被取消之前，它们的结果仍可通过 `taskflow_step(action="resume")` 送达。
+终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子会话可能继续运行，但流一旦进入终态，`taskflow_step(action="resume")` 会拒绝所有结果；必须在 finish/fail/cancel 之前注入。
 
 
 
@@ -664,7 +661,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepStatus` 枚举定义四种状态，`_shared.py` 中三个纯函数管理转换：
+DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepStatus` 枚举定义七种状态（`blocked`、`ready`、`dispatched`、`done`、`failed`、`skipped`、`cancelled`），`_shared.py` 中三个纯函数管理转换：
 
 
 

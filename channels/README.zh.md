@@ -8,7 +8,7 @@
 
 ## 概述
 
-Channels 模块采用插件化架构，可以轻松添加新的聊天平台集成。每个通道都实现为继承自 `BaseChannel` 的类，通过 `MessageBus`（`bus/core.py`）与系统通信——它提供两条无界的 `asyncio.Queue`（入站与出站）。通道实现以独立目录（文件夹）形式存放在 `plugins/channels/` 目录下（运行时扫描含 `core.py` 的目录自动发现），而非本包内。
+Channels 模块采用插件化架构，可以轻松添加新的聊天平台集成。每个通道都实现为继承自 `BaseChannel` 的类，通过 `MessageBus`（`bus/core.py`）与系统通信——它提供两条有界的 `asyncio.Queue`（`BUS_QUEUE_MAXSIZE`，入站与出站）；队列满时生产者等待空位，而不是丢消息。通道实现以独立目录（文件夹）形式存放在 `plugins/channels/` 目录下（运行时扫描含 `core.py` 的目录自动发现），而非本包内。
 
 ## 主要功能
 

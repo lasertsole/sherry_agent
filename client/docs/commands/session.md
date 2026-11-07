@@ -73,7 +73,7 @@ const messages = await invoke<HistoryMessage[]>('session_history', {
 | Field             | Type             | Required | Description                           |
 | ----------------- | ---------------- | -------- | ------------------------------------- |
 | `session_id`      | `string`         | Yes      | Session ID to query                   |
-| `last_turn_count` | `number \| null` | No       | Number of recent turns (`null` = all) |
+| `last_turn_count` | `number \| null` | No       | Recent turns to return; omitted/null = 10 |
 
 ### Returns
 

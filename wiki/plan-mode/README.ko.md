@@ -4,7 +4,7 @@
 
 세션은 실행 전에 설계할 수 있습니다: 에이전트가 **플랜 모드**에 들어가 읽기 전용 도구만으로 작업하고, 계획을 제출한 뒤 사용자의 승인 전까지 어떤 파일도 쓰지 않습니다. 다중 파일 변경으로 곧바로 돌진하는 것이 가장 어긋나기 쉬운 길이며, 사용자는 방향을 바로잡을 기회를 얻지 못합니다.
 
-사실 출처: `agent/tools/plan_mode/`(두 도구 + 공유 상태 헬퍼), `agent/middlewares/tool_selection/core.py`(허용 목록), `workspace/prompt_builder.py::_build_plan_mode_block`(시스템 리마인더), `config/features/agent_side/plan_mode.py`(조정 값).
+사실 출처: `agent/tools/plan_mode/`(두 도구 + 공유 상태 헬퍼), `agent/middlewares/plan_mode_gate/core.py`(허용 목록), `workspace/prompt_builder.py::_build_plan_mode_block`(시스템 리마인더), `config/features/agent_side/plan_mode.py`(조정 값).
 
 ## 흐름
 

@@ -28,6 +28,7 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
 | `session_id`        | `string`         | Yes      | Unique session identifier                   |
 | `text`              | `string \| null` | No       | Text message content                        |
 | `image_base64_list` | `string[]`       | No       | Base64-encoded images for multi-modal input |
+| `image_path_list`   | `string[]`       | No       | Already-uploaded HTTP image URLs            |
 
 ### Returns
 
@@ -87,8 +88,8 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
 
 Stop an ongoing agent generation for the given session.
 
-Sends a cancellation request to the Python backend (`POST /sessions/agent/sse/stop`).
-The SSE stream will terminate and emit `agent:stream:end`.
+Sends a stop frame to the Python backend over `/sessions/agent/ws`.
+The stream will terminate and emit `agent:stream:end`.
 
 ### Signature
 

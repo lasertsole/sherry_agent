@@ -27,9 +27,7 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
   同じディレクトリにある。
 
 - 2026-11-04 以降、タスク prompt はインスタンスの test patch と FAIL_TO_PASS
-  名を（読み取り専用で）含みます。checkout は事前にパッチされず、公式の test
-  patch は従来どおり判定時に適用され、インスタンスレポートは
-  `target_tests_exposed` を記録します。
+  名を（読み取り専用で）含みます。checkout は実行前に test patch でパッチされ、判定時にファイルをリセットしてから再適用します。インスタンスレポートは `target_tests_exposed` を記録します。
 
 ## 失敗の履歴（2026-11-01）
 

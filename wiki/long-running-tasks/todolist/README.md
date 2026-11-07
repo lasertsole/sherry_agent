@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> A session-scoped, lightweight planning and enforcement layer built on top of the existing TaskFlow system. It is **not a task engine**, **not a DAG**, and **does not implement a scheduler**. Session-level plans are managed by `todowrite` / `todoread` (compression-immune via system prompt injection). Cross-session, durable, subagent-dispatching execution is owned by **TaskFlow** (`depends_on`, `blocked/ready/dispatched/done`, `taskflow_step(action="dispatch")`, `taskflow_step(action="wait_all")`). The two layers are linked by `flow_id` / `step_id`; a single state has one authoritative source — no cross-layer duplication.
+> A session-scoped, lightweight planning and enforcement layer built on top of the existing TaskFlow system. It is **not a task engine**, **not a DAG**, and **does not implement a scheduler**. Session-level plans are managed by `todowrite` / `todoread` (compression-immune via the per-turn system-reminder block). Cross-session, durable, subagent-dispatching execution is owned by **TaskFlow** (`depends_on`, `blocked/ready/dispatched/done`, `taskflow_step(action="dispatch")`, `taskflow_step(action="wait_all")`). The two layers are linked by `flow_id` / `step_id`; a single state has one authoritative source — no cross-layer duplication.
 
 ---
 
@@ -25,7 +25,7 @@
   - [E2: Tool Description Enforcement — Format + Delegation Rules](enforcement/README.md#e2-tool-description-enforcement--format--delegation-rules)
   - [E3: Continuation Enforcer — Post-Turn Closure Core ★★](enforcement/README.md#e3-continuation-enforcer--post-turn-closure-core-)
   - [E4: Transition Barrier — Dual Insurance](enforcement/README.md#e4-transition-barrier--dual-insurance)
-  - [E5: Sisyphus Completion Contract ★★](enforcement/README.md#e5-sisyphus-completion-contract-)
+  - [E5: Sisyphus doctrine (prompt-only; runtime gate is completion drain) ★★](enforcement/README.md#e5-sisyphus-completion-contract-)
   - [E6: Delegation Routing — Todo & Subagent Linkage ★](enforcement/README.md#e6-delegation-routing--todo--subagent-linkage-)
   - [E7: Intent Recognition & Guidance — Pre-Trigger ★★](enforcement/README.md#e7-intent-recognition--guidance--pre-trigger-)
 - [Frontend](#frontend)
@@ -132,7 +132,7 @@ One-liner: model won't plan → E7 injects guidance; model stops lazily → E3 p
 Layer 9  │ UI Component      │ ProgressFloat.vue (PrimeVue), grouped by TaskFlow flow
 Layer 8  │ Frontend State    │ useTodoList.ts (module singleton) + grouped by flow
 Layer 7  │ Realtime Comm     │ WS: todo_updated push + todo_refresh reconnect
-Layer 6  │ Compression Guard │ build_system_prompt injects current todos + boulder state
+Layer 6  │ Compression Guard │ DynamicReminderMiddleware injects current todos + boulder as per-turn reminders
 Layer 5  │ DAG Execution     │ Provided by TaskFlow: depends_on + blocked/ready/dispatched/done
 Layer 4  │ Orchestration     │ ulw-execute: plan→checkbox→sub-task→worker→verify, calls TaskFlow
 Layer 3  │ Tools             │ todowrite + todoread (DAG executed by taskflow_* tool family)
@@ -143,7 +143,7 @@ E1       │ System Prompt     │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ Tool Description  │ todowrite docstring format rules
 E3       │ Continuation ★★  │ after_agent middleware: idle+incomplete→auto-continue
 E4       │ Transition Barrier│ TaskFlow step not done / subagent running → block completed
-E5       │ Sisyphus Verify  │ DoneClaim → AdversarialVerify → FullyDone (5 gates)
+E5       │ Sisyphus Verify  │ Doctrine only: DoneClaim → AdversarialVerify → FullyDone (runtime gate = evidence drain)
 E6       │ Delegation Route  │ #a fan-out + #b category route + #c delegation cmd + #d barrier
 E7       │ Intent Recognizer│ before_model: arming (no plan + task intent) + plan-active reminder
 ```
@@ -246,9 +246,9 @@ def build_todolist_tools() -> list[BaseTool]:
 
 The skill file defines when to use todolist (3+ step work), available tools, status/priority/delegation fields, DAG fields (delegated to TaskFlow), and rules (prefer local actions; replace only for a full rewrite; one in_progress at a time; no marking completed before a subagent returns).
 
-### knowledge — Plan-Identity Isolation
+### knowledge — Retired (legacy plan-identity storage)
 
-The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by **plan identity**, not by plan name. Association comes from three sources (`ownership.association_plan_refs()`): the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `src/data/boulder.json` work whose `plan_name` matches and whose `session_ids` contains the session. `identity.resolve_plan_identity()` maps that name to the canonical plan path and derives the storage directory `workspace/knowledge/plans/<plan_key>/`, where `plan_key = sha1(repo-relative plan path)[:12]`; each directory carries a `meta.json` with the readable `plan_name` / `plan_ref`. Consequences:
+The model-facing `knowledge` tool is no longer registered; only internal `KnowledgeStore` audit/repair reads and writes remain. The historical storage layer (`agent/tools/todolist/knowledge/`) is keyed by **plan identity**, not by plan name. Association comes from three sources (`ownership.association_plan_refs()`): the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `src/data/boulder.json` work whose `plan_name` matches and whose `session_ids` contains the session. `identity.resolve_plan_identity()` maps that name to the canonical plan path and derives the storage directory `workspace/knowledge/plans/<plan_key>/`, where `plan_key = sha1(repo-relative plan path)[:12]`; each directory carries a `meta.json` with the readable `plan_name` / `plan_ref`. Consequences:
 
 - Same-named plans held in different plan files are **physically isolated** — each session writes its own key directory, so neither can overwrite the other;
 - One plan file shared through boulder `session_ids` resolves the same path for every listed session, so **multi-session collaboration stays intact** (one shared directory);
@@ -285,7 +285,7 @@ Phase 5: Mark progress → edit checkbox - [ ] → - [x], continue without askin
    - Deps unsatisfied → `blocked`, not dispatched. Unknown dep id → error, no state change.
 3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — inject result:
    - Step becomes `done`; dependent `blocked` steps unlock to `ready` (returned).
-   - **Resume does NOT auto-dispatch.**
+   - `auto_dispatch=True` (the default) spawns the whole ready set immediately; pass `auto_dispatch=False` to only unlock.
 4. `taskflow_step(action="dispatch", flow_id, step_ids)` — batch parallel dispatch ready steps.
 5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — wait for dispatched children to settle.
 6. `taskflow_flow(action="finish", flow_id, summary)` — wrap up; `taskflow_inspect(action="summary")` anytime for re-read.
@@ -333,7 +333,7 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 | -------------------------- | ----------------- | ------------ | ----------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 lines     | Active work state                                           |
-| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 lines | key_failures + key_successes + reusable_patterns (identity-resolved)         |
+| `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
 ### Implementation
 
@@ -365,7 +365,7 @@ def _build_todo_block(session_id: str) -> str:
 
 | omo's 5 layers                                      | This approach                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------------- |
-| Prune protection list                               | Not needed (todos in system prompt)                                     |
+| Prune protection list                               | Not needed (todos in the per-turn reminder block)                                     |
 | Pre-compression snapshot + post-compression restore | Not needed (system prompt rebuilt from DB each time)                    |
 | 8-segment compression context injection             | Not needed (todos not in conversation history)                          |
 | 60s compression protection window                   | Not needed (no continuation injector to protect)                        |

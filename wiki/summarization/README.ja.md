@@ -30,6 +30,8 @@
 
 ## 🎯 概要
 
+トリガーしきい値は `resolve_compression_threshold` が計算し、`MAIN_LLM_MAX_OUTPUT_TOKEN` 設定時は `window - max_output_tokens`、未設定時は `COMPRESSION_TRIGGER_RATIO=0.80` にフォールバックします。
+
 `Summarization`（`agent/middlewares/summarization/core.py`、クラスは `core.py:234`）は**ゼロから実装された** `AgentMiddleware` であり、LangChain 組み込みの `SummarizationMiddleware` を継承し**ません**。エージェントライフサイクルの正確に 2 箇所だけにフックします:
 
 - `before_agent` / `abefore_agent`（`core.py:399` / `core.py:403`）—— **T1 事前点検**
@@ -49,8 +51,8 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 箇所 | トリガー | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| メインエージェント（`agent/core.py:204`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `compression_llm`（`COMPRESSION_LLM_*`、未設定時は補助モデル） | `True` |
-| ワーカー/サブエージェント（`agent/tools/subagent/spawn/core.py:909`） | `("messages", 40)` **または** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（デフォルト） |
+| メインエージェント（`agent/core.py`） | `("tokens", resolve_compression_threshold(window, max_output, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])` | `compression_llm`（`COMPRESSION_LLM_*`、未設定時は補助モデル） | `True` |
+| ワーカー/サブエージェント（`agent/tools/subagent/spawn/core.py`） | `("messages", 40)` **または** `("tokens", resolve_compression_threshold(window, max_output, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])` | `auxiliary_llm` | `False`（デフォルト） |
 
 どちらも `main_llm_context_window=main_llm_max_tokens`（`MAIN_LLM_MAX_TOKEN` 由来）を渡します。
 
@@ -60,7 +62,7 @@ AIMessage(<summary>, lc_source="summarization")
 `_filter_summary_messages` は (a) 直前の要約ペア
 (`lc_source="summarization"`) と、(b) source が `compress_exclude` を宣言した
 カタログ reminder（デフォルト: plan mode、todo、TaskFlow、boulder、project
-instructions、ディレクトリ通知、knowledge index）を除外します。これらの内容は
+instructions、ディレクトリ通知）を除外します。これらの内容は
 注入ターンのスナップショットで、次のターンには live state から再派生されるため、
 要約にはノイズでしかありません。`continuity_context` は
 `compress_exclude=False` を宣言して残ります。タグ導入前に注入された古い
@@ -141,11 +143,11 @@ session のモデル profile は `context_window`（クライアント descripto
 | `PRUNE_MIN_REDUCTION_TOKENS` ◆ | `5_000` | プルーン: 適用の最小利益 |
 | `TARGET_TRUNCATE_RATIO` ◆ | `0.5` | ターゲット切り詰め: 現在トークンの 50% へ収縮 |
 | `MIN_OUTPUT_CHARS_TO_TRUNCATE` ◆ | `500` | ターゲット切り詰め: 資格基準 |
-| `MAX_TOOL_OUTPUT_CHARS` ◆ | `2_000` | ターゲット切り詰め: 出力ごとの上限 |
+| `MAX_TOOL_OUTPUT_TOKENS` ◆ | `500` | ターゲット切り詰め: 出力ごとの上限 |
 | `MIN_ARGS_CHARS_TO_TRUNCATE` ◆ | `500` | ツール引数切り詰め: 資格基準（JSON 直列化した引数の長さ） |
 | `MAX_TOOL_ARGS_CHARS` ◆ | `2_000` | ツール引数切り詰め: 引数ごとの上限 |
-| `AGGRESSIVE_TRUNCATE_CHARS` ◆ | `1_000` | アグレッシブ・バックストップのカット長（ツール結果とツール呼び出し引数） |
-| `SUMMARY_TOTAL_MAX_CHARS` ◆ | `16_000` | 要約メッセージ文字上限 |
+| `AGGRESSIVE_TRUNCATE_TOKENS` ◆ | `250` | アグレッシブ・バックストップのカット長（ツール結果とツール呼び出し引数） |
+| `SUMMARY_TOTAL_MAX_TOKENS` ◆ | `4_000` | 要約メッセージ文字上限 |
 | `CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO` ◆ | `0.3` / `0.3` | すべての先頭/末尾保持（要約と TTL 切り詰め） |
 | `DEGRADATION_NO_TEXT_THRESHOLD` ◆ | `3` | 強制リカバリ前の空応答数 |
 | `MAX_RECOVERY_ATTEMPTS` ◆ | `2` | 劣化リカバリ予算 |
@@ -169,8 +171,8 @@ session のモデル profile は `context_window`（クライアント descripto
 | `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK`（推定器） | `85` / `256` / `1024` / `85` | マルチモーダル content リストのブロック単位固定コスト —— base64 は決してテキストとして数えない; `config/features/agent_side/token_estimation.py` で定義 |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 有効期限の地平 —— TTL トリオのみ消費（現在はテスト専用） |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 初回観測レジストリの上限（現在はテスト専用） |
-| `SUMMARY_TRIM_TOKENS` ○ | `12_000` | ミドルウェアがインポート、一度も読まれない |
-| `AUTO_CONTINUE_PROMPT` ○ | — | ミドルウェアがインポート、一度も読まれない |
+| `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 設定で定義されるが一度も読まれない |
+| `AUTO_CONTINUE_PROMPT` ○ | — | 設定で定義されるが一度も読まれない |
 | `DEGRADATION_MONITOR_COUNT` ○ | `5` | 定義あり、未インポート |
 | `FILE_OPS_SECTION_MAX_CHARS` ○ | `2_000` | 定義あり、未インポート（実際に使われるのは 900 文字のリスト上限） |
 
@@ -180,7 +182,7 @@ session のモデル profile は `context_window`（クライアント descripto
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` の各バンド、候補規則、安定したルート文字列 |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | その場での切り詰め、ペアリング不変量、空でないプレースホルダ、レジストリ上限、予算切り詰め |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 ステータス、テキストヒント、7 つの substring + 25 の provider オーバーフローパターン、NON_OVERFLOW 除外、Cerebras bodyless、cause チェーン深さ、読み取り専用保証 |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 75 | 413 ステータス、テキストヒント、7 つの substring + 25 の provider オーバーフローパターン、NON_OVERFLOW 除外、Cerebras bodyless、cause チェーン深さ、読み取り専用保証 |
 | `tests/models/test_provider_max_output.py` | 15 | provider フィールド対応、Responses 下限、8K 業務下限、未知 gateway のスキップ |
 | `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | 有効ウィンドウ、保持/可用予算、圧力帯、reserve クランプ |
 | `tests/agent/middlewares/test_microcompact.py` | 7 | token/アイドルトリガー、直近保持、メディア/クリア済みスキップ、最小節約、キルスイッチ |
@@ -193,23 +195,23 @@ session のモデル profile は `context_window`（クライアント descripto
 | `tests/config/test_num_contract.py` | 46 | 定数契約（ウォッチドッグ `CONTRACT_NAMES` が文書化済みの全ノブをカバー） |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 純クリップ: 末尾バッチ検出、max_remove/min_keep/enabled ゲート、トークン目標、マーカー保持（P0-2 ポインタ、P2-4 通知）、no-op 冪等性、ペアリング不変量 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 ミドルウェア統合: T1/T2 の LLM なしクリップ、不十分クリップの劣化、キルスイッチ、T4/T5 のクリップ→再試行とクリップ→圧縮劣化、同期/非同期パリティ、サニタイザ不変 |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ、チェイニング要約フィルタリング |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 54 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ、チェイニング要約フィルタリング |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 圧縮時のインライン・メディア・オフロード: 書き込み + ポインタ、内容ハッシュ重複排除、デコード/書き込み失敗のプレースホルダ、保持ウィンドウのメディア不変、同期/非同期パリティ、`evicted_refs` 収集 |
 | `tests/agent/middlewares/test_license_invalidation.py` | 11 | 読み取りライセンスの無効化: 要約に捨てられた `read_file` はライセンスを失い（後の `write_file` は拒否）、保持側の末尾の読み取りは保ち、最新読み取り規則、部分的な重なり、`patch_file` / append は無影響、再読で再発行、同期/非同期パリティ、fail-open |
 | `tests/pub/func/test_estimate_tokens_media.py` | 22 | ブロック単位のマルチモーダル推定: 固定型コスト、5 MB base64 回帰、メディアを隠す未知ブロック、`str` / `None` / 空リスト / 純テキスト境界 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | チェイニング要約フィルタリング: 旧ペアを直列化会話から除去、通常/空/複数ペア入力、未マークの旧セッション human を保持、async `_acreate_summary` ミラー |
-| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 構造化要約: schema 強制変換、レンダリング往復 + バイト安定 + セクション順、コード層 cap + 注記、latest request 逐字、json_mode/json_repair/free-form の 3 ティア、prior-doc JSON チェイニング、旧 MD 遷移、退避ポインタの収集と継承 |
+| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 50 | 構造化要約: schema 強制変換、レンダリング往復 + バイト安定 + セクション順、コード層 cap + 注記、latest request 逐字、json_mode/json_repair/free-form の 3 ティア、prior-doc JSON チェイニング、旧 MD 遷移、退避ポインタの収集と継承 |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: 計画アクティブ判定（state/todo ソース、全完了ゲート、fail-open）、初回/更新プロンプト両経路への注入、チェーン圧縮を跨ぐノートの継承/追記/cap/クリア、latest request 逐字 + 退避ポインタ、複数メッセージ連投 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 登録契約（テスト固定ウィンドウ）: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
-| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 143 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
 | `tests/agent/middlewares/message_persistence/` | 31 | 境界 + ツール返却の増分フラッシュ: 各メッセージちょうど 1 回、境界をまたいで重複なし、永続ウォーターマークによる再起動リプレイで行数不増、同期 + 非同期フック、session_id 欠落スキップ、HITL 拒否ペアの再装着、フィルタ意味論; さらに T1/T2/T3 圧縮経路のゼロ書き込み証明と、要約ペア（両半分）のゼロ書き込み証明 |
 | `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | 圧縮時バックグラウンドレビュー ディスパッチ: memory review + skill review が compact 経路から発火、カットなし圧縮は何もディスパッチしない |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
-プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **8240 passed / 13 skipped / 0 failed** で合格（GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P）。
+プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は CI で合格します。各グループの正確な合計は runner が出力します。
 
 ## ⚠️ 正直な限界
 
@@ -217,7 +219,7 @@ session のモデル profile は `context_window`（クライアント descripto
 - **Microcompact が LLM 要約を先取りすることがあります。** 古いツール結果の削除だけで履歴が保持予算以下になると、compact 経路はスキップされ、memory review も発火しません（メッセージは破棄されていないため）。
 - **`compact_now` はツールであり、クライアントコマンドではありません。** ユーザーの要求時にモデルが呼びます。入力欄に `/compact` コマンドはありません。
 - **末尾保持は予算ベースであり、メッセージ件数ではありません。** 保持予算は `PRESERVE_RATIO` × ウィンドウを [2 000, 15 000] にクランプし、ルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。コンストラクタは `keep` 引数を受け取りません。
-- **飾りインポート。** `summarization/core.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。
+- **未使用の設定キー。** `SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT`、`DEGRADATION_MONITOR_COUNT`、`FILE_OPS_SECTION_MAX_CHARS` は `SUMMARIZATION` TypedDict に定義されていますが消費者がなく、`summarization/core.py` からもインポートされません。実際に使われる切り詰めキーはトークン単位の `MAX_TOOL_OUTPUT_TOKENS`、`AGGRESSIVE_TRUNCATE_TOKENS`、`SUMMARY_TOTAL_MAX_TOKENS` です。文字単位の旧キーは互換性/テスト専用です。
 - **TTL レジストリは本番に接続されていません。** `record_first_seen` / `select_expired` / `truncate_expired`（および `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）を消費するのはテストだけです; ミドルウェアはもっぱら `truncate_to_budget` を使います。`agent/` 全域の grep でも TTL トリオの本番呼び出し箇所は見つかりません。レジストリは揮発性でもあります（インメモリ、`tool_call_id` キー、再起動で喪失）。
 - **残存するが不活性なコード。** `_preemptive_check`（overflow.py:148）と `_preemptive_truncate`（compression.py:420）は参照専用です: これらが実装する 2 バンドの先取りに到達する本番呼び出し箇所はありません。
 - **推定器はトークナイザではなく、3 段階のトークナイザフリー・ヒューリスティックです。** API 報告使用量があれば T1 がそれを返し、T2 が CJK 対応ヒューリスティック（CJK 文字は `CHARS_PER_TOKEN_CJK = 2`、それ以外は `CHARS_PER_TOKEN = 4`）、T3 のレガシー `len // 4` は T2 の純 ASCII 退化ケースです。意図的に決定論的（再現可能なテスト、安定した予算）です; `CHARS_PER_TOKEN_CJK = 2` は中国語が 4 ではなく 1–2 字/トークンに近いことを反映しています。

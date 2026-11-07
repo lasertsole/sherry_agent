@@ -49,10 +49,10 @@ Two registrations exist:
 
 | Site | Trigger | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| Main agent (`agent/core.py:204`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `compression_llm` (`COMPRESSION_LLM_*`, aux fallback) | `True` |
-| Worker/subagent (`agent/tools/subagent/spawn/core.py:909`) | `("messages", 40)` **or** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False` (default) |
+| Main agent (`agent/core.py`) | `("tokens", resolve_compression_threshold(window, max_output, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])` | `compression_llm` (`COMPRESSION_LLM_*`, aux fallback) | `True` |
+| Worker/subagent (`agent/tools/subagent/spawn/core.py`) | `("messages", 40)` **or** the same threshold helper | `auxiliary_llm` | `False` (default) |
 
-Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`).
+Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`). `resolve_compression_threshold` uses `window - max_output_tokens` when `MAIN_LLM_MAX_OUTPUT_TOKEN` is set; `COMPRESSION_TRIGGER_RATIO = 0.80` is only the unset-cap fallback ratio.
 
 ### Summary input filtering
 
@@ -60,7 +60,7 @@ The summarizer never sees the live reminder layer's stale snapshots.
 `_filter_summary_messages` drops (a) the previous summary pair
 (`lc_source="summarization"`) and (b) catalog reminders whose source declared
 `compress_exclude` (the default: plan mode, todo, TaskFlow, boulder, project
-instructions, directory notice, knowledge index). Their content was a snapshot
+instructions, directory notice). Their content was a snapshot
 of the injection turn and the next turn rebuilds it from live state, so it is
 noise in a summary. `continuity_context` declares `compress_exclude=False` and
 stays; reminders injected before the tag existed carry no key and keep the
@@ -141,11 +141,11 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `PRUNE_MIN_REDUCTION_TOKENS` ◆ | `5_000` | prune: minimum payoff to apply |
 | `TARGET_TRUNCATE_RATIO` ◆ | `0.5` | target-truncate: shrink toward 50% of current tokens |
 | `MIN_OUTPUT_CHARS_TO_TRUNCATE` ◆ | `500` | target-truncate: eligibility |
-| `MAX_TOOL_OUTPUT_CHARS` ◆ | `2_000` | target-truncate: per-output cap |
+| `MAX_TOOL_OUTPUT_TOKENS` ◆ | `500` | target-truncate: per-output token cap (legacy char keys are ×4) |
 | `MIN_ARGS_CHARS_TO_TRUNCATE` ◆ | `500` | tool-args truncate: eligibility (JSON-serialized args length) |
 | `MAX_TOOL_ARGS_CHARS` ◆ | `2_000` | tool-args truncate: per-args cap |
-| `AGGRESSIVE_TRUNCATE_CHARS` ◆ | `1_000` | aggressive backstop cut length (tool results and tool-call args) |
-| `SUMMARY_TOTAL_MAX_CHARS` ◆ | `16_000` | summary message char cap |
+| `AGGRESSIVE_TRUNCATE_TOKENS` ◆ | `250` | aggressive backstop cut length (tool results and tool-call args) |
+| `SUMMARY_TOTAL_MAX_TOKENS` ◆ | `4_000` | summary message token cap (`×4` approximates the old 16 000-char cap) |
 | `CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO` ◆ | `0.3` / `0.3` | all head/tail keeps (summaries and TTL truncation) |
 | `DEGRADATION_NO_TEXT_THRESHOLD` ◆ | `3` | empty replies before forced recovery |
 | `MAX_RECOVERY_ATTEMPTS` ◆ | `2` | degradation-recovery budget |
@@ -169,7 +169,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK` (estimator) | `85` / `256` / `1024` / `85` | fixed per-block costs for a multimodal content list — base64 is never counted as text; defined in `config/features/agent_side/token_estimation.py` |
 | `PRUNE_TTL_SECONDS` | `300` | TTL-expiry horizon — consumed only by the TTL trio (test-only today) |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL first-seen registry bound (test-only today) |
-| `SUMMARY_TRIM_TOKENS` ○ | `12_000` | imported by the middleware, never read |
+| `SUMMARY_TRIM_TOKENS` ○ | `12_000` | defined in config, never read |
 | `AUTO_CONTINUE_PROMPT` ○ | — | imported by the middleware, never read |
 | `DEGRADATION_MONITOR_COUNT` ○ | `5` | defined, not imported |
 | `FILE_OPS_SECTION_MAX_CHARS` ○ | `2_000` | defined, not imported (only the 900-char list cap is used) |
@@ -180,7 +180,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` bands, candidate rules, stable route strings |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | In-place truncation, pairing invariant, non-empty placeholders, registry bound, budget truncation |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 status, text hints, 7 substring + 25 provider overflow patterns, NON_OVERFLOW exclusions, Cerebras bodyless, cause-chain depth, read-only guarantees |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 75 | 413 status, text hints, 7 substring + 25 provider overflow patterns, NON_OVERFLOW exclusions, Cerebras bodyless, cause-chain depth, read-only guarantees |
 | `tests/models/test_provider_max_output.py` | 15 | provider field mapping, Responses floor, 8K business floor, unknown-gateway skip |
 | `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | effective window, preserve/usable budgets, pressure bands, reserve clamp |
 | `tests/agent/middlewares/test_microcompact.py` | 7 | token/idle triggers, keep-recent, media/cleared skips, min savings, kill switch |
@@ -193,23 +193,23 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 pure clip: trailing-batch detection, max_remove/min_keep/enabled gates, token target, marker preservation (P0-2 pointer, P2-4 notice), no-op idempotency, pairing invariant |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 middleware integration: T1/T2 clip without LLM, insufficient-clip degradation, kill switch, T4/T5 clip-then-retry and clip→compression degradation, sync/async parity, sanitizer-unchanged |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity, chained-summary filtering |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 54 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity, chained-summary filtering |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 12 | Compression-time inline-media offload: write + pointer, content-hash dedup, placeholder on decode/store failure, preserved-window media untouched, sync/async parity, `evicted_refs` collection |
 | `tests/agent/middlewares/test_license_invalidation.py` | 11 | Read-license invalidation: a summarized-away `read_file` drops its license (later `write_file` refused), preserved-tail reads keep theirs, latest-read rule, partial overlap, `patch_file` / append unaffected, re-read re-licenses, sync/async parity, fail-open |
 | `tests/pub/func/test_estimate_tokens_media.py` | 22 | Block-wise multimodal estimation: fixed media costs, 5 MB-base64 regression, unknown blocks hiding media, `str` / `None` / empty-list / pure-text edges |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | Chained-summary filtering: prior pair stripped from the serialized conversation, normal/empty/multi-pair inputs, unmarked legacy human preserved, async `_acreate_summary` mirror |
-| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | Structured summary: schema coercion, render round-trip + byte stability + section order, code-layer caps + annotations, verbatim latest request, json_mode/json_repair/free-form tiers, prior-doc JSON chaining, legacy-MD transition, evicted-refs collection + carry-forward |
+| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 50 | Structured summary: schema coercion, render round-trip + byte stability + section order, code-layer caps + annotations, verbatim latest request, json_mode/json_repair/free-form tiers, prior-doc JSON chaining, legacy-MD transition, evicted-refs collection + carry-forward |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: plan-active detection (state/todo refs, all-done gate, fail-open), prompt injection on first/update paths, notes inherit/append/cap/clear across chained compressions, verbatim latest request + eviction pointer, multi-message burst |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Registration contract (test-pinned window): `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
-| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 143 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
 | `tests/agent/middlewares/message_persistence/` | 31 | Per-boundary flush (+ tool return): each message exactly once, no duplicate across boundaries, restart replay via the persistent watermark, sync + async hooks, missing-session_id skip, HITL denial re-pairing, filter semantics; plus T1/T2/T3 compactions proving zero store writes and the summary pair (both halves) proving zero writes |
 | `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | Compression-time background-review dispatch: memory review + skill review fire from the compact path; no-cut compactions dispatch nothing |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | Persistent watermark store: idempotent marking, session scoping, cleanup on session deletion, empty-input no-ops |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
-The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **8240 passed / 13 skipped / 0 failed** (GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P).
+The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes in CI; the exact per-group totals are printed by the runner.
 
 ## ⚠️ Honesty & Limitations
 
@@ -217,7 +217,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 - **Microcompact can preempt the LLM summary.** When clearing old tool results alone brings the history under the preserve budget, the compact route is skipped; the memory-review pass then does not fire (no messages were discarded).
 - **`compact_now` is a tool, not a client command.** The model calls it when the user asks; there is no `/compact` composer command.
 - **Tail retention is budget-based, not a message count.** The preserve budget is `PRESERVE_RATIO` × window clamped to [2 000, 15 000], plus the router's `TRUNCATABLE_RECENT_SKIP` margin; the constructor takes no `keep` argument.
-- **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
+- **Inert config keys.** `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`, `DEGRADATION_MONITOR_COUNT`, and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict but consumed by nothing; they are not imported by `summarization/core.py`. The live truncation knobs are the token-denominated `MAX_TOOL_OUTPUT_TOKENS`, `AGGRESSIVE_TRUNCATE_TOKENS`, and `SUMMARY_TOTAL_MAX_TOKENS`; the character-denominated legacy keys remain only for compatibility/tests.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).
 - **Retained-but-inert code.** `_preemptive_check` (overflow.py:148) and `_preemptive_truncate` (compression.py:420) are reference-only: no production call site reaches the two-band preemption they implement.
 - **The estimator is a three-tier tokenizer-free heuristic, not a tokenizer.** T1 returns provider-reported usage when available; T2 is the CJK-aware heuristic (CJK characters at `CHARS_PER_TOKEN_CJK = 2`, everything else at `CHARS_PER_TOKEN = 4`); T3 is the legacy `len // 4`, the pure-ASCII degenerate case of T2. It is intentionally deterministic (reproducible tests, stable budgets); `CHARS_PER_TOKEN_CJK = 2` reflects Chinese averaging closer to 1–2 chars/token than 4.

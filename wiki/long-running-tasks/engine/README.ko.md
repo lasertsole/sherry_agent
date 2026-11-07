@@ -26,6 +26,9 @@ class StepStatus(StrEnum):         # config.py:21
     READY = "ready"
     DISPATCHED = "dispatched"
     DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})   # config.py:35
 ```
@@ -44,7 +47,11 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
     deadline_ts REAL,
-    session_id TEXT NOT NULL DEFAULT ''
+    session_id TEXT NOT NULL DEFAULT '',
+    resumed_from TEXT,
+    superseded_by TEXT,
+    terminal_reason TEXT,
+    updated_at REAL
 );
 ```
 
@@ -62,6 +69,9 @@ blocked ──(의존 충족)──▶ ready ──(디스패치)──▶ dispa
 | `ready` | 모든 의존이 충족되어 디스패치 대기 | 등록 시, 또는 재개 후 `unlock_dependents` |
 | `dispatched` | 분리된 자식 세션이 생성됨; `child_session_key`와 `dispatched_at` 기록 | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | `taskflow_step(action="resume")`가 결과를 주입함 | `taskflow_step(action="resume")` |
+| `failed` | 확정적 실패(`step_outcome="failure"` 또는 schema/판정기 재시도 예산 소진). 의존 단계는 `blocked` 유지 | `taskflow_step(action="resume")` |
+| `skipped` | 스킵 선언, 또는 의존성이 스킵/취소되어 하위로 전파 | `taskflow_step(action="resume")` / `unlock_dependents` |
+| `cancelled` | 단계 완료 전에 플로우가 취소됨 | `taskflow_flow(action="cancel")` |
 
 `done`은 **"결과가 주입됨"**을 뜻하며 "자식이 성공함"이 아닙니다([알려진 한계](../README.ko.md#-알려진-한계) 참조). `status` 필드가 없는 레거시 단계는 파생됩니다: `child_session_key`를 가진 단계는 `dispatched`, 그렇지 않으면 `ready`로 간주됩니다(`_shared.py:85`, `step_status`).
 
@@ -223,7 +233,7 @@ total_cost   = round(existing_total_cost + cost_delta, 6)
 | `glm-5` | 0.5 | 1.5 |
 | `deepseek-chat` | 0.14 | 0.28 |
 | `kimi-latest` | 0.55 | 2.19 |
-| `_default` | 1.0 | 3.0 |
+| `_default` | 0.5 | 1.5 |
 
 `budget_warn_threshold` = `0.80`.
 
@@ -349,9 +359,9 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 | :--- | :--- | :--- |
 | **TaskFlow** | `task_flows.session_id` 컬럼(이번 변경) | `agent/tools/taskflow/registry/store_sqlite.py` |
 | **TodoList** | `session_id`가 테이블의 기본키 접두사 — 처음부터 세션 범위 | `agent/tools/todolist/registry/store_sqlite.py` |
-| **Knowledge** | 계획 아이덴티티 단위로 격리(도구 계층에서 강제): 연결은 `ownership.association_plan_refs()`(세션 `plan_ref` 상태 키, 세션 todo `plan_ref`(SQL에서 `session_id`로 필터), `src/data/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work)에서 오고, `identity.resolve_plan_identity()`가 이름을 정규화된 계획 경로로 해석해 저장 키 `sha1(리포지토리 루트 상대 경로)[:12]`를 도출합니다. 서로 다른 파일의 같은 이름 계획은 물리적으로 격리되고, boulder `session_ids`로 공유된 하나의 계획 파일은 나열된 모든 세션에서 같은 `<plan_key>`로 해석됩니다. 비연결/모호한 계획에 대한 `read` / `write`는 진단 가능한 오류로 거부되고 `list`는 연결된 계획만(가독 이름 + key) 반환합니다; `build_knowledge_block(session_id)`는 프롬프트 블록을 위해 세션의 기본 아이덴티티를 해석합니다; `clear_session`은 세션 전용 아이덴티티 디렉터리를 제거하고 다른 세션과 공유된 계획은 유지합니다. | `agent/tools/todolist/knowledge/identity.py` |
+| **Knowledge (retired)** | The model-facing `knowledge` tool and `build_knowledge_tools` are no longer registered; only internal `KnowledgeStore` audit/repair reads and writes remain. | `agent/tools/todolist/knowledge/identity.py` |
 
-**서브에이전트 경계.** 세 패밀리 모두 빌더(`build_taskflow_tools`, `build_todolist_tools`, `build_knowledge_tools`)가 `metadata["scope"] = "main_only"`를 부여합니다. `apply_tool_policy`(`agent/tools/subagent/spawn/inherited_tool_policy.py`)는 `main_only` 도구를 **가장 먼저 무조건** 제거합니다 — allow/deny 목록보다 앞서며 ORCHESTRATOR 해제로도 덮어쓸 수 없습니다 — 따라서 스폰된 자식 에이전트는 `taskflow_*`, `todowrite`/`todoread`, `knowledge` 도구를 절대 받지 않습니다. 같은 태그 패턴은 이미 `memory`, `skill_manage`, `sessions_kill`, `sessions_steer`를 포괄했습니다. 실제 도구 세트 단언은 `tests/agent/tools/taskflow/test_taskflow_tools.py`, `_build_child_agent` 경계는 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py`가 고정합니다.
+**서브에이전트 경계.** 남은 두 패밀리 모두 빌더(`build_taskflow_tools`, `build_todolist_tools`)가 `metadata["scope"] = "main_only"`를 부여합니다. `apply_tool_policy`(`agent/tools/subagent/spawn/inherited_tool_policy.py`)는 `main_only` 도구를 **가장 먼저 무조건** 제거합니다 — allow/deny 목록보다 앞서며 ORCHESTRATOR 해제로도 덮어쓸 수 없습니다 — 따라서 스폰된 자식 에이전트는 `taskflow_*`, `todowrite`/`todoread`, `knowledge` 도구를 절대 받지 않습니다. 같은 태그 패턴은 이미 `memory`, `skill_manage`, `sessions_kill`, `sessions_steer`를 포괄했습니다. 실제 도구 세트 단언은 `tests/agent/tools/taskflow/test_taskflow_tools.py`, `_build_child_agent` 경계는 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py`가 고정합니다.
 
 **세션 간 거부.** `taskflow_flow(action="create")`에서 다른 세션이 사용 중인 `flow_id`와 충돌하면 존재만 알리고 리비전은 누출하지 않습니다; 다른 세션의 flow에 대한 변경은 알 수 없는 id와 같은 "not found" 텍스트를 반환합니다. 읽기/목록/업데이트/퍼지 경로는 `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py`, `tests/server/service/test_session_cleanup_service.py`가 포괄합니다.
 

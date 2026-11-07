@@ -214,7 +214,7 @@ When `taskflow_step(action="resume")` dispatches a step with acceptance criteria
 
 ### Level 3: Per-flow (taskflow_flow(action="finish") Gate C)
 
-Before a taskflow can transition to DONE, Gate C reads ONE flow's rows by `flow_id`. Step children are stamped at spawn, the creator is stamped for the duration of the finish call (and restored), and stale / broken / unmark events are auto-stamped from the target session's flow context. There is no session-key fallback on this path; an unstamped row is outside the flow. A flow with no stamped rows has no evidence and passes:
+Before a taskflow can transition to DONE, Gate C reads ONE flow's rows by `flow_id`. Step children are stamped at spawn, the creator is stamped for the duration of the finish call (and restored), and stale / broken / unmark events are auto-stamped from the target session's flow context. When the flow-scoped read is empty (e.g. after a restart cleared the in-memory flow stamp), Gate C falls back to the flow's own sessions — its step children plus the creator, never the whole session. Only when those rows are also empty does the gate pass:
 
 | Condition | Result |
 |-----------|--------|

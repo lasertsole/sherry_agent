@@ -67,7 +67,7 @@ LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Pyt
 
 LDW 运行失败且 `LDW["auto_degrade_enabled"]` 打开时，适配器会从**同一份已验证 DAG** 重建执行。它从不 reset 或重跑旧 flow。
 
-1. 创建一个新的 `ldw-<plan_key>-<nonce>` TaskFlow flow；原 flow 仍存在时带 `resumed_from=<origin>`。
+1. 创建一个新的 `ldw-<plan_key 前 8 位>-<8 位 uuid>` TaskFlow flow；原 flow 仍存在时带 `resumed_from=<origin>`。
 2. 把每个非 None 的 LDW 结果预置为 DONE step，使用合成的 `ldw-journal:<flow>:<step>` child key 和结果记录；只有失败/未完成的 step 保持 ready/blocked。
 3. 通过正常 TaskFlow 派发 ready step，因此 retry policy、schema gate、StepJudge 和 child 完成语义与正常执行完全一致。
 4. 用 `taskflow_wait_all` 轮询，然后对每个 settled child 调用 `taskflow_resume`。超时或被杀 child 声明为 failure；`auto_dispatch` 启动下一波。

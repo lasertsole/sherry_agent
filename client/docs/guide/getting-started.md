@@ -2,7 +2,7 @@
 
 ## Overview
 
-The EMA AI Agent uses a **hybrid architecture**: the Tauri/Rust backend exposes **12 IPC commands** that proxy all requests to the Python backend via HTTP. The frontend uses `bridge.ts` to auto-detect the runtime (Tauri IPC vs browser HTTP).
+The EMA AI Agent uses a **hybrid architecture**: the Tauri/Rust backend exposes **17 IPC commands** that proxy all requests to the Python backend via HTTP. The frontend uses `bridge.ts` to auto-detect the runtime (Tauri IPC vs browser HTTP).
 
 All IPC commands are called via Tauri's `invoke()` API and return typed results.
 
@@ -84,7 +84,7 @@ await sendChatMessage({ session_id: 'default', text: 'Hello!', image_base64_list
 ```
 
 In **Tauri mode**, `bridge.ts` calls `invoke()` and listens for Tauri Events for streaming.
-In **browser mode**, it calls the Python backend directly via `fetch()` with SSE.
+In **browser mode**, it connects to the Python backend at `/sessions/agent/ws` directly over WebSocket.
 
 ## Next Steps
 

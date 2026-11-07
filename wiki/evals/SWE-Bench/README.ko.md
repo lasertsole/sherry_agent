@@ -26,9 +26,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
   디렉터리에 있습니다.
 
 - 2026-11-04부터 작업 prompt에는 인스턴스의 test patch와 FAIL_TO_PASS 이름이
-  (읽기 전용으로) 포함됩니다. checkout은 미리 패치되지 않으며, 공식 test patch는
-  기존처럼 판정 시 적용되고 인스턴스 리포트는 `target_tests_exposed`를
-  기록합니다.
+  (읽기 전용으로) 포함됩니다. checkout은 실행 전에 test patch로 미리 패치되며, 채점 시 파일을 초기화한 뒤 다시 적용합니다. 인스턴스 리포트는 `target_tests_exposed`를 기록합니다.
 
 ## 실패 이력(2026-11-01)
 

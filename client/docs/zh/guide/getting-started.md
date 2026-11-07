@@ -2,7 +2,7 @@
 
 ## 概述
 
-EMA AI Agent 采用**混合架构**：Tauri/Rust 后端暴露 **12 个 IPC 命令**，通过 HTTP 将所有请求代理到 Python 后端。前端使用 `bridge.ts` 自动检测运行环境（Tauri IPC 或浏览器 HTTP）。
+EMA AI Agent 采用**混合架构**：Tauri/Rust 后端暴露 **17 个 IPC 命令**，通过 HTTP 将所有请求代理到 Python 后端。前端使用 `bridge.ts` 自动检测运行环境（Tauri IPC 或浏览器 HTTP）。
 
 所有 IPC 命令通过 Tauri 的 `invoke()` API 调用，返回带类型的结果。
 
@@ -83,7 +83,7 @@ await sendChatMessage({ session_id: 'default', text: '你好！', image_base64_l
 ```
 
 **Tauri 模式**下，`bridge.ts` 调用 `invoke()` 并通过 Tauri Events 接收流式数据。
-**浏览器模式**下，它通过 `fetch()` 直接调用 Python 后端并使用 SSE。
+**浏览器模式**下，它通过 WebSocket 直连 Python 后端 `/sessions/agent/ws`。
 
 ## 下一步
 

@@ -67,7 +67,7 @@ The LDW script stores `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, and `WORKFLOW_META` as
 
 When an LDW run fails and `LDW["auto_degrade_enabled"]` is on, the adapter rebuilds execution from the SAME verified DAG. It never resets or re-runs the old flow.
 
-1. Create a new `ldw-<plan_key>-<nonce>` TaskFlow flow with `resumed_from=<origin>` when the origin still exists.
+1. Create a new `ldw-<first 8 chars of plan_key>-<8-char uuid>` TaskFlow flow with `resumed_from=<origin>` when the origin still exists.
 2. Seed every non-None LDW result as a DONE step with a synthetic `ldw-journal:<flow>:<step>` child key and result record; only failed or unfinished steps stay ready/blocked.
 3. Dispatch ready steps through normal TaskFlow, so retry policies, the schema gate, the StepJudge, and child completion all behave exactly as in normal execution.
 4. Poll with `taskflow_wait_all`, then inject each settled child with `taskflow_resume`. A timed-out or killed child is declared a failure; `auto_dispatch` starts the next wave.

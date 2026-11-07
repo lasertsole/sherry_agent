@@ -129,9 +129,9 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     ├── LLM：model_override → build_llm_by_name()；ORCHESTRATOR →
   │     │   build_main_llm()；LEAF → build_auxiliary_llm()
   │     ├── 独立的异步 SQLite checkpointer（按 child_session_key 隔离）
-  │     └── create_agent() 组装七层中间件：
+  │     └── create_agent() 组装十层中间件：
   │           ├── Summarization(model=<辅助 LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",0.80×main_window)])
+  │           │                  ("tokens", _compression_threshold_for_children(main_llm_max_tokens))])
   │           ├── IterationBudget(执行者 90 / 其他 60) — 最大迭代次数
   │           ├── ToolGuardrails()         — 工具安全护栏
   │           ├── OutputRepetitionGuard()  — 输出重复抑制
@@ -507,7 +507,7 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 
 **能力遏制。** 专用角色（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn 白名单（`SPAWN_ALLOWED_CHILD_ROLES`，`types/functional_role.py`）内的角色：**自己的角色**；executor 可额外派生**只读**的 `researcher` / `librarian`——让 executor 能先调研再写；researcher 与 librarian 之间可以互相派生。缺席的条目仍是「只同角色」（reviewer 保持该规则）。没有这条约束时，只读的 researcher 在 ORCHESTRATOR 深度可以 spawn 一个可写文件的 executor 替它写——因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，从不按父代理的过滤。`MAIN`（无 run 记录）与 `general`（inherit = 全部工具）不受限制——任何专用角色的 allow-list 都是它们的子集。不被允许的角色会被拒绝（绝不静默改角色），错误文本同时列出允许集合与出路：`Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` 两条不变量由测试钉死：每个条目必须保留父角色本身，允许的**非父角色子项必须是只读角色**——这条单跳规则让多层派生无需祖先链遍历即安全：写角色只能到达写角色，只读角色只能派生自己那一类。
 
-**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）；`goal_max_turns` 覆盖 goal loop 预算。模型实际调用的运行时工具携带 `functional_role`、`run_timeout_seconds` 与 `isolation`；此处其余字段属于 build-time 类。
+**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）；`goal_max_turns` 覆盖 goal loop 预算。模型实际调用的运行时工具携带 `functional_role`、`run_timeout_seconds`、`isolation` 与 `output_schema`；此处其余字段属于 build-time 类。
 
 **配置**（`SubagentConfig`）：`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。角色解析在每次 spawn 时恒运行；不传 `functional_role` 时，spawn 行为**逐字节不变**——GENERAL 是恒等角色。
 

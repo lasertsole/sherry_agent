@@ -1,7 +1,7 @@
 # DeepSWE 本地测试失败原因分析
 
 - 建档日期：2026-11-02
-- 状态：**方案 C 已落地（2026-11-02）；压力门与子代理 400 待做**
+- 状态：**方案 C 已落地（2026-11-02）；压力门现为 advisory（7/14 次读提示，不阻断）；子代理 400 待做**
 - 运行：`20261101_233217`，DeepSWE 默认切片，`--local --timeout 1200`
 - 原始记录：[evals/deepswe/RESULTS.md](../evals/deepswe/RESULTS.md)
 - 原始报告（gitignored）：`evals/results/deepswe-local/20261101_233217/`
@@ -14,7 +14,7 @@
 message(s)`，主 agent 的 transcript 也确实看到了子代理结果。
 
 但同一次复跑仍以 0/69 F2P 结束（537.5s，无超时）：第一个实现子代理以
-DeepSeek `reasoning_content` 400 失败；之后主 agent 被压力门锁在“不能读写、
+DeepSeek `reasoning_content` 400 失败；之后主 agent 被当时的压力门设计限制在“不能读写、
 只能 spawn”的状态，只能反复派只读状态检查，无法修改 `src/cattrs/partial.py`。
 所以 C 解决的是“结果不可见”，**没有解决压力门让主 agent 无法修复的问题**。
 下一步优先处理 P1 的压力门恢复窗口和 P1 的子代理 thinking 400。
@@ -29,7 +29,7 @@ DeepSeek `reasoning_content` 400 失败；之后主 agent 被压力门锁在“�
   - `httpx`：104/108 F2P，1404/1404 P2P
   - `cattrs`：62/69 F2P，7/7 P2P
 - 真正的失败链是：
-  1. `DelegationPressureGate` 在 16 次读后拦截主 agent 的 `read_file` / `terminal` / `write_file` / `patch_file`；
+  1. 当时的 `DelegationPressureGate` 在 16 次读后拦截主 agent 的工具调用；当前实现只在 7/14 次读时发 `<system-reminder>` 提示，不阻断工具；
   2. 主 agent 按指令 `sessions_spawn`，只把验证/清理交给子代理；
   3. 子代理正常完成，但 **完成消息没有进入主 agent 的 transcript**；
   4. `sessions_messages` 读子代理 checkpoint 也返回空，主 agent 没有任何回读路径；
@@ -115,7 +115,7 @@ DeepSeek `reasoning_content` 400 失败；之后主 agent 被压力门锁在“�
 
 ### 1.5 压力门的设计放大了故障
 
-`agent/middlewares/delegation_pressure/core.py` 在 16 次读后阻断
+`agent/middlewares/delegation_pressure/core.py` 当时在 16 次读后阻断
 `read_file` / `search_files` / `terminal` / `write_file` / `patch_file` 等。
 当前实现还有两个交互问题：
 
@@ -187,12 +187,9 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
 
 ### P1 — 压力门与交接语义
 
-- [ ] 明确门的阻断集合：`sessions_yield` / `sessions_messages` / `subagents_list`
-  不能被阻断；是否允许 `read_file` 读取子代理结果文件需要设计。
-- [ ] 在门注入的 directive 中说明“结果会作为 completion 消息返回”，并给出
-  `sessions_messages` 兜底；当前 directive 只说去 spawn。
-- [ ] 增加“完成已交付/结果已消费”的可观测状态；主 agent 不应在结果已返回后继续
-  spawn。
+- [x] 门的阻断集合：当前 gate 只发 advisory `<system-reminder>`，不阻断任何工具。
+- [x] directive 已说明 completion 消息与 `sessions_messages` 兜底（当前 gate advisory）。
+- [x] 完成交付/结果消费由 completion drain 与 registry 状态观测。
 - [x] 成功 accepted/pending 的 `sessions_spawn` 解除阻断并清零重新计数；
   失败 spawn 和写本身不清零。后续需观察这是否重新引入 patch 循环，必要时加
   spawn 次数/无进展上限。

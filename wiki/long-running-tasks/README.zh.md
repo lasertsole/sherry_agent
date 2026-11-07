@@ -189,7 +189,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 完成度 %、分解、后续步骤、预计剩余 |
 | `taskflow_flow(action="budget")` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 预算报告，或设置确认 |
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | 本会话面板（`active` / `all` / 状态名） |
-| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 终态 `done`（四道门、失败开放） |
+| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, session_id)` | 终态 `done`（四道门、失败开放） |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 用目标 + 已完成结果 + 失败原因重新生成**未完成**步骤（已完成/在跑的保留，被改步骤的下游重新 blocked，每流程 ≤ 3 次） |
 | `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 把一个目标分解成依赖有序的新流程；初始 ready 兄弟 step 会自动派发 |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `failed` |
@@ -236,7 +236,7 @@ step 可以声明 `skills: ["browser", "code-wiki"]`。dispatch 时系统会把�
 
 ## 🧪 测试
 
-TaskFlow 测试位于 `tests/agent/tools/taskflow/`（二十四个 `unit` 测试文件加一个共享的 `conftest.py`）：
+TaskFlow 测试位于 `tests/agent/tools/taskflow/`（四十八个 `unit` 测试文件加一个共享的 `conftest.py`）：
 
 | 测试文件 | 覆盖内容 |
 | :--- | :--- |
@@ -268,7 +268,7 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（二十四个 `unit` 测试
 | `test_index_audit.py` | SQLite 索引升级路径与查询计划审计 |
 | `test_update_steps.py` | 步骤列表全量替换：增删/重写/重排与 dispatched/done 安全规则 |
 
-跨领域测试套件：`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验门控）、`tests/agent/middlewares/test_completion_drain_gate.py`（无条件的程序化门控）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完成判别器与有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`（证据记录、stale 事件、账本视图）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理流程的提示词注入）、`tests/server/test_session_project.py`（项目目录绑定：挂起/晋升、启动预热）以及 `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（文件浏览器的 `resolve_within` 门禁在工具边界上重跑）。
+跨领域测试套件：`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验门控）、`tests/agent/middlewares/test_completion_drain_gate.py`（无条件的程序化门控）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完成判别器与有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`（证据记录、stale 事件、账本视图）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_plan_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理流程的提示词注入）、`tests/server/test_session_project.py`（项目目录绑定：挂起/晋升、启动预热）以及 `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（文件浏览器的 `resolve_within` 门禁在工具边界上重跑）。
 
 用标准的 uv/pytest 工具只跑这一区块：
 

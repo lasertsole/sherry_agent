@@ -4,7 +4,7 @@
 
 セッションは実行の前に設計できます：エージェントは**プランモード**に入り、読み取り専用ツールだけで作業し、計画を提出し、ユーザーの承認があるまで一切ファイルを書きません。多ファイル変更へいきなり突っ込むのが一番ずれやすい道であり、ユーザーには軌道修正の機会がありません。
 
-事実の出典：`agent/tools/plan_mode/`（2 つのツール + 共有状態ヘルパー）、`agent/middlewares/tool_selection/core.py`（ホワイトリスト）、`workspace/prompt_builder.py::_build_plan_mode_block`（システムリマインダー）、`config/features/agent_side/plan_mode.py`（調整値）。
+事実の出典：`agent/tools/plan_mode/`（2 つのツール + 共有状態ヘルパー）、`agent/middlewares/plan_mode_gate/core.py`（ホワイトリスト）、`workspace/prompt_builder.py::_build_plan_mode_block`（システムリマインダー）、`config/features/agent_side/plan_mode.py`（調整値）。
 
 ## 流れ
 

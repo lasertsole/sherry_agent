@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> 에이전트가 두 LLM 모두에 200K 컨텍스트 윈도우 하한을 강제하는 방식: 하나의 공유 술어가 네 개의 적용 지점(서버 부팅, 그래프 빌드, 서브에이전트 스폰, `.env` 쓰기)에서 예외를 던지고, 프런트엔드는 차단하기 전에 경고하며, `GET /model-config`가 현재 판정을 노출합니다.
+> 에이전트가 두 LLM 모두에 200K 컨텍스트 윈도우 하한을 강제하는 방식: 하나의 공유 술어가 네 개의 적용 지점(서버 부팅, 그래프 빌드, 서브에이전트 스폰, `.models` 쓰기)에서 예외를 던지고, 프런트엔드는 차단하기 전에 경고하며, `GET /model-config`가 현재 판정을 노출합니다.
 
 사실 출처: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, `server/service/models_config.py`, 그리고 `.models`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조해 검증했습니다.
 
@@ -78,7 +78,7 @@ from config.features import (
 | `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow 결정 모델 윈도우(선택) | 미설정 시 보조 모델을 따름; 설정 시 `>= 200000` | `200000` |
 | `COMPRESSION_LLM_MAX_TOKEN` | 압축 모델 윈도우(선택) | 미설정 시 보조 모델을 따름; 설정 시 `>= 200000` | `200000` |
 
-두 키는 설정 쓰기 허용 목록 `TOKEN_KEYS`에도 등록되어 있습니다(`server/service/models_config.py`; `.env` 자체는 모델 키를 받지 않습니다):
+두 키는 설정 쓰기 허용 목록 `TOKEN_KEYS`에도 등록되어 있습니다(`server/service/models_config.py`; `.env` 자체는 더 이상 모델 키를 받지 않습니다):
 
 ```python
 TOKEN_KEYS = frozenset({
@@ -121,7 +121,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 
 기존 `.models`에 이전 기본값 `131072`가 남아 있으면 로드 시 `200000`으로 자동 마이그레이션됩니다. 그 외 하한 미만 값은 자동 수정되지 않고 부팅 게이트가 거부합니다.
 
-> 로컬 `.env`가 아직 `100000`이라면, 서버는 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked`와 함께 시작을 거부합니다. 실행 전에 `>= 200000`로 올리세요.
+> 로컬 `.models`가 아직 `100000`이라면, 서버는 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked`와 함께 시작을 거부합니다. 실행 전에 `>= 200000`로 올리세요.
 
 ### 증상, 원인, 해결
 
@@ -129,9 +129,9 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 | :------ | :---- | :-- |
 | 서버가 즉시 종료되고 로그에 `STARTUP ABORTED: ...` | 키가 미설정이거나 `200000` 미만 | 두 키를 `>= 200000`로 설정 후 재시작 |
 | 로그에 `AUXILIARY_LLM_MAX_TOKEN = 121072 ...` | 보조 키 미설정으로 `121072`로 폴백 | `AUXILIARY_LLM_MAX_TOKEN`을 명시적으로 설정 |
-| 응답 대신 WebSocket 에러 청크 | 실행 중 환경 편집으로 값이 하한 미만이 됨 | `.env`를 고친 뒤 해당 턴을 재시도 |
+| 응답 대신 WebSocket 에러 청크 | 실행 중 환경 편집으로 값이 하한 미만이 됨 | `.models`를 고친 뒤 해당 턴을 재시도 |
 | 환경 탭 저장 시 maxToken 오류 | 값이 비정수이거나 `< 200000` | `>= 200000` 정수를 입력 |
-| 전송 시 "모델 설정이 최소값 미만" toast | `GET /model-config`가 `valid: false` 보고 | `.env`를 고침. 저장 성공 후 캐시가 새로고침됨 |
+| 전송 시 "모델 설정이 최소값 미만" toast | `GET /model-config`가 `valid: false` 보고 | `.models`를 고침. 저장 성공 후 캐시가 새로고침됨 |
 
 ## 🧪 테스트
 
@@ -139,7 +139,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 | :---- | :----- | :----- |
 | `tests/config/test_token_guard.py` | `unit` | 임계값은 `200_000`. `None`과 하한 미만은 예외. 오류가 키 이름을 명시. 하한 이상은 통과 |
 | `tests/agent/core/test_built_agent_guard.py` | `unit` | `built_agent()`가 메인 미만, 메인 미설정, 보조 미설정 폴백을 거부. 유효 env로 빌드 |
-| `tests/server/service/test_env_guard.py` | `unit` | `write_env_file()`가 **쓰지 않고** 하한 미만과 비정수를 거부. 유효값과 비토큰 키는 통과 |
+| `tests/server/test_env_service.py` + `tests/server/test_models_config_service.py` | `unit` | `write_models_config()`가 **쓰지 않고** 하한 미만과 비정수를 거부. 유효값과 비토큰 키는 통과 |
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` 형상과 `valid`: 둘 다 최소, 메인 미만, 보조 미설정, 메인 미설정 |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | 조회 캐시 무효화, 한 번만 캐시, invalidate 후 재조회, 기본 무효 폴백 |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend`는 무효일 때만 경고. 유효할 때와 조회 실패 시 조용 |
@@ -148,7 +148,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 ```bash
 # Python (unit + integration)
 uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent_guard.py \
-  tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
+  tests/server/test_env_service.py tests/server/test_models_config_service.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
 cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token

@@ -13,7 +13,7 @@ OS-isolation detail.
 | 2 | LLM → tool | Tool call | HITL approval gate, `agent/middlewares/humanInTheLoop/detection.py` shell blocklist |
 | 3 | Tool output → model context | Tool result | **Untrusted-output fence**, prompt-injection scanner, tool-result eviction |
 | 4 | Child agent → parent | Announce pipeline | Completion gates, `SubagentCompletionDrain` |
-| 5 | MCP server → agent process | Tool result | Untrusted-output fence (`mcp_` prefix rule; no MCP tool ships yet) |
+| 5 | MCP server → agent process | Tool result | Untrusted-output fence (`mcp_` prefix rule, applied to every shipped MCP tool) |
 | 6 | HTTP client → gateway | HTTP route | Gateway auth middleware, typed query-param casting; with login protection on, the session gate (`server/trigger/auth_user.py`, fail-closed, loopback exempt) |
 | 7 | Filesystem → agent | File tools | `PathGuard`, `O_NOFOLLOW`, virtual-path resolution |
 | 8 | Sandboxed child → host process | Subprocess spawn | `scrub_env`, `bwrap`/`seatbelt` isolation |
@@ -40,7 +40,7 @@ OS-isolation detail.
 | Secret leakage into logs / tool output | **Redaction engine** on the log pipeline (always on, exception text included) and on leak-prone tool output, `scrub_env` for child processes | It removes what its patterns recognise, nothing more |
 | URL credential leakage | **URL redaction**: extra schemes, nested percent-encoding (depth 8), query and presigned parameters | — |
 | Path traversal | `PathGuard` + `O_NOFOLLOW` | — |
-| Shell injection | `agent/middlewares/humanInTheLoop/detection.py` blocklist (12 hardline + 59 dangerous rules) | — |
+| Shell injection | `agent/middlewares/humanInTheLoop/detection.py` blocklist (12 hardline + 61 dangerous rules) | — |
 | Sandbox escape | `bwrap` / `seatbelt` | — |
 | Reasoning-block leakage into the stream | **Inline-CoT redirect**: the thinking is moved to the reasoning channel, not discarded | Models that emit no tags at all are unaffected by definition |
 | Terminal control sequences in captured output | **Sequence stripper** on both `terminal` spawn paths | — |
@@ -161,7 +161,7 @@ sandbox remain the real gates.
 
 **Not affected.** Every internal write keeps working: the `memory` tool,
 `skill_manage`, `exit_plan_mode`, the evidence ledger, shadow-git, the
-checkpointer, trajectory and the knowledge index build their paths from
+checkpointer, trajectory and the code-intel index build their paths from
 `config.path` constants and never pass through the resolvers above.
 
 **Why a whitelist.** A new sensitive path added later is denied by default

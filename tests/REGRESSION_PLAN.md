@@ -18,7 +18,7 @@ uv run python tests/run_tests_split.py
 uv run pytest -m regression -k "UC-03 or cron" -q
 ```
 
-标记约定：`pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]`（组 B/C 同进程约束一致）。
+标记约定：`pytestmark = [pytest.mark.module, pytest.mark.timeout(120)]`（组 B/C 同进程约束一致；个别文件按需更高）。
 
 ---
 
@@ -36,7 +36,7 @@ uv run pytest -m regression -k "UC-03 or cron" -q
 | F8 | HITL 审批 | 6 层管道（hardline/deny/YOLO/allowlist/session/dangerous） | `tests/agent/middlewares/humanInTheLoop/test_hitl_integration.py`, `test_hitl_sandbox_bypass.py` | UC-06, EC-15 |
 | F9 | 多模态输入 | base64 落盘 / 提示词注入 / 历史剥离 / 过期清理 | — | UC-09, EC-16 |
 | F10 | 迭代预算 | wrap_model_call 计数 / 耗尽终态消息 / 回合重置 | — | UC-11, EC-08 |
-| F11 | 工具护栏 | 5 病理 × ALLOW/WARN/BLOCK/HALT + 恢复模式 | `tests/agent/middlewares/test_tool_guardrails.py`（17 个） | UC-12, EC-10 |
+| F11 | 工具护栏 | 5 病理 × ALLOW/WARN/BLOCK/HALT + 恢复模式 | `tests/agent/middlewares/test_tool_guardrails.py`（37 个） | UC-12, EC-10 |
 | F12 | 重复输出守卫 | 跨调用 / 字符连跑 / 短语重复 / 流级检查 | `tests/agent/middlewares/test_tool_guardrails.py`（部分）、`stream_repetition_guard_wrapper` | UC-13 |
 | F13 | 心跳看门狗 | 停滞计数 / 击杀 / 超时异常 | `tests/skills/builtin/core/heartbeat/test_heartbeat_backoff.py` | UC-14 |
 | F14 | 消息总线 | 有界双队列 / 背压 / 顺序 | — | UC-16, EC-09 |

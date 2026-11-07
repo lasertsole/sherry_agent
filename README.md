@@ -25,13 +25,13 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
 - **Context Governance**: oversized tool results and human messages are evicted off the prompt with a recoverable on-disk copy, `read_file` results are sliced, a no-LLM tail clip runs before any compression, and chained summaries are filtered out of the conversation payload
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
-- **Experience Extraction**: three lifecycle paths turn conversation history into durable experience: the compression-time memory review (on every compression), skill review when the todo list is all-complete at a compression, and the post-compression todo fork. They write to the memory store (`memory` / `user` targets in the SQLite `memory_entries` table), the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
+- **Experience Extraction**: four lifecycle paths turn conversation history into durable experience: the compression-time memory review (on every compression), skill review when the plan completes at a turn boundary (not at compression), the post-compression todo fork, and MAIN-session deletion salvage. They write to the memory store (`memory` / `user` / `facts` targets in the SQLite `memory_entries` table), `skills/auto/`, `todos.db`, and the raw `handoff-tree.json` audit file; the model-facing `knowledge` tool and its prompt block are retired
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
 - ▶️ _See the [Experience README](wiki/experience/README.md) for the extraction paths and the skill Curator_
 
 ### 2. 🛠️ Dynamic Skill System
-- **SKILL.md Standard**: skills are Markdown files with YAML frontmatter (`name`, `description`, optional `scope: all | main_only | subagent_only`) — the loader auto-discovers every `SKILL.md` under `skills/`
-- **Built-in Skills** ([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub` (GitHub skill installer), `skill_creator` (generates new skills), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `code_wiki`, `llm_wiki`
+- **SKILL.md Standard**: skills are Markdown files with YAML frontmatter (`name`, `description`, optional `scope: all | main_only | subagent_only`) — the loader scans only the `builtin/`, `auto/`, and `plugins/` roots under `skills/`
+- **Built-in Skills** ([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub` (GitHub skill installer), `skill_creator` (generates new skills), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `bugfix-contract`, `code_wiki`, `llm_wiki`, plus the feature-gated `browser` skill
 - **Skill Management Tools**: the agent can list, view, and manage skills at runtime; third-party uploads (`skills/plugins/`) stay inactive until explicitly enabled
 - **SkillSpector Security Scanning** ([server/service/skill_scanner.py](server/service/skill_scanner.py)): third-party skills are scanned by NVIDIA SkillSpector (static YARA/rule analysis + optional LLM semantic analysis via the auxiliary LLM) before activation; flagged skills are blocked from installation
 - **Skill Curator**: the context-engine curator thread maintains auto-learned skills under `skills/auto/` — see the [Experience README](wiki/experience/README.md)
@@ -39,11 +39,11 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - ▶️ _See the [Middlewares README](agent/middlewares/README.md) for the middleware pipeline (guardrails, iteration budget, HITL, normalization, summarization, multimodal processing)_
 
 ### 3. 🤖 Multi-level Subagent System
-- **7 Runtime Tools**: `sessions_spawn`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
+- **8 Runtime Tools**: `sessions_spawn`, `sessions_messages`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
 - **Hierarchical Roles**: depth-limited nesting (default max depth 2, hard cap 2) with MAIN → ORCHESTRATOR → LEAF roles and least-privilege tool scoping
 - **Isolated Context**: every subagent runs with a fresh, independent context — the parent transcript is never inherited; file attachments are supported
 - **Reliable Delivery**: results return through an EventBus announce pipeline with idempotency checks and exponential-backoff retries
-- **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces run timeouts when configured (default: none)
+- **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces the default 600 s run timeout (`run_timeout_seconds=0` disables it)
 - **Swarm Mode**: batch sub-task execution with FIFO scheduling and configurable concurrency
 - **Verified completion**: every spawn runs an auxiliary-LLM completion judge between child turns; a `continue` verdict injects the judge's follow-up prompt as the next turn, bounded by the configured `COMPLETION_JUDGE["goal_max_turns"]` budget (default 5)
 - **Functional Roles (opt-in)**: `sessions_spawn(functional_role=...)` specializes a worker (general / researcher / executor / reviewer / librarian); the role drives the LLM tier, the tool allow-list, and the child's system-prompt sections
@@ -64,15 +64,15 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Document Parsing**: MinerU-based multimodal document ingestion for the knowledge-graph RAG pipeline
 
 ### 6. ⏰ Scheduled & Proactive Behavior
-- **Cron Service** ([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): one-shot (`at`), interval (`every`), or cron-expression (`cron`, via croniter + timezone) agent tasks, persisted to a JSON job store with per-job run history and delivery to channels
+- **Cron Service** ([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): one-shot (`at`), interval (`every`), or cron-expression (`cron`, via croniter + timezone) agent tasks, persisted to a JSON job store (last-run state) with per-job execution logs under `logs/output/cron/<job_id>.log` and delivery to channels
 - **Heartbeat Service** ([skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)): periodic wake-up (default 30 min) that checks `HEARTBEAT.md` for pending tasks, lets an LLM decide skip/run, and passes results through a notification gate
 
 ### 7. ⚙️ Runtime, Concurrency & Session Control
-- **Project Directory Binding** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): every session has a project directory that its tools resolve relative paths against — session binding → `SHERRY_PROJECT_DIR` → `project_dir` in `sherry.jsonc` → `ROOT_DIR`. `PUT /sessions/project` binds or clears it (`null`), and a choice made mid-turn is parked and promoted at the turn boundary. The root is resolved **per call**, never cached, so a process-level tool singleton never freezes a session onto the first caller's directory; a subagent inherits the parent's binding at spawn and stays frozen to the root it started with. The prompt gains a `## Current Working Directory` block naming the effective root. The root's `AGENTS.md` (fallback `CLAUDE.md`) is injected as a `project_instructions` reminder whenever its content changes, and an explicitly bound project gets one `.sherry/` shell — code index and shadow git — on the first message, never at binding time
+- **Project Directory Binding** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): every session has a project directory that its tools resolve relative paths against — session binding → `SHERRY_PROJECT_DIR` → `project_dir` in `sherry.jsonc` → `ROOT_DIR`. `PUT /sessions/project` binds or clears it (`null`), and a choice made mid-turn is parked and promoted at the turn boundary. The root is resolved **per call**, never cached, so a process-level tool singleton never freezes a session onto the first caller's directory; a subagent inherits the parent's binding at spawn and stays frozen to the root it started with. The prompt gains a `## Current Working Directory` block naming the effective root. The root's `AGENTS.md` (fallback `CLAUDE.md`) is injected as a `project_instructions` reminder whenever its content changes, and an explicitly bound project gets one `.sherry/` shell for the per-project code index on the first message, never at binding time; the write-snapshot shadow-git store lives globally at `APP_HOME/checkpoints/store`
 - **Read-only File Browsing**: `GET /project/tree` and `GET /project/file` serve a lazy tree and a viewer hard-refused outside the session's root (they deliberately bypass the agent's external-file approval flow), with `FILE_BROWSER` bounding read size, encoding, depth and entries per level. The in-app directory picker (`GET /system/dirs`, a deliberate exception that lists one absolute path's **subdirectories only**) backs the browser build, while the desktop build opens the OS folder dialog. A tree row's context menu offers open / open with / open in the built-in browser (HTML) / reveal in the file manager / copy the absolute or relative path / add to chat, and a row (or a file-viewer tab) can be dragged into the composer — either way the message carries an `@./path` mention chip, never the file's content: the agent reads the file itself
 - **Selection Quote & Side Session**: selecting text inside ONE chat message and right-clicking opens a small menu — **Add to Current Session** inserts an atomic quote chip into the composer (sent as a markdown blockquote), while **Ask in Side Session** creates an ordinary child session that is a **complete fork** of the parent: its first turn is seeded with the parent's checkpoint transcript (model-only, so the side chat's visible history stays empty) and the parent preset, agent config, per-session model settings and project directory are copied, with the fork cut at the parent's last completed answer so an unfinished tool call is never replayed. It opens in a session-scoped right-sidebar tab and pre-fills the quote; closing that tab only closes the panel — the child and all of its state survive, it stays in the session list so it can be reopened, and it is purged only when the parent session is deleted. The tab strip's leftmost down-arrow menu lists the latest 10 recently closed tabs under **This session** / **Global** (current-session history is scoped to that session and disappears with it), and restores a closed side chat with its history intact. The **This session** tab group is isolated per session — switching sessions shows that session's own tabs (or none), never the previous session's — while **Global** tabs are shared across all sessions. Selections spanning rows, starting in controls/approval cards, or over 8 000 chars leave the native context menu alone
 - **Agent-Controllable Browser (CDP)** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): opt-in and off by default (`SHERRY_BROWSER_AGENT_ENABLED=1` plus a restart) — while off, no browser tool is registered, every `/browser/*` route answers 404, and no Chromium is spawned. When on, the main agent drives a real loopback Chromium through the merged main-only `browser` tool (navigate / snapshot / click / type / press / scroll / screenshot) plus `browser_evaluate`, the last only with `SHERRY_BROWSER_ALLOW_EVALUATE=1`, and the toolbox's browser panel watches the same page as a second CDP client (`/browser/ws` screencast + input); the debug port never leaves the backend process
-- **User Lifecycle Hooks** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): the `sherry.jsonc` `hooks` section runs operator-supplied commands against the turn — `PostToolUse` / `PostToolUseFailure` (each carries `toolName`, `toolCallId`, a bounded result/error preview and `durationMs`) and `Stop` (`responsePreview`, `toolCallCount`). Read-only by design: a hook audits, notifies and meters, and cannot block a tool, rewrite its arguments or inject context. Off by default (a tracked config must not make the agent execute commands on its own); commands are `shlex`-split with no shell, run with a scrubbed environment, bounded by a per-hook timeout that kills the process, and their stdout is capped and parsed as optional JSON (non-JSON output = success). Registered after the tool guardrails, gateable per session
+- **User Lifecycle Hooks** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): the `sherry.jsonc` `hooks` section runs operator-supplied commands against the turn — `PostToolUse` / `PostToolUseFailure` (each carries `toolName`, `toolCallId`, a bounded result/error preview and `durationMs`) and `Stop` (`responsePreview`, `toolCallCount`). Read-only by design: a hook audits, notifies and meters, and cannot block a tool, rewrite its arguments or inject context. Off by default (a tracked config must not make the agent execute commands on its own); commands are `shlex`-split with no shell, run with a scrubbed environment, bounded by a per-hook timeout that kills the process, and their stdout is capped and parsed as optional JSON (non-JSON output = success). Registered after the tool guardrails; enabled globally through `hooks.enabled` (chain membership is a build-time contract, not a per-session switch)
 - **Concurrency Lanes** ([runtime/lane/core.py](runtime/lane/core.py)): four process-level lanes, each an `asyncio.Semaphore` with active/queued counters, queue over-limit work FIFO instead of rejecting it — `MAIN` (main-agent turns, CPU-scaled 12–16), `SUBAGENT` (spawns and steers, 8), `BACKGROUND_REVIEW` (background-review calls, 4), `NESTED` (`sessions_send` reply turns, serial, 1). Startup validation enforces `main >= subagent + background_review`; `GET /lane-status` reports each lane's `{name, max_concurrent, active, queued}`
 - **Queued User Input**: a message sent while a turn is running is persisted as a `QUEUED` row (dedup by `client_msg_id`, capped by `INPUT_QUEUE["max_active_per_session"]`) and answered with its FIFO position. The turn runner drains **one row per turn**, so N queued messages produce N turns and N replies — never one merged answer — and a HITL-pending session drains nothing until the resume completes. The client can `cancel_queued`, `edit_queued`, or `send_now` a queued row
 - **Parallel Step Dispatch & Flow Lineage** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): a dispatch wave spawns concurrently, bounded by `TASKFLOW_INFRA["max_parallel_dispatch"]` (2; 1 restores the sequential behaviour) — a partial wave failure persists every spawned child and names the failed step ids, and two children completing at once both land (the resume write re-applies its decided verdict through `update_flow_with_conflict_retry`, so no result is lost to a conflict and a step is never spawned twice). `taskflow_flow(action="create", resumed_from=…)` records flow lineage (`resumed_from` / `superseded_by`, current-schema columns); a superseded flow drops out of the active reads while staying on the board
@@ -128,7 +128,7 @@ sherry_agent/
 │       ├── subagent/       # Multi-level subagent system (spawn/registry/swarm/...)
 │       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
 │       ├── todolist/       # Session-scoped todo planning layer
-│       │   └── knowledge/  # Plan knowledge base + `knowledge` tool
+│       │   └── knowledge/  # KnowledgeStore + handoff-tree audit (model-facing tool retired)
 │       ├── file_tools/     # File I/O tools (read, write, patch, search)
 │       ├── skill_tools/    # Skill management tools (list, view, manage)
 │       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
@@ -191,7 +191,7 @@ sherry_agent/
 │   └── auth/               # Opt-in login protection (account + session)
 │
 ├── evals/                  # Evaluation framework (dispatcher + 11 suites)
-│   ├── evals.py            # Suite runner: uv run python evals/evals.py [suite]
+│   ├── evals.py            # Suite runner: uv run --group evals python evals/evals.py [suite]
 │   ├── sandbox.py          # Sandbox that redirects repo writes during a run
 │   ├── graph_rag/          # RAGAS metrics for the graph-RAG pipeline
 │   ├── subagent/           # Subagent spawn-pipeline benchmark
@@ -268,7 +268,7 @@ sherry_agent/
 │   └── builtin/            # Built-in skills
 │       ├── core/           # cron, heartbeat, clawhub, skill_creator, image_to_text,
 │       │                   # speech_to_text, video_text_to_text, multimodal_rag,
-│       │                   # taskflow, todolist, ulw-execute
+│       │                   # taskflow, todolist, ulw-execute, bugfix-contract, browser
 │       ├── text_to_image/  # Text-to-image skill
 │       ├── code_wiki/      # Codebase wiki generation skill
 │       └── llm_wiki/       # Markdown knowledge-base skill
@@ -394,7 +394,7 @@ Models configured for **local GGUF** mode are downloaded automatically from Hugg
 > Network access to huggingface.co is required for first-run downloads (users in China may need a proxy or a mirror). Interrupted downloads are resumed on the next start; delete `models/<model>/model_weight/` to force a re-download.
 
 ### 4. Start the Backend
-`start.sh` activates the uv-managed `.venv` and launches the Robyn backend (it does not start Ollama or any frontend):
+`start.sh` starts the Nuxt dev server in the background when `pnpm` is available, then launches the Robyn backend (it does not start Ollama):
 
 ```bash
 chmod +x start.sh
@@ -429,13 +429,13 @@ uv run --no-sync python packaging/build_backend.py   # backend → client/src-ta
 cd client && pnpm tauri build                         # packs backend + SPA + shell
 ```
 
-`.github/workflows/desktop-build.yml` builds the unified installer on all three platforms. The backend build and the installer are both per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` / `.models` / `.network` — into the OS app-data directory (`SHERRY_HOME`, set by the shell), never into the read-only install tree. First run has no model configured yet: the window opens, **Model Config** writes the keys, and the next launch picks them up.
+`.github/workflows/desktop-build.yml` builds the unified installer on all three platforms. The backend build and the installer are both per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` / `.models` / `.network` — into the OS app-data directory (passed as `--sherry-home`; `SHERRY_HOME` is only a fallback), never into the read-only install tree. First run has no model configured yet: the window opens, **Model Config** writes the keys, and the next launch picks them up.
 
 ---
 
 ## 🧪 Testing
 
-Tests live under `tests/`, **mirroring the source tree** (`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), and run with **pytest** via uv (`uv run pytest` for a single test file or a small selection). Every test file carries a module-level `pytestmark` (`unit` / `integration` / `module` / `system` / `regression`) that selects which runner group executes it.
+Tests live under `tests/`, **mirroring the source tree** (`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), and run with **pytest** via uv (`uv run pytest` for a single test file or a small selection). Most test files carry a module-level `pytestmark` (`unit` / `integration` / `module` / `system` / `regression`) that selects which runner group executes it; the split runner selects by marker, so an unmarked file is never collected.
 
 ### Recommended: the process-isolated runner
 
@@ -476,8 +476,8 @@ Eight tests across five files call **real LLM APIs**: seven in `tests/agent/tool
 `evals/` is a homegrown, sandboxed evaluation framework that sits beside pytest. Run every registered suite, or one by name:
 
 ```bash
-uv run python evals/evals.py                # all registered suites
-uv run python evals/evals.py graph_rag      # a single suite by name
+uv run --group evals python evals/evals.py                # all registered suites
+uv run --group evals python evals/evals.py graph_rag      # a single suite by name
 ```
 
 | Suite | What it evaluates |
@@ -488,7 +488,7 @@ uv run python evals/evals.py graph_rag      # a single suite by name
 | `session_memory` | The session-memory stack over 6 checks: cooldown, compaction lock, checkpoint restore, idempotent replay, context eligibility, semantic search ranking |
 | `skill_review` | The plan-completion skill review, judged by an auxiliary LLM for grounded, reusable, non-generic skills |
 | `coding_capability` | The real main agent on a small self-designed coding task set, each task judged by its own repository's pytest run — a baseline, not an external benchmark |
-| `swebench` | External SWE-bench_Lite instances through the same harness (pinned base commit + per-instance venv + the instance's own FAIL_TO_PASS / PASS_TO_PASS verdict; the agent sees the problem statement only) |
+| `swebench` | External SWE-bench_Lite instances through the same harness (pinned base commit + per-instance venv + the instance's own FAIL_TO_PASS / PASS_TO_PASS verdict; the evaluation test patch is exposed in the prompt and pre-applied to the checkout during the run, then reset and applied by the judge for grading) |
 | `deepswe` | External DeepSWE tasks in the benchmark's own Docker image: the agent edits a bind-mounted checkout, `terminal` runs in the container, and the task's separate verifier image grades the agent's diff (gold patch checked first) |
 | `terminal_bench` | External Terminal-Bench tasks: the task image is built, the agent works inside it, and its own `run-tests.sh` pytest verdict judges the run (oracle checked first; multi-service tasks are reported unsupported) |
 | `agentbench` | External [AgentBench](https://github.com/THUDM/AgentBench) DBBench test set: official questions/tables from a pinned checkout, materialised in SQLite, graded by AgentBench's own comparison rules (INSERT/DELETE/UPDATE rows are reported unsupported; MySQL→SQLite dialect is documented) |
@@ -496,7 +496,7 @@ uv run python evals/evals.py graph_rag      # a single suite by name
 
 Every suite runs inside `evals/sandbox.py`, which redirects repo writes into a temp sandbox, and writes its reports under `evals/results/<suite>/<run_id>/`. That directory is **gitignored**; per-run reports are never committed.
 
-`deepswe` and `terminal_bench` are container-backed and need a working Docker daemon; `toolbench` needs `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY` and an OpenAI-compatible ToolEval judge key; `agentbench` needs `MAIN_LLM_API_KEY`. Without their prerequisites all four SKIP loudly and exit non-zero (a skipped suite is not a pass). Task trees and benchmark data are cloned/downloaded into `~/.cache/sherry_evals` (override with `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`), never inside the repository; `--dry-run` validates a task selection without Docker, a model or the large ToolBench download.
+`terminal_bench` needs Docker; `deepswe` is Docker-backed by default, while `deepswe --local` runs on the host without Docker; `toolbench` needs `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY` and an OpenAI-compatible ToolEval judge key; `agentbench` needs `MAIN_LLM_API_KEY`. Without their prerequisites all four SKIP loudly and exit non-zero (a skipped suite is not a pass). Task trees and benchmark data are cloned/downloaded into `~/.cache/sherry_evals` (override with `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`), never inside the repository; `--dry-run` validates a task selection without Docker, a model or the large ToolBench download.
 
 `coding_capability`, `swebench`, `deepswe`, `terminal_bench`, `agentbench` and `toolbench` additionally keep a version-controlled baseline (in their suite directories), point the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exit non-zero when they drop below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
 
@@ -520,9 +520,9 @@ The Agent's behavior is driven by the files under `workspace/`:
 
 Issues and Pull Requests are welcome! To add a new skill:
 
-1. Create a folder under `skills/` (or `skills/plugins/` for third-party skills).
+1. Create a folder under `skills/builtin/` (or `skills/auto/` / `skills/plugins/` for third-party skills).
 2. Write a `SKILL.md` with YAML frontmatter (`name`, `description`, optional `scope`) describing the skill's usage and steps.
-3. Restart the Agent — the loader auto-discovers every `SKILL.md` and exposes it to the model. (You can also ask the running Agent to use the built-in `skill_creator` skill to generate one.)
+3. Restart the Agent — only those three roots are scanned for `SKILL.md`, and the discovered skill is exposed to the model. (You can also ask the running Agent to use the built-in `skill_creator` skill to generate one.)
 
 Third-party skills under `skills/plugins/` are scanned by SkillSpector and stay inactive until explicitly enabled.
 

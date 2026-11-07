@@ -67,7 +67,7 @@ LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を
 
 LDW 実行が失敗し `LDW["auto_degrade_enabled"]` が有効なとき、アダプターは**同じ検証済み DAG** から実行を再構築します。古い flow を reset したり再実行したりはしません。
 
-1. 新しい `ldw-<plan_key>-<nonce>` TaskFlow flow を作り、元 flow がまだ存在すれば `resumed_from=<origin>` を付けます。
+1. 新しい `ldw-<plan_key の先頭 8 文字>-<8 文字 uuid>` TaskFlow flow を作り、元 flow がまだ存在すれば `resumed_from=<origin>` を付けます。
 2. 非 None の LDW 結果をすべて DONE step として、合成 `ldw-journal:<flow>:<step>` child key と結果レコード付きで予置します。失敗または未完了の step だけが ready/blocked のままです。
 3. ready step を通常の TaskFlow で dispatch するため、retry policy、schema gate、StepJudge、child 完了の意味は通常実行と完全に同じです。
 4. `taskflow_wait_all` でポーリングし、settled child ごとに `taskflow_resume` を呼びます。タイムアウトまたは kill された child は failure として宣言されます。`auto_dispatch` が次の波を開始します。

@@ -48,11 +48,11 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
 
 | Value | Meaning |
 | :---- | :------ |
-| `required` (shipped default) | Backend unavailable ⇒ reject the command, never run unsandboxed |
+| `required` (recommended deployment; shipped `.env` is `auto`) | Backend unavailable ⇒ reject the command, never run unsandboxed |
 | `auto` | Backend unavailable ⇒ degrade to unsandboxed with one warning (a bare run, recorded in the ledger) |
 | `off` | Sandboxing disabled entirely |
 
-The unset-env fallback inside `read_policy()` is still `auto` (a running install keeps whatever it configured); the value shipped in `.env` is `required`, because `auto` silently turns every shell command into an unsandboxed one on a host where the backend cannot run — measured, not hypothetical: a kernel without user namespaces (Ubuntu 24.04's default AppArmor policy, or a PRoot/container host) leaves a `bwrap` binary present but non-functional. At boot the effective policy and backend are logged (`sandbox: policy=… backend=… available=…`), an unusable `required` logs an ERROR with the fix commands, and `SANDBOX_STRICT_BOOT=1` turns that into a refused start. `GET /sandbox/status` reports the same dict at runtime.
+The unset-env fallback inside `read_policy()` is still `auto` (a running install keeps whatever it configured); the tracked `.env` ships `auto`; a deployment should opt into `required`, because `auto` silently turns every shell command into an unsandboxed one on a host where the backend cannot run — measured, not hypothetical: a kernel without user namespaces (Ubuntu 24.04's default AppArmor policy, or a PRoot/container host) leaves a `bwrap` binary present but non-functional. At boot the effective policy and backend are logged (`sandbox: policy=… backend=… available=…`), an unusable `required` logs an ERROR with the fix commands, and `SANDBOX_STRICT_BOOT=1` turns that into a refused start. `GET /sandbox/status` reports the same dict at runtime.
 
 `parse_policy` strips whitespace, matches case-insensitively, and raises `ValueError` on unknown values: a mistyped safety setting must fail loudly, never fall back silently. `read_policy()` calls `os.getenv` on **every** invocation (no import-time caching), so runtime changes take effect immediately.
 
@@ -142,7 +142,7 @@ The terminal approval card also offers **Allow for Session** only when the backe
 | Suite | Covers |
 | :---- | :----- |
 | `tests/agent/tools/test_sandbox_matrix.py` | 14 tests, one per matrix-cell behavior (cells 1-5 once per tool, cell 6 four times), including the real-graph HITL interrupt and the exactly-one-warning degrade assertion |
-| `tests/agent/tools/pub_base/test_env_scrub.py` | scrub rules, precedence, keep/deny edges (29 tests) |
+| `tests/agent/tools/pub_base/test_env_scrub.py` | scrub rules, precedence, keep/deny edges (50 tests) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction (incl. read-shield mounts), probe caching (all subprocess mocked), plus an optional real-bwrap read-shield smoke test |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards (dangerous / sensitive-file regexes), schema, spawn forms, restricted-builtins barrier |
@@ -163,7 +163,7 @@ Matrix tests patch `subprocess.Popen` globally, stub `get_backend` at the tool-m
 - **The sensitive-file regex is a mitigation, not a barrier.** It matches literal command shapes; `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, variables, and globs bypass it by design of the layer. The OS read-shield is the actual read barrier where a backend exists.
 - **`python_repl` has no sensitive-file regex.** The terminal-only gates ([Isolation §3](isolation/README.md#3-dangerous-command-gate-terminal-only)) do not cover it; its wrapper script instead restricts builtins (the safe subset omits `open` / `__import__`) — a different, narrower control.
 - **PTC inherits the same backend caveats.** `execute_code` now wraps its child with the L2 backend whenever one is usable, but under `SANDBOX_POLICY=auto` (the default) a host without a usable backend runs the child unsandboxed after one warning; PTC passes `allow_network=True`, so bwrap adds `--share-net` beside `--unshare-all` to keep the loopback RPC bridge reachable; `terminal` and `python_repl` keep the private network namespace. PTC's one-time RPC token and its `/proc/<pid>/environ` residual are documented on the [PTC page](../ptc/README.md).
-- **The degrade path executes unsandboxed by design.** `auto` + no backend = one logged warning, then a normal unsandboxed run (recorded as `sandboxed: false` in the evidence ledger, and named in the boot log). That is intentional availability-over-strictness; the shipped default is now `required`, and `SANDBOX_STRICT_BOOT=1` additionally refuses to start.
+- **The degrade path executes unsandboxed by design.** `auto` + no backend = one logged warning, then a normal unsandboxed run (recorded as `sandboxed: false` in the evidence ledger, and named in the boot log). That is intentional availability-over-strictness; the tracked `.env` ships `auto`; set `required` for deployment, and `SANDBOX_STRICT_BOOT=1` additionally refuses to start.
 - **The command-path screen is a mitigation, not a barrier.** It refuses a command that literally names a hard-denied path (credential/system files, the YOLO deny list) and lets everything else through to the sandbox; `base64 -d | sh`, variable indirection built from pieces, and `cd` + relative paths all evade it by construction. The OS sandbox is the boundary.
 - **Env scrubbing is name-based.** A secret stored under a name without any blocked substring (and not on the deny list) passes through. There is no value scanning or dynamic secret detection, and that is deliberate.
 - **No network sandboxing, seccomp, or AppArmor profiles are claimed or configured.** Isolation comes from the bwrap / Seatbelt constructions exactly as shown in [Isolation §2](isolation/README.md#2-os-native-sandbox-backends-l2), nothing more.

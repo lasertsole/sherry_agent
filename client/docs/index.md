@@ -13,10 +13,10 @@ hero:
       link: /commands/agent
 
 features:
-  - title: 12 IPC Commands
+  - title: 17 IPC Commands
     details: Agent chat/stop, session management, system prompts, character config, and system utilities. All proxied to the Python backend via HTTP bridge.
   - title: Streaming Events
-    details: Real-time agent responses via Tauri events. SSE from Python backend is forwarded as 4 Tauri event types.
+    details: Real-time agent responses via Tauri events. WebSocket frames from the Python backend are forwarded as 4 Tauri event types.
   - title: TypeScript Types
     details: Auto-generated .d.ts files from Rust types via ts-rs for compile-time safety.
   - title: Hybrid Architecture

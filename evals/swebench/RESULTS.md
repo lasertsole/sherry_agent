@@ -1,6 +1,6 @@
-# SWE-bench 运行记录（2026-11-01）
+# SWE-bench 运行记录（2026-11-01 起）
 
-本文件只保留 2026-11-01 的运行记录。更早的 arm 已从失败历史中移除，完整分析见
+本文件保留 2026-11-01 起的运行记录。更早的 arm 已从失败历史中移除，完整分析见
 `wiki/evals/SWE-Bench/`。原始报告（gitignored）在
 `evals/results/swebench/<run_id>/`。
 

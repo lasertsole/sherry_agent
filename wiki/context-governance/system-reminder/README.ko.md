@@ -6,7 +6,7 @@
 
 ---
 
-시스템 프롬프트에는 **안정적** 내용만 들어갑니다: persona 파일, memory 블록, 스킬 인덱스. 모든 **라이브** 뷰 — 플랜 모드, 작업 디렉터리, 프로젝트 지시(`AGENTS.md`, 폴백 `CLAUDE.md`), todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스 — 는 대신 각 턴의 첫 모델 호출에 `<system-reminder source="…">` HumanMessage로 주입됩니다(`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 카탈로그). 가장 낮은 우선순위의 `current_time` 소스가 같은 블록에 매 턴 로컬 시계를 추가합니다. 영어 한 줄로, 예: `Current local time: 2026-11-06 09:41:07 (Friday) (CST, UTC+08:00)`. `transient=True`이므로 이전 턴의 줄은 제거되고 누적되지 않습니다. 또한 의도적으로 `only_if_changed`를 사용하지 않습니다 — 시계는 계속 진행되어야 하기 때문입니다. 이유는 두 가지입니다: 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것(persona 포함)의 prefix 캐시를 무효화합니다; 캐시 미스에서만 재구성되는 프롬프트는 다음 재구성까지 **오래된** todo 목록을 보여줍니다.
+시스템 프롬프트에는 **안정적** 내용만 들어갑니다: persona 파일, memory 블록, 스킬 인덱스. 모든 **라이브** 뷰 — 플랜 모드, 작업 디렉터리, 프로젝트 지시(`AGENTS.md`, 폴백 `CLAUDE.md`), todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트 — 는 대신 각 턴의 첫 모델 호출에 `<system-reminder source="…">` HumanMessage로 주입됩니다(`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 카탈로그). 가장 낮은 우선순위의 `current_time` 소스가 같은 블록에 매 턴 로컬 시계를 추가합니다. 영어 한 줄로, 예: `Current local time: 2026-11-06 09:41:07 (Friday) (CST, UTC+08:00)`. `transient=True`이므로 이전 턴의 줄은 제거되고 누적되지 않습니다. 또한 의도적으로 `only_if_changed`를 사용하지 않습니다 — 시계는 계속 진행되어야 하기 때문입니다. 이유는 두 가지입니다: 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것(persona 포함)의 prefix 캐시를 무효화합니다; 캐시 미스에서만 재구성되는 프롬프트는 다음 재구성까지 **오래된** todo 목록을 보여줍니다.
 
 동결된 메모리 스냅샷에는 의도적인 예외가 하나 있습니다. 세션 모델 전환은 새로운 provider 캐시 네임스페이스로 들어가고, 사고 모드 전환은 동일한 prefix에서 `cache_read`가 0이 되는 것이 실측되었습니다——어느 쪽이든 캐시는 이미 차갑습니다. `ThinkingControlMiddleware`의 `before_model` 훅은 해당 턴의 `(thinking key, profile fingerprint, mapping fingerprint)`을 마지막 적용 값과 비교하고(그래프가 매 턴 재구성되므로 프로세스 수준에서 보관), 변경이 있으면 `system_prompt_injection` 전에 `MemoryStore` 스냅샷을 다시 로드하고 두 레지스터에서 `StateKey.SYSTEM_PROMPT`를 삭제합니다. 전환된 턴의 첫 모델 호출은 세션 중간에 기록된 메모리 항목(SQLite 백엔드. 이전 Markdown 파일은 부팅 시 한 번만 가져옴)을 봅니다. 첫 턴, 변경 없음, 재로드 실패는 캐시를 유지하며, 전송이 없으면 발화하지 않습니다.
 
@@ -25,7 +25,7 @@ todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(
 
 ## 📋 등록 소스
 
-카탈로그는 10개 소스를 등록합니다(`agent/middlewares/reminder_catalog/sources.py::register_default_sources`). 모두 같은 채널(`CURRENT_TURN`)을 타며, `current_time`과 `memory_recall`을 제외하고 모두 `only_if_changed=True`를 가집니다——이전 주입과 **바이트 동일**한 페이로드는 쿨다운이 지났어도 재주입**되지 않습니다**. 카탈로그는**턴당 1회만, 첫 모델 호출에서** 해결됩니다(마지막 메시지가 진짜 사용자 메시지일 때). 재개 턴이 사용자 메시지보다 앞에 이미 블록을 가지고 있으면 재주입을 건너뜁니다.
+카탈로그는 9개 소스를 등록합니다(`agent/middlewares/reminder_catalog/sources.py::register_default_sources`). 모두 같은 채널(`CURRENT_TURN`)을 타며, `current_time`과 `memory_recall`을 제외하고 모두 `only_if_changed=True`를 가집니다——이전 주입과 **바이트 동일**한 페이로드는 쿨다운이 지났어도 재주입**되지 않습니다**. 카탈로그는**턴당 1회만, 첫 모델 호출에서** 해결됩니다(마지막 메시지가 진짜 사용자 메시지일 때). 재개 턴이 사용자 메시지보다 앞에 이미 블록을 가지고 있으면 재주입을 건너뜁니다.
 
 | 소스(`source_id`) | 우선순위 | 예산(문자) | 쿨다운 | Transient | 주입 내용 |
 |---|---|---|---|---|
@@ -37,7 +37,6 @@ todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(
 | `continuity_context` | 65 | 1 000 | 0 —— 매 턴 | No | 턴 간 연속성 컨텍스트 |
 | `project_instructions` | 62 | 8 000 | 0 —— 매 턴 | Yes | 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`) |
 | `project_dir_notice` | 60 | 500 | 0 —— 매 턴 | No | 작업 디렉터리 알림 |
-| `knowledge_index` | 50 | 1 000 | 0 —— 매 턴 | No | 지식 인덱스 |
 | `current_time` | 10 | 120 | 0 —— 매 턴 | Yes | 로컬 시계(영어, 날짜·요일·초·UTC 오프셋) |
 
 **빈도 읽는 법.** `cooldown_turns = 0`은*매 턴 대상*——이전 주입 이후 내용이 변하면 재주입됩니다; 내용이 거의 변하지 않는 소스(`project_instructions` 등)는 매 턴 대상이어도 주입은 드물고, 자주 변하는 소스(`todo_block` 등)는 대부분의 턴에 주입됩니다. `cooldown_turns = 5`(TaskFlow 보드, boulder)는*최대 5 턴에 1회*, 그리고 내용도 변했을 때만. 변하지 않은 보드는 대상이어도 5 턴 동안 조용합니다. 스로틀 관리 상태는 실제로 주입된 소스만 진행되며, 억제된 소스는 쿨다운을「헛으로 소비」하지 않습니다. `current_time`은 예외입니다: 내용에 초가 포함되고 `only_if_changed`가 꺼져 있어 매 턴 나타납니다.

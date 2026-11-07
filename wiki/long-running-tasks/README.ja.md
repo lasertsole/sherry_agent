@@ -189,7 +189,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 完了率、内訳、次のステップ、残り推定 |
 | `taskflow_flow(action="budget")` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 予算レポート、または設定確認 |
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | このセッションのボード（`active` / `all` / ステータス名） |
-| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 終端 `done`（4 ゲート、フェイルオープン） |
+| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, session_id)` | 終端 `done`（4 ゲート、フェイルオープン） |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 目標 + 完了済み結果 + 失敗理由から**未完了**ステップを再生成（完了/実行中は保持、変更ステップの下流は blocked に戻る、1 フロー ≤ 3 回） |
 | `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 目標を依存順の新フローに分解。初期 ready の兄弟 step は自動ディスパッチ |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `failed` |
@@ -236,7 +236,7 @@ step は `skills: ["browser", "code-wiki"]` を宣言できます。dispatch 時
 
 ## 🧪 テスト
 
-TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個の `unit` テストファイル + 共有 `conftest.py`）：
+TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（48 個の `unit` テストファイル + 共有 `conftest.py`）：
 
 | テストファイル | カバー内容 |
 | :--- | :--- |
@@ -268,7 +268,7 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | `test_index_audit.py` | SQLite インデックス更新パスとクエリプラン監査 |
 | `test_update_steps.py` | ステップリスト全置換：追加/削除/書き換え/並べ替えと dispatched/done 安全規則 |
 
-横断スイート：`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証ゲート）、`tests/agent/middlewares/test_completion_drain_gate.py`（無条件のプログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留フローのプロンプト注入）、`tests/server/test_session_project.py`（プロジェクトディレクトリ束縛：保留/昇格、起動時のウォームアップ）、`tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（ファイルブラウザの `resolve_within` ゲートをツール境界で再実行）。
+横断スイート：`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証ゲート）、`tests/agent/middlewares/test_completion_drain_gate.py`（無条件のプログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_plan_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留フローのプロンプト注入）、`tests/server/test_session_project.py`（プロジェクトディレクトリ束縛：保留/昇格、起動時のウォームアップ）、`tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（ファイルブラウザの `resolve_within` ゲートをツール境界で再実行）。
 
 標準の uv/pytest ツールでこの領域だけを実行：
 

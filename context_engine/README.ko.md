@@ -93,7 +93,7 @@ from .core import retrieve_history_by_last_n_prompt, search_messages
 
 ## 데이터 모델
 
-### 데이터베이스 스키마
+### 핵심 messages 테이블(발췌)
 
 ```sql
 CREATE TABLE IF NOT EXISTS messages (
@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS messages (
     origin        TEXT                -- 주입 메시지 출처: "user"(WS/채널 사용자 입력), "task_intent"(스티어링 주입), "subagent_completion"(완료 캐리어), "cron"(Cron 전달 턴), "heartbeat"(예약), "project_dir"(작업 디렉터리 변경 알림); NULL = 레거시 human 행 또는 일반 ai/tool 행
 );
 ```
+
+> 여기에는 핵심 messages 열만 보여줍니다. 전체 현재 스키마(token/cache/compaction 열, `memory_entries`, `message_embeddings`, `persisted_message_ids`, FTS5 트리거)는 `context_engine/store/db.py`에 있으며 `IF NOT EXISTS`로 재생성됩니다. 마이그레이션 체인은 없습니다.
 
 **인덱스:**
 
@@ -249,7 +251,7 @@ for r in results:
 
 | 진입점 | 임포트 | 용도 |
 |--------|--------|------|
-| `agent/middlewares/message_persistence/` (`MessagePersistenceMiddleware`) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | 각 모델 경계가 새 human/ai 메시지를 MesMemory로 증분 플러시하고(human은 턴의 첫 경계, AI는 생성 직후), 도구 결과는 도구 반환 시 플러시합니다; 영속 워터마크 `persisted_message_ids`가 상태 누적과 프로세스 재시작을 넘어 write-once를 유지합니다. 압축 경로는 이제 아무것도 영속화하지 않습니다 — `compaction_persistence.py`는 삭제되었습니다. `system_prompt_injection`(`@dynamic_prompt` 미들웨어)는 시스템 프롬프트 주입(`wrap_model_call`/`awrap_model_call`)만 담당하고, 메모리 리뷰 / 스킬 리뷰는 여전히 `summarization/background_reviews.py`가 압축 시점에 스케줄합니다. 자세한 내용은 `agent/middlewares/README.md` 참조. |
+| `agent/middlewares/message_persistence/` (`MessagePersistenceMiddleware`) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | 각 모델 경계가 새 human/ai 메시지를 MesMemory로 증분 플러시하고(human은 턴의 첫 경계, AI는 생성 직후), 도구 결과는 도구 반환 시 플러시합니다; 영속 워터마크 `persisted_message_ids`가 상태 누적과 프로세스 재시작을 넘어 write-once를 유지합니다. 압축 경로는 이제 아무것도 영속화하지 않습니다 — `compaction_persistence.py`는 삭제되었습니다. `system_prompt_injection`(`@dynamic_prompt` 미들웨어)는 시스템 프롬프트 주입(`wrap_model_call`/`awrap_model_call`)만 담당하고, 메모리 리뷰는 `summarization/background_reviews.py`가 압축 시 스케줄하고, 스킬 리뷰는 턴 경계에서 계획이 완료될 때 실행됩니다. 자세한 내용은 `agent/middlewares/README.md` 참조. |
 | `agent/tools/message_search.py` → `message_search` 도구 | `get_db`, `search_messages`, `get_turns_by_turn_num_scope` | 세션 간 회상 도구: FTS5 검색(limit 50) → 일치 항목별 턴 범위 조회 → LLM 세션 요약. query가 없으면 최근 세션 메타데이터를 대신 반환 |
 | `server/service/messages.py` | `get_session_ids`, `get_history_by_turn_page`, 그리고 (`context_engine.curator`의) `reset_idle_for_seconds` | 클라이언트용 세션 목록(최상위 세션 + 파생 제목), 페이지네이션 히스토리, 사용자 턴마다 curator 유휴 타이머 리셋 |
 | `server/service/session_cleanup_service.py` | `delete_messages_by_session` | "세션 비우기" 작업 |

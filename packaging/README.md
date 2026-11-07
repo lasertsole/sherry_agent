@@ -69,7 +69,7 @@ lock and silently put CUDA PyTorch back on Linux.
   `package_info().version`. A missing or stale tree is a broken install; there
   is no runtime download fallback.
 - **`client/src-tauri/src/services/python_process.rs`** — spawns the bundled
-  backend with `SHERRY_HOME` = the OS app-data directory (everything writable —
+  backend with `--sherry-home` = the OS app-data directory (`SHERRY_HOME` is only a fallback; everything writable —
   sessions, memory, logs, learned skills, `.env` — lives there, never in the
   read-only install tree). A **dev** build (`pnpm tauri dev`, or a plain
   `cargo build`) neither packs nor starts the frozen backend and runs the

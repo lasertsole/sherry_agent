@@ -89,48 +89,44 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 
 ```python
 middleware = [
-    # after_agent 후크는 리스트 역순으로 실행됩니다: 가장 먼저 등록된
-    # enforcer가 턴 종료 시 가장 마지막에 실행되어, 진짜 끝난 턴을 관측합니다.
     PlanContinuationEnforcer(),
-    system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
-    # 작업 디렉터리 변경 알림: 턴 시작 시 프로젝트 디렉터리가 마지막으로 알린
-    # 루트와 다르면 HumanMessage 바로 앞에 AIMessage 하나를 삽입한다
+    system_prompt_injection,
     WorkspaceNoticeMiddleware(),
     PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+    TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
     DynamicReminderMiddleware(),
+    InputSafetyFilter(),
+    LLMModerationMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
-    # per-session thinking toggle (client switch → /sessions/thinking):
-    # swaps request.model for the thinking on/off or low/high/max variant
     ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
-    # after_model 노드는 등록 역순으로 실행됩니다: HITL 바로 뒤에 등록하면
-    # 모델 응답 후 가장 먼저 실행되는 후크가 되어, HITL이 거부 호출을
-    # 벗겨내거나 interrupt를 걸기 전에 AI 메시지가 영속화됩니다.
     MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
+    OutputSafetyFilter(),
     Summarization(
         need_update_system_prompt=True,
-        model=auxiliary_llm,
+        model=compression_llm or auxiliary_llm,
         main_llm_context_window=main_llm_max_tokens,
-        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+        trigger=[("tokens", resolve_compression_threshold(
+            main_llm_max_tokens, max_output_tokens,
+            fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+        )[0])],
     ),
-    # wrap_model_call의 최내곽, 원시 모델 호출에 가장 가까운 위치:
-    # JSON 인자 파싱에 실패한 도구 호출을 복구한다(그렇지 않으면 루프가
-    # 호출 없는 최종 답변으로 보고 턴을 종료한다). 복구 불가 시 모델을
-    # 한 번만 재호출한다.
     InvalidToolCallRepairMiddleware(),
 ]
+# DelegationPressureGate is appended when DELEGATION_PRESSURE["enabled"] is on.
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # 컴파일된 그래프는 apply_graph_wrappers()가 래핑합니다 (안쪽 → 바깥쪽):
 # RepetitionGuardWrapper, 그다음 ContextLimitGuardWrapper.
@@ -564,7 +560,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | 폴백 (`should_fallback=True`, 재시도 불가) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | 다음 폴백 후보로 전환. 체인 소진 시 재발생                                                                                                                                    |
 | 하드 페일                                  | `format_error`                                                                                                                                      | 재발생(재시도·폴백 없음)                                                                                                                                                      |
 
-**스테일 연속 서킷 브레이커(턴 간):** timeout으로 분류된 실패마다 — 그리고 timeout 분류의 부분 스트림 스텁 재시도마다 — 세션 단위 `llm_stale_streak`(`state_register_mem` 내)가 증가하고, 성공한 handler 호출이 있으면 0으로 리셋됩니다. 연속이 `stale_giveup_threshold`에 도달하면 다음 모델 호출은 LLM을 호출하기 **전에** `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`를 발생시켜, 프로바이더가 계속 무응답인 악순환을 턴 간에 끊습니다.
+**스테일 연속 서킷 브레이커(기본 턴 범위; `stale_giveup_scope="session"`은 opt-in):** timeout으로 분류된 실패마다 — 그리고 timeout 분류의 부분 스트림 스텁 재시도마다 — 세션 단위 `llm_stale_streak`(`state_register_mem` 내)가 증가하고, 성공한 handler 호출이 있으면 0으로 리셋됩니다. 연속이 `stale_giveup_threshold`에 도달하면 다음 모델 호출은 LLM을 호출하기 **전에** `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`를 발생시켜, 프로바이더가 계속 무응답인 악순환을 끊습니다. 기본적으로 각 턴 시작 시 리셋됩니다.
 
 **모델 폴백 체인:** `FallbackCandidate(provider, model_name, model)` 항목은 `models/LLMs/main_llm.py::build_fallback_chain()`이 환경 변수 `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}`로부터 구축합니다(i = 1…, 처음 `NAME`이 빠진 지점에서 중단. `PROVIDER` 기본값 `openai`. 클라이언트를 구성할 수 없는 후보는 경고와 함께 건너뜀). 1 기준 활성 인덱스는 세션 단위로 `llm_fallback_index`에 스티키하게 유지되며, 매 모델 호출 시작 시 `request.override(model=...)`로 이미 활성화된 후보에 재바인딩되고, 폴백 분류 실패(또는 콘텐츠 필터 플래그) 시 다음 후보가 활성화됩니다. `FALLBACK_LLM_*`가 설정되지 않으면(기본값) 이 미들웨어는 단순한 유계 재시도 루프입니다.
 
@@ -583,23 +579,23 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 **모듈:** `agent/middlewares/summarization/core.py` · **클래스:** `Summarization(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`(카운터 리셋), `wrap_model_call` / `awrap_model_call`
 
-최내곽 미들웨어 — LLM에 가장 가까운 위치. 처음부터 직접 구현한 `AgentMiddleware`입니다(LangChain의 `SummarizationMiddleware` **아님**): 트리거가 발동하면 예산 기반 컷오프로 히스토리를 압축합니다 — 비(非)LLM 전략 우선, 텍스트 저하가 안전할 때만 보조 LLM 요약 사용. `keep` 파라미터는 받아들이지만 사용하지 않으며, 꼬리 보존은 예산 기반입니다: `clamp(context_window × 0.25, 2 000, 15 000)` 토큰(`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
+가장 안쪽 미들웨어 계층 중 하나입니다 — `InvalidToolCallRepairMiddleware`(및 활성화 시 `DelegationPressureGate`)만 더 LLM에 가깝습니다. 처음부터 직접 구현한 `AgentMiddleware`입니다(LangChain의 `SummarizationMiddleware` **아님**): 트리거가 발동하면 예산 기반 컷오프로 히스토리를 압축합니다 — 비(非)LLM 전략 우선, 텍스트 저하가 안전할 때만 보조 LLM 요약 사용. `keep` 파라미터는 받아들이지만 사용하지 않으며, 꼬리 보존은 예산 기반입니다: `clamp(context_window × 0.25, 2 000, 15 000)` 토큰(`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
 - **라이프사이클과 라우팅:** 미들웨어는 이제 다섯 개의 트리거 지점(T1–T5)을 아우릅니다 — T1 사전 점검(`before_agent` / `abefore_agent`), T2 호출 전 디스패치(`wrap_model_call` / `awrap_model_call`), T3 응답 후 재확인(실제 보고 토큰), T4(413 Payload Too Large)/T5(컨텍스트 오버플로) 에러 복구 링 — 모든 트리거는 4-경로 오버플로 라우팅 결정(truncate / compact / both / pass)을 실행하며 `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/tool_args_truncate.py`(도구 호출 인자 절단), `pub/func/message/llm_error_classifier.py`에 위임됩니다. 상태는 세션 단위 `summarization_*` 키(총 13개, 턴마다 11개 리셋)로 유지됩니다. 전체 문서는 아래 링크를 참조하세요.
-- **트리거 시맨틱스**: 절은 `("messages", N)` 또는 `("tokens", N)`이며, 절 리스트 사이는 **OR** — 절이 하나라도 발동하면 압축이 시작됩니다. 메인 에이전트: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. 워커: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
+- **트리거 시맨틱스**: 절은 `("messages", N)` 또는 `("tokens", N)`이며, 절 리스트 사이는 **OR** — 절이 하나라도 발동하면 압축이 시작됩니다. 메인 에이전트: `[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])]`. 워커: `[("messages", 40), ("tokens", _compression_threshold_for_children(main_llm_max_tokens))]`.
 - **컷오프 안전성:** `_determine_cutoff`가 컷오프 지점을 고르고, 이어서 `_adjust_for_orphan_pairs`가 `ToolMessage`가 자신의 `AIMessage` 도구 호출과 분리되지 않을 때까지 위치를 뒤로 이동시킵니다. 마지막 사용자 턴이 추정 토큰의 ≥ 50%를 차지하면(`LAST_TURN_RATIO_THRESHOLD = 0.5`), 그 턴을 요약으로 없애는 대신 턴 자체를 압축합니다(`self._compress_last_turn` 플래그).
 - **안티스래싱:** 세션당 최대 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5`회 압축(턴당이 아님). 연속 `INEFFECTIVE_THRESHOLD = 2`회 무효 압축이면(유효 = 메시지 수 감소 또는 토큰 절감 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) LLM 단계를 비활성화(`summarization_skip_llm`)하고 비(非)LLM 전략만 실행합니다. 카운터는 세션 단위 `summarization_*` 키로 `state_register_mem`에 저장됩니다(압축 횟수, 무효 연속, 마지막 토큰, 마지막 전략, 스킵 플래그, 복구 상태 등).
 - **압축 시 미디어 오프로드:** 버려질 프리픽스는 요약되기 전에 `offload_inline_media`(`summarization/media_offload.py`)를 거쳐, 인라인 미디어(`data:` URL, 원시 `base64` 필드, 원시 바이트)를 `SESSIONS_DIR/<session_id>/media/{sha256[:16]}{ext}`에 기록하고(내용 해시로 중복 제거, 이 하위 디렉터리는 `clear_session`이 통째로 삭제), 각 블록을 `[evicted to: <path>]` 텍스트 포인터로 교체합니다 — `_collect_evicted_refs`가 스캔하는 이 마커 덕분에 경로가 `SummaryDoc.evicted_refs`에 들어가 요약 체인에 살아남습니다. 재작성되는 범위는 요약 대상 구간뿐이며, 보존되는 꼬리 창의 미디어 블록은 그대로입니다. 모든 실패는 fail-open으로, 디코딩/기록할 수 없는 블록은 `<media error="failed_to_offload" />`가 됩니다.
-- **절단:** 기존 요약 메시지(`additional_kwargs["lc_source"] == "summarization"`로 식별)가 `SUMMARY_TOTAL_MAX_CHARS = 16 000`자를 넘으면 재절단되어, 머리 30% / 꼬리 30%(`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`)를 유지하고 생략 마커가 삽입됩니다.
+- **절단:** 기존 요약 메시지(`additional_kwargs["lc_source"] == "summarization"`로 식별)가 `SUMMARY_TOTAL_MAX_TOKENS = 4 000` 토큰를 넘으면 재절단되어, 머리 30% / 꼬리 30%(`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`)를 유지하고 생략 마커가 삽입됩니다.
 - **출력:** 교체 메시지는 `HumanMessage` / `AIMessage` **쌍**입니다 — 중립적인 `"What did we do so far?"` 뒤에 `additional_kwargs={"lc_source": "summarization"}`을 담은 `AIMessage`가 이어집니다 — 모델이 연속된 같은 역할 메시지를 보는 일이 없어 사후 페어링 복구도 필요 없습니다.
 - **구조화 요약:** 보조 호출은 `with_structured_output(SummaryDoc, method="json_mode")`(`summarization/summary_doc.py`)를 통과합니다. Markdown은 문서에서 코드로 렌더링되고, cap 후 문서 본체는 AIMessage의 `additional_kwargs["summary_doc"]`에 저장됩니다(체이닝 재요약은 `<prior-summary-json>`으로 재투입). 파싱 실패는 `json_repair`, 다음으로 레거시 free-form 경로로 강등됩니다. 항목 상한은 배열 슬라이스(`completed[-5:]`, `key_decisions[-5:]`, `active_plan_notes[-20:]`, `evicted_refs[-20:]`)이며 Markdown 재파싱이 아닙니다.
 - `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다. 두 전달 경로(압축 직후, 안티-스래싱 게이트 경로)는 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 주입을 건너뛰고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다.
 - **더 이상 영속화하지 않음:** 압축 경로는 MesMemory에 아무것도 쓰지 않습니다. 메시지 영속화는 각 모델 경계에서 `MessagePersistenceMiddleware`가 수행합니다; 기존 `compaction_persistence.py`의 버려진 프리픽스 플러시와 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점은 삭제되었습니다.
-- **압축 시점 메모리 리뷰:** `schedule_memory_review`(`summarization/background_reviews.py`)는 압축마다 **메모리 리뷰**만 디스패치하며, 넘기는 것은 **버려질** 메시지입니다——남길 사실이 거기에 있습니다. 기본 `cache_warm` 모드에서 `_execute_memory_review`는 그 슬라이스를 **원문 그대로**, 해당 턴이 실제로 사용한 모델 구성(`_build_session_model`: 세션의 모델 오버라이드와 사고 변형, 또는 환경 기본값)으로 보내고, 세션 자신의 시스템 프롬프트와 도구 면도 재현합니다. 압축 절단은 **프리픽스 절단**이므로 `[도구][시스템 프롬프트][버려질 메시지][리뷰 지시]`가 메인 모델이 방금 처리한 요청 프리픽스를 그대로 재현합니다——제공자는 프리픽스 캐시에서 응답하고, 리뷰는 실제 원문을 읽으면서 캐시 읽기 가격만 지불하며, 새 입력은 지시 하나뿐입니다. `BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"`는 먼저 접습니다(`digest_history`: 최근 24개는 원문, 이전은 한 줄로 절단)——캐시가 잘 안 듣는 제공자나 작은 윈도의 리뷰 모델용입니다. 가드는 여전히 두 겹입니다: 리뷰는 정확히 컨텍스트가 가장 가득 찬 순간에 실행되며, 넘겨받는 것은 버려질 슬라이스뿐(전체 대화는 결코 넘기지 않음)이고 턴을 막지 않습니다. BACKGROUND_REVIEW 레인의 fire-and-forget 작업으로 실행됩니다; 리뷰 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. 스킬 리뷰는 이 경로에 없습니다(플랜 완료 시 fork, 아래 참조).
+- **압축 시점 메모리 리뷰:** `schedule_memory_review`(`summarization/background_reviews.py`)는 압축마다 **메모리 리뷰**만 디스패치하며, 넘기는 것은 **버려질** 메시지입니다——남길 사실이 거기에 있습니다. 기본 `cache_warm` 모드에서 `_execute_memory_review`는 그 슬라이스를 **원문 그대로** (`[tools][system prompt][discarded messages][review instruction]` 프리픽스를 재현하여), 해당 턴이 실제로 사용한 모델 구성(`_build_session_model`: 세션의 모델 오버라이드와 사고 변형, 또는 환경 기본값)으로 보내고, 세션 자신의 시스템 프롬프트와 도구 면도 재현합니다. 압축 절단은 **프리픽스 절단**이므로 `[도구][시스템 프롬프트][버려질 메시지][리뷰 지시]`가 메인 모델이 방금 처리한 요청 프리픽스를 그대로 재현합니다——제공자는 프리픽스 캐시에서 응답하고, 리뷰는 실제 원문을 읽으면서 캐시 읽기 가격만 지불하며, 새 입력은 지시 하나뿐입니다. `BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"`는 먼저 접습니다(`digest_history`: 최근 24개는 원문, 이전은 한 줄로 절단)——캐시가 잘 안 듣는 제공자나 작은 윈도의 리뷰 모델용입니다. 가드는 여전히 두 겹입니다: 리뷰는 정확히 컨텍스트가 가장 가득 찬 순간에 실행되며, 넘겨받는 것은 버려질 슬라이스뿐(전체 대화는 결코 넘기지 않음)이고 턴을 막지 않습니다. BACKGROUND_REVIEW 레인의 fire-and-forget 작업으로 실행됩니다; 리뷰 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. 스킬 리뷰는 이 경로에 없습니다(플랜 완료 시 fork, 아래 참조).
 
 **백그라운드 리뷰 서브에이전트** (`summarization/background_reviews.py`, 압축 파이프라인이 디스패치): 독립적인 `create_agent` 인스턴스로, 두 경로는 각각 다른 트리거·다른 모델·다른 도구 장벽을 가집니다:
 
-- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 압축 파이프라인이 발화하며 **해당 턴의 구성에서 재구축한 메인 모델**(`_build_session_model`, 위의 cache_warm 이음새)을 쓰고, 도구 면은 세션의 전체 면입니다; 그래프는 `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`를 지니며, `_BackgroundReviewLimitTool`은 메타데이터에 `background_review: true`가 없는 도구를 거부하므로 리뷰가 **실행**할 수 있는 것은 마커된 집합(`memory`, `knowledge`, `question`, 플랜 모드)뿐입니다. 전체 면은 프리픽스 캐시 일치를 위한 것이고, 게이트가 실행 장벽입니다. 스킬 3종은 **의도적으로 미마커**——여기서 스킬 리뷰가 일어날 수 없습니다.
+- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 압축 파이프라인이 발화하며 **해당 턴의 구성에서 재구축한 메인 모델**(`_build_session_model`, 위의 cache_warm 이음새)을 쓰고, 도구 면은 세션의 전체 면입니다; 그래프는 `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`를 지니며, `_BackgroundReviewLimitTool`은 메타데이터에 `background_review: true`가 없는 도구를 거부하므로 리뷰가 **실행**할 수 있는 것은 마커된 집합(`memory`, `question`, 플랜 모드)뿐입니다. 전체 면은 프리픽스 캐시 일치를 위한 것이고, 게이트가 실행 장벽입니다. 스킬 3종은 **의도적으로 미마커**——여기서 스킬 리뷰가 일어날 수 없습니다.
 - `_SKILL_REVIEW_PROMPT`(스킬 리뷰): **플랜 완료** 훅(`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_skill_review`)이 발화하며 **보조 모델**(`_create_skill_review_agent`, `temperature=0`)을 쓰고 대화는 받지 않습니다. 도구 면은 `skill_list` / `skill_view` / `skill_manage`만이며 knowledge와 memory는 없습니다. `skills/auto`를 스냅샷하고 리뷰 후 runtime judge(`skill_review.judge_skill_update`)가 grounded / reusable / trigger / quality를 판정합니다. 거부되면 스냅샷으로 복원해 feedback과 함께 재시도하고, 소진되면 실패 마커를 기록하며 성공 fingerprint를 진행하지 않습니다. knowledge와 FACTS를 쓰지 않고 `handoff-tree.json`은 감사용으로 남깁니다.
 - **스킬 리뷰 중복 제거:** `_detect_todo_all_complete`는 모든 todo가 `completed`/`cancelled`이고 플랜의 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)이 마지막 **성공** 리뷰 후 `skill_review_snapshot_hash`에 저장된 값과 다를 때 발화합니다——완료된 todo의 제자리 수정은 재추출하고, 변하지 않은 플랜은 건너뛰며, 실패한 패스는 다음 완료 턴에 재시도합니다. 앞단 게이트: `BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]`, `skill_review_lock`, 실행 중인 이벤트 루프.
 - **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 백그라운드 리뷰 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_BackgroundReviewLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
@@ -833,7 +829,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                  |
 | `repetition_guard.py`     | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30`                                                              |
 | `max_tokens_boost.py`     | `base_max_tokens`(`MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3`                                                                                           |
-| `llm_retry.py`            | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                     |
+| `llm_retry.py`            | `max_retries=10`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                     |
 | `context_guard.py`        | `output_cut_ratio=0.20`, `check_interval=20`                                                                                                                                                                      |
 
 > **관련되지만 독립적:** 도구별 타임아웃은 기능 레지스트리에 묶인 모듈 상수입니다(`config/features/agent_side/tools_timeouts.py`의 `TOOLS_TIMEOUTS`) — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal/core.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `TOOL_CALL_TIMEOUT_MINUTES`(기본 5)는 `sherry.jsonc` 설정으로 `config/sherry_settings.py`를 거쳐 설정 서비스에 노출되지만, **이를 소비하는 도구 실행 경로는 없습니다** — 유효한 타임아웃 노브가 아닙니다. 요약 파이프라인은 `config/features/agent_side/summarization.py`에서 상수를 읽습니다.
@@ -894,7 +890,7 @@ agent = create_agent(
 | `HeartbeatStaleness`       | (기본)                            | 주기 1분, 아이들 7 / 도구 내 20                                                               | 기본값                                            |
 | `OutputRepetitionGuard`    | (기본)                            | 3 / 2 / 0.6 / 6 / 8                                                                           | 기본값                                            |
 | `MaxTokensBoostMiddleware` | (환경 변수)                       | base: 요청 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`(8192) → 8192, 상한 32768, 3회 재시도    | 기본값                                            |
-| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | 기본값 (+ `FALLBACK_LLM_*` 기반 `fallback_chain`) |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=10`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | 기본값 (+ `FALLBACK_LLM_*` 기반 `fallback_chain`) |
 
 ---
 

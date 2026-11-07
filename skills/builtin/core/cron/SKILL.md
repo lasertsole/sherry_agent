@@ -21,7 +21,7 @@ if __name__ == "__main__":
     at: str | None = "{placeholder}"  # <- ISO datetime (e.g. '2026-02-12T10:30:00')
     deliver: bool | None = bool(
         "{placeholder}"
-    )  # "Whether to deliver the execution result to the user channel (default false)"
+    )  # "Whether to deliver the execution result to the user channel (default true)"
     skills: list[str] | None = [
         "{placeholder}"
     ]  # <- Optional skill names to pre-load into the prompt on every run (e.g. ['news-digest']). The cron sets when, the skill sets how.

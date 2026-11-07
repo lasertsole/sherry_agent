@@ -93,7 +93,7 @@ from .core import retrieve_history_by_last_n_prompt, search_messages
 
 ## 数据模型
 
-### 数据库 Schema
+### 核心 messages 表（节选）
 
 ```sql
 CREATE TABLE IF NOT EXISTS messages (
@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS messages (
     origin        TEXT                -- 注入消息来源："user"（WS/渠道用户输入）、"task_intent"（引导注入）、"subagent_completion"（完成载体）、"cron"（定时投递轮次）、"heartbeat"（预留）、"project_dir"（工作目录变更通知）；NULL = 存量 human 行或普通 ai/tool 行
 );
 ```
+
+> 这里只展示核心 messages 列；完整当前 schema（含 token/cache/压缩字段、`memory_entries`、`message_embeddings`、`persisted_message_ids` 与 FTS5 触发器）在 `context_engine/store/db.py`，以 `IF NOT EXISTS` 重建，没有迁移链。
 
 **索引：**
 
@@ -249,7 +251,7 @@ for r in results:
 
 | 入口 | 导入 | 用途 |
 |------|------|------|
-| `agent/middlewares/message_persistence/`（`MessagePersistenceMiddleware`） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | 每个模型边界都把新产生的 human/ai 消息增量落库到 MesMemory（human 在当轮首个边界、AI 在产出后），工具结果则在工具返回时落库；持久水位 `persisted_message_ids` 使落库在状态累积与进程重启下都只写一次。压缩路径不再做任何持久化 —— `compaction_persistence.py` 已删除；`system_prompt_injection`（`@dynamic_prompt` 中间件）只注入系统提示词（`wrap_model_call`/`awrap_model_call`）；记忆复盘 / 技能评审 仍由 `summarization/background_reviews.py` 在压缩时调度。详见 `agent/middlewares/README.md`。 |
+| `agent/middlewares/message_persistence/`（`MessagePersistenceMiddleware`） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | 每个模型边界都把新产生的 human/ai 消息增量落库到 MesMemory（human 在当轮首个边界、AI 在产出后），工具结果则在工具返回时落库；持久水位 `persisted_message_ids` 使落库在状态累积与进程重启下都只写一次。压缩路径不再做任何持久化 —— `compaction_persistence.py` 已删除；`system_prompt_injection`（`@dynamic_prompt` 中间件）只注入系统提示词（`wrap_model_call`/`awrap_model_call`）；记忆复盘由 `summarization/background_reviews.py` 在压缩时调度；技能评审则在计划于回合边界完成时运行。详见 `agent/middlewares/README.md`。 |
 | `agent/tools/message_search.py` → `message_search` 工具 | `get_db`、`search_messages`、`get_turns_by_turn_num_scope` | 跨会话回忆工具：FTS5 搜索（limit 50）→ 按匹配取轮次范围 → LLM 会话摘要；无 query 时改为返回最近会话的元数据 |
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`，以及（来自 `context_engine.curator` 的）`reset_idle_for_seconds` | 面向客户端的会话列表（顶层会话 + 派生标题）、分页历史，以及每次用户回合重置 curator 空闲计时 |
 | `server/service/session_cleanup_service.py` | `delete_messages_by_session` | 「清空会话」操作 |

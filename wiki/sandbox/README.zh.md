@@ -48,11 +48,11 @@
 
 | 取值 | 含义 |
 | :--- | :--- |
-| `required`（出厂默认） | 后端不可用 ⇒ 拒绝命令，绝不无沙箱运行 |
+| `required`（推荐部署值；随包 `.env` 是 `auto`） | 后端不可用 ⇒ 拒绝命令，绝不无沙箱运行 |
 | `auto` | 后端不可用 ⇒ 降级为无沙箱执行并记录一条警告（裸跑，会记入证据账本） |
 | `off` | 完全关闭沙箱 |
 
-`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但 `.env` 出厂值是 `required` —— 在后端根本无法运行的主机上，`auto` 会把每一条 shell 命令悄悄变成无沙箱执行。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
+`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但随包 `.env` 的值是 `auto`；部署时应显式设为 `required`，因为 在后端根本无法运行的主机上，`auto` 会把每一条 shell 命令悄悄变成无沙箱执行。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
 
 `parse_policy` 先去空白、再大小写不敏感匹配，未知取值抛 `ValueError`：安全配置写错了必须大声失败，绝不静默回退。`read_policy()` **每次**调用都执行 `os.getenv`（不做导入期缓存），运行期修改变量立即生效。
 
@@ -143,7 +143,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | 测试套件 | 覆盖内容 |
 | :------- | :------- |
 | `tests/agent/tools/test_sandbox_matrix.py` | 14 个测试，逐格覆盖矩阵行为（第 1-5 格每个工具一次，第 6 格四次），包括真实图上的 HITL 中断与"恰好一条警告"的降级断言 |
-| `tests/agent/tools/pub_base/test_env_scrub.py` | 清洗规则、优先级、保留/拒绝边界（29 个测试） |
+| `tests/agent/tools/pub_base/test_env_scrub.py` | 清洗规则、优先级、保留/拒绝边界（50 个测试） |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 策略解析、严格 `ValueError`、即时读取语义、平台分发 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造（含读遮蔽挂载）、探测缓存（子进程全部 mock），以及 1 条可选的真实 bwrap 读遮蔽冒烟测试 |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫（危险命令 / 敏感文件正则）、schema、启动形态、受限内建屏障 |
@@ -164,7 +164,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
 - **`python_repl` 没有对应的敏感文件正则。** terminal 专属门禁（[隔离 §3](isolation/README.zh.md#3-危险命令拦截仅-terminal)）不覆盖它；它的包装脚本则限制内建（安全子集省略了 `open` / `__import__`）——这是一道不同且更窄的控制。
 - **PTC 继承同一套后端的局限。** `execute_code` 现在会在后端可用时用 L2 后端包装子进程，但在 `SANDBOX_POLICY=auto`（默认）且无可用后端的主机上，仍会在一条警告后无沙箱运行；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net` 以保持 loopback RPC 桥可达；`terminal` 与 `python_repl` 仍使用私有网络命名空间。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
-- **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行（证据账本记为 `sandboxed: false`，启动日志也会点名）。这是"可用性优先于严格性"的有意取舍；出厂默认已改为 `required`，并且 `SANDBOX_STRICT_BOOT=1` 会直接拒绝启动。
+- **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行（证据账本记为 `sandboxed: false`，启动日志也会点名）。这是"可用性优先于严格性"的有意取舍；随包 `.env` 是 `auto`；部署应设 `required`，并且 `SANDBOX_STRICT_BOOT=1` 会直接拒绝启动。
 - **命令路径筛查是缓解层，不是屏障。** 它只拒绝**字面点名**硬拒路径（凭据/系统文件、YOLO 拒绝名单）的命令，其余一律交给沙箱；`base64 -d | sh`、用碎片拼出的变量、以及 `cd` + 相对路径都天然绕过它。真正的边界是 OS 沙箱。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。
 - **不宣称、也未配置任何网络隔离、seccomp 或 AppArmor profile。** 隔离能力就是 [隔离 §2](isolation/README.zh.md#2-操作系统原生沙箱后端l2) 展示的 bwrap / Seatbelt 构造，仅此而已。

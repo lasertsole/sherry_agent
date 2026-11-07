@@ -182,7 +182,7 @@ src/data/wiki/
 | Append to a file | `write_file(append=true)` | Append content to the end of a file |
 | Modify a file | `patch_file` | Replace specified content in a file |
 | Run commands | `terminal` | Execute shell commands (create dirs, move files, ...) |
-| Run Python | `python_repl` | Execute Python code (call the scripts) |
+| Run Python | `terminal` | Execute Python code (call the scripts; `python_repl` cannot import) |
 | Web search | `web_search` | Search the web |
 | Search memory | `_message_search_tool` | Search past conversation history |
 

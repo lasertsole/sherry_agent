@@ -160,23 +160,18 @@ if (!cfg.valid) {
 
 ### 환경 탭 배너와 저장 전 검증
 
-`client/app/pages/home/components/ConfigPanel.vue`:
+`client/app/pages/home/components/LlmModelManager.vue` + `ConfigPanel.vue`:
 
-- 환경 탭이 `*_MAX_TOKEN` 키를 하나라도 노출하면(`hasMaxTokenKeys`, 344행) 호박색 배너가 `config.env.maxTokenHint`(211행)를 렌더링합니다.
+- `LlmModelManager.vue` 입력 키가 `MAX_TOKEN_GUARD_KEYS`에 포함되면 호박색 배너가 `config.env.maxTokenHint`를 렌더링합니다.
 - 저장 시 `persistEnvChanges()`가 보호된 토큰 키를 사전 검증합니다(379행부터 389행). 비정수 또는 `200000` 미만 값은 `config.env.maxTokenError`를 설정하고 `false`를 반환하므로, PUT은 결코 전송되지 않습니다:
 
 ```ts
-const TOKEN_KEYS = [
-  'MAIN_LLM_MAX_TOKEN',
-  'AUXILIARY_LLM_MAX_TOKEN',
-  'TASKFLOW_LLM_MAX_TOKEN',
-  'COMPRESSION_LLM_MAX_TOKEN'
-];
-const MIN_TOKEN = 200000;
+import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
+
 for (const [key, value] of Object.entries(changes)) {
-  if (TOKEN_KEYS.includes(key)) {
+  if (MAX_TOKEN_GUARD_KEYS.includes(key)) {
     const num = parseInt(value, 10);
-    if (Number.isNaN(num) || num < MIN_TOKEN) {
+    if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
       envLoadError.value = t('config.env.maxTokenError', { key });
       return false;
     }

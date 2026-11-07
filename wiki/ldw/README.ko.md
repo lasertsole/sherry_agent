@@ -67,7 +67,7 @@ LDW 스크립트는 `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, `WORKFLOW_META`를 Pytho
 
 LDW 실행이 실패하고 `LDW["auto_degrade_enabled"]`가 켜져 있으면 어댑터는 **같은 검증된 DAG**에서 실행을 다시 구성합니다. 오래된 flow를 reset하거나 다시 실행하지 않습니다.
 
-1. 새 `ldw-<plan_key>-<nonce>` TaskFlow flow를 만들고, 원본 flow가 아직 있으면 `resumed_from=<origin>`을 붙입니다.
+1. 새 `ldw-<plan_key 앞 8자>-<8자 uuid>` TaskFlow flow를 만들고, 원본 flow가 아직 있으면 `resumed_from=<origin>`을 붙입니다.
 2. None이 아닌 모든 LDW 결과를 DONE step으로 미리 넣고 합성 `ldw-journal:<flow>:<step>` child key와 결과 레코드를 붙입니다. 실패했거나 끝나지 않은 step만 ready/blocked로 남습니다.
 3. ready step을 정상 TaskFlow로 dispatch하므로 retry policy, schema gate, StepJudge, child 완료 의미가 일반 실행과 완전히 같습니다.
 4. `taskflow_wait_all`로 폴링한 뒤 settled child마다 `taskflow_resume`을 호출합니다. 타임아웃되거나 kill된 child는 failure로 선언됩니다. `auto_dispatch`가 다음 물결을 시작합니다.

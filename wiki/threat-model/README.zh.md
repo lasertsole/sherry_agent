@@ -10,7 +10,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 2 | LLM → 工具 | 工具调用 | HITL 审批门、`agent/middlewares/humanInTheLoop/detection.py` 危险命令清单 |
 | 3 | 工具输出 → 模型上下文 | 工具结果 | **不可信输出围栏**、Prompt 注入扫描器、工具结果驱逐 |
 | 4 | 子 Agent → 父 Agent | announce 管道 | 完成门禁、`SubagentCompletionDrain` |
-| 5 | MCP 服务器 → Agent 进程 | 工具结果 | 不可信输出围栏（`mcp_` 前缀规则；目前没有 MCP 工具） |
+| 5 | MCP 服务器 → Agent 进程 | 工具结果 | 不可信输出围栏（`mcp_` 前缀规则，适用于所有已随包发布的 MCP 工具） |
 | 6 | HTTP 客户端 → 网关 | HTTP 路由 | 网关鉴权中间件、查询参数类型化转换；登录保护开启时还有会话门（`server/trigger/auth_user.py`，fail-closed，loopback 豁免） |
 | 7 | 文件系统 → Agent | 文件工具 | `PathGuard`、`O_NOFOLLOW`、虚拟路径解析 |
 | 8 | 沙箱子进程 → 宿主进程 | 子进程派生 | `scrub_env`、`bwrap`/`seatbelt` 隔离 |
@@ -37,7 +37,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 密钥泄漏到日志 / 工具输出 | **脱敏引擎**：日志管线（始终开启，含异常文本）与易泄漏的工具输出；子进程用 `scrub_env` | 只能去掉它认得出的那些形状，仅此而已 |
 | URL 凭证泄漏 | **URL 脱敏**：更多协议、嵌套百分号解码（深度 8）、查询参数与预签名参数 | — |
 | 路径遍历 | `PathGuard` + `O_NOFOLLOW` | — |
-| Shell 注入 | `agent/middlewares/humanInTheLoop/detection.py` 清单（12 条 hardline + 59 条 dangerous） | — |
+| Shell 注入 | `agent/middlewares/humanInTheLoop/detection.py` 清单（12 条 hardline + 61 条 dangerous） | — |
 | 沙箱逃逸 | `bwrap` / `seatbelt` | — |
 | 推理块泄漏到流式输出 | **内联 CoT 重定向**：思考内容被搬到推理通道，而不是被丢弃 | 完全不输出标签的模型按定义不受影响 |
 | 终端输出中的控制序列 | **控制序列剥离**：`terminal` 两个 spawn 落点都施加 | — |

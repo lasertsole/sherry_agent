@@ -40,8 +40,8 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
    ```
 
    非 LLM での縮小が最初の機会を得ます; 履歴がまだ保持予算の 2 倍を超えるとき（またはガバナが LLM 要約を無効化しているとき、または非 LLM 戦略が何も減らせなかったとき）にのみ、補助 LLM に金を払います。
-4. **アグレッシブ・バックストップ**（`_aggressive_truncate`、compression.py:360）: 結果が*それでも*大きすぎる場合、`AGGRESSIVE_TRUNCATE_CHARS (1 000)` 文字を超えるすべての `ToolMessage` がマーカー付きでハードカットされます —— 同じ上限を超えるすべてのツール呼び出し引数 JSON も同様です（先頭のみ、`PROTECTED_TOOLS` は免除、`{"_truncated_args": ...}` に置き換え）。
-5. **要約の自己切り詰め**（`_truncate_summary_messages`、compression.py:417）: `SUMMARY_TOTAL_MAX_CHARS (16 000)` 文字を超える既存の要約メッセージ（`lc_source == "summarization"`）は、先頭 30% / 末尾 30% に再切り詰めされます（`_truncate_content`、compression.py:414）。
+4. **アグレッシブ・バックストップ**（`_aggressive_truncate`、compression.py:360）: 結果が*それでも*大きすぎる場合、`AGGRESSIVE_TRUNCATE_TOKENS (250)` 文字を超えるすべての `ToolMessage` がマーカー付きでハードカットされます —— 同じ上限を超えるすべてのツール呼び出し引数 JSON も同様です（先頭のみ、`PROTECTED_TOOLS` は免除、`{"_truncated_args": ...}` に置き換え）。
+5. **要約の自己切り詰め**（`_truncate_summary_messages`、compression.py:417）: `SUMMARY_TOTAL_MAX_TOKENS (4 000)` 文字を超える既存の要約メッセージ（`lc_source == "summarization"`）は、先頭 30% / 末尾 30% に再切り詰めされます（`_truncate_content`、compression.py:414）。
 6. **復帰コンテキストの注入**（`_inject_recovery_context`、compression.py:379）: 捕捉したファイル操作ラチェットが要約の `## Relevant Files` セクションに書き込まれ、チェックポイントが常に最新の読み取り/変更ファイルマップを運ぶようにします。
 7. **帳簿記録**（`_record_compression`、thrash.py:117）し、最後に `request.override(messages=..., system_message=...)`。
 
@@ -148,7 +148,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 - **AIMessage**、`additional_kwargs={"lc_source": "summarization"}` 付き —— このマーカーを後続のターンは (a) 前のチェックポイントを発見してチェーンし、(b) チェイニング再要約の入力からペアを除去し、プルーンがチェックポイントで停止するようにし、(c) テストが置き換え後の要約がモデル視点から丸ごと呑み込めることを検証するために使います。
 - このペアが MesMemory に入ることはありません: `MessagePersistenceMiddleware._is_persistable` が `lc_source="summarization"` の両半分をスキップします（human 行ビルダーも同じゲートを持ちます）。
 - AIMessage は構造化ドキュメント本体も保持します: `additional_kwargs["summary_doc"]`（cap 後の `SummaryDoc`、JSON 直列化可能な素の dict —— チェーンキャリア。`<prior-summary-json>` として再入力されます）。free-form フォールバックの回はこのペイロードを持たず、`_extract_previous_summary` が `<summary>` 本体の解析へフォールバックします。
-- 合計コンテンツは `SUMMARY_TOTAL_MAX_CHARS (16 000)` で封印され、先頭/末尾 30/30 保持。
+- 合計コンテンツは `SUMMARY_TOTAL_MAX_TOKENS (4 000)` で封印され、先頭/末尾 30/30 保持。
 
 ## 🛡️ スラッシング防止マトリクスと劣化リカバリ
 
@@ -177,18 +177,18 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 # InvalidToolCallRepairMiddleware。Summarization は LLMRetry のすぐ内側）
 Summarization(
     need_update_system_prompt=True,
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
-    trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+    trigger=[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])],
 )
 
 # agent/tools/subagent/spawn/core.py:1106 — ワーカーエージェント（最初のミドルウェア）
 Summarization(
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
     trigger=[
         ("messages", 40),
-        ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0]),
     ],
 )
 ```

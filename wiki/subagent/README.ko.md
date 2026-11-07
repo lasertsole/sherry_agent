@@ -35,6 +35,8 @@
 
 ### 🧱 불변식
 
+완료 게이트는 기본 활성화이며 `COMPLETION_JUDGE["enabled"]`와 `GOAL_GATE["enabled"]`가 마스터 스위치입니다.
+
 1. **두 축은 결코 합쳐지지 않는다.** 기능 역할은 spawn 권한을 부여할 수 없고, 깊이 역할은 도구 허용 목록이나 프롬프트를 바꿀 수 없습니다. 모든 spawn에서 둘이 합성됩니다.
 2. **`general`은 항등 역할이다.** 기능 역할 힌트가 없으면 spawn 동작은 그대로입니다: 어떤 정의도 로드되지 않고 LLM 티어는 깊이 역할이 공급합니다.
 3. **spawn 권한은 두 번 깊이로 게이트된다**——조립 시점(도구 정책 교집합)과 호출 시점(도구 자체의 권한 검사).
@@ -66,10 +68,10 @@
 | 역할 | 용도 | 유효 LLM 티어 | 역할 도구 집합 |
 |------|------|----------------|----------------|
 | `general` | 기본 worker; 항등 역할(패키지 정의는 결코 로드되지 않음) | 깊이 역할 | 모든 도구 + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
+| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `search_files`, `terminal`, `web_search`, `web_fetch`, `message_search`, `skill_view`, `skill_list` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
 | `executor` | 쓰기 가능한 구현과 명령 실행. 읽기 전용 `researcher` / `librarian`을 추가로 spawn할 수 있는 유일한 역할 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `claim_scope`, `share_finding`, `peers_findings` |
 | `reviewer` | 읽기 전용 diff·품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
-| `librarian` | 읽기 전용 외부 코드베이스 검색: 서드파티 저장소 clone·색인·검색 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
+| `librarian` | 읽기 전용 외부 코드베이스 검색: 서드파티 저장소 clone·색인·검색 | `auxiliary` | `read_file`, `search_files`, `terminal`, `web_search`, `web_fetch`, `message_search`, `skill_view`, `skill_list` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
 
 **ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact` / `semantic_code_search`는 심볼 인덱스가 필요하므로 `researcher`와 `librarian` 두 코드 검색 역할에 주어집니다(`semantic_code_search`는 그 인덱스에 대한 임베딩 기반 개념 검색입니다). LSP 도구 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 역시 같은 이유로 이 두 역할에 주어지며, 실행 중인 언어 서버가 필요하여 하위 에이전트가 필요할 때 지연 시작하고 유휴 시 자동 종료합니다. `lsp_rename`과 `lsp_format`은 기본적으로 미리보기만 하고, `lsp_diagnostics`는 비동기 진단 알림을 기다리며, `lsp_status`는 아무것도 시작하지 않고 가용성만 보고합니다. `execute_code` 도구(프로그래매틱 도구 호출)는 executor 전용이며, executor 역할만 받고 다른 기능 역할은 받지 않습니다.
 
@@ -161,16 +163,18 @@ curated 직행 경로로 교체)를 추가하고, `constraints` 규칙은 HARD �
 
 ## 🚦 계층화된 완료 게이트
 
+완료 게이트는 기본 활성화이며 `COMPLETION_JUDGE["enabled"]`와 `GOAL_GATE["enabled"]`로 판정기와 목표 게이트를 끌 수 있습니다.
+
 네 게이트가 자식 실행에서 바깥으로 쌓입니다. 넷 모두 상시 켜져 있고, 입력은 예산과 판정 기준뿐입니다.
 
 | # | 계층 | 게이트 | 필요한 입력 | 페일오픈 동작 |
 |---|------|--------|-------------|----------------|
 | 1 | 자식 실행 | 완료 판정기 + goal loop(`spawn/completion_judge.py`) | 작업, 최신 응답, 증거 요약; 예산 `goal_max_turns`(기본 `5`) | 모델 오류 / 파싱 불가 → `done` |
-| 2 | 단계 | TaskFlow 단계 판정기(`agent/tools/taskflow/step_judge.py`) | 단계의 `validation_criteria`(없으면 판정기 호출 없음) | 모델 오류 / 파싱 불가 → `pass` |
+| 2 | 단계 | TaskFlow 단계 판정기(`agent/tools/taskflow/step_judge.py`) | 단계의 `judge_criteria`(레거시 `validation_criteria`)(없으면 판정기 호출 없음) | 모델 오류 / 파싱 불가 → `pass` |
 | 3 | 흐름 | `taskflow_flow(action="finish")` 게이트 A–C(`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG 상태와 흐름 증거 | 원장 읽기 불가 → 통과 |
 | 4 | 부모 턴 | 완료 drain 프로그램 게이트(`agent/middlewares/subagent_completion_drain/`) | 세션의 검증 증거 요약 | 조회 실패 → 게이트 생략 |
 
-**2계층——단계 판정기.** `taskflow_step(action="resume")`이 자식 결과를 주입한 뒤, `validation_criteria`를 가진 단계는 `PASS` / `RETRY` / `BLOCK`으로 판정됩니다. `RETRY`는 단계 재시도 횟수가 `STEP_JUDGE["max_retries"]`(기본 `2`) 미만이면 판정기 피드백과 함께 단계를 재디스패치하고, 예산을 다 쓰면 단계를 차단합니다. 판정 기준은 판정기의 입력이지 스위치가 아닙니다——기준이 없는 단계는 판정기로 보내지지 않습니다.
+**2계층——단계 판정기.** `taskflow_step(action="resume")`이 자식 결과를 주입한 뒤, `judge_criteria`(레거시 `validation_criteria`)를 가진 단계는 `PASS` / `RETRY` / `BLOCK`으로 판정됩니다. `RETRY`는 단계 재시도 횟수가 `STEP_JUDGE["max_retries"]`(기본 `2`) 미만이면 판정기 피드백과 함께 단계를 재디스패치하고, 예산을 다 쓰면 단계를 차단합니다. 판정 기준은 판정기의 입력이지 스위치가 아닙니다——기준이 없는 단계는 판정기로 보내지지 않습니다.
 
 **3계층——흐름 게이트.** `taskflow_flow(action="finish")`는 다음을 모두 만족할 때까지 `DONE` 전환을 거부합니다: 게이트 A가 모든 단계를 `done` 또는 `blocked`로 보고, 게이트 B가 차단된 단계를 보지 않고, 게이트 C가 `FAIL`이나 `[stale]` 흐름 증거를 보지 않습니다(그리고 `description`이 있는 흐름의 단계 수가 `GOAL_GATE["min_steps"]` 이상일 때만 도는 옵트인 Gate E 목표 판정).
 
@@ -184,7 +188,7 @@ curated 직행 경로로 교체)를 추가하고, `constraints` 규칙은 HARD �
 
 | 하위 시스템 | 이 경계를 넘는 것 | 세부 |
 |-------------|-------------------|------|
-| TaskFlow 엔진 | 단계 디스패치, `validation_criteria`, `aggregate_deps`, 흐름 게이트 A–C(+ Gate E) | [장기 실행 작업](../long-running-tasks/README.ko.md) |
+| TaskFlow 엔진 | 단계 디스패치, `judge_criteria`, `aggregate_deps`, 흐름 게이트 A–C(+ Gate E) | [장기 실행 작업](../long-running-tasks/README.ko.md) |
 | 런어웨이 루프 방지 | 완료 게이트, 판정기 예산, drain과 announce 재시도 동작 | [런어웨이 루프 방지](../loop-prevention/README.ko.md) |
 | 컨텍스트 엔진 | MesMemory에 영속되는 것은 완료 캐리어뿐; 자식 트랜스크립트는 checkpoint에만 존재 | [Context Engine README](../../context_engine/README.ko.md) |
 | 런타임 레인 | `SUBAGENT` 레인이 동시 자식 실행을 제한; 초과 spawn은 `PENDING`으로 대기 | [런어웨이 루프 방지](../loop-prevention/README.ko.md) |
