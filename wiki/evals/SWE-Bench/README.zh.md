@@ -15,7 +15,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 ## Harness 与切片
 
 - 数据集：`princeton-nlp/SWE-bench_Lite`，test split。
-- HARD 切片：`django__django-17051`。`sympy__sympy-20639` 已于 2026-11-08 从可运行切片移除：其 test patch 改变了 NumberSymbol 与 Symbol 分母的旧语义，而该选择无法从 issue 和修复前测试推导出来。Sympy 历史运行仍保留在 `evals/swebench/RESULTS.md`。
+- HARD 切片：`django__django-17051` 与 `django__django-16820`。`sympy__sympy-20639` 已于 2026-11-08 从可运行切片移除：其 test patch 改变了 NumberSymbol 与 Symbol 分母的旧语义，而该选择无法从 issue 和修复前测试推导出来。Sympy 历史运行仍保留在 `evals/swebench/RESULTS.md`。
 - 实例缓存：`--instance-cache-dir /tmp/swebench-instance-cache`。
 - Arm：中性提示词、`--persona coding`、delegation pressure
   （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。delegate-only arm 及其中间件已于
@@ -24,6 +24,9 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 
 - 自 2026-11-04 起，任务 prompt 会附带实例的 test patch 和 FAIL_TO_PASS 名称
   （只读）。checkout 会在运行前预先打上 test patch；判题时先重置这些文件再重新应用补丁，实例报告记录 `target_tests_exposed`。
+- 确定性解码：每个 eval turn 都通过固定 temperature 0 的 `built_agent` 构建。
+  `SHERRY_EVAL_MAX_ITERATIONS` 可选地提高主模型调用上限（未设置/0 保持出厂 90）；
+  报告记录 `model.temperature` 与 `budget.main_max_iterations`。
 
 ## 失败历史（2026-11-01）
 
@@ -42,6 +45,11 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 | 2026-11-04 004714 | + 目标测试预应用到 checkout（HARD 2） | 1/2 | Django 通过；Sympy 用 `e.is_Symbol`（对 `1/x_17` 判断错误）并在 repro 脚本上循环 |
 | 2026-11-04 005721 | 强化失败后提示（仅 Sympy） | 0/1 | 仍是同样的错误条件；F2P 仍为 0 |
 | 2026-11-08 111407 | 仅 HARD Django；prompt 列出 F2P+P2P | 1/1 | Django 通过；首跑 0/1 因 P2P `NoneType` 回归，第二次通过 |
+| 2026-11-08 133112 | temperature=0 + prompt 列出 F2P/P2P | 隔离失效 | 温度 pin 在 workspace 覆盖之前导入了 `config.path`，运行落在 live workspace；其 1/1 不计入 |
+| 2026-11-08 133743 | 修正 pin 顺序后 temperature=0 | 1/1 | Django 通过；17 次调用 / 60.6 秒；F2P/P2P 全通过，无临时文件 |
+| 2026-11-08 135604 | temperature=0，累计四次有效重复 | 4/4 | 全部通过；调用量 16～82 次（60.6～286.3 秒），最长一次用掉 90 次预算中的 82 次 |
+| 2026-11-08 145011 | 新 HARD 实例 `django__django-16820`，temperature=0 | 0/1 | gold check 通过（5 F2P + 91 P2P）；agent 在 92 次调用时耗尽 90 次预算，F2P 通过、P2P 未通过 |
+| 2026-11-08 184144 | 同实例，`SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24 次调用 / 96.5 秒通过；更大的上限消除了截断风险，但不是修复成功的原因（同温度下轨迹差异很大） |
 
 ## 暴露的问题
 
@@ -53,11 +61,16 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
    没有任何机制强制它进入编辑与验证。
 4. **评测 harness 没有拒绝测试文件改动。** 干净 diff 是产品契约的一部分，但
    `changed_paths` 只是被记录。测试文件可以通过目标测试，却仍是脏成功。该缺口
-   仍然存在；本次成功只是恰好没有改测试。
+   已关闭：`dirty_test_edits` 会标出 agent 在 harness 补丁之外改动的测试文件，
+   并强制 `resolved=False`，无论测试是否通过。
 5. **写不等于验证。** 第一版 no-edit arm 产出了 patch，却没有运行既有测试文件；
    P2P 回归直到判题时才被发现。
 6. **子代理结果与 token 难以观察。** 超时子代理的 checkpoint 可能已被清理；主代理
    有时为了确认状态重复 spawn，报告也只统计主 session 的 token。
+7. **测量用的 pin 也能破坏沙箱。** 在 `SHERRY_WORKSPACE_DIR` 覆盖之前导入 eval
+   接缝，会把 `WORKSPACE_DIR` 冻结到 live persona 目录。该次运行仍报告 1/1，
+   但 `eval_workspace_has_sessions=false`、`live_sessions_unchanged=false` 暴露了
+   问题；报告的 isolation 块就是阻止这种运行进入能力统计的门。
 
 ### 当前解决
 

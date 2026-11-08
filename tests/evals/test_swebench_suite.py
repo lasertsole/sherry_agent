@@ -27,6 +27,7 @@ def _instance(tmp_path: Path):
         python_exe=Path("/usr/bin/python3"),
         version="",
         node_ids=lambda: (["t"], []),
+        unrunnable_ids=lambda: {},
     )
 
 
@@ -180,3 +181,32 @@ def test_task_template_requires_reading_the_target_tests_before_editing():
     assert "Before editing, read the" in suite._TASK_TEMPLATE
     assert "FAIL_TO_PASS and PASS_TO_PASS" in suite._TASK_TEMPLATE
     assert "derive the" in suite._TASK_TEMPLATE
+
+
+def test_eval_temperature_is_pinned_at_the_message_seam(monkeypatch):
+    import asyncio
+    import server.service.messages as messages
+    from evals.coding_capability import suite as coding_suite
+
+    async def _original(*_args, **kwargs):
+        return kwargs.get("temperature")
+
+    monkeypatch.setattr(messages, "built_agent", _original)
+    coding_suite.pin_eval_temperature()
+
+    assert asyncio.run(messages.built_agent(force_rebuild=True)) == coding_suite.EVAL_TEMPERATURE
+
+
+def test_eval_budget_override_is_opt_in(monkeypatch):
+    from config.features import ITERATION_BUDGET
+    from evals.coding_capability import suite as coding_suite
+
+    monkeypatch.setitem(ITERATION_BUDGET, "main_agent_max_iterations", 90)
+
+    monkeypatch.setattr(coding_suite, "EVAL_MAX_ITERATIONS", 0)
+    coding_suite.pin_eval_budget()
+    assert coding_suite.eval_main_max_iterations() == 90
+
+    monkeypatch.setattr(coding_suite, "EVAL_MAX_ITERATIONS", 180)
+    coding_suite.pin_eval_budget()
+    assert coding_suite.eval_main_max_iterations() == 180

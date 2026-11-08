@@ -110,6 +110,54 @@ _PROCEED_DIRECTIVE = (
     "`python -m pytest -q` pass."
 )
 
+#: Evaluation runs pin the main model to deterministic decoding. The shipped
+#: agent default is temperature 0.8 (persona behaviour), which makes two runs of
+#: the same instance produce different patches; an eval arm must not inherit
+#: that sampling variance.
+EVAL_TEMPERATURE = 0.0
+
+#: Opt-in model-call ceiling for an eval arm whose repair loop needs more turns
+#: than the shipped 90 (a HARD instance can run into the cap mid-repair). 0
+#: keeps the product default exactly; the report always states which one ran.
+EVAL_MAX_ITERATIONS = int(os.getenv("SHERRY_EVAL_MAX_ITERATIONS", "0") or 0)
+
+
+def pin_eval_budget() -> None:
+    """Raise the main agent's model-call budget when the arm asks for it."""
+    if EVAL_MAX_ITERATIONS <= 0:
+        return
+    from config.features import ITERATION_BUDGET
+
+    ITERATION_BUDGET["main_agent_max_iterations"] = EVAL_MAX_ITERATIONS
+
+
+def eval_main_max_iterations() -> int:
+    """The main agent's effective model-call ceiling in this process."""
+    from config.features import ITERATION_BUDGET
+
+    return int(ITERATION_BUDGET["main_agent_max_iterations"])
+
+
+def pin_eval_temperature() -> None:
+    """Force ``server.service.messages.built_agent`` to build at temperature 0.
+
+    Patched at the module seam rather than changing the product default: the
+    server keeps its persona temperature, while every eval turn (including a
+    HITL resume) rebuilds the graph through this wrapper.
+    """
+    import server.service.messages as messages
+
+    original = messages.built_agent
+    if getattr(original, "_sherry_eval_temperature_pin", False):
+        return
+
+    async def _pinned(*args, **kwargs):
+        kwargs["temperature"] = EVAL_TEMPERATURE
+        return await original(*args, **kwargs)
+
+    _pinned._sherry_eval_temperature_pin = True  # type: ignore[attr-defined]
+    messages.built_agent = _pinned
+
 
 # ── Entry point ─────────────────────────────────────────────────────────────
 
@@ -167,6 +215,12 @@ def _run(selected: list[Task], *, update_baseline: bool, skip_self_check: bool) 
     # imported it at module load, so this import must happen before the
     # sandbox redirects persistence.
     import agent.core  # noqa: F401
+
+    # Pin after the workspace override and config hydration: importing
+    # ``server.service.messages`` too early would freeze WORKSPACE_DIR onto the
+    # live persona directory, defeating the sandbox isolation.
+    pin_eval_budget()
+    pin_eval_temperature()
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(
@@ -565,7 +619,12 @@ def _build_report(
         "suite": "coding_capability",
         "kind": "self-designed task set (NOT an external benchmark; not comparable)",
         "results_dir": str(results_dir),
-        "model": {**_model_info(), "thinking_enabled": False},
+        "model": {
+            **_model_info(),
+            "thinking_enabled": False,
+            "temperature": EVAL_TEMPERATURE,
+        },
+        "budget": {"main_max_iterations": eval_main_max_iterations()},
         "agent_config": _coding_preset_payload(),
         "persona": _persona_evidence(results[0]["id"] if results else None),
         "isolation": _isolation_evidence(live_workspace, live_sessions, eval_workspace),

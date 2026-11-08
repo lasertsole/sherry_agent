@@ -309,6 +309,12 @@ def _run(
     # sandbox redirects persistence.
     import agent.core  # noqa: F401
 
+    # Pin after the workspace override and config hydration: importing
+    # ``server.service.messages`` too early would freeze WORKSPACE_DIR onto the
+    # live persona directory, defeating the sandbox isolation.
+    harness.pin_eval_budget()
+    harness.pin_eval_temperature()
+
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(
             "[evals] swebench SKIPPED: MAIN_LLM_API_KEY is not configured "
@@ -406,7 +412,12 @@ def _run(
             "instance_python": instances.INSTANCE_PYTHON,
             "slice": "hard" if hard else "spike",
         },
-        "model": {**harness._model_info(), "thinking_enabled": False},
+        "model": {
+            **harness._model_info(),
+            "thinking_enabled": False,
+            "temperature": harness.EVAL_TEMPERATURE,
+        },
+        "budget": {"main_max_iterations": harness.eval_main_max_iterations()},
         "agent_config": harness._coding_preset_payload(),
         # This run's probed network reality (default-off philosophy: the record
         # says what was reachable; nothing was switched on for it).
@@ -703,6 +714,7 @@ def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
         "pass_to_pass_ok": False,
         "test_patch_applied": False,
         "target_tests_exposed": bool(instance.test_patch.strip()),
+        "unrunnable_test_ids": instance.unrunnable_ids(),
         "judge_detail": "",
         "judge_tests": None,
         "duration_s": 0.0,
@@ -755,6 +767,7 @@ async def _run_instance(
     instance: Instance, results_dir: Path, *, hard: bool = False
 ) -> dict[str, Any]:
     fail_to_pass, pass_to_pass = instance.node_ids()
+    unrunnable = instance.unrunnable_ids()
     test_paths = instances.test_files_of(instance.test_patch)
     tests_preapplied = bool(instance.test_patch.strip()) and instances.apply_patch(
         instance, instance.test_patch
@@ -850,6 +863,7 @@ async def _run_instance(
                 "pass_to_pass_ok": False,
                 "test_patch_applied": False,
                 "target_tests_exposed": bool(instance.test_patch.strip()),
+                "unrunnable_test_ids": unrunnable,
                 "judge_detail": "",
                 "judge_tests": None,
                 "duration_s": round(time.monotonic() - started, 1),
@@ -907,6 +921,7 @@ async def _run_instance(
             "pass_to_pass_ok": bool(test_patch_applied and ok_p2p),
             "test_patch_applied": test_patch_applied,
             "target_tests_exposed": bool(instance.test_patch.strip()),
+            "unrunnable_test_ids": unrunnable,
             "tests_preapplied": tests_preapplied,
             "dirty_test_edits": dirty_test_edits,
             "judge_detail": detail[-3000:],

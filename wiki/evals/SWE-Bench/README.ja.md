@@ -18,7 +18,7 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 ## Harness とスライス
 
 - データセット：`princeton-nlp/SWE-bench_Lite`、test split。
-- HARD スライス：`django__django-17051`。`sympy__sympy-20639` は 2026-11-08 に実行スライスから削除しました。test patch が NumberSymbol と Symbol の分母に関する旧来の意味論を変更しており、その選択は issue と修正前テストから導出できないためです。Sympy の過去実行は `evals/swebench/RESULTS.md` に残しています。
+- HARD スライス：`django__django-17051` と `django__django-16820`。`sympy__sympy-20639` は 2026-11-08 に実行スライスから削除しました。test patch が NumberSymbol と Symbol の分母に関する旧来の意味論を変更しており、その選択は issue と修正前テストから導出できないためです。Sympy の過去実行は `evals/swebench/RESULTS.md` に残しています。
 - インスタンスキャッシュ：`--instance-cache-dir /tmp/swebench-instance-cache`。
 - Arm：中立プロンプト、`--persona coding`、delegation pressure
   （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。delegate-only arm とそのミドルウェアは
@@ -28,6 +28,10 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 
 - 2026-11-04 以降、タスク prompt はインスタンスの test patch と FAIL_TO_PASS
   名を（読み取り専用で）含みます。checkout は実行前に test patch でパッチされ、判定時にファイルをリセットしてから再適用します。インスタンスレポートは `target_tests_exposed` を記録します。
+- 決定論的デコード：各 eval ターンは temperature 0 に固定した `built_agent` で構築されます。
+  `SHERRY_EVAL_MAX_ITERATIONS` はメインのモデル呼び出し上限を任意に引き上げます
+  （未設定/0 は出荷時の 90）。レポートは `model.temperature` と
+  `budget.main_max_iterations` を記録します。
 
 ## 失敗の履歴（2026-11-01）
 
@@ -46,6 +50,11 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 | 2026-11-04 004714 | + 対象テストを checkout に事前適用（HARD 2） | 1/2 | Django は通過。Sympy は `e.is_Symbol`（`1/x_17` には誤り）を使い、repro スクリプトでループ |
 | 2026-11-04 005721 | 失敗後の指示を強化（Sympy のみ） | 0/1 | 同じ誤った条件のまま。F2P は 0 |
 | 2026-11-08 111407 | HARD は Django のみ、prompt に F2P+P2P | 1/1 | Django 通過。初回は P2P の `NoneType` 回帰で 0/1、2 回目で通過 |
+| 2026-11-08 133112 | temperature=0 + prompt に F2P/P2P | 隔離失敗 | 温度 pin が workspace 上書きより前に `config.path` を import し、live workspace で実行された。1/1 は集計しない |
+| 2026-11-08 133743 | pin 順序修正後の temperature=0 | 1/1 | Django 通過。17 回呼び出し / 60.6 秒。F2P/P2P とも通過、一時ファイルなし |
+| 2026-11-08 135604 | temperature=0、有効な反復は計 4 回 | 4/4 | すべて通過。呼び出し回数は 16～82 回（60.6～286.3 秒）。最長は 90 回予算のうち 82 回を使用 |
+| 2026-11-08 145011 | 新 HARD インスタンス `django__django-16820`、temperature=0 | 0/1 | gold check は通過（F2P 5 + P2P 91）。エージェントは 92 回で 90 回予算を使い切り、F2P は通過、P2P は未通過 |
+| 2026-11-08 184144 | 同インスタンス、`SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24 回呼び出し / 96.5 秒で通過。上限拡大は打ち切りの天井を外したが、修正の原因ではない（同温度でも軌跡が大きく異なる） |
 
 ## 露呈した問題
 
@@ -58,13 +67,19 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
    上流 PR を探しに行った。編集と検証へ移ることを強制する仕組みがなかった。
 4. **評価 harness がテストファイル編集を拒否しなかった。** クリーン diff は製品契約の
    一部だが、`changed_paths` は記録されるだけだった。テストファイルは対象テストを
-   通っても汚い成功になる。この穴はまだ開いており、今回の成功は偶然テストを
-   編集しなかっただけである。
+   通っても汚い成功になる。この穴は閉じた。`dirty_test_edits` が harness の
+   patch 以外でエージェントが変更したテストファイルを検出し、テスト結果に
+   かかわらず `resolved=False` にする。
 5. **書くことは検証ではない。** 最初の no-edit arm は patch を作ったが既存テストを
    実行せず、P2P 回帰は判定時に初めて分かった。
 6. **子の結果と token が観測しにくい。** タイムアウトした子の checkpoint は消えて
    いることがあり、メインは状態確認のため再 spawn し、レポートはメイン session の
    token だけを数えていた。
+7. **計測用の pin がサンドボックスを壊しうる。** `SHERRY_WORKSPACE_DIR` の上書き前に
+   eval の接合点を import すると、`WORKSPACE_DIR` が live persona ディレクトリに
+   固定された。実行は 1/1 と報告したが、`eval_workspace_has_sessions=false` と
+   `live_sessions_unchanged=false` が露呈させた。レポートの isolation ブロックが、
+   そのような実行を能力集計から排除するゲートである。
 
 ### 現在の解決
 

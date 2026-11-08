@@ -6,7 +6,12 @@
 
 > **2026-11-08 切片变更：** `sympy__sympy-20639` 已从可运行 HARD 切片移除；
 > 其隐藏测试语义无法从 issue 与修复前测试推导，属于模型能力分歧而非 harness
-> 失败。后续 `--hard` 只运行 `django__django-17051`；Sympy 历史运行仅作记录。
+> 失败。后续 `--hard` 运行 `django__django-17051` 与 `django__django-16820`
+> （两者均通过 gold check）；Sympy 历史运行仅作记录。
+>
+> **保留策略：** 报告、diff、`instance_results` 与 `sandbox/workspace` 保留；
+> `sandbox/src/checkpoints` 和 `shadow/` 是派生会话状态（单次可达数百 MB），
+> 会拖慢仓库级搜索测试的预算，跑完即删。
 
 ---
 
@@ -200,7 +205,118 @@
   估算 $2.057；`changed_paths` 包含 `django/db/backends/{base,postgresql,sqlite3}/features.py`
   和 `django/db/models/query.py`，另有 agent 自建的 `dbg_tmp.py`（非测试文件，未判 dirty）。
 - 对照：`20261108_105816` 同实例、同 prompt 首跑 0/1；F2P 5/5 通过，但 P2P
-  `test_ignore_conflicts_ignore` 报 `'NoneType' object is not iterable`。第二次
-  运行 resolved，说明该实例仍有模型/采样方差，不能把单次 1/1 当作稳定能力。
+  `test_ignore_conflicts_ignore` 报 `'NoneType' object is not iterable`。该次运行的
+  `final_text` 是 “The iteration budget (90) has been exhausted”，即 92 次工具调用
+  后被预算截断在修复中途——这是“回合不够”型失败，不是模型不知道该改哪里。
+  第二次运行 1/1 同样在预算耗尽时结束（补丁已先完成），说明该实例的调用需求就在
+  90 附近，单次结果受方差支配。
 - 结论：HARD 现在只跑 Django；Sympy 历史保留但不再计分。DeepSWE 的“SWE 全通过”
   门现在满足，但 DeepSWE 本身仍未验证。
+
+---
+
+## 20261108_133112 — temperature=0 pinned（Django，隔离失效，结果不计入）
+
+- 目的：把 eval 主模型温度固定为 0，消除两次 Django 运行之间最明显的采样方差；
+  同时保留 prompt 中的 F2P+P2P 列表。
+- **有效性：无效。** `pin_eval_temperature()` 在 `SHERRY_WORKSPACE_DIR` 覆盖与
+  `config.path` 初始化之前导入了 `server.service.messages`/`config.path`，把
+  `WORKSPACE_DIR` 冻结回 live workspace：报告 isolation 为
+  `eval_workspace_has_sessions=false`、`live_sessions_unchanged=false`，因此本次
+  1/1 不能作为能力证据。修复：pin 移到 workspace 覆盖与 config 初始化之后。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；168.2s；57 tool calls；tokens 2,195,175 / 8,452；
+  估算 $1.110；`resumes=0`；改动 `django/db/models/query.py` 与
+  `django/db/models/sql/compiler.py`，无测试文件、无 scratch 文件。
+- 对照：不固定温度时同实例两次为 0/1（437s / 92 calls）和 1/1（254s / 94 calls）；
+  固定温度后本次为 1/1（168s / 57 calls）。这是单次实验，不能单独证明稳定性，
+  但说明 temperature 是主要方差源之一。
+- 注：HARD 切片新增的 `django__django-16820` 尚未完成 host gold check（网络拉取
+  超时），暂不把它的结果计入能力结论。
+
+---
+
+## 20261108_133743 — temperature=0，pin 顺序修正后（Django，1/1，有效）
+
+- 目的：修正 `pin_eval_temperature()` 的导入顺序——在 `SHERRY_WORKSPACE_DIR`
+  覆盖与 `config.path` 初始化之后再 pin，恢复 eval 沙箱隔离，然后重跑同实例。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；60.6s；17 tool calls；tokens 395,375 / 2,346；
+  估算 $0.201；`resumes=0`；只改 `django/db/models/query.py`，无测试文件、无临时文件。
+- 隔离：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
+  `model.temperature=0.0`、`thinking_enabled=false`。
+- 观察：agent 在 17 次调用内完成定位→编辑→运行 `bulk_create` 全量测试（52 个，
+  7 skipped），并在最终答复中明确报告 F2P 5/5 与全部 PASS_TO_PASS 通过。与不固定
+  温度时的 57～94 次调用相比，确定性解码同时降低了方差和调用量。
+- 结论：temperature=0 的收益在有效隔离下成立；单次样本不足以证明稳定性，下面用
+  三次重复补齐。`django__django-16820` 的 gold check 另行记录。
+
+---
+
+## 20261108_134640 / 135057 / 135604 — temperature=0 重复三次（Django，3/3）
+
+- 目的：单次 1/1 不能证明稳定；在 temperature=0、隔离有效的前提下重复同一实例，
+  观察调用量与结果的方差。
+- 命令同 133743（每次独立 run_id；checkout/venv 复用实例缓存）。
+- 结果：**3/3 resolved**，且四次有效 temperature=0 运行（含 133743）全部 1/1：
+
+  | run | calls | 时长 | resolved |
+  | --- | --- | --- | --- |
+  | 133743 | 17 | 60.6s | 1/1 |
+  | 134640 | 69 | 235.8s | 1/1 |
+  | 135057 | 82 | 286.3s | 1/1 |
+  | 135604 | 16 | 63.1s | 1/1 |
+
+  全部 `eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`。
+- 观察：temperature=0 下结果稳定，但**调用量并不确定**（16～82 次，约 5 倍差）。
+  最长的一次用掉 90 次预算中的 82 次——如果轨迹再长一点，就会再次落入
+  “预算耗尽、补丁未收敛”的失败模式。
+- 结论：
+  1. 该实例的稳定性来自“确定性解码 + 编辑后跑全量目标测试”，不是来自回合数；
+  2. “加回合”只对**截断型**失败有效（105816 的 0/1 正是 90 次预算在修复中途耗尽）；
+     它不修复错误补丁，也不保证语义分歧的实例收敛；
+  3. 对长轨迹实例，90 次预算余量偏薄，可考虑按实例给出更大的上限，但应作为
+     安全边际而不是收敛策略。
+
+---
+
+## 20261108_145011 — 新增 HARD 实例 django__django-16820，90 次预算（0/1）
+
+- 目的：验证新增 HARD 实例在真实 agent 下的行为；temperature=0、隔离有效、
+  gold check 已通过（F2P 5/5、P2P 91/91）。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+  （本次 checkout 由 codeload tarball 重建：git fetch 在代理下两次超时）。
+- 结果：**0/1**；263.7s；92 tool calls；tokens 5,104,262 / 10,018；估算 $2.567；
+  `final_text` 为 “The iteration budget (90) has been exhausted”，即再次在修复
+  中途被预算截断。F2P 5/5 通过，P2P 未通过；改动
+  `django/db/migrations/{autodetector,operations/models,state}.py`。
+- P2P 输出异常：Django runner 在子进程回报失败时抛
+  `TypeError: cannot pickle 'traceback' object`，`judge_detail` 只保留了尾部，
+  无法从报告定位具体失败测试；这属于 runner 的报告缺陷，判题仍是失败。
+- 有效性：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
+  `temperature=0.0`、`thinking_enabled=false`。
+- 结论：该实例把“回合预算”从理论问题变成了实测约束——90 次调用不够它走完
+  修复→全量 P2P 验证。下一次用 `SHERRY_EVAL_MAX_ITERATIONS=180` 重跑同一实例，
+  直接检验“加回合能否收敛”。
+
+---
+
+## 20261108_184144 — 同实例，180 次预算（1/1）
+
+- 目的：直接检验“加回合能否收敛”。环境与上一条相同（temperature=0、隔离有效、
+  同一 checkout / venv / gold check），只把主模型调用上限从 90 提到 180。
+- 命令：`SHERRY_EVAL_MAX_ITERATIONS=180 uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；96.5s；**24 tool calls**；tokens 715,973 / 3,007；
+  估算 $0.362；F2P 5/5、P2P 91/91；只改
+  `django/db/migrations/operations/models.py`，无测试文件改动。
+- 报告新增字段：`budget.main_max_iterations=180`；`unrunnable_test_ids` 为
+  `{"fail_to_pass": 2, "pass_to_pass": 112}`——数据集里混入的测试描述文本不是
+  合法 Django 标签，被 harness 丢弃并如实上报（实际运行 5 + 91 个）。
+- 关键观察：180 的预算并没有“让”它成功——它在 24 次调用内就完成了修复并跑完
+  `migrations` 全量 722 个测试。与上一条 92 次耗尽预算的轨迹相比，同样的代码、
+  同样的 temperature=0，轨迹长度相差近 4 倍。也就是说：
+  1. 90 的预算确实能截断一条长轨迹（上一条的失败模式），提高上限可以消除这个
+     截断风险；
+  2. 但“加回合”不是收敛的充分条件，也不能归因本次成功——模型这次走了短路径；
+  3. 真正可复用的部分是编辑后的全量目标测试验证（prompt 已要求），预算只是
+     安全边际。

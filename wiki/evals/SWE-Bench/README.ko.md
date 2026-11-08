@@ -17,7 +17,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 ## Harness와 슬라이스
 
 - 데이터셋: `princeton-nlp/SWE-bench_Lite`, test split.
-- HARD 슬라이스: `django__django-17051`. `sympy__sympy-20639`는 2026-11-08에 실행 슬라이스에서 제거했습니다. test patch가 NumberSymbol과 Symbol 분모의 오래된 의미론을 바꾸는데, 그 선택은 issue와 수정 전 테스트에서 유도할 수 없기 때문입니다. Sympy 과거 실행은 `evals/swebench/RESULTS.md`에 남아 있습니다.
+- HARD 슬라이스: `django__django-17051` 및 `django__django-16820`. `sympy__sympy-20639`는 2026-11-08에 실행 슬라이스에서 제거했습니다. test patch가 NumberSymbol과 Symbol 분모의 오래된 의미론을 바꾸는데, 그 선택은 issue와 수정 전 테스트에서 유도할 수 없기 때문입니다. Sympy 과거 실행은 `evals/swebench/RESULTS.md`에 남아 있습니다.
 - 인스턴스 캐시: `--instance-cache-dir /tmp/swebench-instance-cache`.
 - Arm: 중립 프롬프트, `--persona coding`, delegation pressure
   (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). delegate-only arm과 그 미들웨어는
@@ -27,6 +27,10 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 
 - 2026-11-04부터 작업 prompt에는 인스턴스의 test patch와 FAIL_TO_PASS 이름이
   (읽기 전용으로) 포함됩니다. checkout은 실행 전에 test patch로 미리 패치되며, 채점 시 파일을 초기화한 뒤 다시 적용합니다. 인스턴스 리포트는 `target_tests_exposed`를 기록합니다.
+- 결정론적 디코딩: 모든 eval 턴은 temperature 0으로 고정된 `built_agent`로 빌드됩니다.
+  `SHERRY_EVAL_MAX_ITERATIONS`는 메인 모델 호출 상한을 선택적으로 올립니다
+  (미설정/0이면 출하 기본 90). 리포트는 `model.temperature`와
+  `budget.main_max_iterations`를 기록합니다.
 
 ## 실패 이력(2026-11-01)
 
@@ -45,6 +49,11 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 | 2026-11-04 004714 | + 대상 테스트를 checkout에 사전 적용(HARD 2) | 1/2 | Django 통과. Sympy는 `e.is_Symbol`(`1/x_17`에는 오류)을 사용해 repro 스크립트에서 루프 |
 | 2026-11-04 005721 | 실패 후 지시 강화(Sympy만) | 0/1 | 같은 잘못된 조건. F2P는 0 |
 | 2026-11-08 111407 | HARD Django만, prompt에 F2P+P2P | 1/1 | Django 통과. 첫 실행은 P2P `NoneType` 회귀로 0/1, 두 번째 통과 |
+| 2026-11-08 133112 | temperature=0 + prompt에 F2P/P2P | 격리 실패 | temperature pin이 workspace 재정의 전에 `config.path`를 import해 live workspace에서 실행됨. 1/1은 집계하지 않음 |
+| 2026-11-08 133743 | pin 순서 수정 후 temperature=0 | 1/1 | Django 통과. 17회 호출 / 60.6초. F2P/P2P 모두 통과, 임시 파일 없음 |
+| 2026-11-08 135604 | temperature=0, 유효 반복 총 4회 | 4/4 | 모두 통과. 호출 수는 16～82회(60.6～286.3초). 가장 긴 실행은 90회 예산 중 82회 사용 |
+| 2026-11-08 145011 | 새 HARD 인스턴스 `django__django-16820`, temperature=0 | 0/1 | gold check 통과(F2P 5 + P2P 91). 에이전트는 92회에서 90회 예산을 소진했고 F2P는 통과, P2P는 미통과 |
+| 2026-11-08 184144 | 동일 인스턴스, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24회 호출 / 96.5초로 통과. 상한 확대는 잘림 위험을 없앴지만 수정의 원인은 아님(같은 온도에서도 궤적이 크게 다름) |
 
 ## 드러난 문제
 
@@ -57,13 +66,19 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
    상류 PR을 찾으러 갔다. 편집과 검증으로 넘어가게 강제하는 장치가 없었다.
 4. **평가 harness가 테스트 파일 편집을 거부하지 않았다.** 깨끗한 diff는 제품 계약의
    일부지만 `changed_paths`는 기록만 했다. 테스트 파일은 대상 테스트를 통과해도
-   오염된 성공이 된다. 이 구멍은 아직 열려 있으며, 이번 성공은 우연히 테스트를
-   편집하지 않았을 뿐이다.
+   오염된 성공이 된다. 이 구멍은 닫혔다. `dirty_test_edits`가 harness 패치 밖에서
+   에이전트가 수정한 테스트 파일을 표시하고 테스트 결과와 무관하게
+   `resolved=False`로 만든다.
 5. **쓰기는 검증이 아니다.** 첫 no-edit arm은 patch를 만들었지만 기존 테스트를
    실행하지 않았고, P2P 회귀는 판정 때 처음 드러났다.
 6. **자식 결과와 token을 관찰하기 어렵다.** 타임아웃된 자식의 checkpoint가 사라질 수
    있고, 메인은 상태 확인을 위해 다시 spawn했으며, 리포트는 메인 session token만
    셌다.
+7. **측정용 pin이 샌드박스를 무력화할 수 있다.** `SHERRY_WORKSPACE_DIR` 재정의 전에
+   eval 접합점을 import하면 `WORKSPACE_DIR`가 live persona 디렉터리에 고정된다.
+   실행은 1/1로 보고했지만 `eval_workspace_has_sessions=false`와
+   `live_sessions_unchanged=false`가 이를 드러냈다. 리포트의 isolation 블록이
+   그런 실행을 능력 집계에서 제외하는 게이트다.
 
 ### 현재 해결
 

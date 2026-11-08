@@ -96,6 +96,27 @@ def test_django_labels_are_not_duplicated_when_the_row_already_carries_them():
     assert pass_to_pass == ["bulk_create.tests.BulkCreateTests.test_y"]
 
 
+def test_unrunnable_django_labels_are_reported_not_silently_dropped():
+    row = {
+        **_ROW,
+        "repo": "django/django",
+        "FAIL_TO_PASS": json.dumps(
+            ["test_x (bulk_create.tests.BulkCreateTests)", "A description, not a test."]
+        ),
+        "PASS_TO_PASS": json.dumps(["A docstring.", "test_y (bulk_create.tests.BulkCreateTests)"]),
+    }
+    instance = instances.to_instance(row, repo_dir=None)  # type: ignore[arg-type]
+
+    fail_to_pass, pass_to_pass = instance.node_ids()
+
+    assert fail_to_pass == ["bulk_create.tests.BulkCreateTests.test_x"]
+    assert pass_to_pass == ["bulk_create.tests.BulkCreateTests.test_y"]
+    assert instance.unrunnable_ids() == {
+        "fail_to_pass": ["A description, not a test."],
+        "pass_to_pass": ["A docstring."],
+    }
+
+
 def test_the_library_version_is_carried_for_shallow_clones():
     instance = instances.to_instance({**_ROW, "version": "8.0"}, repo_dir=None)  # type: ignore[arg-type]
 
@@ -251,5 +272,8 @@ def test_retry_run_retries_a_transient_failure(tmp_path, monkeypatch):
 
 def test_hard_slice_excludes_the_sympy_information_gap():
     """The removed instance is pinned so a future edit cannot silently re-add it."""
-    assert instances.HARD_INSTANCES == ("django__django-17051",)
+    assert instances.HARD_INSTANCES == (
+        "django__django-17051",
+        "django__django-16820",
+    )
     assert "sympy__sympy-20639" not in instances.HARD_INSTANCES
