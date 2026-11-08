@@ -321,3 +321,31 @@
   2. 但“加回合”不是收敛的充分条件，也不能归因本次成功——模型这次走了短路径；
   3. 真正可复用的部分是编辑后的全量目标测试验证（prompt 已要求），预算只是
      安全边际。
+
+---
+
+## 20261108_222819 — 最终代码：精确命令 + 默认 180 预算（Django 16820，0/1）
+
+- 目的：在“prompt 带精确测试命令 + 主 agent 默认预算 180”的最终代码上重跑新 HARD
+  实例，确认两处改动端到端生效。
+- 环境：temperature=0、隔离有效；`budget.main_max_iterations=180`（未设置
+  `SHERRY_EVAL_MAX_ITERATIONS`，走产品默认）；`unrunnable_test_ids` 为
+  2 F2P + 112 P2P。
+- 结果：**0/1**；264.6s；97 tool calls；F2P 5/5 通过，P2P 未通过；改动
+  `django/db/migrations/{autodetector,operations/models}.py`。
+- 验证命令：agent 的最终答复明确使用并复跑了
+  `python tests/runtests.py migrations`，说明 prompt 里的精确命令生效。
+- 失败原因（串行复判同一 diff 得到）：5 个 P2P 失败，全部是真实断言差异——
+  `OptimizerTests.test_create_alter_owrt_field`（`_order` 字段插入位置错误），
+  `AutodetectorTests.test_add_model_order_with_respect_to_{unique_together,constraint}`、
+  `AutodetectorIndexTogetherTests.test_add_model_order_with_respect_to_index_together`
+  与 `test_default_related_name_option`（空的 `indexes` 泄漏进 options）。
+  agent 的最终答复也列出了同样的剩余工作，但在被 ToolGuardrails 阻止继续读测试
+  文件后主动停止，未继续修复。
+- 判题器缺陷（已修）：Django 默认的并行 runner 在回报一个无法 pickle 的异常时
+  崩溃（`TypeError: cannot pickle 'traceback' object`），导致报告只剩
+  `pass_to_pass_ok=false` 和 91 条“全通过”的解析结果，看不到失败测试。现在
+  `run_tests` 对 Django 固定 `--parallel 1`；对同一 diff 串行复判得到 91 条
+  outcomes、5 条 fail，与 agent 自己的诊断一致。
+- 结论：精确命令和更大预算都生效了，但这次失败是**补丁语义不完整**，不是截断；
+  额外回合只有在 agent 还能继续读取/运行时才有意义。

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,6 +122,29 @@ def test_the_library_version_is_carried_for_shallow_clones():
     instance = instances.to_instance({**_ROW, "version": "8.0"}, repo_dir=None)  # type: ignore[arg-type]
 
     assert instance.version == "8.0"
+
+
+def test_django_judge_runs_serially_so_failures_are_reported(tmp_path, monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    def _fake_run(argv, **_kwargs):
+        captured["argv"] = list(argv)
+        return SimpleNamespace(returncode=0, stdout="OK\n", stderr="")
+
+    monkeypatch.setattr(instances.subprocess, "run", _fake_run)
+    instance = instances.to_instance(
+        {
+            **_ROW,
+            "repo": "django/django",
+            "FAIL_TO_PASS": json.dumps(["test_x (bulk_create.tests.C)"]),
+        },
+        repo_dir=tmp_path,
+    )
+
+    ok, _tail, _outcomes = instances.run_tests(instance, ["bulk_create.tests.C.test_x"])
+
+    assert ok is True
+    assert captured["argv"][captured["argv"].index("--parallel") + 1] == "1"
 
 
 def test_revert_drops_the_shadow_snapshot_and_excludes_it_from_git_clean(tmp_path, monkeypatch):

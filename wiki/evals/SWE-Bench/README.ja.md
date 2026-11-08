@@ -55,6 +55,7 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 | 2026-11-08 135604 | temperature=0、有効な反復は計 4 回 | 4/4 | すべて通過。呼び出し回数は 16～82 回（60.6～286.3 秒）。最長は 90 回予算のうち 82 回を使用 |
 | 2026-11-08 145011 | 新 HARD インスタンス `django__django-16820`、temperature=0 | 0/1 | gold check は通過（F2P 5 + P2P 91）。エージェントは 92 回で 90 回予算を使い切り、F2P は通過、P2P は未通過 |
 | 2026-11-08 184144 | 同インスタンス、`SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24 回呼び出し / 96.5 秒で通過。上限拡大は打ち切りの天井を外したが、修正の原因ではない（同温度でも軌跡が大きく異なる） |
+| 2026-11-08 222819 | 最終コード：正確なコマンド + 既定 180 予算（16820） | 0/1 | F2P 5/5、実際の P2P 断言失敗 5 件。guardrail がテストファイルの追加読み取りを止めた後、エージェントは停止 |
 
 ## 露呈した問題
 
@@ -75,6 +76,12 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 6. **子の結果と token が観測しにくい。** タイムアウトした子の checkpoint は消えて
    いることがあり、メインは状態確認のため再 spawn し、レポートはメイン session の
    token だけを数えていた。
+8. **Django の並列 runner は、クラッシュ時に報告中の失敗を失うことがある。**
+   例外が pickle できないと、プールが `TypeError: cannot pickle 'traceback'
+   object` で中断し、レポートに失敗テスト名が残らない。Django judge は
+   `--parallel 1` で実行するようになり、同じ diff から 91 件の結果と 5 件の
+   名前付き失敗が得られる。
+
 7. **計測用の pin がサンドボックスを壊しうる。** `SHERRY_WORKSPACE_DIR` の上書き前に
    eval の接合点を import すると、`WORKSPACE_DIR` が live persona ディレクトリに
    固定された。実行は 1/1 と報告したが、`eval_workspace_has_sessions=false` と

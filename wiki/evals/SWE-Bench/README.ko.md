@@ -54,6 +54,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 | 2026-11-08 135604 | temperature=0, 유효 반복 총 4회 | 4/4 | 모두 통과. 호출 수는 16～82회(60.6～286.3초). 가장 긴 실행은 90회 예산 중 82회 사용 |
 | 2026-11-08 145011 | 새 HARD 인스턴스 `django__django-16820`, temperature=0 | 0/1 | gold check 통과(F2P 5 + P2P 91). 에이전트는 92회에서 90회 예산을 소진했고 F2P는 통과, P2P는 미통과 |
 | 2026-11-08 184144 | 동일 인스턴스, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24회 호출 / 96.5초로 통과. 상한 확대는 잘림 위험을 없앴지만 수정의 원인은 아님(같은 온도에서도 궤적이 크게 다름) |
+| 2026-11-08 222819 | 최종 코드: 정확한 명령 + 기본 180 예산(16820) | 0/1 | F2P 5/5, 실제 P2P 단언 실패 5건. guardrail이 테스트 파일 추가 읽기를 막은 뒤 에이전트가 중단 |
 
 ## 드러난 문제
 
@@ -74,6 +75,12 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 6. **자식 결과와 token을 관찰하기 어렵다.** 타임아웃된 자식의 checkpoint가 사라질 수
    있고, 메인은 상태 확인을 위해 다시 spawn했으며, 리포트는 메인 session token만
    셌다.
+8. **Django의 병렬 runner는 크래시 시 보고 중이던 실패를 잃을 수 있다.**
+   예외를 pickle할 수 없으면 풀이 `TypeError: cannot pickle 'traceback'
+   object`로 중단되고, 리포트에는 실패 테스트 이름이 남지 않는다. Django
+   judge는 이제 `--parallel 1`로 실행하며, 같은 diff에서 91개 결과와 5개
+   이름 있는 실패를 얻는다.
+
 7. **측정용 pin이 샌드박스를 무력화할 수 있다.** `SHERRY_WORKSPACE_DIR` 재정의 전에
    eval 접합점을 import하면 `WORKSPACE_DIR`가 live persona 디렉터리에 고정된다.
    실행은 1/1로 보고했지만 `eval_workspace_has_sessions=false`와

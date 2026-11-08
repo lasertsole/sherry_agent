@@ -60,6 +60,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-08 135604 | temperature=0, four valid repeats total | 4/4 | All resolved; calls vary 16–82 (60.6–286.3 s). The longest used 82 of the 90-call budget |
 | 2026-11-08 145011 | new HARD instance `django__django-16820`, temperature=0 | 0/1 | Gold check passes (5 F2P + 91 P2P); agent hit the 90-call cap at 92 calls, F2P passed, P2P did not |
 | 2026-11-08 184144 | same instance, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | Resolved in 24 calls / 96.5 s; the larger cap removed the truncation ceiling but did not cause the fix (same temperature, very different trajectory) |
+| 2026-11-08 222819 | final code: exact command + default 180 budget (16820) | 0/1 | F2P 5/5, five real P2P assertion failures; the agent stopped after a guardrail blocked more test-file reads |
 
 ## Problems exposed
 
@@ -83,6 +84,12 @@ HARD instances?” — not “what is the leaderboard position?”.
 6. **Child results and child tokens were hard to observe.** A timed-out child’s
    checkpoint may be gone; the main agent sometimes re-spawned to learn status,
    and reports counted only the main session’s tokens.
+8. **Django's parallel runner can lose the failure it crashed on.** A test
+   whose exception cannot be pickled aborts the pool with `TypeError: cannot
+   pickle 'traceback' object`, and the report then names no failing test. The
+   Django judge now runs with `--parallel 1`; the same diff then yields 91
+   parsed outcomes and 5 named failures.
+
 7. **A measurement pin can defeat the sandbox.** Importing the eval seam before
    `SHERRY_WORKSPACE_DIR` froze `WORKSPACE_DIR` onto the live persona directory.
    The run still reported 1/1, but `eval_workspace_has_sessions=false` and

@@ -50,6 +50,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 | 2026-11-08 135604 | temperature=0，累计四次有效重复 | 4/4 | 全部通过；调用量 16～82 次（60.6～286.3 秒），最长一次用掉 90 次预算中的 82 次 |
 | 2026-11-08 145011 | 新 HARD 实例 `django__django-16820`，temperature=0 | 0/1 | gold check 通过（5 F2P + 91 P2P）；agent 在 92 次调用时耗尽 90 次预算，F2P 通过、P2P 未通过 |
 | 2026-11-08 184144 | 同实例，`SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24 次调用 / 96.5 秒通过；更大的上限消除了截断风险，但不是修复成功的原因（同温度下轨迹差异很大） |
+| 2026-11-08 222819 | 最终代码：精确命令 + 默认 180 预算（16820） | 0/1 | F2P 5/5，5 个真实 P2P 断言失败；agent 在被护栏阻止继续读测试文件后停止 |
 
 ## 暴露的问题
 
@@ -67,6 +68,11 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
    P2P 回归直到判题时才被发现。
 6. **子代理结果与 token 难以观察。** 超时子代理的 checkpoint 可能已被清理；主代理
    有时为了确认状态重复 spawn，报告也只统计主 session 的 token。
+8. **Django 的并行 runner 可能丢掉它崩溃时正在报的失败。** 测试异常无法 pickle
+   时，进程池以 `TypeError: cannot pickle 'traceback' object` 中止，报告里没有
+   任何失败测试名。Django judge 现在固定 `--parallel 1`；同一 diff 能解析出
+   91 条结果和 5 个具名失败。
+
 7. **测量用的 pin 也能破坏沙箱。** 在 `SHERRY_WORKSPACE_DIR` 覆盖之前导入 eval
    接缝，会把 `WORKSPACE_DIR` 冻结到 live persona 目录。该次运行仍报告 1/1，
    但 `eval_workspace_has_sessions=false`、`live_sessions_unchanged=false` 暴露了

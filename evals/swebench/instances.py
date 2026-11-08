@@ -617,7 +617,19 @@ def run_tests(
     if not node_ids:
         return True, "(no tests)", []
     if instance.judge_mode == "django":
-        argv = [str(instance.python_exe), "tests/runtests.py", "--verbosity", "1", *node_ids]
+        # Django's parallel runner crashes while reporting a failure whose
+        # exception cannot be pickled ("cannot pickle 'traceback' object"),
+        # which loses the failing test AND the verdict's evidence. These suites
+        # are small, so run serially and keep the actionable output.
+        argv = [
+            str(instance.python_exe),
+            "tests/runtests.py",
+            "--verbosity",
+            "1",
+            "--parallel",
+            "1",
+            *node_ids,
+        ]
     else:
         argv = [
             str(instance.python_exe),
