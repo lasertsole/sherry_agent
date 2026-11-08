@@ -20,7 +20,7 @@ Rules for entries:
 | --- | --- | --- | --- |
 | F1 | Provider 400 on the thinking-mode replay path | `coding_capability` run `20261014_010112` | TODO (product) |
 | F2 | The orchestrator steering fights a coding task | every `coding_capability` / `swebench` run | RESOLVED (2026-10-31) |
-| F3 | Near-miss fixes are not verified against the reported behaviour | `swebench` `sympy__sympy-24909` (two runs) | TODO (skill) |
+| F3 | Near-miss fixes are not verified against the reported behaviour | `swebench` `sympy__sympy-24909` (two runs) | IN-PROGRESS (generic F2P+P2P prompt; Django 1/1) |
 | F4 | Harness: the local pytest gate is load-sensitive | gate runs 2026-10-14 | WONTFIX-ENV |
 | F5 | The measurement host has no OS sandbox backend | every eval run | WONTFIX-ENV |
 | F6 | The auxiliary model's provider returned 429 "balance exhausted" | unit run 2026-10-14 (review factory fix) | RESOLVED (aux → DeepSeek) |

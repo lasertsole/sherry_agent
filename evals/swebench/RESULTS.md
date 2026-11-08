@@ -4,6 +4,10 @@
 `wiki/evals/SWE-Bench/`。原始报告（gitignored）在
 `evals/results/swebench/<run_id>/`。
 
+> **2026-11-08 切片变更：** `sympy__sympy-20639` 已从可运行 HARD 切片移除；
+> 其隐藏测试语义无法从 issue 与修复前测试推导，属于模型能力分歧而非 harness
+> 失败。后续 `--hard` 只运行 `django__django-17051`；Sympy 历史运行仅作记录。
+
 ---
 
 ## 20261101_000025 — prompt + no-edit 门（1/2，脏）
@@ -184,3 +188,19 @@
   45 行的 `repro_issue.py` 并反复重写/运行，未再回到库源码。
 - 结论：暴露并预应用目标测试对 Django 有效；Sympy 剩余问题是模型正确性/收敛能力，
   不是测试不可见。后续单独重跑 Sympy（20261104_005721）仍 0/1。
+
+---
+
+## 20261108_111407 — HARD Django only; target F2P+P2P in prompt（1/1）
+
+- 目的：移除有隐藏语义争议的 Sympy 实例后，在通用 prompt 中要求编辑前阅读
+  FAIL_TO_PASS 和 PASS_TO_PASS 测试体，并显式列出两组测试名；重跑 HARD 切片。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；254.1s；94 tool calls；tokens 4,071,258 / 14,569；
+  估算 $2.057；`changed_paths` 包含 `django/db/backends/{base,postgresql,sqlite3}/features.py`
+  和 `django/db/models/query.py`，另有 agent 自建的 `dbg_tmp.py`（非测试文件，未判 dirty）。
+- 对照：`20261108_105816` 同实例、同 prompt 首跑 0/1；F2P 5/5 通过，但 P2P
+  `test_ignore_conflicts_ignore` 报 `'NoneType' object is not iterable`。第二次
+  运行 resolved，说明该实例仍有模型/采样方差，不能把单次 1/1 当作稳定能力。
+- 结论：HARD 现在只跑 Django；Sympy 历史保留但不再计分。DeepSWE 的“SWE 全通过”
+  门现在满足，但 DeepSWE 本身仍未验证。

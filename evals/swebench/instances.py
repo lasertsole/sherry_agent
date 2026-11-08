@@ -62,14 +62,16 @@ SPIKE_INSTANCES: tuple[str, ...] = (
 
 #: The HARD slice: same dataset, instances whose fixes need a real codebase and
 #: whose regression surface is large (multi-test FAIL_TO_PASS sets and 100+
-#: PASS_TO_PASS tests), one per repo so the number is not a single-repo artefact.
-#: Versions are chosen for Python 3.11 compatibility (django 5.0, pytest 8.0,
-#: pylint 2.15, sympy 1.8) — an old checkout whose suite fails for interpreter
-#: reasons would measure the harness, not the agent.
-HARD_INSTANCES: tuple[str, ...] = (
-    "django__django-17051",
-    "sympy__sympy-20639",
-)
+#: PASS_TO_PASS tests). Versions are chosen for Python 3.11 compatibility
+#: (django 5.0) — an old checkout whose suite fails for interpreter reasons
+#: would measure the harness, not the agent.
+#:
+#: ``sympy__sympy-20639`` was removed from the runnable slice on 2026-11-08:
+#: its test patch changes a long-standing semantic distinction (NumberSymbol
+#: vs Symbol denominators) that is not derivable from the issue and the repo's
+#: pre-fix test; keeping it would score a model-capability disagreement as a
+#: harness failure. Its historical runs remain in RESULTS.md.
+HARD_INSTANCES: tuple[str, ...] = ("django__django-17051",)
 
 #: Two further repos were intended here and are NOT, each for a measured
 #: environment reason (not a benchmark one — the gold-patch self-check catches

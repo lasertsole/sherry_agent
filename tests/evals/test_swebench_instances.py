@@ -247,3 +247,9 @@ def test_retry_run_retries_a_transient_failure(tmp_path, monkeypatch):
 
     assert instances._retry_run(["git", "fetch"], cwd=tmp_path) == "ok"
     assert calls["n"] == 3
+
+
+def test_hard_slice_excludes_the_sympy_information_gap():
+    """The removed instance is pinned so a future edit cannot silently re-add it."""
+    assert instances.HARD_INSTANCES == ("django__django-17051",)
+    assert "sympy__sympy-20639" not in instances.HARD_INSTANCES

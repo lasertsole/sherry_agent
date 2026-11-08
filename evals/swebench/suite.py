@@ -67,9 +67,12 @@ issue in the library source.
 - Do not repeat an identical command after its output has told you what you
   need. Once a candidate patch exists, spend the remaining budget verifying
   and refining it, not re-probing the environment.
-- The target tests are in the checkout. Run them after every source edit. If
-  one fails, the next change must be in the library source (or a read of the
-  failing test); do not keep rewriting a reproduction script.
+- The target tests are in the checkout. Before editing, read the
+  FAIL_TO_PASS and PASS_TO_PASS test bodies and extract their exact input →
+  expected-output cases; derive the predicate from those cases, not only from
+  the issue prose. Run both lists after every source edit. If one fails, the
+  next change must be in the library source (or a read of the failing test);
+  do not keep rewriting a reproduction script.
 {target_tests}
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
@@ -83,7 +86,11 @@ _TEST_EXPOSURE_MAX_CHARS = 12000
 
 
 def _target_tests_block(
-    instance: Instance, fail_to_pass: list[str], *, preapplied: bool = False
+    instance: Instance,
+    fail_to_pass: list[str],
+    pass_to_pass: list[str] | None = None,
+    *,
+    preapplied: bool = False,
 ) -> str:
     """Render the read-only evaluation-tests block for the task prompt."""
     patch = instance.test_patch.strip()
@@ -95,6 +102,7 @@ def _target_tests_block(
             + "\n...[test patch truncated; read the test files in the checkout]"
         )
     names = "\n".join(f"- {name}" for name in fail_to_pass[:20]) or "- (none listed)"
+    keep_names = "\n".join(f"- {name}" for name in (pass_to_pass or [])[:20]) or "- (none listed)"
     if preapplied:
         intro = (
             "The evaluation test patch is ALREADY APPLIED to this checkout. "
@@ -113,6 +121,9 @@ def _target_tests_block(
 
 FAIL_TO_PASS:
 {names}
+
+PASS_TO_PASS (must keep passing):
+{keep_names}
 
 ```diff
 {patch}
@@ -252,7 +263,7 @@ def main() -> None:
             args.append(item)
         index += 1
     # ``--hard`` runs the HARD slice (multi-test regressions, 100+ PASS_TO_PASS
-    # tests, one repo each); without it the small sympy spike is the default.
+    # tests); without it the small sympy spike is the default.
     default_slice = instances.HARD_INSTANCES if "--hard" in flags else instances.SPIKE_INSTANCES
     wanted = tuple(args) or default_slice
     raise SystemExit(
@@ -748,7 +759,9 @@ async def _run_instance(
     tests_preapplied = bool(instance.test_patch.strip()) and instances.apply_patch(
         instance, instance.test_patch
     )
-    target_tests = _target_tests_block(instance, fail_to_pass, preapplied=tests_preapplied)
+    target_tests = _target_tests_block(
+        instance, fail_to_pass, pass_to_pass, preapplied=tests_preapplied
+    )
     prompt = _TASK_TEMPLATE.format(
         problem=instance.problem_statement.strip(),
         repo=instance.repo,

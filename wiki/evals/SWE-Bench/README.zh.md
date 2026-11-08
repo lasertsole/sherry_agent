@@ -15,7 +15,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 ## Harness 与切片
 
 - 数据集：`princeton-nlp/SWE-bench_Lite`，test split。
-- HARD 切片：`django__django-17051`、`sympy__sympy-20639`。
+- HARD 切片：`django__django-17051`。`sympy__sympy-20639` 已于 2026-11-08 从可运行切片移除：其 test patch 改变了 NumberSymbol 与 Symbol 分母的旧语义，而该选择无法从 issue 和修复前测试推导出来。Sympy 历史运行仍保留在 `evals/swebench/RESULTS.md`。
 - 实例缓存：`--instance-cache-dir /tmp/swebench-instance-cache`。
 - Arm：中性提示词、`--persona coding`、delegation pressure
   （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。delegate-only arm 及其中间件已于
@@ -41,6 +41,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 | 2026-11-04 003521 | + 目标测试写进 prompt（HARD 2） | 0/2 | 测试可见但不可运行；两个实例都耗尽 90 次调用 |
 | 2026-11-04 004714 | + 目标测试预应用到 checkout（HARD 2） | 1/2 | Django 通过；Sympy 用 `e.is_Symbol`（对 `1/x_17` 判断错误）并在 repro 脚本上循环 |
 | 2026-11-04 005721 | 强化失败后提示（仅 Sympy） | 0/1 | 仍是同样的错误条件；F2P 仍为 0 |
+| 2026-11-08 111407 | 仅 HARD Django；prompt 列出 F2P+P2P | 1/1 | Django 通过；首跑 0/1 因 P2P `NoneType` 回归，第二次通过 |
 
 ## 暴露的问题
 

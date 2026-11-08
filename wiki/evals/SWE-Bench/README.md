@@ -18,7 +18,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 ## Harness and slices
 
 - Dataset: `princeton-nlp/SWE-bench_Lite`, test split.
-- HARD slice: `django__django-17051`, `sympy__sympy-20639`.
+- HARD slice: `django__django-17051`. `sympy__sympy-20639` was removed from the runnable slice on 2026-11-08: its test patch changes a long-standing NumberSymbol-vs-Symbol semantic distinction that is not derivable from the issue and the pre-fix test. Historical Sympy runs remain in `evals/swebench/RESULTS.md`.
 - Instance cache: `--instance-cache-dir /tmp/swebench-instance-cache`.
 - Arms: neutral prompt, `--persona coding`, and delegation pressure
   (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). The delegate-only arm was removed
@@ -47,6 +47,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-04 003521 | + target tests in the prompt (HARD 2) | 0/2 | Tests were visible but not runnable; both instances exhausted 90 calls |
 | 2026-11-04 004714 | + target tests pre-applied to the checkout (HARD 2) | 1/2 | Django resolved; Sympy used `e.is_Symbol` (wrong for `1/x_17`) and looped on a repro script |
 | 2026-11-04 005721 | stronger post-failure prompt (Sympy only) | 0/1 | Same wrong condition; still 0 F2P |
+| 2026-11-08 111407 | HARD Django only; F2P+P2P in prompt | 1/1 | Django resolved; first run 0/1 on a P2P `NoneType` regression, second resolved |
 
 ## Problems exposed
 

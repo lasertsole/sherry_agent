@@ -18,7 +18,7 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 ## Harness とスライス
 
 - データセット：`princeton-nlp/SWE-bench_Lite`、test split。
-- HARD スライス：`django__django-17051`、`sympy__sympy-20639`。
+- HARD スライス：`django__django-17051`。`sympy__sympy-20639` は 2026-11-08 に実行スライスから削除しました。test patch が NumberSymbol と Symbol の分母に関する旧来の意味論を変更しており、その選択は issue と修正前テストから導出できないためです。Sympy の過去実行は `evals/swebench/RESULTS.md` に残しています。
 - インスタンスキャッシュ：`--instance-cache-dir /tmp/swebench-instance-cache`。
 - Arm：中立プロンプト、`--persona coding`、delegation pressure
   （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。delegate-only arm とそのミドルウェアは
@@ -45,6 +45,7 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 | 2026-11-04 003521 | + 対象テストを prompt に提示（HARD 2） | 0/2 | テストは見えるが実行できず、両インスタンスが 90 回を使い切った |
 | 2026-11-04 004714 | + 対象テストを checkout に事前適用（HARD 2） | 1/2 | Django は通過。Sympy は `e.is_Symbol`（`1/x_17` には誤り）を使い、repro スクリプトでループ |
 | 2026-11-04 005721 | 失敗後の指示を強化（Sympy のみ） | 0/1 | 同じ誤った条件のまま。F2P は 0 |
+| 2026-11-08 111407 | HARD は Django のみ、prompt に F2P+P2P | 1/1 | Django 通過。初回は P2P の `NoneType` 回帰で 0/1、2 回目で通過 |
 
 ## 露呈した問題
 

@@ -133,11 +133,15 @@ def test_target_tests_block_exposes_the_patch_and_f2p_names():
         test_patch="diff --git a/tests/test_x.py b/tests/test_x.py\n+assert x\n"
     )
 
-    block = suite._target_tests_block(instance, ["tests/test_x.py::test_x"])
+    block = suite._target_tests_block(
+        instance, ["tests/test_x.py::test_x"], ["tests/test_x.py::test_old"]
+    )
 
     assert "Evaluation tests (read-only)" in block
     assert "FAIL_TO_PASS" in block
     assert "tests/test_x.py::test_x" in block
+    assert "PASS_TO_PASS (must keep passing)" in block
+    assert "tests/test_x.py::test_old" in block
     assert "diff --git a/tests/test_x.py" in block
 
 
@@ -170,3 +174,9 @@ def test_the_dirty_diff_gate_recognises_test_paths():
     assert suite._looks_like_test("test_dbg.py") is True
     assert suite._looks_like_test("django/db/models/query.py") is False
     assert suite._looks_like_test("fix_compiler.py") is False
+
+
+def test_task_template_requires_reading_the_target_tests_before_editing():
+    assert "Before editing, read the" in suite._TASK_TEMPLATE
+    assert "FAIL_TO_PASS and PASS_TO_PASS" in suite._TASK_TEMPLATE
+    assert "derive the" in suite._TASK_TEMPLATE

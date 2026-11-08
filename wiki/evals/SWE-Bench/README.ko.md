@@ -17,7 +17,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 ## Harness와 슬라이스
 
 - 데이터셋: `princeton-nlp/SWE-bench_Lite`, test split.
-- HARD 슬라이스: `django__django-17051`, `sympy__sympy-20639`.
+- HARD 슬라이스: `django__django-17051`. `sympy__sympy-20639`는 2026-11-08에 실행 슬라이스에서 제거했습니다. test patch가 NumberSymbol과 Symbol 분모의 오래된 의미론을 바꾸는데, 그 선택은 issue와 수정 전 테스트에서 유도할 수 없기 때문입니다. Sympy 과거 실행은 `evals/swebench/RESULTS.md`에 남아 있습니다.
 - 인스턴스 캐시: `--instance-cache-dir /tmp/swebench-instance-cache`.
 - Arm: 중립 프롬프트, `--persona coding`, delegation pressure
   (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). delegate-only arm과 그 미들웨어는
@@ -44,6 +44,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 | 2026-11-04 003521 | + 대상 테스트를 prompt에 제시(HARD 2) | 0/2 | 테스트는 보이지만 실행할 수 없어 두 인스턴스 모두 90회를 소진 |
 | 2026-11-04 004714 | + 대상 테스트를 checkout에 사전 적용(HARD 2) | 1/2 | Django 통과. Sympy는 `e.is_Symbol`(`1/x_17`에는 오류)을 사용해 repro 스크립트에서 루프 |
 | 2026-11-04 005721 | 실패 후 지시 강화(Sympy만) | 0/1 | 같은 잘못된 조건. F2P는 0 |
+| 2026-11-08 111407 | HARD Django만, prompt에 F2P+P2P | 1/1 | Django 통과. 첫 실행은 P2P `NoneType` 회귀로 0/1, 두 번째 통과 |
 
 ## 드러난 문제
 

@@ -1,4 +1,5 @@
 {
+  "slice_note": "Captured before 2026-11-08; the runnable HARD slice now excludes sympy__sympy-20639.",
   "captured_run": "20261017_003529",
   "threshold_resolve_rate": 0.0,
   "model": {
