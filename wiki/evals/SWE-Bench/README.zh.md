@@ -23,9 +23,9 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 - 报告位于 `evals/results/swebench/<run_id>/eval_report.json`；各实例 diff 在同目录。
 
 - 自 2026-11-04 起，任务 prompt 会附带实例的 test patch 和 FAIL_TO_PASS 名称
-  （只读）。checkout 会在运行前预先打上 test patch；判题时先重置这些文件再重新应用补丁，实例报告记录 `target_tests_exposed`。
+  （只读）。checkout 会在运行前预先打上 test patch，供 agent 运行目标测试；prompt 现在还给出两组测试的精确命令（Django 为 `python tests/runtests.py <labels>`，其他为 `python -m pytest <node ids>`）。判题时先重置这些文件再重新应用补丁，实例报告记录 `target_tests_exposed` 与 `tests_preapplied`。
 - 确定性解码：每个 eval turn 都通过固定 temperature 0 的 `built_agent` 构建。
-  `SHERRY_EVAL_MAX_ITERATIONS` 可选地提高主模型调用上限（未设置/0 保持出厂 90）；
+  `SHERRY_EVAL_MAX_ITERATIONS` 可选地提高主模型调用上限（未设置/0 保持出厂 180）；
   报告记录 `model.temperature` 与 `budget.main_max_iterations`。
 
 ## 失败历史（2026-11-01）
@@ -104,11 +104,11 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 首版软门（10/20）在任何产品写入后立即解除阻断，且没有把 `patch_file` 纳入目标。
 主代理 spawn 了一个 researcher，门复位，随后主代理在 `compiler.py` 上连续约 70 次
 `patch_file`。这是**patch 重试病理**，不是未授权的 `write_file` 覆盖，所以许可证
-从未触发。早先的 8/16 门也会阻断 `patch_file`，2026-11-01 的运行正是这样收尾的；当前 7/14 建议式设计已刻意移除阻断。
+从未触发。早先的 8/16 门也会阻断 `patch_file`，2026-11-01 的运行正是这样收尾的；当前 7/12 建议式设计已刻意移除阻断。
 
-## 当前设计：DelegationPressureGate（7/14 建议式）
+## 当前设计：DelegationPressureGate（7/12 建议式）
 
-2026-11-01 的运行测量的是早先的 8/16 硬阻断版本；下面的 7/14 行为是 2026-11-02 合并冲突后确定的设计。2026-11-03 的 0/2 重跑是它的首次测量，HARD 切片未通过——详见 `evals/swebench/RESULTS.md`。
+2026-11-01 的运行测量的是早先的 8/16 硬阻断版本；下面的 7/12 行为是当前设计；2026-11-03 的 0/2 重跑测量的是 7/14 设置，HARD 切片未通过——详见 `evals/swebench/RESULTS.md`。
 
 `agent/middlewares/delegation_pressure/core.py`：
 
@@ -117,7 +117,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 - 第 **14** 次读时注入语气更强的 escalated 系统提醒；工具始终可用，门只建议、不阻断。
 - 浏览器调试工具不计次。
 - accepted/pending 的 spawn 成功会重新计数，主 Agent 可以检查/验证，
-  之后再次达到 7/14 时门会重新生效；失败 spawn 和写本身不清零，
+  之后再次达到 7/12 时门会重新生效；失败 spawn 和写本身不清零，
   `after_agent` 也会在回合边界清零。
 
 它只安装在主 Agent 上；子代理的 middleware builder 不会添加它，`_active` 也会拒绝

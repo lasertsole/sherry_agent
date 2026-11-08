@@ -1,11 +1,11 @@
-"""Main-agent delegation-pressure gate (7-read warn, 14-read escalated warn).
+"""Main-agent delegation-pressure gate (7-read warn, 12-read escalated warn).
 
 The counter is cumulative for ONE turn. At ``warn_after`` the main agent
 receives one system-reminder directive to delegate; at ``block_after`` it
 receives an escalated system-reminder with stronger language. Tools remain
 available at both levels — the gate advises, never blocks. A successful spawn
 (accepted or pending) resets the counter so the main agent can inspect/verify
-and a later 7/14 cycle re-arms; a failed spawn does not reset. Writes alone do
+and a later 7/12 cycle re-arms; a failed spawn does not reset. Writes alone do
 not reset the counter. ``after_agent`` also resets it at the turn boundary.
 
 The directive uses ``wrap_reminder`` / ``system_reminder_metadata`` so the
@@ -63,7 +63,7 @@ def _active(session_id: str) -> bool:
 
 
 class DelegationPressureGate(AfterAgentHooksMixin, BeforeAgentHooksMixin, AgentMiddleware):
-    """Warn at 7 reads, escalate at 14, and reset after an accepted spawn."""
+    """Warn at 7 reads, escalate at 12, and reset after an accepted spawn."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -175,7 +175,7 @@ class DelegationPressureGate(AfterAgentHooksMixin, BeforeAgentHooksMixin, AgentM
         name = str(request.tool_call.get("name") or "")
         if name == "sessions_spawn" and self._spawn_accepted(result):
             # A successful hand-off is the gate's purpose. Restart the count so
-            # the main agent can inspect/verify; a later 7/14 cycle re-arms.
+            # the main agent can inspect/verify; a later 7/12 cycle re-arms.
             # A failed spawn is not a hand-off and does not reset.
             self._save(session_id, _PressureState())
             logger.info(

@@ -1,7 +1,7 @@
 # DeepSWE 本地测试失败原因分析
 
 - 建档日期：2026-11-02
-- 状态：**方案 C 已落地（2026-11-02）；压力门现为 advisory（7/14 次读提示，不阻断）；子代理 400 待做**
+- 状态：**方案 C 已落地（2026-11-02）；压力门现为 advisory（7/12 次读提示，不阻断）；子代理 400 待做**
 - 运行：`20261101_233217`，DeepSWE 默认切片，`--local --timeout 1200`
 - 原始记录：[evals/deepswe/RESULTS.md](../evals/deepswe/RESULTS.md)
 - 原始报告（gitignored）：`evals/results/deepswe-local/20261101_233217/`
@@ -29,7 +29,7 @@ DeepSeek `reasoning_content` 400 失败；之后主 agent 被当时的压力门�
   - `httpx`：104/108 F2P，1404/1404 P2P
   - `cattrs`：62/69 F2P，7/7 P2P
 - 真正的失败链是：
-  1. 当时的 `DelegationPressureGate` 在 16 次读后拦截主 agent 的工具调用；当前实现只在 7/14 次读时发 `<system-reminder>` 提示，不阻断工具；
+  1. 当时的 `DelegationPressureGate` 在 16 次读后拦截主 agent 的工具调用；当前实现只在 7/12 次读时发 `<system-reminder>` 提示，不阻断工具；
   2. 主 agent 按指令 `sessions_spawn`，只把验证/清理交给子代理；
   3. 子代理正常完成，但 **完成消息没有进入主 agent 的 transcript**；
   4. `sessions_messages` 读子代理 checkpoint 也返回空，主 agent 没有任何回读路径；

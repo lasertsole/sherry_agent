@@ -19,10 +19,10 @@ class IterationBudgetConfig(TypedDict):
 
 ITERATION_BUDGET: IterationBudgetConfig = {
     "default_max_iterations": 50,
-    "main_agent_max_iterations": 90,
+    "main_agent_max_iterations": 180,
     "worker_max_iterations": 60,
-    # The executor is the write-capable worker: it gets the main agent's budget
-    # because implementation + verification loops routinely exceed a plain
-    # researcher/reviewer's 60-call ceiling.
+    # The executor is the write-capable worker: it needs more room than a plain
+    # researcher/reviewer's 60-call ceiling, but stays below the main agent's
+    # 180 so a runaway child cannot outlive its parent's turn.
     "executor_max_iterations": 90,
 }

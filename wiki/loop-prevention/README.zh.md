@@ -19,7 +19,7 @@
 |---|---|---|
 | **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | 按模型族的采样惩罚（`frequency_penalty` / `presence_penalty`）→ `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
-| **无界回合** | 模型调用永不停止 | `IterationBudget`（主 Agent 90 次 / 执行者 90 次 / 其他 worker 60 次；只计模型调用，工具结果免费） |
+| **无界回合** | 模型调用永不停止 | `IterationBudget`（主 Agent 180 次 / 执行者 90 次 / 其他 worker 60 次；只计模型调用，工具结果免费） |
 | **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
 | **溢出重试螺旋** | 超长上下文被拒绝 → 压缩触发 → 压缩后的上下文仍然溢出 → 提供商再次报错 | `Summarization`：先做不调 LLM 的溢出尾部裁剪，再走既有溢出路由，最后强制恢复 |
 | **卡死回合** | 连续数分钟毫无进展（工具挂起、循环楔死） | `HeartbeatStaleness` 看门狗 → `HeartbeatTimeoutError` |
@@ -66,11 +66,11 @@
 
 ### 回合级：`IterationBudget`
 
-每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 180 次，执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
 
 ### 回合级：`DelegationPressureGate`（仅主 Agent）
 
-安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **7** 次通过自己的 mid-turn `abefore_model` 路径注入一条 `<system-reminder source="delegation_pressure">` 警告；第 **14** 次注入语气更强的 escalated 系统提醒。两个阶段工具都保持可用——门只建议，不阻断（浏览器调试工具不计次）。成功 accepted/pending 的 spawn 会清零计数，主 Agent 可以检查/验证，之后再次达到 7/14 时门会重新生效；失败 spawn 不清零。写本身不会清零，回合内每次图调用都累计，直到 spawn 或 `after_agent` 清零。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
+安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **7** 次通过自己的 mid-turn `abefore_model` 路径注入一条 `<system-reminder source="delegation_pressure">` 警告；第 **12** 次注入语气更强的 escalated 系统提醒。两个阶段工具都保持可用——门只建议，不阻断（浏览器调试工具不计次）。成功 accepted/pending 的 spawn 会清零计数，主 Agent 可以检查/验证，之后再次达到 7/12 时门会重新生效；失败 spawn 不清零。写本身不会清零，回合内每次图调用都累计，直到 spawn 或 `after_agent` 清零。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 
@@ -266,7 +266,7 @@
 
 ## 🛠️ 配置与使用
 
-- **所有阈值都是代码默认值**（dataclass / 构造函数参数）；有意不为它们提供环境变量。值得注意的是，`config/schema.py` 的 `max_tool_iterations = 40` *并未*被中间件消费（预算是显式传入的：90 / 60），`HeartbeatConfig.interval_s = 1800` 与心跳服务默认值一致但服务是以默认参数构造的。
+- **所有阈值都是代码默认值**（dataclass / 构造函数参数）；有意不为它们提供环境变量。值得注意的是，`config/schema.py` 的 `max_tool_iterations = 40` *并未*被中间件消费（预算是显式传入的：180 / 90 / 60），`HeartbeatConfig.interval_s = 1800` 与心跳服务默认值一致但服务是以默认参数构造的。
 - `TOOL_CALL_TIMEOUT_MINUTES`（`sherry.jsonc` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
 - `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。

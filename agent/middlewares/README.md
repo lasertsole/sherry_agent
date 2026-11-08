@@ -262,7 +262,7 @@ The gate applies only while a plan is open; a session outside plan mode sees the
 **Module:** `agent/middlewares/iteration_budget/core.py` · **Class:** `IterationBudget(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Constructor: `__init__(max_iterations: int = 50)`; the main agent and the executor subagent register `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
+Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Constructor: `__init__(max_iterations: int = 50)`; the main agent registers `IterationBudget(180)`, the executor subagent `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
 
 - `before_agent` resets the counters in `state_register_mem`: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call` consumes 1 per model call; when the budget is exhausted it returns a terminal `AIMessage` **without calling the model**.
@@ -820,7 +820,7 @@ Middleware tuning lives in per-object TypedDict modules — the env only supplie
 
 | Module                    | Knobs                                                                                                                                                                                                                             |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                               |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                               |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"` (`"true"` / `"false"` / `"auto"`; any other value takes the fail-safe skill path), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` plus the preserve/attempt/cooldown/threshold constants read by `Summarization` and `summarization/background_reviews.py`                                                                                     |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, preview head/tail 5, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                                            |
@@ -857,7 +857,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt: system prompt injection
         MultimodalProcessor(),  # multimodal input normalization
-        IterationBudget(90),  # per-turn call budget
+        IterationBudget(180),  # per-turn call budget
         ToolGuardrails(),  # failure-pathology detection
         ToolCallNormalize(),  # tool_use/tool_result repair
         PathGuard(),  # path-argument screening

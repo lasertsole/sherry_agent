@@ -292,7 +292,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   `_build_child_middlewares`, and `_active` also rejects any
   `:subagent:`/`:swarm:` session): at 7 read calls it injects a
   `<system-reminder source="delegation_pressure">` delegation warning through
-  its own mid-turn `abefore_model` path; at 14 it injects the escalated
+  its own mid-turn `abefore_model` path; at 12 it injects the escalated
   `<system-reminder>` with stronger language. Tools remain available at both
   levels — the gate advises, never blocks. Browser debugging tools are excluded
   from counting. A successful accepted/pending `sessions_spawn` resets the

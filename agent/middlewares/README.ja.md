@@ -272,7 +272,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/iteration_budget/core.py` · **クラス：** `IterationBudget(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-1 ターン内の**モデル呼び出し回数**に対するハード上限。ツール呼び出しのペアは合計 1 回だけ消費します（呼び出しを行う `AIMessage` を生成したモデル呼び出し）。その `ToolMessage` 結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントと executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
+1 ターン内の**モデル呼び出し回数**に対するハード上限。ツール呼び出しのペアは合計 1 回だけ消費します（呼び出しを行う `AIMessage` を生成したモデル呼び出し）。その `ToolMessage` 結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントは `IterationBudget(180)`、executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
 
 - `before_agent` は `state_register_mem` のカウンターをリセット：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` はモデル呼び出しごとに 1 消費。予算が尽きると**モデルを呼ばずに**終端 `AIMessage` を返します。
@@ -826,7 +826,7 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 
 | モジュール                | ノブ                                                                                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                    |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                    |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`。それ以外はフェイルセーフのスキルパス）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` に加え、`Summarization` と `summarization/background_reviews.py` が読む保持/試行/クールダウン/しきい値の各定数                                                                                      |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、プレビュー先頭/末尾 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
@@ -864,7 +864,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt：システムプロンプト注入
         MultimodalProcessor(),  # マルチモーダル入力の正規化
-        IterationBudget(90),  # ターン単位の呼び出し予算
+        IterationBudget(180),  # ターン単位の呼び出し予算
         ToolGuardrails(),  # 失敗病理の検知
         ToolCallNormalize(),  # tool_use/tool_result の修復
         PathGuard(),  # パス引数のスクリーニング

@@ -272,7 +272,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/iteration_budget/core.py` · **클래스:** `IterationBudget(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-한 턴 안의 **모델 호출 횟수**에 대한 하드 상한. 도구 호출 쌍은 총 1회만 소모합니다(호출을 담은 `AIMessage`를 만든 모델 호출). 그 `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않으며, 뒤따르는 모델 호출만 소모합니다. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트와 executor 서브에이전트는 `IterationBudget(90)`, 그 외 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
+한 턴 안의 **모델 호출 횟수**에 대한 하드 상한. 도구 호출 쌍은 총 1회만 소모합니다(호출을 담은 `AIMessage`를 만든 모델 호출). 그 `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않으며, 뒤따르는 모델 호출만 소모합니다. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트는 `IterationBudget(180)`, executor 서브에이전트는 `IterationBudget(90)`, 그 외 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
 
 - `before_agent`는 `state_register_mem`의 카운터를 리셋: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call`은 모델 호출당 1 소모. 예산이 소진되면 **모델을 호출하지 않고** 종단 `AIMessage`를 반환합니다.
@@ -602,7 +602,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ▶️ 전체 문서: [wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
-> 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. _실제 등록된_ 값은 90(메인)과 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
+> 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. _실제 등록된_ 값은 180(메인), 90(executor), 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
 
 ### MaxTokensBoostMiddleware
 
@@ -821,7 +821,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 
 | 모듈                      | 노브                                                                                                                                                                                                              |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                             |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                             |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`(`"true"` / `"false"` / `"auto"`, 그 외 값은 페일세이프 스킬 경로), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/background_reviews.py`가 읽는 보존/시도/쿨다운/임계값 상수                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, 미리보기 머리/꼬리 5줄, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                         |
@@ -859,7 +859,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
         MultimodalProcessor(),  # 멀티모달 입력 정규화
-        IterationBudget(90),  # 턴 단위 호출 예산
+        IterationBudget(180),  # 턴 단위 호출 예산
         ToolGuardrails(),  # 실패 병리 감지
         ToolCallNormalize(),  # tool_use/tool_result 복구
         PathGuard(),  # 경로 인자 스크리닝

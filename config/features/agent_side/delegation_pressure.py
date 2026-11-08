@@ -20,12 +20,12 @@ class DelegationPressureConfig(TypedDict):
     excluded_tools: tuple[str, ...]
 
 
-#: A main agent that has read/explored 14 times in one turn receives an
+#: A main agent that has read/explored 12 times in one turn receives an
 #: escalated directive to delegate; tools remain available.
 DELEGATION_PRESSURE: DelegationPressureConfig = {
     "enabled": True,
     "warn_after": 7,
-    "block_after": 14,
+    "block_after": 12,
     "pressure_tools": (
         "read_file",
         "search_files",

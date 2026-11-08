@@ -28,12 +28,14 @@ HARD instances?” — not “what is the leaderboard position?”.
 
 - Since 2026-11-04 the task prompt includes the instance's test patch and the
   FAIL_TO_PASS + PASS_TO_PASS names; the test patch is also pre-applied to the
-  checkout so the agent can run the target tests. Judging resets those files and
-  re-applies the published patch, and the report records `target_tests_exposed`
-  and `tests_preapplied`.
+  checkout so the agent can run the target tests. The prompt now also carries
+  the exact runner command for each set (`python tests/runtests.py <labels>` for
+  Django, `python -m pytest <node ids>` otherwise). Judging resets those files
+  and re-applies the published patch, and the report records
+  `target_tests_exposed` and `tests_preapplied`.
 - Deterministic decoding: every eval turn builds through a pinned `built_agent`
   at temperature 0. `SHERRY_EVAL_MAX_ITERATIONS` optionally raises the main
-  model-call ceiling (unset/0 keeps the shipped 90); the report states
+  model-call ceiling (unset/0 keeps the shipped 180); the report states
   `model.temperature` and `budget.main_max_iterations`.
 
 ## The failure history (2026-11-01)
@@ -127,21 +129,21 @@ reset, and the main agent then made roughly 70 `patch_file` attempts on
 `compiler.py`. That loop was a **patch-retry pathology**, not an unlicensed
 `write_file` overwrite, so the license never fired. The earlier 8/16 gate
 blocked `patch_file` too, which is how the 2026-11-01 run ended; the current
-7/14 advisory design deliberately removed blocking.
+7/12 advisory design deliberately removed blocking.
 
-## The current design: DelegationPressureGate (7/14 advisory)
+## The current design: DelegationPressureGate (7/12 advisory)
 
-The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/14
-behavior below is the design reconciled on 2026-11-02. The 2026-11-03 rerun (0/2) is its first measurement; it did not resolve the HARD slice — see `evals/swebench/RESULTS.md`.
+The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/12
+behavior below is the current design (the 2026-11-03 rerun measured the earlier 7/14 setting); it did not resolve the HARD slice — see `evals/swebench/RESULTS.md`.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
 - Counts **read/exploration** calls cumulatively within one turn.
 - At **7** reads, injects one `<system-reminder source="delegation_pressure">` warning through the gate's own mid-turn `abefore_model` path.
-- At **14** reads, injects the escalated system-reminder with stronger language. Tools remain available; the gate advises, never blocks.
+- At **12** reads, injects the escalated system-reminder with stronger language. Tools remain available; the gate advises, never blocks.
 - Browser debugging tools are excluded from counting.
 - An accepted/pending successful spawn restarts the count, so the main agent
-  can inspect/verify and the gate re-arms on another 7/14 reads. A failed spawn
+  can inspect/verify and the gate re-arms on another 7/12 reads. A failed spawn
   and writes alone do not reset it; `after_agent` also resets at the turn
   boundary.
 

@@ -19,7 +19,7 @@
 |---|---|---|
 | **텍스트 데스 루프** (모델 호출 1회) | 같은 문장 / 같은 문자열이 영원히 스트리밍됨 | 모델 패밀리별 샘플링 페널티 (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (워커) + `RepetitionGuardWrapper` (메인 에이전트 스트림) |
 | **도구 병리 루프** (턴 1회) | 같은 실패 도구 호출, 핑퐁 쌍, 인자 갱신 | `ToolGuardrails`: 5가지 병리 → WARN → BLOCK → HALT, 복구 모드 포함 |
-| **무한 턴** | 모델 호출이 끝나지 않음 | `IterationBudget` (메인 90 / executor 90 / 기타 워커 60, 모델 호출만 — 도구 결과는 무료) |
+| **무한 턴** | 모델 호출이 끝나지 않음 | `IterationBudget` (메인 180 / executor 90 / 기타 워커 60, 모델 호출만 — 도구 결과는 무료) |
 | **잘림 재시도 나선** | `max_tokens`로 잘린 도구 호출이 쓰레기 인수로 실행 → 오류 → 모델이 재발행하며 반복을 태움 | `MaxTokensBoostMiddleware`: 미들웨어 내 유한 재호출(3회 재시도, 부스트 상한, 예산 +0) |
 | **오버플로 재시도 나선** | 과대한 컨텍스트가 거부됨 → 압축 실행 → 압축된 컨텍스트도 여전히 오버플로 → 프로바이더가 다시 오류 | `Summarization`: LLM 없는 오버플로 테일 클립을 먼저, 그다음 기존 라우트, 마지막으로 강제 복구 |
 | **멈춘 턴** | 수 분간 진행 없음 (도구 행, 끼인 루프) | `HeartbeatStaleness` 와치독 → `HeartbeatTimeoutError` |
@@ -66,11 +66,11 @@
 
 ### 턴 수준: `IterationBudget`
 
-턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
+턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트는 180, executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
 
 ### 턴 수준: `DelegationPressureGate`(메인 에이전트 전용)
 
-메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **14**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/14에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
+메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **12**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/12에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
 
 ### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
 
@@ -269,7 +269,7 @@
 
 ## 🛠️ 설정과 사용법
 
-- **모든 임계값은 코드 기본값입니다** (dataclass / 생성자 파라미터); 환경 변수는 의도적으로 두지 않았습니다. 특히 `config/schema.py`의 `max_tool_iterations = 40`은 미들웨어가 소비하지 *않고*(예산은 명시적으로 전달됨: 90 / 60), `HeartbeatConfig.interval_s = 1800`은 하트비트 서비스 기본값과 일치하지만 서비스는 기본값으로 생성됩니다.
+- **모든 임계값은 코드 기본값입니다** (dataclass / 생성자 파라미터); 환경 변수는 의도적으로 두지 않았습니다. 특히 `config/schema.py`의 `max_tool_iterations = 40`은 미들웨어가 소비하지 *않고*(예산은 명시적으로 전달됨: 180 / 90 / 60), `HeartbeatConfig.interval_s = 1800`은 하트비트 서비스 기본값과 일치하지만 서비스는 기본값으로 생성됩니다.
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.

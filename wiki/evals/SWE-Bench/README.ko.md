@@ -26,10 +26,10 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
   디렉터리에 있습니다.
 
 - 2026-11-04부터 작업 prompt에는 인스턴스의 test patch와 FAIL_TO_PASS 이름이
-  (읽기 전용으로) 포함됩니다. checkout은 실행 전에 test patch로 미리 패치되며, 채점 시 파일을 초기화한 뒤 다시 적용합니다. 인스턴스 리포트는 `target_tests_exposed`를 기록합니다.
+  (읽기 전용으로) 포함됩니다. checkout은 실행 전에 test patch로 미리 패치되어 agent가 대상 테스트를 실행할 수 있습니다. prompt는 두 세트의 정확한 명령도 제공합니다(Django는 `python tests/runtests.py <labels>`, 그 외는 `python -m pytest <node ids>`). 채점 시 파일을 초기화한 뒤 다시 적용하며, 리포트는 `target_tests_exposed`와 `tests_preapplied`를 기록합니다.
 - 결정론적 디코딩: 모든 eval 턴은 temperature 0으로 고정된 `built_agent`로 빌드됩니다.
   `SHERRY_EVAL_MAX_ITERATIONS`는 메인 모델 호출 상한을 선택적으로 올립니다
-  (미설정/0이면 출하 기본 90). 리포트는 `model.temperature`와
+  (미설정/0이면 출하 기본 180). 리포트는 `model.temperature`와
   `budget.main_max_iterations`를 기록합니다.
 
 ## 실패 이력(2026-11-01)
@@ -114,22 +114,22 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 넣지 않았습니다. 메인은 researcher를 spawn했고 게이트가 리셋된 뒤 `compiler.py`에
 약 70회 `patch_file`을 시도했습니다. 이는 **patch 재시도 병리**이지 라이선스 없는
 `write_file` 덮어쓰기가 아니므로 라이선스는 발동하지 않았습니다. 이전 8/16 게이트는
-`patch_file`도 차단했고 2026-11-01 실행은 그렇게 끝났습니다. 현재 7/14 조언형 설계는
+`patch_file`도 차단했고 2026-11-01 실행은 그렇게 끝났습니다. 현재 7/12 조언형 설계는
 차단을 의도적으로 제거했습니다.
 
-## 현재 설계: DelegationPressureGate(7/14 조언형)
+## 현재 설계: DelegationPressureGate(7/12 조언형)
 
-2026-11-01 실행은 이전 8/16 하드 차단 버전을 측정한 것이며, 아래의 7/14
+2026-11-01 실행은 이전 8/16 하드 차단 버전을 측정한 것이며, 아래의 7/12
 조언형 동작은 2026-11-02에 충돌을 해소해 확정한 설계입니다. 2026-11-03의 0/2 재실행이 첫 측정이며 HARD 슬라이스를 해결하지 못했습니다 — `evals/swebench/RESULTS.md` 참조.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
 - 한 턴 안의 **읽기/탐색** 호출을 누적합니다.
 - **7**회에서 게이트 자체의 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입합니다.
-- **14**회에서 더 강한 escalated 시스템 리마인더를 주입합니다. 도구는 계속 사용 가능하며 게이트는 조언만 하고 차단하지 않습니다.
+- **12**회에서 더 강한 escalated 시스템 리마인더를 주입합니다. 도구는 계속 사용 가능하며 게이트는 조언만 하고 차단하지 않습니다.
 - 브라우저 디버깅 도구는 집계에서 제외됩니다.
 - accepted/pending spawn이 성공하면 카운트를 리셋해 메인
-  에이전트가 검사/검증할 수 있으며, 이후 7/14에서 다시 작동합니다. 실패한 spawn과
+  에이전트가 검사/검증할 수 있으며, 이후 7/12에서 다시 작동합니다. 실패한 spawn과
   쓰기만으로는 리셋되지 않고, `after_agent`도 턴 경계에서 리셋합니다.
 
 메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도

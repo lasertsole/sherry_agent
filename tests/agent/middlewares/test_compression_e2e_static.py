@@ -6,7 +6,7 @@ real middleware hooks) with scripted stub models - zero network, zero LLM.
 
 The SAME six scenarios run against BOTH Summarization registration orders:
 
-- main order   (mirrors agent/core.py):    [IterationBudget(90), Summarization]
+- main order   (mirrors agent/core.py):    [IterationBudget(180), Summarization]
   -> Summarization registered LAST (innermost wrap layer).
 - worker order (mirrors spawn/core.py):    [Summarization, IterationBudget(60)]
   -> Summarization registered FIRST (outermost wrap layer); worker trigger
@@ -183,7 +183,7 @@ def _build_agent(order: str, main_model, aux_model):
     trigger_tokens = int(CTX_WINDOW * COMPRESSION_TRIGGER_RATIO)
     if order == "main":
         middleware = [
-            IterationBudget(90),
+            IterationBudget(180),
             Summarization(
                 need_update_system_prompt=True,
                 model=aux_model,

@@ -166,7 +166,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 与主 Agent 的差异：
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
-- 更紧的迭代预算（60 而非 90）。
+- 更紧的迭代预算（60 而非 180）。
 - 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`PlanContinuationEnforcer`、`WorkspaceNoticeMiddleware`。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
@@ -270,7 +270,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/iteration_budget/core.py` · **类：** `IterationBudget(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-对**一个回合内模型调用次数**的硬上限。一次工具调用对只计 1 次：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 与执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
+对**一个回合内模型调用次数**的硬上限。一次工具调用对只计 1 次：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 注册 `IterationBudget(180)`，执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
 
 - `before_agent` 在 `state_register_mem` 中重置计数器：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` 每次模型调用消耗 1；预算耗尽时直接返回终止 `AIMessage`，**不再调用模型**。
@@ -600,7 +600,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ▶️ 完整文档：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
-> 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 90（主）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
+> 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 180（主）、90（executor）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
 
 ### MaxTokensBoostMiddleware
 
@@ -804,7 +804,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 模块                      | 旋钮                                                                                                                                                                                                            |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                           |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                           |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/background_reviews.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
@@ -842,7 +842,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt：系统提示词注入
         MultimodalProcessor(),  # 多模态输入规范化
-        IterationBudget(90),  # 回合级调用预算
+        IterationBudget(180),  # 回合级调用预算
         ToolGuardrails(),  # 失败病理检测
         ToolCallNormalize(),  # tool_use/tool_result 修复
         PathGuard(),  # 路径参数筛查

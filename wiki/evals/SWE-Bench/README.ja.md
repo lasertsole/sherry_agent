@@ -27,10 +27,10 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
   同じディレクトリにある。
 
 - 2026-11-04 以降、タスク prompt はインスタンスの test patch と FAIL_TO_PASS
-  名を（読み取り専用で）含みます。checkout は実行前に test patch でパッチされ、判定時にファイルをリセットしてから再適用します。インスタンスレポートは `target_tests_exposed` を記録します。
+  名を（読み取り専用で）含みます。checkout は実行前に test patch でパッチされ、agent が対象テストを実行できます。prompt は両方のセットの正確なコマンドも示します（Django は `python tests/runtests.py <labels>`、それ以外は `python -m pytest <node ids>`）。判定時にファイルをリセットしてから再適用し、レポートは `target_tests_exposed` と `tests_preapplied` を記録します。
 - 決定論的デコード：各 eval ターンは temperature 0 に固定した `built_agent` で構築されます。
   `SHERRY_EVAL_MAX_ITERATIONS` はメインのモデル呼び出し上限を任意に引き上げます
-  （未設定/0 は出荷時の 90）。レポートは `model.temperature` と
+  （未設定/0 は出荷時の 180）。レポートは `model.temperature` と
   `budget.main_max_iterations` を記録します。
 
 ## 失敗の履歴（2026-11-01）
@@ -118,22 +118,22 @@ old_string/new_string、曖昧一致、stale-write CAS で置換し、事前の�
 リセットされ、その後 `compiler.py` に約 70 回の `patch_file` を試した。これは
 **patch リトライの病理**であり、未ライセンスの `write_file` 上書きではないため、
 ライセンスは発火しなかった。以前の 8/16 ゲートは `patch_file` もブロックしており、
-2026-11-01 の実行はそうして収束した。現在の 7/14 助言型設計はブロックを
+2026-11-01 の実行はそうして収束した。現在の 7/12 助言型設計はブロックを
 意図的に撤去している。
 
-## 現在の設計：DelegationPressureGate（7/14 助言型）
+## 現在の設計：DelegationPressureGate（7/12 助言型）
 
 2026-11-01 の実行は以前の 8/16 ハードブロック版を測定したもので、以下の
-7/14 助言型動作は 2026-11-02 に競合解消して確定した設計です。2026-11-03 の 0/2 再実行が最初の測定で、HARD スライスは解決できませんでした——`evals/swebench/RESULTS.md` を参照。
+7/12 助言型動作が現在の設計です。2026-11-03 の 0/2 再実行は 7/14 設定の測定で、HARD スライスは解決できませんでした——`evals/swebench/RESULTS.md` を参照。
 
 `agent/middlewares/delegation_pressure/core.py`：
 
 - 1 ターン内の**読み取り/探索**呼び出しを累積する。
 - **7** 回で、ゲート自身の mid-turn `abefore_model` 経由で `<system-reminder source="delegation_pressure">` 警告を 1 回注入する。
-- **14** 回で、より強い escalated システムリマインダーを注入する。ツールは利用可能なままで、ゲートは助言し、ブロックしない。
+- **12** 回で、より強い escalated システムリマインダーを注入する。ツールは利用可能なままで、ゲートは助言し、ブロックしない。
 - ブラウザのデバッグツールは計数対象外。
 - accepted/pending の spawn が成功するとカウントをリセットし、
-  メインエージェントは検査/検証でき、その後の 7/14 で再び作動する。失敗した
+  メインエージェントは検査/検証でき、その後の 7/12 で再び作動する。失敗した
   spawn と書き込みだけではリセットされず、`after_agent` もターン境界でリセットする。
 
 これはメインエージェントにのみインストールされる。子ミドルウェアビルダーは追加せず、

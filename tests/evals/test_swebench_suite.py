@@ -169,6 +169,30 @@ def test_target_tests_block_marks_preapplied_tests():
     assert "ALREADY APPLIED" in block
 
 
+def test_target_tests_block_gives_the_exact_django_runner_commands():
+    instance = SimpleNamespace(test_patch="diff --git a/x b/x\n", judge_mode="django")
+
+    block = suite._target_tests_block(
+        instance,
+        ["bulk_create.tests.BulkCreateTests.test_x"],
+        ["migrations.test_optimizer.OptimizerTests.test_y"],
+    )
+
+    assert "python tests/runtests.py bulk_create.tests.BulkCreateTests.test_x" in block
+    assert "python tests/runtests.py bulk_create migrations" in block
+
+
+def test_target_tests_block_gives_the_exact_pytest_node_ids():
+    instance = SimpleNamespace(test_patch="diff --git a/x b/x\n", judge_mode="pytest")
+
+    block = suite._target_tests_block(
+        instance, ["tests/test_x.py::test_x"], ["tests/test_x.py::test_old"]
+    )
+
+    assert "python -m pytest tests/test_x.py::test_x" in block
+    assert "python -m pytest tests/test_x.py" in block
+
+
 def test_the_dirty_diff_gate_recognises_test_paths():
     assert suite._looks_like_test("tests/bulk_create/test_dbg.py") is True
     assert suite._looks_like_test("pkg/tests/test_x.py") is True

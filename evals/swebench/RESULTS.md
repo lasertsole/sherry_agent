@@ -275,8 +275,8 @@
   1. 该实例的稳定性来自“确定性解码 + 编辑后跑全量目标测试”，不是来自回合数；
   2. “加回合”只对**截断型**失败有效（105816 的 0/1 正是 90 次预算在修复中途耗尽）；
      它不修复错误补丁，也不保证语义分歧的实例收敛；
-  3. 对长轨迹实例，90 次预算余量偏薄，可考虑按实例给出更大的上限，但应作为
-     安全边际而不是收敛策略。
+  3. 对长轨迹实例，90 次预算余量偏薄；主线已把主 agent 默认预算提高到 180，
+     `SHERRY_EVAL_MAX_ITERATIONS` 仍可覆盖。预算应作为安全边际而不是收敛策略。
 
 ---
 
@@ -304,7 +304,8 @@
 ## 20261108_184144 — 同实例，180 次预算（1/1）
 
 - 目的：直接检验“加回合能否收敛”。环境与上一条相同（temperature=0、隔离有效、
-  同一 checkout / venv / gold check），只把主模型调用上限从 90 提到 180。
+  同一 checkout / venv / gold check）；当时出厂默认是 90，只把主模型调用上限
+  提到 180。
 - 命令：`SHERRY_EVAL_MAX_ITERATIONS=180 uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
 - 结果：**1/1 resolved**；96.5s；**24 tool calls**；tokens 715,973 / 3,007；
   估算 $0.362；F2P 5/5、P2P 91/91；只改

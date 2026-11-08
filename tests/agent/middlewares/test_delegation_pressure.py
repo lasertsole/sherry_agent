@@ -1,4 +1,4 @@
-"""Delegation-pressure gate: 7-read warning, 14-read escalated warning, no block."""
+"""Delegation-pressure gate: 7-read warning, 12-read escalated warning, no block."""
 
 from __future__ import annotations
 
@@ -76,9 +76,9 @@ def _state(gate: DelegationPressureGate):
     return gate._get(_SESSION)
 
 
-def test_defaults_are_seven_and_fourteen_without_a_blocked_set():
+def test_defaults_are_seven_and_twelve_without_a_blocked_set():
     assert DELEGATION_PRESSURE["warn_after"] == 7
-    assert DELEGATION_PRESSURE["block_after"] == 14
+    assert DELEGATION_PRESSURE["block_after"] == 12
     assert "read_file" in DELEGATION_PRESSURE["pressure_tools"]
     assert "blocked_tools" not in DELEGATION_PRESSURE
     assert "browser" in DELEGATION_PRESSURE["excluded_tools"]

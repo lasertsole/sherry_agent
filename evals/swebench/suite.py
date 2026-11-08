@@ -58,8 +58,8 @@ You are working inside a checkout of `{repo}` at the commit the issue was
 reported against; that checkout is the session's project directory. Fix the
 issue in the library source.
 
-- The project's environment interpreter is the `python` on PATH (`python -m
-  pytest <path>` runs a test file). Use it if you want to run tests.
+- The project's environment interpreter is the `python` on PATH. The
+  Evaluation tests section below gives the exact command for this instance.
 - Before you stop: run the tests that cover every source file you changed —
   the neighboring test module, plus your reproduction of the reported issue.
   A patch that fixes the reported case but breaks a neighboring test is not
@@ -114,6 +114,7 @@ def _target_tests_block(
             "The grader will apply this test patch and run the FAIL_TO_PASS tests "
             "below. Do not modify the tests; make the library source satisfy them."
         )
+    commands = _suggested_commands(instance, fail_to_pass, pass_to_pass)
     return f"""
 ## Evaluation tests (read-only)
 
@@ -125,10 +126,49 @@ FAIL_TO_PASS:
 PASS_TO_PASS (must keep passing):
 {keep_names}
 
+Suggested feedback loop (run after every source edit; a non-zero exit is the
+actionable failure — fix the library source and rerun):
+{commands}
+
 ```diff
 {patch}
 ```
 """
+
+
+def _suggested_commands(
+    instance: Instance,
+    fail_to_pass: list[str],
+    pass_to_pass: list[str] | None,
+) -> str:
+    """The exact runner command for both target sets, in this repo's dialect.
+
+    Django test ids are labels (``app.module.Class.test``); a pytest repo uses
+    node ids. Running the apps that own PASS_TO_PASS is cheaper than listing
+    every id and still covers them, which is what the successful runs did.
+    """
+    if getattr(instance, "judge_mode", "") == "django":
+        exact = " ".join(fail_to_pass[:20])
+        apps = sorted(
+            {
+                label.split(".", 1)[0]
+                for label in [*fail_to_pass, *(pass_to_pass or [])]
+                if "." in label
+            }
+        )
+        lines = [f"- `python tests/runtests.py {exact}` — the exact FAIL_TO_PASS set."]
+        if apps:
+            lines.append(
+                f"- `python tests/runtests.py {' '.join(apps)}` — the apps that own PASS_TO_PASS."
+            )
+        return "\n".join(lines)
+
+    exact = " ".join(fail_to_pass[:20])
+    files = sorted({node.split("::", 1)[0] for node in [*fail_to_pass, *(pass_to_pass or [])]})
+    lines = [f"- `python -m pytest {exact}` — the exact FAIL_TO_PASS set."]
+    if files:
+        lines.append(f"- `python -m pytest {' '.join(files)}` — the files that own PASS_TO_PASS.")
+    return "\n".join(lines)
 
 
 def _looks_like_test(path: str) -> bool:
