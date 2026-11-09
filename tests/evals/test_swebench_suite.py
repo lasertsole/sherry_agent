@@ -193,6 +193,23 @@ def test_target_tests_block_gives_the_exact_pytest_node_ids():
     assert "python -m pytest tests/test_x.py" in block
 
 
+def test_dirty_test_edits_excludes_the_harness_patch_and_flags_agent_test_files():
+    changed = [
+        "django/db/models/query.py",
+        "tests/bulk_create/test_agent_scratch.py",
+        "django/tests/test_x.py",
+    ]
+    assert suite._dirty_test_edits(changed, ["tests/bulk_create/tests.py"]) == [
+        "tests/bulk_create/test_agent_scratch.py",
+        "django/tests/test_x.py",
+    ]
+
+    assert (
+        suite._dirty_test_edits(["tests/bulk_create/tests.py"], ["tests/bulk_create/tests.py"])
+        == []
+    )
+
+
 def test_the_dirty_diff_gate_recognises_test_paths():
     assert suite._looks_like_test("tests/bulk_create/test_dbg.py") is True
     assert suite._looks_like_test("pkg/tests/test_x.py") is True

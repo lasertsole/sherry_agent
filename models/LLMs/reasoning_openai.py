@@ -24,9 +24,36 @@ Why it exists
 from __future__ import annotations
 
 import openai
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_deepseek import ChatDeepSeek
 from langchain_openai.chat_models.base import BaseChatOpenAI
+
+
+def _inject_reasoning_content(model, input_, payload: dict) -> dict:
+    """Copy each AIMessage's ``reasoning_content`` into its outgoing dict.
+
+    ``langchain-openai``/``langchain-deepseek`` drop unknown
+    ``additional_kwargs`` when converting messages, but a thinking-mode
+    provider requires the assistant turn's ``reasoning_content`` back on the
+    next request (DeepSeek: ``400 ... must be passed back``). Pair the assistant
+    messages in order — an injected system message must not shift the mapping.
+    """
+    try:
+        messages = model._convert_input(input_).to_messages()
+    except Exception:  # noqa: BLE001 - payload construction must never fail here
+        return payload
+    sources = [m for m in messages if isinstance(m, AIMessage)]
+    targets = [
+        m
+        for m in payload.get("messages") or []
+        if isinstance(m, dict) and m.get("role") == "assistant"
+    ]
+    for source, target in zip(sources, targets):
+        reasoning = (source.additional_kwargs or {}).get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            target["reasoning_content"] = reasoning
+    return payload
 
 
 class ReasoningChatOpenAI(BaseChatOpenAI):
@@ -83,5 +110,23 @@ class ReasoningChatOpenAI(BaseChatOpenAI):
                     )
         return generation_chunk
 
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        return _inject_reasoning_content(self, input_, payload)
 
-__all__ = ["ReasoningChatOpenAI"]
+
+class ReasoningDeepSeekChat(ChatDeepSeek):
+    """``ChatDeepSeek`` + the same outgoing ``reasoning_content`` contract.
+
+    DeepSeek returns ``reasoning_content`` on assistant turns and requires it
+    back when the turn is replayed (thinking mode). ``ChatDeepSeek`` extracts
+    the field from responses but does not put it into the request payload;
+    this subclass does, which is what fixes the stalled-stream replay 400.
+    """
+
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        return _inject_reasoning_content(self, input_, payload)
+
+
+__all__ = ["ReasoningChatOpenAI", "ReasoningDeepSeekChat"]

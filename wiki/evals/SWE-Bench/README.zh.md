@@ -30,6 +30,8 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 
 ## 失败历史（2026-11-01）
 
+> **2026-11-09：** 下表是完整历史。当前代码 tally（test patch 预应用 + temperature 0 + 默认 180 + 当前 prompt）在 `evals/swebench/RESULTS.md`：17051 4/4、16820 3/4、HARD 7/8（2 个实例），不是排行榜位置。已废弃 arm 的运行归档在同一文件。
+
 | 运行 | Arm | 结果 | 发生了什么 |
 | :--- | :--- | :--- | :--- |
 | 2026-11-01 000025 | 提示词 + no-edit 门 | 1/2 脏 | Django 新增测试文件；Sympy 726B patch 破坏 P2P |

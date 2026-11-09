@@ -13,6 +13,205 @@
 > `sandbox/src/checkpoints` 和 `shadow/` 是派生会话状态（单次可达数百 MB），
 > 会拖慢仓库级搜索测试的预算，跑完即删。
 
+## 当前代码 tally（2026-11-09）
+
+只统计“当前意图内”的运行：test patch 预应用 + temperature=0 + 默认 180 预算 +
+当前 prompt/guardrail。历史 arm（no-edit / 软门 10/20·8/16·7/14 / delegate-only /
+sympy guardrail 调参链 / 目标测试仅写 prompt）已移到文末归档，不作为能力证据。
+
+- `django__django-17051`：**4/4**（133743 / 134640 / 135057 / 135604；
+  105816 的 0/1 是 90 次调用截断，单列为“截断型”证据）
+- `django__django-16820`：**3/4**（184144 1/1；204854 1/1，验收闭环模板；
+  222819 0/1，补丁语义不全 + guardrail 切断测试读取；214040 1/1，修复后回归）
+- HARD 切片：**7/8 ≈ 88%**（2 个实例的小样本，不是 leaderboard 位置）
+
+> 2026-11-09 起，主表只保留当前意图内的运行；全量历史（含故意失败的实验 arm、
+> sympy 和隔离失效轮）见文末“历史 / 实验归档”。
+
+---
+
+## 20261108_111407 — HARD Django only; target F2P+P2P in prompt（1/1）
+
+- 目的：移除有隐藏语义争议的 Sympy 实例后，在通用 prompt 中要求编辑前阅读
+  FAIL_TO_PASS 和 PASS_TO_PASS 测试体，并显式列出两组测试名；重跑 HARD 切片。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；254.1s；94 tool calls；tokens 4,071,258 / 14,569；
+  估算 $2.057；`changed_paths` 包含 `django/db/backends/{base,postgresql,sqlite3}/features.py`
+  和 `django/db/models/query.py`，另有 agent 自建的 `dbg_tmp.py`（非测试文件，未判 dirty）。
+- 对照：`20261108_105816` 同实例、同 prompt 首跑 0/1；F2P 5/5 通过，但 P2P
+  `test_ignore_conflicts_ignore` 报 `'NoneType' object is not iterable`。该次运行的
+  `final_text` 是 “The iteration budget (90) has been exhausted”，即 92 次工具调用
+  后被预算截断在修复中途——这是“回合不够”型失败，不是模型不知道该改哪里。
+  第二次运行 1/1 同样在预算耗尽时结束（补丁已先完成），说明该实例的调用需求就在
+  90 附近，单次结果受方差支配。
+- 结论：HARD 现在只跑 Django；Sympy 历史保留但不再计分。DeepSWE 的“SWE 全通过”
+  门现在满足，但 DeepSWE 本身仍未验证。
+
+---
+
+## 20261108_133112 — temperature=0 pinned（Django，隔离失效，结果不计入）
+
+- 目的：把 eval 主模型温度固定为 0，消除两次 Django 运行之间最明显的采样方差；
+  同时保留 prompt 中的 F2P+P2P 列表。
+- **有效性：无效。** `pin_eval_temperature()` 在 `SHERRY_WORKSPACE_DIR` 覆盖与
+  `config.path` 初始化之前导入了 `server.service.messages`/`config.path`，把
+  `WORKSPACE_DIR` 冻结回 live workspace：报告 isolation 为
+  `eval_workspace_has_sessions=false`、`live_sessions_unchanged=false`，因此本次
+  1/1 不能作为能力证据。修复：pin 移到 workspace 覆盖与 config 初始化之后。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；168.2s；57 tool calls；tokens 2,195,175 / 8,452；
+  估算 $1.110；`resumes=0`；改动 `django/db/models/query.py` 与
+  `django/db/models/sql/compiler.py`，无测试文件、无 scratch 文件。
+- 对照：不固定温度时同实例两次为 0/1（437s / 92 calls）和 1/1（254s / 94 calls）；
+  固定温度后本次为 1/1（168s / 57 calls）。这是单次实验，不能单独证明稳定性，
+  但说明 temperature 是主要方差源之一。
+- 注：HARD 切片新增的 `django__django-16820` 尚未完成 host gold check（网络拉取
+  超时），暂不把它的结果计入能力结论。
+
+---
+
+## 20261108_133743 — temperature=0，pin 顺序修正后（Django，1/1，有效）
+
+- 目的：修正 `pin_eval_temperature()` 的导入顺序——在 `SHERRY_WORKSPACE_DIR`
+  覆盖与 `config.path` 初始化之后再 pin，恢复 eval 沙箱隔离，然后重跑同实例。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；60.6s；17 tool calls；tokens 395,375 / 2,346；
+  估算 $0.201；`resumes=0`；只改 `django/db/models/query.py`，无测试文件、无临时文件。
+- 隔离：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
+  `model.temperature=0.0`、`thinking_enabled=false`。
+- 观察：agent 在 17 次调用内完成定位→编辑→运行 `bulk_create` 全量测试（52 个，
+  7 skipped），并在最终答复中明确报告 F2P 5/5 与全部 PASS_TO_PASS 通过。与不固定
+  温度时的 57～94 次调用相比，确定性解码同时降低了方差和调用量。
+- 结论：temperature=0 的收益在有效隔离下成立；单次样本不足以证明稳定性，下面用
+  三次重复补齐。`django__django-16820` 的 gold check 另行记录。
+
+---
+
+## 20261108_134640 / 135057 / 135604 — temperature=0 重复三次（Django，3/3）
+
+- 目的：单次 1/1 不能证明稳定；在 temperature=0、隔离有效的前提下重复同一实例，
+  观察调用量与结果的方差。
+- 命令同 133743（每次独立 run_id；checkout/venv 复用实例缓存）。
+- 结果：**3/3 resolved**，且四次有效 temperature=0 运行（含 133743）全部 1/1：
+
+  | run | calls | 时长 | resolved |
+  | --- | --- | --- | --- |
+  | 133743 | 17 | 60.6s | 1/1 |
+  | 134640 | 69 | 235.8s | 1/1 |
+  | 135057 | 82 | 286.3s | 1/1 |
+  | 135604 | 16 | 63.1s | 1/1 |
+
+  全部 `eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`。
+- 观察：temperature=0 下结果稳定，但**调用量并不确定**（16～82 次，约 5 倍差）。
+  最长的一次用掉 90 次预算中的 82 次——如果轨迹再长一点，就会再次落入
+  “预算耗尽、补丁未收敛”的失败模式。
+- 结论：
+  1. 该实例的稳定性来自“确定性解码 + 编辑后跑全量目标测试”，不是来自回合数；
+  2. “加回合”只对**截断型**失败有效（105816 的 0/1 正是 90 次预算在修复中途耗尽）；
+     它不修复错误补丁，也不保证语义分歧的实例收敛；
+  3. 对长轨迹实例，90 次预算余量偏薄；主线已把主 agent 默认预算提高到 180，
+     `SHERRY_EVAL_MAX_ITERATIONS` 仍可覆盖。预算应作为安全边际而不是收敛策略。
+
+---
+
+## 20261108_145011 — 新增 HARD 实例 django__django-16820，90 次预算（0/1）
+
+- 目的：验证新增 HARD 实例在真实 agent 下的行为；temperature=0、隔离有效、
+  gold check 已通过（F2P 5/5、P2P 91/91）。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+  （本次 checkout 由 codeload tarball 重建：git fetch 在代理下两次超时）。
+- 结果：**0/1**；263.7s；92 tool calls；tokens 5,104,262 / 10,018；估算 $2.567；
+  `final_text` 为 “The iteration budget (90) has been exhausted”，即再次在修复
+  中途被预算截断。F2P 5/5 通过，P2P 未通过；改动
+  `django/db/migrations/{autodetector,operations/models,state}.py`。
+- P2P 输出异常：Django runner 在子进程回报失败时抛
+  `TypeError: cannot pickle 'traceback' object`，`judge_detail` 只保留了尾部，
+  无法从报告定位具体失败测试；这属于 runner 的报告缺陷，判题仍是失败。
+- 有效性：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
+  `temperature=0.0`、`thinking_enabled=false`。
+- 结论：该实例把“回合预算”从理论问题变成了实测约束——90 次调用不够它走完
+  修复→全量 P2P 验证。下一次用 `SHERRY_EVAL_MAX_ITERATIONS=180` 重跑同一实例，
+  直接检验“加回合能否收敛”。
+
+---
+
+## 20261108_184144 — 同实例，180 次预算（1/1）
+
+- 目的：直接检验“加回合能否收敛”。环境与上一条相同（temperature=0、隔离有效、
+  同一 checkout / venv / gold check）；当时出厂默认是 90，只把主模型调用上限
+  提到 180。
+- 命令：`SHERRY_EVAL_MAX_ITERATIONS=180 uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**1/1 resolved**；96.5s；**24 tool calls**；tokens 715,973 / 3,007；
+  估算 $0.362；F2P 5/5、P2P 91/91；只改
+  `django/db/migrations/operations/models.py`，无测试文件改动。
+- 报告新增字段：`budget.main_max_iterations=180`；`unrunnable_test_ids` 为
+  `{"fail_to_pass": 2, "pass_to_pass": 112}`——数据集里混入的测试描述文本不是
+  合法 Django 标签，被 harness 丢弃并如实上报（实际运行 5 + 91 个）。
+- 关键观察：180 的预算并没有“让”它成功——它在 24 次调用内就完成了修复并跑完
+  `migrations` 全量 722 个测试。与上一条 92 次耗尽预算的轨迹相比，同样的代码、
+  同样的 temperature=0，轨迹长度相差近 4 倍。也就是说：
+  1. 90 的预算确实能截断一条长轨迹（上一条的失败模式），提高上限可以消除这个
+     截断风险；
+  2. 但“加回合”不是收敛的充分条件，也不能归因本次成功——模型这次走了短路径；
+  3. 真正可复用的部分是编辑后的全量目标测试验证（prompt 已要求），预算只是
+     安全边际。
+
+---
+
+## 20261108_222819 — 最终代码：精确命令 + 默认 180 预算（Django 16820，0/1）
+
+- 目的：在“prompt 带精确测试命令 + 主 agent 默认预算 180”的最终代码上重跑新 HARD
+  实例，确认两处改动端到端生效。
+- 环境：temperature=0、隔离有效；`budget.main_max_iterations=180`（未设置
+  `SHERRY_EVAL_MAX_ITERATIONS`，走产品默认）；`unrunnable_test_ids` 为
+  2 F2P + 112 P2P。
+- 结果：**0/1**；264.6s；97 tool calls；F2P 5/5 通过，P2P 未通过；改动
+  `django/db/migrations/{autodetector,operations/models}.py`。
+- 验证命令：agent 的最终答复明确使用并复跑了
+  `python tests/runtests.py migrations`，说明 prompt 里的精确命令生效。
+- 失败原因（串行复判同一 diff 得到）：5 个 P2P 失败，全部是真实断言差异——
+  `OptimizerTests.test_create_alter_owrt_field`（`_order` 字段插入位置错误），
+  `AutodetectorTests.test_add_model_order_with_respect_to_{unique_together,constraint}`、
+  `AutodetectorIndexTogetherTests.test_add_model_order_with_respect_to_index_together`
+  与 `test_default_related_name_option`（空的 `indexes` 泄漏进 options）。
+  agent 的最终答复也列出了同样的剩余工作，但在被 ToolGuardrails 阻止继续读测试
+  文件后主动停止，未继续修复。
+- 判题器缺陷（已修）：Django 默认的并行 runner 在回报一个无法 pickle 的异常时
+  崩溃（`TypeError: cannot pickle 'traceback' object`），导致报告只剩
+  `pass_to_pass_ok=false` 和 91 条“全通过”的解析结果，看不到失败测试。现在
+  `run_tests` 对 Django 固定 `--parallel 1`；对同一 diff 串行复判得到 91 条
+  outcomes、5 条 fail，与 agent 自己的诊断一致。
+- 结论：精确命令和更大预算都生效了，但这次失败是**补丁语义不完整**，不是截断；
+  额外回合只有在 agent 还能继续读取/运行时才有意义。
+
+---
+
+## 20261109_204854 — verify-todo 模板回归（Django 16820，1/1）
+
+- 目的：验收闭环（SYSTEM verify todo + reviewer + 定向回退）落地后，用最终代码回归
+  HARD 实例，确认新模板与转换屏障没有破坏基本修复流程。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+  （checkout 复用本地缓存；产品默认预算 180）。
+- 结果：**1/1 resolved**；117.3s；31 tool calls；tokens 1,026,359 / 4,347；
+  F2P 5/5、P2P 91/91；无 dirty test edits。
+- 隔离：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
+  `budget.main_max_iterations=180`。
+- 观察：该 agent 没有创建 todo 计划（本 run 无 todowrite），因此 verify todo
+  分支没有被真实模型触发；verify 循环由确定性测试覆盖——15 个 todolist verify
+  测试、5 个 PlanContinuationEnforcer verify 测试、5 个 skill-review guard 测试，
+  以及完整的 todolist e2e。
+- 备注：本轮还修复了 eval persona 的 `workspace.mkdir` 回归（删掉旧 memory
+  目录创建后，`_seed_persona` 在 workspace 根不存在时无法写 AGENTS.md），并新增
+  回归测试。
+
+---
+
+## 历史 / 实验归档（2026-11-01 – 2026-11-04）
+
+以下运行用于验证当时的设计（no-edit 门、软门、delegate-only、sympy guardrail
+调参链、目标测试仅写 prompt）。它们对应的 arm / 实例已删除或移出切片，**不作为
+能力证据**，仅保留设计演进与失败模式的完整记录。每个条目的原始报告仍在
+`evals/results/swebench/<run_id>/`（gitignored）。
 ---
 
 ## 20261101_000025 — prompt + no-edit 门（1/2，脏）
@@ -196,176 +395,13 @@
 
 ---
 
-## 20261108_111407 — HARD Django only; target F2P+P2P in prompt（1/1）
+## 20261109_214040 — guardrail 测试读取豁免 + reasoning payload 回归（16820，1/1）
 
-- 目的：移除有隐藏语义争议的 Sympy 实例后，在通用 prompt 中要求编辑前阅读
-  FAIL_TO_PASS 和 PASS_TO_PASS 测试体，并显式列出两组测试名；重跑 HARD 切片。
-- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
-- 结果：**1/1 resolved**；254.1s；94 tool calls；tokens 4,071,258 / 14,569；
-  估算 $2.057；`changed_paths` 包含 `django/db/backends/{base,postgresql,sqlite3}/features.py`
-  和 `django/db/models/query.py`，另有 agent 自建的 `dbg_tmp.py`（非测试文件，未判 dirty）。
-- 对照：`20261108_105816` 同实例、同 prompt 首跑 0/1；F2P 5/5 通过，但 P2P
-  `test_ignore_conflicts_ignore` 报 `'NoneType' object is not iterable`。该次运行的
-  `final_text` 是 “The iteration budget (90) has been exhausted”，即 92 次工具调用
-  后被预算截断在修复中途——这是“回合不够”型失败，不是模型不知道该改哪里。
-  第二次运行 1/1 同样在预算耗尽时结束（补丁已先完成），说明该实例的调用需求就在
-  90 附近，单次结果受方差支配。
-- 结论：HARD 现在只跑 Django；Sympy 历史保留但不再计分。DeepSWE 的“SWE 全通过”
-  门现在满足，但 DeepSWE 本身仍未验证。
-
----
-
-## 20261108_133112 — temperature=0 pinned（Django，隔离失效，结果不计入）
-
-- 目的：把 eval 主模型温度固定为 0，消除两次 Django 运行之间最明显的采样方差；
-  同时保留 prompt 中的 F2P+P2P 列表。
-- **有效性：无效。** `pin_eval_temperature()` 在 `SHERRY_WORKSPACE_DIR` 覆盖与
-  `config.path` 初始化之前导入了 `server.service.messages`/`config.path`，把
-  `WORKSPACE_DIR` 冻结回 live workspace：报告 isolation 为
-  `eval_workspace_has_sessions=false`、`live_sessions_unchanged=false`，因此本次
-  1/1 不能作为能力证据。修复：pin 移到 workspace 覆盖与 config 初始化之后。
-- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
-- 结果：**1/1 resolved**；168.2s；57 tool calls；tokens 2,195,175 / 8,452；
-  估算 $1.110；`resumes=0`；改动 `django/db/models/query.py` 与
-  `django/db/models/sql/compiler.py`，无测试文件、无 scratch 文件。
-- 对照：不固定温度时同实例两次为 0/1（437s / 92 calls）和 1/1（254s / 94 calls）；
-  固定温度后本次为 1/1（168s / 57 calls）。这是单次实验，不能单独证明稳定性，
-  但说明 temperature 是主要方差源之一。
-- 注：HARD 切片新增的 `django__django-16820` 尚未完成 host gold check（网络拉取
-  超时），暂不把它的结果计入能力结论。
-
----
-
-## 20261108_133743 — temperature=0，pin 顺序修正后（Django，1/1，有效）
-
-- 目的：修正 `pin_eval_temperature()` 的导入顺序——在 `SHERRY_WORKSPACE_DIR`
-  覆盖与 `config.path` 初始化之后再 pin，恢复 eval 沙箱隔离，然后重跑同实例。
-- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-17051 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
-- 结果：**1/1 resolved**；60.6s；17 tool calls；tokens 395,375 / 2,346；
-  估算 $0.201；`resumes=0`；只改 `django/db/models/query.py`，无测试文件、无临时文件。
-- 隔离：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
-  `model.temperature=0.0`、`thinking_enabled=false`。
-- 观察：agent 在 17 次调用内完成定位→编辑→运行 `bulk_create` 全量测试（52 个，
-  7 skipped），并在最终答复中明确报告 F2P 5/5 与全部 PASS_TO_PASS 通过。与不固定
-  温度时的 57～94 次调用相比，确定性解码同时降低了方差和调用量。
-- 结论：temperature=0 的收益在有效隔离下成立；单次样本不足以证明稳定性，下面用
-  三次重复补齐。`django__django-16820` 的 gold check 另行记录。
-
----
-
-## 20261108_134640 / 135057 / 135604 — temperature=0 重复三次（Django，3/3）
-
-- 目的：单次 1/1 不能证明稳定；在 temperature=0、隔离有效的前提下重复同一实例，
-  观察调用量与结果的方差。
-- 命令同 133743（每次独立 run_id；checkout/venv 复用实例缓存）。
-- 结果：**3/3 resolved**，且四次有效 temperature=0 运行（含 133743）全部 1/1：
-
-  | run | calls | 时长 | resolved |
-  | --- | --- | --- | --- |
-  | 133743 | 17 | 60.6s | 1/1 |
-  | 134640 | 69 | 235.8s | 1/1 |
-  | 135057 | 82 | 286.3s | 1/1 |
-  | 135604 | 16 | 63.1s | 1/1 |
-
-  全部 `eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`。
-- 观察：temperature=0 下结果稳定，但**调用量并不确定**（16～82 次，约 5 倍差）。
-  最长的一次用掉 90 次预算中的 82 次——如果轨迹再长一点，就会再次落入
-  “预算耗尽、补丁未收敛”的失败模式。
-- 结论：
-  1. 该实例的稳定性来自“确定性解码 + 编辑后跑全量目标测试”，不是来自回合数；
-  2. “加回合”只对**截断型**失败有效（105816 的 0/1 正是 90 次预算在修复中途耗尽）；
-     它不修复错误补丁，也不保证语义分歧的实例收敛；
-  3. 对长轨迹实例，90 次预算余量偏薄；主线已把主 agent 默认预算提高到 180，
-     `SHERRY_EVAL_MAX_ITERATIONS` 仍可覆盖。预算应作为安全边际而不是收敛策略。
-
----
-
-## 20261108_145011 — 新增 HARD 实例 django__django-16820，90 次预算（0/1）
-
-- 目的：验证新增 HARD 实例在真实 agent 下的行为；temperature=0、隔离有效、
-  gold check 已通过（F2P 5/5、P2P 91/91）。
-- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
-  （本次 checkout 由 codeload tarball 重建：git fetch 在代理下两次超时）。
-- 结果：**0/1**；263.7s；92 tool calls；tokens 5,104,262 / 10,018；估算 $2.567；
-  `final_text` 为 “The iteration budget (90) has been exhausted”，即再次在修复
-  中途被预算截断。F2P 5/5 通过，P2P 未通过；改动
-  `django/db/migrations/{autodetector,operations/models,state}.py`。
-- P2P 输出异常：Django runner 在子进程回报失败时抛
-  `TypeError: cannot pickle 'traceback' object`，`judge_detail` 只保留了尾部，
-  无法从报告定位具体失败测试；这属于 runner 的报告缺陷，判题仍是失败。
-- 有效性：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
-  `temperature=0.0`、`thinking_enabled=false`。
-- 结论：该实例把“回合预算”从理论问题变成了实测约束——90 次调用不够它走完
-  修复→全量 P2P 验证。下一次用 `SHERRY_EVAL_MAX_ITERATIONS=180` 重跑同一实例，
-  直接检验“加回合能否收敛”。
-
----
-
-## 20261108_184144 — 同实例，180 次预算（1/1）
-
-- 目的：直接检验“加回合能否收敛”。环境与上一条相同（temperature=0、隔离有效、
-  同一 checkout / venv / gold check）；当时出厂默认是 90，只把主模型调用上限
-  提到 180。
-- 命令：`SHERRY_EVAL_MAX_ITERATIONS=180 uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
-- 结果：**1/1 resolved**；96.5s；**24 tool calls**；tokens 715,973 / 3,007；
-  估算 $0.362；F2P 5/5、P2P 91/91；只改
-  `django/db/migrations/operations/models.py`，无测试文件改动。
-- 报告新增字段：`budget.main_max_iterations=180`；`unrunnable_test_ids` 为
-  `{"fail_to_pass": 2, "pass_to_pass": 112}`——数据集里混入的测试描述文本不是
-  合法 Django 标签，被 harness 丢弃并如实上报（实际运行 5 + 91 个）。
-- 关键观察：180 的预算并没有“让”它成功——它在 24 次调用内就完成了修复并跑完
-  `migrations` 全量 722 个测试。与上一条 92 次耗尽预算的轨迹相比，同样的代码、
-  同样的 temperature=0，轨迹长度相差近 4 倍。也就是说：
-  1. 90 的预算确实能截断一条长轨迹（上一条的失败模式），提高上限可以消除这个
-     截断风险；
-  2. 但“加回合”不是收敛的充分条件，也不能归因本次成功——模型这次走了短路径；
-  3. 真正可复用的部分是编辑后的全量目标测试验证（prompt 已要求），预算只是
-     安全边际。
-
----
-
-## 20261108_222819 — 最终代码：精确命令 + 默认 180 预算（Django 16820，0/1）
-
-- 目的：在“prompt 带精确测试命令 + 主 agent 默认预算 180”的最终代码上重跑新 HARD
-  实例，确认两处改动端到端生效。
-- 环境：temperature=0、隔离有效；`budget.main_max_iterations=180`（未设置
-  `SHERRY_EVAL_MAX_ITERATIONS`，走产品默认）；`unrunnable_test_ids` 为
-  2 F2P + 112 P2P。
-- 结果：**0/1**；264.6s；97 tool calls；F2P 5/5 通过，P2P 未通过；改动
-  `django/db/migrations/{autodetector,operations/models}.py`。
-- 验证命令：agent 的最终答复明确使用并复跑了
-  `python tests/runtests.py migrations`，说明 prompt 里的精确命令生效。
-- 失败原因（串行复判同一 diff 得到）：5 个 P2P 失败，全部是真实断言差异——
-  `OptimizerTests.test_create_alter_owrt_field`（`_order` 字段插入位置错误），
-  `AutodetectorTests.test_add_model_order_with_respect_to_{unique_together,constraint}`、
-  `AutodetectorIndexTogetherTests.test_add_model_order_with_respect_to_index_together`
-  与 `test_default_related_name_option`（空的 `indexes` 泄漏进 options）。
-  agent 的最终答复也列出了同样的剩余工作，但在被 ToolGuardrails 阻止继续读测试
-  文件后主动停止，未继续修复。
-- 判题器缺陷（已修）：Django 默认的并行 runner 在回报一个无法 pickle 的异常时
-  崩溃（`TypeError: cannot pickle 'traceback' object`），导致报告只剩
-  `pass_to_pass_ok=false` 和 91 条“全通过”的解析结果，看不到失败测试。现在
-  `run_tests` 对 Django 固定 `--parallel 1`；对同一 diff 串行复判得到 91 条
-  outcomes、5 条 fail，与 agent 自己的诊断一致。
-- 结论：精确命令和更大预算都生效了，但这次失败是**补丁语义不完整**，不是截断；
-  额外回合只有在 agent 还能继续读取/运行时才有意义。
-
----
-
-## 20261109_204854 — verify-todo 模板回归（Django 16820，1/1）
-
-- 目的：验收闭环（SYSTEM verify todo + reviewer + 定向回退）落地后，用最终代码回归
-  HARD 实例，确认新模板与转换屏障没有破坏基本修复流程。
-- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
-  （checkout 复用本地缓存；产品默认预算 180）。
-- 结果：**1/1 resolved**；117.3s；31 tool calls；tokens 1,026,359 / 4,347；
-  F2P 5/5、P2P 91/91；无 dirty test edits。
-- 隔离：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
-  `budget.main_max_iterations=180`。
-- 观察：该 agent 没有创建 todo 计划（本 run 无 todowrite），因此 verify todo
-  分支没有被真实模型触发；verify 循环由确定性测试覆盖——15 个 todolist verify
-  测试、5 个 PlanContinuationEnforcer verify 测试、5 个 skill-review guard 测试，
-  以及完整的 todolist e2e。
-- 备注：本轮还修复了 eval persona 的 `workspace.mkdir` 回归（删掉旧 memory
-  目录创建后，`_seed_persona` 在 workspace 根不存在时无法写 AGENTS.md），并新增
-  回归测试。
+- 目的：验证 ②（test-path `read_file` 豁免 signature/no-progress 路径）和 ⑥
+  （`ReasoningDeepSeekChat` 出站 `reasoning_content` 注入）后，同实例回归。
+- 结果：**1/1 resolved**；117.8s；33 tool calls；tokens 1,140,324 / 4,243；
+  F2P 5/5、P2P 91/91；无 dirty test edits；`budget.main_max_iterations=180`；
+  隔离两项均 true。
+- 观察：DeepSeek 客户端走新的 `ReasoningDeepSeekChat` 构建并正常服务本 run；
+  本次没有出现需要重复读测试文件的情形。guardrail 豁免仍是按失败模式修复，
+  由三个单测钉住（test-path 不计数、source 仍计数、仅 read_file 豁免）。

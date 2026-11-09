@@ -40,6 +40,8 @@ HARD instances?” — not “what is the leaderboard position?”.
 
 ## The failure history (2026-11-01)
 
+> **2026-11-09:** the table below is full history. The current-code tally (test patch pre-applied + temperature 0 + default 180 + current prompt) lives in `evals/swebench/RESULTS.md`: 17051 4/4, 16820 3/4, HARD 7/8 on two instances — not a leaderboard position. Runs of removed arms are archived there.
+
 | Run | Arm | Result | What happened |
 | :--- | :--- | :--- | :--- |
 | 2026-11-01 000025 | prompt + no-edit gate | 1/2 dirty | Django added a test file; Sympy's 726-byte patch broke P2P |

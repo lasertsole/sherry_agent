@@ -176,6 +176,17 @@ def _looks_like_test(path: str) -> bool:
     return "tests" in path.split("/") or Path(path).name.startswith("test_")
 
 
+def _dirty_test_edits(changed: list[str], test_paths: list[str]) -> list[str]:
+    """Agent edits to test files, excluding the harness's own test patch.
+
+    A clean diff is part of the product contract: touching a test file (other
+    than the harness-owned patch, which is reset before judging) makes the run
+    dirty even when the target tests pass.
+    """
+    harness_owned = set(test_paths)
+    return [path for path in changed if path not in harness_owned and _looks_like_test(path)]
+
+
 #: Appended to the neutral working rules for the swebench arm ONLY (the
 #: coding-capability baseline keeps the untouched neutral rules so its pinned
 #: threshold stays comparable). It records this harness's environment facts —
@@ -941,9 +952,7 @@ async def _run_instance(
             resolved = False
             detail = "the test patch does not apply — the agent changed test files"
 
-        dirty_test_edits = [
-            path for path in changed if path not in set(test_paths) and _looks_like_test(path)
-        ]
+        dirty_test_edits = _dirty_test_edits(changed, test_paths)
         if dirty_test_edits:
             resolved = False
             detail += f"\nDIRTY TEST EDITS: {', '.join(dirty_test_edits)}"

@@ -247,6 +247,25 @@ class ToolGuardrails(AgentMiddleware):
             gs.last_signature = signature
             gs.signature_streak = 1
 
+    @staticmethod
+    def _is_test_file_read(tool_name: str, tool_args: dict[str, Any] | None) -> bool:
+        """A read_file targeting a test path is acceptance feedback, not probing.
+
+        Reading the same test file again after a failed assertion is how a
+        coding agent recovers; counting it as a repetition streak cuts the
+        legal "read the expectation → fix → read again" loop (SWE 20261108
+        run 222819). The exemption only covers ``read_file`` on a test path;
+        every other read keeps the normal streak.
+        """
+        if tool_name != "read_file" or not isinstance(tool_args, dict):
+            return False
+        raw = str(tool_args.get("path") or tool_args.get("file_path") or "").strip()
+        if not raw:
+            return False
+        parts = raw.replace("\\", "/").split("/")
+        name = parts[-1] if parts else ""
+        return "tests" in parts or name.startswith("test_") or name.endswith("_test.py")
+
     def _evaluate(
         self,
         gs: _TurnGuardrailState,
@@ -258,9 +277,12 @@ class ToolGuardrails(AgentMiddleware):
         is_stagnant: bool,
         tool: Any | None = None,
         output_hash: str | None = None,
+        tool_args: dict[str, Any] | None = None,
     ) -> GuardrailAction:
         gs.last_pathology = None
-        self._update_signature_streak(gs, tool_name, args_hash)
+        test_read = self._is_test_file_read(tool_name, tool_args)
+        if not test_read:
+            self._update_signature_streak(gs, tool_name, args_hash)
 
         if gs.halt_decision is not None:
             return GuardrailAction.HALT
@@ -298,7 +320,7 @@ class ToolGuardrails(AgentMiddleware):
             if same_action is not None and _ACTION_RANK[same_action] > _ACTION_RANK[action]:
                 action = same_action
         else:
-            if is_idempotent and result_hash is not None:
+            if is_idempotent and result_hash is not None and not test_read:
                 for rec in reversed(gs.records):
                     if rec.name == tool_name and rec.result_hash == result_hash:
                         no_progress_key = f"{tool_name}:{result_hash}"
@@ -316,7 +338,7 @@ class ToolGuardrails(AgentMiddleware):
                             action = no_progress_action
                         break
 
-        if action in (GuardrailAction.ALLOW, GuardrailAction.WARN):
+        if action in (GuardrailAction.ALLOW, GuardrailAction.WARN) and not test_read:
             action = self._evaluate_pair_pathologies(
                 gs, tool_name, args_hash, result_hash, is_error, action, is_stagnant
             )
@@ -369,7 +391,7 @@ class ToolGuardrails(AgentMiddleware):
         # git log, the same search). The warning budget is bounded; once it is
         # spent, only that exact signature is blocked (other args and tools
         # stay available).
-        if action == GuardrailAction.ALLOW and self.config.warnings_enabled:
+        if action == GuardrailAction.ALLOW and self.config.warnings_enabled and not test_read:
             threshold = self._streak_threshold(tool, tool_name)
             if gs.signature_streak >= threshold:
                 signature = self._signature(tool_name, args_hash)
@@ -621,6 +643,7 @@ class ToolGuardrails(AgentMiddleware):
             is_stagnant,
             tool=request.tool,
             output_hash=output_hash,
+            tool_args=request.tool_call.get("args", {}) or {},
         )
         self._save_state(session_id, gs)
 
