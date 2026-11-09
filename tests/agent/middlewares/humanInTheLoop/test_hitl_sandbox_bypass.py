@@ -376,10 +376,16 @@ class TestMainSessionBypassApproval:
     def test_main_terminal_sandbox_false_resume_approve_executes_with_scrubbed_env(
         self, monkeypatch
     ):
-        # REAL SafeShellTool in the graph; GLOBAL Popen mock; the approved
-        # resume must hand the tool sandbox=False AND still spawn with a
-        # scrubbed env + clamped cwd (user's original design guarantee).
+        # H2 (2026-11-09 audit): the HITL handler still reads the RAW call
+        # arguments (defense in depth for internal callers), so the card still
+        # appears — but the tool schema discards the forged flag, so the
+        # approved run stays on the sandboxed path (True) with the same
+        # scrubbed env + clamped cwd guarantee.
         _seed_fake_secrets(monkeypatch)
+        # The approved call now runs with sandbox=True (H2), so the policy would
+        # PROBE the backend through the globally mocked Popen. Pin the no-backend
+        # degrade path so popen_calls holds only the command itself.
+        monkeypatch.setattr("agent.tools.terminal.core.get_backend", lambda policy: None)
         popen_calls: list[dict[str, Any]] = []
         monkeypatch.setattr(
             subprocess, "Popen", lambda *a, **kw: _FakeShellProc(popen_calls, *a, **kw)
@@ -408,10 +414,12 @@ class TestMainSessionBypassApproval:
 
         assert _pending_tasks(graph, config) == []
         assert captured_run, "approved call must reach the tool layer"
-        assert captured_run[0]["sandbox"] is False, "tool must receive sandbox=False"
+        assert captured_run[0]["sandbox"] is True, (
+            "the model-visible schema must drop the forged flag; the server owns the policy"
+        )
         assert captured_run[0]["commands"] == ["echo ok"]
 
-        assert popen_calls, "approved sandbox=False call must execute via Popen"
+        assert popen_calls, "the approved call must execute via Popen"
         kwargs = popen_calls[0]["kwargs"]
         _assert_scrubbed_env(kwargs.get("env"))
         assert kwargs.get("cwd") == str(ROOT_DIR), "cwd clamp must stay unconditional"
@@ -486,7 +494,10 @@ class TestMainSessionBypassApproval:
     def test_main_python_repl_sandbox_false_resume_approve_executes_with_scrubbed_env(
         self, monkeypatch
     ):
+        # Same H2 semantics as the terminal test: the raw arg still triggers
+        # the card, the schema drops it before the tool runs.
         _seed_fake_secrets(monkeypatch)
+        monkeypatch.setattr("agent.tools.python_repl.get_backend", lambda policy: None)
         popen_calls: list[dict[str, Any]] = []
         monkeypatch.setattr(
             subprocess, "Popen", lambda *a, **kw: _FakeReplProc(popen_calls, *a, **kw)
@@ -515,9 +526,11 @@ class TestMainSessionBypassApproval:
 
         assert _pending_tasks(graph, config) == []
         assert captured_run, "approved call must reach the tool layer"
-        assert captured_run[0]["sandbox"] is False, "tool must receive sandbox=False"
+        assert captured_run[0]["sandbox"] is True, (
+            "the model-visible schema must drop the forged flag; the server owns the policy"
+        )
 
-        assert popen_calls, "approved sandbox=False python_repl call must execute via Popen"
+        assert popen_calls, "the approved python_repl call must execute via Popen"
         kwargs = popen_calls[0]["kwargs"]
         _assert_scrubbed_env(kwargs.get("env"))
         assert kwargs.get("cwd") == str(ROOT_DIR), "cwd clamp must stay unconditional"
@@ -653,27 +666,16 @@ class TestBackgroundScopeGuard:
             )
 
     def test_background_stamped_python_repl_sandbox_false_tool_layer_exception(self):
-        # A background graph (NO HITL middleware — heartbeat/cron never get one)
-        # with a background-stamped python_repl: sandbox=False → the TOOL layer
-        # raises ToolException (guard text mentions the main-session-only
-        # sandbox bypass) — no interrupt anywhere.
+        # H2 (2026-11-09 audit): a model tool call can no longer carry the flag
+        # (the schema drops it), so the guard is exercised the way its remaining
+        # callers reach it — a server-side/internal `_run(sandbox=False)`.
         repl = build_python_repl_tool()
         repl.metadata = {"idempotent": False, "caller_scope": "background"}
-        _ScriptedModel.calls = 0
-        _ScriptedModel.scripted_calls = [
-            _single_sandbox_false_call("python_repl", {"query": "print(1)"}, "call_bp_bg_r")
-        ]
-        graph = create_agent(model=_ScriptedModel(), tools=[repl])
 
-        out = graph.invoke({"messages": [HumanMessage(content="run it")]})
+        with pytest.raises(ToolException) as excinfo:
+            repl._run("print(1)", sandbox=False)
 
-        errors = [
-            m
-            for m in out["messages"]
-            if isinstance(m, ToolMessage) and getattr(m, "status", None) == "error"
-        ]
-        assert errors, "background python_repl sandbox=False must be denied by the tool layer"
-        assert "Sandbox bypass requires main-session" in str(errors[0].content)
+        assert "Sandbox bypass requires main-session" in str(excinfo.value)
 
     def test_background_stamped_terminal_sandbox_false_tool_layer_exception(self, monkeypatch):
         # Spawn-point stubbed (belt-and-braces): whatever the guard does, no
@@ -683,22 +685,11 @@ class TestBackgroundScopeGuard:
         )
         term = build_terminal_tool()
         term.metadata = {"idempotent": False, "caller_scope": "background"}
-        _ScriptedModel.calls = 0
-        _ScriptedModel.scripted_calls = [
-            _single_sandbox_false_call("terminal", {"commands": ["echo ok"]}, "call_bp_bg_t")
-        ]
-        graph = create_agent(model=_ScriptedModel(), tools=[term])
 
-        out = graph.invoke({"messages": [HumanMessage(content="run it")]})
+        with pytest.raises(ToolException) as excinfo:
+            term._run(["echo ok"], sandbox=False)
 
-        errors = [
-            m
-            for m in out["messages"]
-            if isinstance(m, ToolMessage) and getattr(m, "status", None) == "error"
-        ]
-        assert errors, "background terminal sandbox=False must be denied by the tool layer"
-        assert "Sandbox bypass requires main-session" in str(errors[0].content)
-        assert "__EXEC__" not in str(errors[0].content)
+        assert "Sandbox bypass requires main-session" in str(excinfo.value)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

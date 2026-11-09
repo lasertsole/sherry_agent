@@ -170,18 +170,17 @@ def _tool(caller_scope: str | None = None) -> SafeShellTool:
 #    class-level tool_call_schema access)
 # ─────────────────────────────────────────────────────────────────────────────
 class TestSchemaPropagation:
-    def test_class_level_tool_call_schema_contains_sandbox(self):
+    def test_class_level_tool_call_schema_excludes_sandbox(self):
         # CLASS-level access must work: after the archived-parent migration the
-        # schema hangs off ``args_schema`` (a plain pydantic model), so both the
-        # class and an instance expose it.
+        # schema hangs off ``args_schema`` (a plain pydantic model). The sandbox
+        # switch is server-owned (2026-11-09 audit H2), so it is NOT part of it.
         props = SafeShellTool.tool_call_schema.model_json_schema()["properties"]
-        assert "sandbox" in props, "sandbox field must reach the tool-call schema"
-        assert props["sandbox"].get("default") is True
-        assert props["sandbox"].get("description"), "description must be non-empty"
+        assert "sandbox" not in props
+        assert set(props) == {"commands", "run_in_background", "timeout"}
 
     def test_args_schema_is_the_local_safe_shell_input(self):
         # The schema is the repo's own model now (the archived ShellInput parent
-        # is gone); the field set must stay the union the LLM sees, and
+        # is gone); the field set must stay the surface the LLM sees, and
         # ``commands`` must remain the inherited-compatible name HITL reads.
         # NOTE: pydantic v2 has no class-level field attribute access, so read
         # the schema from an instance.
@@ -196,16 +195,14 @@ class TestSchemaPropagation:
         # the str->list normalization upstream's validator did must still hold
         # (pinned end-to-end by test_shell_input_validator_normalizes_str_to_list).
         assert "commands" in schema.model_fields
-        assert "sandbox" in schema.model_fields
-        assert schema.model_fields["sandbox"].default is True
+        assert "sandbox" not in schema.model_fields
 
     def test_instance_tool_call_schema_matches_class(self):
         tool = _tool()
         props = tool.tool_call_schema.model_json_schema()["properties"]
-        assert "sandbox" in props
-        assert props["sandbox"].get("default") is True
+        assert "sandbox" not in props
 
-    def test_sandbox_flag_flows_to_run_via_invoke(self, monkeypatch):
+    def test_forged_sandbox_is_dropped_via_invoke(self, monkeypatch):
         captured: list[tuple[Any, dict[str, Any]]] = []
 
         def fake_run(self: Any, commands: Any, **kwargs: Any) -> str:
@@ -218,8 +215,8 @@ class TestSchemaPropagation:
         assert captured, "_run must be called"
         commands, kwargs = captured[0]
         assert commands == ["ls -la"]
-        assert kwargs.get("sandbox") is False, (
-            "sandbox=False must flow from the schema into _run by field name"
+        assert "sandbox" not in kwargs, (
+            "the model-visible schema must discard a forged sandbox flag"
         )
 
 
@@ -699,8 +696,10 @@ class TestPublicInvokeSemantics:
         assert isinstance(out, str)
         assert "Blocked: unsafe command." in out
 
-    def test_invoke_subagent_sandbox_false_returns_deny_string(self):
+    def test_internal_subagent_sandbox_false_is_denied(self):
+        # The model can no longer reach the switch (H2), but server-side callers
+        # keep the parameter and its guard.
         tool = _tool(caller_scope="subagent")
-        out = tool.invoke({"commands": ["echo ok"], "sandbox": False})
-        assert isinstance(out, str)
-        assert "Sandbox bypass requires main-session human approval" in out
+        with pytest.raises(ToolException) as excinfo:
+            tool._run(["echo ok"], sandbox=False)
+        assert "Sandbox bypass requires main-session human approval" in str(excinfo.value)

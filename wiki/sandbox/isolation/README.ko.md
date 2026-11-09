@@ -101,7 +101,7 @@ bwrap
 
 ### 4. 사람이 승인하는 우회 통로
 
-`sandbox=False` 호출은 의도적인 우회 요청입니다. `HumanInTheLoop` 미들웨어가 실행 중이고 YOLO가 아닌 **메인 세션** 그래프에서는 `after_model`이 해당 호출을 LangGraph `interrupt()` 위에 세워 둡니다:
+서버 측 `sandbox=False` 호출은 의도적인 우회 요청입니다. 모델은 보낼 수 없습니다(`terminal` / `python_repl` 스키마에 `sandbox` 필드가 없음——2026-11-09 감사 H2). 따라서 이 경로는 내부/진단 호출자를 위한 것입니다. `HumanInTheLoop` 미들웨어가 실행 중이고 YOLO가 아닌 **메인 세션** 그래프에서는 `after_model`이 해당 호출을 LangGraph `interrupt()` 위에 세워 둡니다:
 
 - 인터럽트 페이로드는 전체 도구 호출(도구 이름, 인자, 명령 또는 query)을 보여주고 `allowed_decisions: ["approve", "reject"]`를 담습니다.
 - **승인**(`{"decisions": [{"type": "approve"}]}`): 원래 인자 그대로 실행됩니다. 환경은 여전히 세척되고, cwd는 프로젝트 루트로 고정되며, 위험 명령 정규식도 여전히 적용됩니다. 승인된 우회는 스마트 승인과 위험 명령 재확인을 건너뜁니다. 사람이 이번 호출 전체를 승인했기 때문이고, 하드라인 블랙리스트는 그 전에 이미 실행됐습니다.

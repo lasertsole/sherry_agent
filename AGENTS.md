@@ -961,7 +961,13 @@ File browsing (`GET /project/tree`, `GET /project/file`,
 `server/service/project_files_service.py`) is read-only and hard-refused to the
 session's root: `resolve_within(base, path)` runs the same gate order as the
 tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
-size (413), non-UTF-8 (415), depth and entries per level. Binary previews
+size (413), non-UTF-8 (415), depth and entries per level. Since the 2026-11-09
+audit (H1) an UNBOUND session cannot read files at all (its fallback root is the
+sherry checkout, so `path=.env` used to return the model API keys), and a bound
+checkout still refuses sherry's own root config/credential files through the
+tools' `_ROOT_SENSITIVE_FILES` list (`self_path_policy.is_sensitive_root_file`,
+case-folded on Windows); a bound USER project's own `.env` stays browsable. The
+tree endpoint keeps serving names for API parity. Binary previews
 (PDF / docx / image) ride the sibling `GET /project/file/blob` — the same
 boundary and error protocol with the wider `max_blob_bytes` (20 MiB) cap and a
 `mimetypes` Content-Type instead of the 415 no-UTF-8 rule — and the viewer tab
@@ -2171,7 +2177,14 @@ by the `browser` playbook skill (`skills/builtin/core/browser/SKILL.md`,
 scriptless, hidden from the index while the feature is off). The seven verbs are
 thin handlers over the same manager; the original `browser_*` classes remain
 internal handlers and are exposed only by `build_legacy_browser_tools()` for
-tests. `browser(action="screenshot")` writes a PNG and
+tests. Since the 2026-11-09 audit (H5) navigation and reads reuse the
+`web_fetch` SSRF verdict: `agent/tools/browser/tools/_shared.py::validate_navigation_url`
+allows http(s) only, refuses local/private/metadata targets unless
+`SHERRY_BROWSER_ALLOW_LOCAL=1`, and resolves public names through
+`is_public_url`; the final URL after a redirect is re-checked, and
+snapshot/screenshot/evaluate re-check the page's ACTUAL URL before returning
+content — a blocked page is parked at `about:blank` and the result is withheld.
+`browser(action="screenshot")` writes a PNG and
 returns **the image itself** when the serving model reads images natively
 (`media_pipeline/tool_media.py::native_image_content` — the `image_to_text`
 skill is the fallback for a model without vision, never the route a
@@ -2601,6 +2614,14 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
+  The `sandbox` switch is SERVER-owned since the 2026-11-09 audit (H2): it is
+  NOT in the model-facing `SafeShellInput` / `PythonReplInput` schemas (a forged
+  argument is dropped by validation), while internal `_run(sandbox=False)`
+  callers keep the scope/policy guard and the HITL card. `python_repl` and PTC
+  also refuse class-introspection escapes statically
+  (`pub_base/safe_exec.py::validate_restricted_code`: no dunder attributes,
+  no `__builtins__`), and their restricted builtins omit
+  `getattr`/`type`/`dir`/`vars` (H4).
   `PathGuard` additionally screens the command-string arguments (`commands` /
   `query`) against the hard-deny floor AND the sherry-self policy — read-looking
   tokens against the read allow-list, extracted write targets (`>` / `>>` /

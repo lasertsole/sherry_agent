@@ -33,6 +33,7 @@ interfere with the agent's own features.
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from pathlib import Path
@@ -43,6 +44,7 @@ __all__ = [
     "SelfPathDecision",
     "classify_self_path",
     "is_self_path",
+    "is_sensitive_root_file",
     "read_denied_reason",
     "write_denied_reason",
 ]
@@ -137,6 +139,21 @@ def _write_allow_roots(session_id: str) -> tuple[Path, ...]:
     return tuple(_resolved(root) for root in roots)
 
 
+def is_sensitive_root_file(path: Path) -> bool:
+    """True for sherry's own root config/credential files (any of its trees).
+
+    ``normcase`` matters on Windows: NTFS opens ``.ENV`` and ``.env`` as the same
+    file, but a case-sensitive string compare would let the upper-case spelling
+    through the deny list.
+    """
+    target = os.path.normcase(str(_resolved(path)))
+    return any(
+        target == os.path.normcase(str(root / name))
+        for root in _self_roots()
+        for name in _ROOT_SENSITIVE_FILES
+    )
+
+
 def _read_allowed_except_denied(path: Path, session_id: str) -> bool:
     """Whether a READ of *path* is refused.
 
@@ -146,10 +163,8 @@ def _read_allowed_except_denied(path: Path, session_id: str) -> bool:
     target = _resolved(path)
 
     # Configuration / credentials at the root of either tree.
-    for root in _self_roots():
-        for name in _ROOT_SENSITIVE_FILES:
-            if target == root / name:
-                return True
+    if is_sensitive_root_file(target):
+        return True
 
     # Persona files and the memory / knowledge trees at the workspace root.
     workspace = _resolved(paths.WORKSPACE_DIR)

@@ -101,7 +101,7 @@ bwrap
 
 ### 4. 人工审批的绕过通道
 
-`sandbox=False` 的调用是主动绕过请求。在运行 `HumanInTheLoop` 中间件、且未开启 YOLO 的**主会话**图里，`after_model` 会把该调用停在 LangGraph 的 `interrupt()` 上：
+服务端 `sandbox=False` 的调用是主动绕过请求；模型无法发出（`terminal` / `python_repl` 的 schema 不含 `sandbox` 字段——2026-11-09 审计 H2），因此这条路径服务于内部/诊断调用方。在运行 `HumanInTheLoop` 中间件、且未开启 YOLO 的**主会话**图里，`after_model` 会把该调用停在 LangGraph 的 `interrupt()` 上：
 
 - 中断载荷展示完整工具调用（工具名、参数、命令或 query），`allowed_decisions: ["approve", "reject"]`。
 - **批准**（`{"decisions": [{"type": "approve"}]}`）：调用按原参数执行。环境变量仍然清洗、cwd 仍然钳制在项目根目录、危险命令正则仍然生效。已批准的绕过会跳过智能审批和危险命令的二次询问，因为人工批准的就是这一次完整调用；硬线黑名单在此之前已经跑过。

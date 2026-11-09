@@ -475,3 +475,62 @@ def test_blob_route_answers_bytes_and_refusals(project: Path):
 
     no_sid = _call(api.project_file_blob_handler, _FakeRequest({"path": "doc.pdf"}))
     assert no_sid.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# H1 (2026-11-09 audit): the unbound default root and sherry's own credentials
+# ---------------------------------------------------------------------------
+
+
+def test_unbound_session_cannot_read_files():
+    """No project binding → the default root is the sherry checkout itself.
+
+    The file endpoints used to serve it, so ``path=.env`` returned every model
+    API key. The tree endpoint (names only) keeps working for API parity; a
+    FILE read now demands an explicit binding.
+    """
+    for reader in (svc.read_file, svc.read_file_bytes):
+        with pytest.raises(svc.FileBrowserError) as excinfo:
+            reader(SESSION_B, "AGENTS.md")
+        assert excinfo.value.status == 403
+        assert "bind a project directory" in excinfo.value.reason
+
+
+def test_unbound_file_route_answers_403():
+    response = _call(
+        api.project_file_handler,
+        _FakeRequest({"session_id": SESSION_B, "path": "AGENTS.md"}),
+    )
+    assert response.status_code == 403
+    assert "bind a project directory" in json.loads(response.description)["reason"]
+
+    blob = _call(
+        api.project_file_blob_handler,
+        _FakeRequest({"session_id": SESSION_B, "path": "AGENTS.md"}),
+    )
+    assert blob.status_code == 403
+
+
+def test_bound_external_project_env_is_the_users_own_file(project: Path):
+    """The sensitive list covers SHERRY's tree — a user project's .env is theirs."""
+    (project / ".env").write_text("LOCAL_SETTING=1\n", encoding="utf-8")
+
+    content = svc.read_file(SESSION_A, ".env")
+
+    assert content.content == "LOCAL_SETTING=1\n"
+
+
+def test_bound_sherry_checkout_hides_root_credentials():
+    from config.path import ROOT_DIR
+
+    state_register_mem.set_state(SESSION_A, StateKey.PROJECT_DIR, str(ROOT_DIR))
+
+    for name in (".env", ".models", ".network", "sherry.jsonc"):
+        with pytest.raises(svc.FileBrowserError) as excinfo:
+            svc.read_file(SESSION_A, name)
+        assert excinfo.value.status == 403, name
+        assert "configuration file" in excinfo.value.reason, name
+
+    with pytest.raises(svc.FileBrowserError) as blob_err:
+        svc.read_file_bytes(SESSION_A, ".env")
+    assert blob_err.value.status == 403

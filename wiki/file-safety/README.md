@@ -224,6 +224,19 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 - The isolated-workspace merge is byte-level throughout, so resource files merge
   exactly even though the text tools will not edit them.
 
+## 🌐 Web file browser (`GET /project/file*`)
+
+The read-only browser resolves paths inside the session's project directory and
+opens them with the same `O_NOFOLLOW` primitive as the tools, but it is a HUMAN
+surface and never routes through the agent's external-path HITL flow. Two
+refusals close the credential path (2026-11-09 audit H1): a session with **no
+project binding** cannot read files at all (its fallback root is the sherry
+checkout itself, so `path=.env` used to return every model API key), and a bound
+checkout still refuses sherry's own root config/credential files through the
+same `_ROOT_SENSITIVE_FILES` list the agent tools use. The tree endpoint keeps
+serving names for API parity; a bound USER project's own `.env` remains
+browsable because it is the user's file.
+
 ## 🚧 Boundaries
 
 - The cross-process lock is advisory: an external editor does not take it. The CAS layers are the answer there.
@@ -233,7 +246,7 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 
 ## 🧪 Testing
 
-`tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix), `tests/agent/middlewares/test_license_invalidation.py` (compression drops the license of the reads it discards). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the dirty baseline, the auto-init deny list, the materialization (links, copies, untracked files), the external-path exemption, the merge CAS, conflicts, symlink skipping, the interface-change report and the per-root serialization; `tests/agent/tools/code_intel/test_symbol_diff.py` pins the symbol comparator (rename pairing, the group rule, creation/deletion, the error paths).
+`tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix), `tests/agent/middlewares/test_license_invalidation.py` (compression drops the license of the reads it discards). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the dirty baseline, the auto-init deny list, the materialization (links, copies, untracked files), the external-path exemption, the merge CAS, conflicts, symlink skipping, the interface-change report and the per-root serialization; `tests/agent/tools/code_intel/test_symbol_diff.py` pins the symbol comparator (rename pairing, the group rule, creation/deletion, the error paths); `tests/server/test_project_files.py` pins the web browser's boundary plus the unbound-session and sherry-credential refusals.
 
 ## 🗺️ File Map
 

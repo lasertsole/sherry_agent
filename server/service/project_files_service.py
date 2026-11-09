@@ -37,6 +37,7 @@ from agent.tools.pub_base import (
     resolve_within,
     safe_error_detail,
 )
+from agent.tools.pub_base.self_path_policy import is_sensitive_root_file
 from runtime.session.project_dir import current_project_dir, project_dir_source
 
 __all__ = [
@@ -85,9 +86,10 @@ def _session_root(session_id: str) -> Path:
         raise FileBrowserError("invalid session_id")
     root = current_project_dir(session_id)
     if project_dir_source(session_id) == "default":
-        # Unbound: the process default (the repository itself). Browsing it is
-        # allowed for API parity but the UI shows an empty state instead — the
-        # response carries the fact so a client can do the same.
+        # Unbound: the process default IS the sherry checkout. The TREE may list
+        # its names for API parity (the UI shows an empty state and never binds
+        # here by default), but _resolve_file_target refuses every FILE read —
+        # the checkout holds the API keys. 2026-11-09 audit H1.
         logger.debug(
             "project files: session {} is unbound; serving the process default {}", session_id, root
         )
@@ -166,6 +168,10 @@ def _resolve_file_target(session_id: str, rel_path: str) -> Path:
     callers, which answer different media.
     """
     root = _session_root(session_id)
+    if project_dir_source(session_id) == "default":
+        # The unbound fallback is the sherry checkout itself; its credential
+        # files must never be served through the human file browser.
+        raise FileBrowserError("bind a project directory before opening project files", status=403)
     rel = (rel_path or "").strip().lstrip("/")
     if not rel:
         raise FileBrowserError("path is required")
@@ -176,6 +182,11 @@ def _resolve_file_target(session_id: str, rel_path: str) -> Path:
         raise FileBrowserError("path escapes the project directory") from None
     except OSError as exc:
         raise FileBrowserError(safe_error_detail(exc)) from None
+
+    if is_sensitive_root_file(target):
+        raise FileBrowserError(
+            "this is sherry's own configuration file and is not browsable", status=403
+        )
 
     if not target.exists():
         raise FileBrowserError("file not found", status=404)

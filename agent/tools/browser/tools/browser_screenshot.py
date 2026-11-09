@@ -9,11 +9,20 @@ keeps the text + path answer, and the media pipeline strips the block again.
 
 from __future__ import annotations
 
+from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
+from ._shared import (
+    MAIN_ONLY,
+    BrowserPageInput,
+    BrowserTool,
+    guard,
+    resolve_manager,
+    withhold_blocked_page,
+)
 
 
 class ScreenshotInput(BrowserPageInput):
@@ -39,6 +48,17 @@ class BrowserScreenshotTool(BrowserTool):
         async def operation() -> str | list[dict[str, Any]]:
             manager = resolve_manager()
             outcome = await manager.screenshot(session_id, full_page=full_page, page_id=page)
+            withheld = await withhold_blocked_page(
+                manager, session_id, page, str(outcome.get("url") or "")
+            )
+            if withheld is not None:
+                # The capture already landed on disk; a withheld result must not
+                # leave the page's pixels readable through terminal/read paths.
+                capture = str(outcome.get("path") or "")
+                if capture:
+                    with suppress(OSError):
+                        Path(capture).unlink(missing_ok=True)
+                return withheld
             size = (
                 f"{outcome.get('width')}×{outcome.get('height')}"
                 if outcome.get("width")

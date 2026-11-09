@@ -21,7 +21,9 @@ import builtins
 # Names exposed to the child script. Mirrors python_repl.py's restricted set
 # so the two execution surfaces stay consistent. Intentionally excludes:
 # open, exec, eval, compile, __import__, globals, locals, input, breakpoint,
-# exit, quit, help, memoryview, object, super, classmethod, staticmethod.
+# exit, quit, help, memoryview, object, super, classmethod, staticmethod — and
+# the introspection helpers getattr/type/dir/vars (2026-11-09 audit H4: they
+# reopen the object-graph escape this set is meant to close).
 RESTRICTED_BUILTIN_NAMES: tuple[str, ...] = (
     "True",
     "False",
@@ -51,12 +53,8 @@ RESTRICTED_BUILTIN_NAMES: tuple[str, ...] = (
     "round",
     "pow",
     "print",
-    "type",
     "isinstance",
     "hasattr",
-    "getattr",
-    "dir",
-    "vars",
     "id",
     "repr",
     "Exception",

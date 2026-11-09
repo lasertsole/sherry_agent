@@ -65,6 +65,7 @@ import json
 import platform
 import subprocess
 import sys
+import warnings
 from contextlib import contextmanager
 from typing import Any, ClassVar
 
@@ -385,7 +386,7 @@ class TestCell2RequiredSandboxTrueBackendUnavailable:
 
         # handle_tool_error=True surfaces the raw exception message at run()
         # level (langchain_core 1.4.7: content = e.args[0]).
-        surfaced = term.run({"commands": ["echo ok"], "sandbox": True})
+        surfaced = term.run({"commands": ["echo ok"]})
         assert isinstance(surfaced, str)
         assert "Required sandbox unavailable" in surfaced
 
@@ -619,3 +620,40 @@ class TestCell6OffNeverSandboxNeverApproved:
         argv = calls[0]["args"][0]
         assert isinstance(argv, list)
         assert argv[0] == sys.executable and argv[1] == "-c", "off must NEVER wrap"
+
+
+# ---------------------------------------------------------------------------
+# H2 (2026-11-09 audit) — the sandbox switch is SERVER-owned.
+#
+# The flag used to be a model-visible argument; an LLM could set
+# ``sandbox=false`` and, under the default AUTO policy in a main session, run
+# unsandboxed with no approval. The schema no longer offers it, and a forged
+# argument is discarded by pydantic before the tool runs.
+# ---------------------------------------------------------------------------
+
+
+class TestH2SandboxFlagIsNotModelVisible:
+    def test_terminal_schema_exposes_no_sandbox_field(self):
+        schema = build_terminal_tool().tool_call_schema.model_json_schema()
+        assert "sandbox" not in schema["properties"]
+        assert set(schema["properties"]) == {"commands", "run_in_background", "timeout"}
+
+    def test_python_repl_schema_is_query_only(self):
+        schema = build_python_repl_tool().tool_call_schema.model_json_schema()
+        assert set(schema["properties"]) == {"query"}
+
+    def test_forged_sandbox_argument_is_dropped(self):
+        term = build_terminal_tool()
+        repl = build_python_repl_tool()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            term_args = term._parse_input({"commands": ["echo ok"], "sandbox": False}, "call-1")
+        assert "sandbox" not in term_args
+        assert "sandbox" not in repl._parse_input({"query": "print(1)", "sandbox": False}, "call-2")
+
+    def test_internal_sandbox_switch_still_guarded(self, monkeypatch: pytest.MonkeyPatch):
+        """Server-side callers keep the parameter, and the policy guard still fires."""
+        monkeypatch.setenv("SANDBOX_POLICY", "required")
+        tool = build_terminal_tool()
+        with pytest.raises(ToolException):
+            tool._deny_sandbox_bypass(False)

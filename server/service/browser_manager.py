@@ -776,6 +776,10 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
         """
         page = self.page_for(session_id, page_id)
         transport = self._require_transport()
+        # The tool re-checks this URL before returning pixels: a page can move
+        # via a click/redirect/script, so the cached value may be stale.
+        location = await self._page_location(page)
+        page.url = str(location.get("url") or page.url)
         captured = await transport.call(
             "Page.captureScreenshot",
             session=page.cdp_session,
@@ -797,6 +801,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
         size = _png_size(png)
         return {
             "page": page.page_id,
+            "url": page.url,
             "path": str(file_path),
             "bytes": len(png),
             "width": size[0] if size else None,
@@ -821,10 +826,15 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
             raise ValueError("expression is required")
         page = self.page_for(session_id, page_id)
         raw = await self._eval_raw(page, script, timeout=float(self.config["op_timeout_s"]))
+        # The expression may have navigated the page; the tool's read gate needs
+        # where it ENDED, not where it started.
+        location = await self._page_location(page)
+        page.url = str(location.get("url") or page.url)
         text = json.dumps(raw, ensure_ascii=False, default=str)
         page.last_used = time.monotonic()
         return {
             "page": page.page_id,
+            "url": page.url,
             "result": text[:_EVALUATE_MAX_CHARS],
             "truncated": len(text) > _EVALUATE_MAX_CHARS,
         }

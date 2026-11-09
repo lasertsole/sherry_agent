@@ -33,7 +33,7 @@ def _refusal(exc: FileBrowserError):
     """Map a browser refusal onto the response contract (never a raw exception)."""
     if exc.status == 404:
         return not_found(exc.reason)
-    if exc.status in (413, 415):
+    if exc.status in (403, 413, 415):
         return to_text_response(exc.status, {"success": False, "reason": exc.reason})
     return bad_request(exc.reason)
 
