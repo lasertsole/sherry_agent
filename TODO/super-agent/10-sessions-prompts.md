@@ -1,6 +1,8 @@
 # 10 Sessions 与 Prompts：Harness→Sherry 适配
 
-复刻原型 `src/app/sessions.ts` + `src/app/prompts.ts` + `004-prompts.md`。这是 Python 版第二大工程差异（仅次于 Executor）：原型用 DeepSeek Harness 的 Session API，Python 版用 Sherry 的 subagent + LLM。
+复刻原型 `src/app/sessions.ts` + `src/app/prompts.ts` + `004-prompts.md`。这是 Python 版第二大工程差异(仅次于 Executor):原型用 DeepSeek Harness 的 Session API,Python 版用 Sherry 的 subagent + LLM。
+
+> **修正(承重问题 1、2、5)**:main Session 是 superagent 持久 Sherry main agent session(router role),不是独立 subagent。`orchestrator_*` 工具经 MCP 暴露(见 `12-sherry-integration.md §5`),不传 spawn_kwargs。prompt 内容是**按 Sherry 工具表面重写**,不是从原型逐句翻译。
 
 ## 1. Sessions（`superagent/app/sessions.py`）
 
@@ -39,19 +41,22 @@ class Sessions:
 
 ### 1.1 main Session（router）
 
-- 用 `dsh-superagent-router` preset（Python = 受限工具子集的 Sherry 主 agent 或独立 subagent）。
+- **是 superagent 持久 Sherry main agent session**（`superagent-main`），不是独立 subagent。workers 是它的子代理（见 `12-sherry-integration.md §3-§4`）。
+- router role + 受限工具子集 + MCP `orchestrator_*` 工具（全 14 个）。
 - shell/job 5 秒返回（Sherry terminal 工具的 timeout 配置）。
 - `noWait` 守卫：拒 `sleep` 在命令位、`timeoutMs>30s`、`job_output>5s` 等待。报告/job 结果自动到，等只延迟 candidate。
 - 不读 repo `AGENTS.md`（原型：main Session 不读，Executor 读）。
-- 工具：14 个应用工具（见 §3）+ Sherry 的 skill/bash/read/read_image/job_output/job_list/job_kill。
+- **续跑 latch 靠 worker 完成重置**——这是 L7 核心（见 `12-sherry-integration.md §9`）。main session 受 15 轮 cap，但每次 worker subagent 完成（drain 回 main）重置 latch。
+- 工具来源：Sherry 工具注册表的 `skill`/`bash`/`read`/`read_image`/`job_output`/`job_list`/`job_kill`（既有）+ MCP `orchestrator_*`（superagent MCP server 暴露，Sherry 以 MCP client 加载）。
 
 ### 1.2 worker Session（worker）
 
-- 用 `dsh-superagent-worker` preset（Python = Sherry subagent + executor role + 受限工具集）。
+- **是 main session 的子代理**（`spawn_subagent_direct(requester_session_key="superagent-main")`），不是孤儿。
+- MVP 选 A：每次 Trigger 唤醒起一个**新** subagent run（goal-bounded，完成 drain）。不持久化跨多消息注入。见 `12-sherry-integration.md §4.2`。
+- executor role + WORK_TOOLS（Sherry 既有 file/search/shell/job/web/skill/todo/subagent）+ MCP `orchestrator_*`（worker 6 个 + `orchestrator_read`）。
 - shell 5 秒转后台（Sherry terminal bg）。
-- 工具：6 个应用工具（见 §4）+ WORK_TOOLS（file/search/shell/job/web/skill/todo/subagent）。
-- **移除**：ask/present/profile/scheduling/其他 Session/外部文档编辑工具。
-- Ticket end 后工具调用拒绝。
+- **移除**：ask/present/profile/scheduling/其他 Session/外部文档编辑工具（Sherry role containment 既定，executor role 不含这些）。
+- Ticket end 后工具调用拒绝（MCP 层 Engine 鉴权拒）。
 - 读 repo `AGENTS.md` + Sherry coding prompt。
 
 ### 1.3 preset 恢复
@@ -162,7 +167,7 @@ environment 给 main Session deployment-wide 值，给 Executor Ticket 特定值
 
 ## 3. main Session 工具（`superagent/app/tools/main.py`）
 
-14 个应用工具（对应原型 `007 §Main Session tools`）：
+14 个应用工具（对应原型 `007 §Main Session tools`）。**经 MCP 暴露给 Sherry main session**（见 `12-sherry-integration.md §5`），不在 Sherry `build_main_tools()` 注册。
 
 | 用途 | 工具 |
 |---|---|
@@ -181,7 +186,7 @@ environment 给 main Session deployment-wide 值，给 Executor Ticket 特定值
 
 ## 4. Executor 工具（`superagent/app/tools/executor.py`）
 
-6 个应用工具：
+6 个应用工具。**经 MCP 暴露给 worker subagent**（同 §3 机制）。worker 是 main session 子代理，MCP server 按调用方角色返回不同 tool 集（或全暴露 + Engine 鉴权拒越权）。
 
 | 工具 | 用途 |
 |---|---|
@@ -245,9 +250,43 @@ class Versions:
 
 ## 9. 配置 reload
 
-- 除 `stateDir` 外全 volatile；面板/Plugin Manager 改 → 写 `cordis.patch.yml`（原型）→ Python 版写 `superagent.jsonc` + 通知 runtime reload。
+- 除 `stateDir` 外全 volatile；面板/Plugin Manager 改 → 写 `superagent.jsonc` + 通知 runtime reload。
 - 限值用时读最新（无 restart）。
 - 改 Source setup 字段（account CLI）或 setup pending → restart superagent 进程。
+
+## 10. Prompt 重写指引（修正问题 5）
+
+> **关键**：prompt 不是从原型逐句翻译，是**按 Sherry 工具表面重写**。原型 prompt 大量引用 Harness 概念（preset、`job_output`、inbox、Session event、`dsh` CLI），Sherry 的工具表面完全不同（terminal/taskflow/todolist/subagent/MCP）。
+
+### 10.1 重写规则
+
+- **工具名替换**：原型提 `job_output`/`job_list`/`job_kill` → Sherry terminal 工具的 bg job 接口（经 MCP）；`bash` → Sherry `terminal` 工具；`read`/`read_image` → Sherry `read_file` + 多模态。
+- **`orchestrator_*` 工具描述**：保留原型语义，但描述文本按 MCP tool schema 写（input/output JSON schema），不引用 Harness Session 概念。
+- **去掉 Harness 引用**：删除"DeepSeek Harness's coding prompt"、"preset"、"inbox"、"Plugin Manager"、"cordis.patch.yml"等引用。改为 Sherry 等价物（subagent system prompt、functional_role、MCP、`superagent.jsonc`）。
+- **环境变量保留**：`DSH_SUPERAGENT_*` 前缀保留（prompt 文本依赖），但描述改为"由 superagent 注入 worker env"。
+- **role 分离不变**：main Session 只 route（≤30 字 routing note）；Executor 读原始 source、判 scope、实现、验证。这条核心原则照搬。
+- **built-in 文本原则（§2.7）照搬**，但例子里的工具名换 Sherry 的。
+
+### 10.2 每个 built-in part 的重写要点
+
+| Part | 重写要点 |
+|---|---|
+| `runtime/shared` | 角色定义；"你是 superagent 的 main Session/worker"（不提 Harness） |
+| `runtime/orchestrator` | routing 职责；`orchestrator_route` MCP 工具用法；≤30 字 note |
+| `runtime/worker` | 执行职责；`orchestrator_report`/`ack` MCP 工具用法；Sherry terminal/taskflow/todolist 用法 |
+| `runtime/subscriptions` | 订阅/handback/context-only；`orchestrator_thread_*` MCP 工具 |
+| `runtime/replies` | `orchestrator_reply` MCP 工具；Channel purpose 规则 |
+| `runtime/dispatch` | main Session 的 routing 决策流；`orchestrator_eval*` MCP 工具 |
+| `runtime/work` | worker 工作流；prepare 命令；worktree；Sherry terminal/file 工具 |
+| `runtime/admission` | proactive assessment；inferred accept 规则（照搬） |
+| `runtime/handoff/*` | main/worker 交接（照搬语义） |
+| `runtime/environment` | `{variables}` 模板；`DSH_SUPERAGENT_*` 描述 |
+| `runtime/policy` | `{version}`/`{mode}`/`{rules}` 模板（照搬） |
+| `skill/github`、`skill/feishu` | Source 特定技能；`gh`/`lark-cli` 用法（照搬，CLI 不变） |
+
+### 10.3 测试对应
+
+`test_cards.py`（镜像原型）的断言要按 Sherry 表面调整：不检查 Harness 引用，检查 Sherry 工具名 + MCP `orchestrator_*` 引用正确。`test_model_surface.py` 同理：tools/prompts/skills/inputs 对 MCP schema + Sherry env + glossary。
 
 ## 10. 该册验收门
 

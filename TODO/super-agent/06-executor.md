@@ -5,9 +5,11 @@
 ## 1. 命名与定位
 
 - 原型 `DshExecutor` → Python `SherryExecutor`（`superagent/executor/sherry.py`）。
-- 原型 Executor Session = Harness Session → Python = **Sherry subagent run**（`spawn_subagent_direct`）。
-- 原型 `dsh-superagent-worker` preset → Python = Sherry subagent 的 functional_role + tool 集裁剪。
-- 原型 `dsh-superagent-router` preset → Python = Sherry 主 agent 用一个受限工具子集做 routing（或独立 subagent）。
+- 原型 Executor Session = Harness Session → Python = **Sherry subagent run**（`spawn_subagent_direct`，父 = superagent main session，见 `12-sherry-integration.md §3-§4`）。
+- 原型 `dsh-superagent-worker` preset → Python = Sherry subagent 的 functional_role=executor + MCP `orchestrator_*` 工具 + WORK_TOOLS。
+- 原型 `dsh-superagent-router` preset → Python = superagent 持久 main session（router role，受限工具 + MCP）。
+
+> **修正（承重问题 1、2、3）**:workers 不再是"无父独立 spawn",而是 superagent main session 的子代理。`orchestrator_*` 工具经 MCP 暴露(不传 spawn_kwargs)。Assignment 模型选 A:每次 Trigger 唤醒起一个**新** subagent run,而非持久 worker session。详见 `12-sherry-integration.md`。
 
 ## 2. SherryExecutor（`superagent/executor/sherry.py`）
 
@@ -53,36 +55,37 @@ async def _handle_launch(self, ticket_id, payload):
     # 2. prepare 命令（首次）
     if not os.path.exists(ticket.execution.directory):
         await self._run_prepare(ticket)
-    # 3. 起 Sherry subagent
+    # 3. 起 Sherry subagent（父 = superagent-main session）
     session_key = self.worker_session_id(ticket_id)
-    spawn_kwargs = self._spawn_kwargs(ticket)  # role/model/timeout/tools
-    self.host.spawn_subagent(
-        session_key=session_key,
-        parent_session=None,  # 独立（不是 Sherry 主 agent 的子）
-        prompt=self._assignment_message(ticket),
-        **spawn_kwargs,
+    spawn_req = SpawnRequest(
+        requester_session_key="superagent-main",   # ← 父是 superagent main session
+        functional_role="executor",
+        step_model=settings.executor_model,
+        run_timeout_seconds=_work_budget(ticket),
+        cwd=ticket.execution.directory,
+        env=self._worker_env(ticket),
+        expects_completion_message=True,            # drain 回 main session
+        announce=True,
+        # tools 不在这里传——orchestrator_* 经 MCP 加载,WORK_TOOLS 来自 Sherry registry
     )
+    result = await self.http.post(f"{self.sherry_url}/internal/superagent/spawn",
+                                  json=spawn_req.dict())
     # 4. 通知 Engine
     self.host.engine.assignment_started(ticket_id, payload.assignment_id)
 ```
 
-### 2.2 spawn_kwargs（关键映射）
+**关键修正**:`requester_session_key="superagent-main"`(非 None)。worker 完成 drain 回 main session,既触发下一 routing turn,又重置 main session 续跑 latch(L7 核心)。详见 `12-sherry-integration.md §4`。
 
-```python
-def _spawn_kwargs(self, ticket):
-    settings = self.settings_getter()
-    return {
-        "functional_role": "executor",   # Sherry 角色：可写 + 可 spawn researcher/librarian
-        "step_model": settings.executor_model,
-        "run_timeout_seconds": _work_budget(ticket),  # prepare+work
-        "tools": _worker_tools(),        # 受限集（见 §3）
-        "response_schema": None,         # free-form report
-        "cwd": ticket.execution.directory,
-        "env": self._worker_env(ticket), # DSH_SUPERAGENT_* + Sherry env
-    }
-```
+### 2.2 spawn_kwargs（修正）
 
-`_worker_tools()` 裁剪 Sherry 主工具集：保留 file/search/shell/job/web/skill/todo/subagent；**移除** question/exit_plan_mode/present/ask_user/plugin_manager/sessions_send（worker 不能问人/不能操控其他 Session）。
+tools **不在 spawn 时传**。Sherry subagent 的工具来自两部分:
+
+- **Sherry 工具注册表的 WORK_TOOLS**:file/search/shell/job/web/skill/todo/subagent(Sherry 既有,经 preset/role 配置裁剪)。
+- **MCP `orchestrator_*` 工具**:superagent MCP server 暴露,Sherry 以 MCP client 加载(配在 `sherry.jsonc` 的 `mcp.servers.superagent`)。
+
+worker 收到 6 个 worker 应用工具(`orchestrator_read`/`ack`/`report`/`thread_unrelated`/`thread_follow`/`trigger_handback`)+ WORK_TOOLS。移除 ask/present/profile/plugin_manager/sessions_send——这些在 Sherry 工具集里就不给 executor role(`SPAWN_ALLOWED_CHILD_ROLES` 既定)。
+
+role 裁剪 + MCP 工具暴露见 `12-sherry-integration.md §5` + `10-sessions-prompts.md §3-§4`。
 
 ## 3. WorkerSlots（`superagent/executor/sherry.py` 同文件）
 
@@ -118,30 +121,30 @@ wake 优先于 launch：人消息/status 请求用额外槽，且 launcher 排�
 
 ## 4. 后台作业（`superagent/executor/background.py`）
 
-复刻原型 `src/executor/background.ts`。Sherry subagent 的 shell job + 嵌套 subagent：
+复刻原型 `src/executor/background.ts`。**注意 Assignment 模型选 A 后的差异**(见 `12-sherry-integration.md §4.2`):
+
+- MVP(A):每次 Trigger 唤醒起**新** subagent run,goal-bounded,完成 drain。background job 的完成**不**唤醒当前 executor(executor 已完成),而是由下一个 wake 的 subagent 读 `job_output`。
+- 这符合原型"Executor reads killed-job results on its next turn"——只是"next turn" = 下一个 subagent run。
+- P2 评估选 B(持久 worker session)是否值得:若要支持"background job 完成唤醒当前 executor 续 turn",需新 Sherry 机制(state_port 注入 + turn_runner 续 turn),工程量大。MVP 不做。
 
 ```python
 class BackgroundWork:
-    """worker turn 结束后仍在跑的 shell job + subagent。"""
-    def __init__(self, session_key: str, host):
-        self.session_key = session_key
-        self.host = host
-
-    def running_jobs(self) -> list[Job]: ...       # 经 hooks 读 Sherry session 的 jobs
-    async def until_quiet(self, timeout_s=1800): ...  # 30 分钟上限
-    def kill_jobs(self): ...                        # 超时杀 shell job
-    def stop_subagents(self): ...                   # handoff 时停 subagent
+    """worker turn 结束后仍在跑的 shell job + subagent。
+    MVP(A):executor 完成 drain 后,这些 job 的结果由下一个 wake 读。
+    handoff 时停 subagent;shell job(如 review server)可继续到 Assignment 结束。"""
+    def running_jobs(self) -> list[Job]: ...
+    def kill_jobs(self): ...
+    def stop_subagents(self): ...
     def stop_background(self): ...
-    def cancelled(self) -> list[str]: ...           # 被停 subagent 取消的 turn
 ```
 
-规则（来自 003-execution.md）：
+规则(选 A 后简化):
 
-- turn 结束仍有 shell job/subagent → keep slot，不报 waiting。
-- 完成 job/subagent 用结果唤醒 Executor（下一 turn）。
-- 30 分钟上限：杀 shell job，Ticket 报 waiting；**subagent 允许继续**。
-- handoff（ready/问题/blocked/failed）→ 立即释放 slot；subagent 停；shell job（如 review 用的 server）可继续到 Assignment 结束，不占槽、不受 30 分钟限。
-- Assignment 结束 → 杀 shell job（不唤醒），释放 subagent，completion turn drop。
+- turn 结束仍有 shell job/subagent → keep slot,不报 waiting(等待 subagent 完成 drain)。
+- subagent 完成(CompletionJudge goal loop 结束)→ drain 回 main session → release slot。
+- 30 分钟上限:杀 shell job;subagent 由 `run_timeout_seconds` 管(Sherry subagent 既有 wall-clock timeout)。
+- handoff(ready/问题/blocked/failed)→ release slot;subagent 停;shell job 可继续到 Assignment 结束。
+- Assignment 结束 → 杀 shell job(不唤醒),释放 subagent。
 
 ## 5. prepare 命令（`sh -c`）
 
