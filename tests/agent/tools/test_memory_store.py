@@ -36,8 +36,8 @@ def test_append_entries_memory_only(memory_repo):
     assert result["success"] is True
     assert store.memory_entries == ["alpha", "Environment: Python 3.13"]
     assert store.user_entries == []
-    assert "MEMORY.md" in result["message"]
-    assert "USER.md" not in result["message"]
+    assert "to memory" in result["message"]
+    assert "to user" not in result["message"]
     assert [entry["target"] for entry in memory_repo.list_entries(limit=None)] == [
         "memory",
         "memory",
@@ -51,7 +51,7 @@ def test_append_entries_user_only(memory_repo):
     assert result["success"] is True
     assert store.user_entries == ["User: prefers concise answers"]
     assert store.memory_entries == []
-    assert "USER.md" in result["message"]
+    assert "to user" in result["message"]
     assert len(memory_repo.list_entries("user", limit=None)) == 1
     assert memory_repo.list_entries("memory", limit=None) == []
 
@@ -74,8 +74,7 @@ def test_append_entries_mixed(memory_repo):
     assert store.memory_entries == ["Environment: Python 3.13", "Project: uses uv"]
     assert store.user_entries == ["User: likes tea"]
     assert result["entry_count"] == 3
-    assert "MEMORY.md" in result["message"]
-    assert "USER.md" in result["message"]
+    assert "to memory, user" in result["message"]
 
 
 # ===========================================================================

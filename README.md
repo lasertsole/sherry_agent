@@ -295,7 +295,6 @@ sherry_agent/
 │   ├── file_sync.py        # Lazy workspace template sync (per language)
 │   ├── template/           # Persona templates (en / zh / ja / ko)
 │   ├── sessions/           # Per-session runtime workspace data
-│   └── memory/             # Long-term memory storage
 │
 ├── .env                    # App config, tracked (sandbox / gateway / login — never a key)
 ├── .models.example         # Model-config template (seeds .models on first boot)

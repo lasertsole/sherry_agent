@@ -295,7 +295,6 @@ sherry_agent/
 │   ├── file_sync.py        # 워크스페이스 템플릿 지연 동기화(언어별)
 │   ├── template/           # 페르소나 템플릿(en / zh / ja / ko)
 │   ├── sessions/           # Per-session runtime workspace data
-│   └── memory/             # 장기 기억 저장소
 │
 ├── .env                    # 앱 설정, 추적됨 (샌드박스 / 게이트웨이 / 로그인 — 키는 넣지 마세요)
 ├── .models.example         # 모델 설정 템플릿 (첫 실행 시 .models 생성)

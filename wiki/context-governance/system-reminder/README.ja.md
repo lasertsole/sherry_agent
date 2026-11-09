@@ -10,7 +10,7 @@
 
 凍結されたメモリスナップショットには意図的な例外が 1 つあります。セッションのモデル切替は新しい provider キャッシュ名前空間に入り、思考モード切替は同一プレフィックスで `cache_read` が 0 になることを実測済みです——どちらもキャッシュは元々冷えます。`ThinkingControlMiddleware` の `before_model` フックは、そのターンの `(thinking key, profile fingerprint, mapping fingerprint)` を最後に適用した値と比較し（グラフは毎ターン再構築されるためプロセスレベルで保持）、変化があれば `system_prompt_injection` より前に `MemoryStore` のスナップショットを再読み込みし、両レジスタから `StateKey.SYSTEM_PROMPT` を削除します。切替後のターンの最初のモデル呼び出しは、セッション途中に書かれたメモリエントリ（SQLite バックエンド。旧 Markdown ファイルは起動時に一度だけインポート）を見ます。初回ターン、変化なし、再読み込み失敗ではキャッシュを保持し、送信なしでは発火しません。
 
-FACTS.md はグローバルなので、ディレクトリ切替でメモリ用のキャッシュプロンプトは無効化されません。同じターンの `project_instructions` リマインダーは新しいプロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`）を読み直し、`only_if_changed` により内容が変わるまで再注入しません。
+facts メモリターゲットはグローバルなので、ディレクトリ切替でメモリ用のキャッシュプロンプトは無効化されません。同じターンの `project_instructions` リマインダーは新しいプロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`）を読み直し、`only_if_changed` により内容が変わるまで再注入しません。
 
 | 関心事 | ルール |
 |---|---|

@@ -173,7 +173,7 @@ client/
 │   │           ├── SessionPresetButton.vue    # トップバーの閲覧専用入口：現在のセッションのプリセットタブを開く
 │   │           ├── SessionPresetPanel.vue     # 「現在のセッション」タブ：そのセッション自身のプリセット（閲覧専用、エージェント モデルが最初のタブ）
 │   │           ├── NewSessionPresetDialog.vue # 「新規チャット」ごとに必須のプリセット選択ダイアログ（適用後にセッション作成）
-│   │           ├── MemoryPanel.vue            # 長期メモリタブ（workspace/memory/*）
+│   │           ├── MemoryPanel.vue            # 長期メモリタブ（SQLite エントリ）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md タブ + グローバル ハートビート スイッチ
 │   │           ├── CronPanel.vue              # 定期タスクタブ（/cron）
 │   │           ├── WebSearchPanel.vue         #「モデル検索」タブ：セッションの検索バックエンド（Tavily / SearXNG のラジオ）＋ Tavily キーと SearXNG 接続のフォーム——これらの .network キーを編集する唯一の入口（GET /network-config からは除外）
@@ -312,7 +312,6 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 | `getHistory(sessionId, lastTurnCount)`                                                                                                 | 履歴を取得（`session_history` IPC または `GET /n_turns_history_messages`）                                       |
 | `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                      | バックグラウンドのサブエージェントタスク管理                                                                     |
 | `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                           | システムプロンプトファイルの CRUD                                                                                |
-| `readMemory` / `writeMemory`                                                                                                           | 長期メモリファイル（`workspace/memory/*`）                                                                       |
 | `readHeartbeat` / `writeHeartbeat`                                                                                                     | `workspace/HEARTBEAT.md`（常に直接 HTTP）                                                                        |
 | `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                     | cron ジョブ管理                                                                                                  |
 | `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                             | スキル管理                                                                                                       |

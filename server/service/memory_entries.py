@@ -23,7 +23,6 @@ from context_engine.store.memory_entry_repository import (
 )
 from context_engine.store.memory_migration import split_legacy_memory_content
 
-MEMORY_SYSTEM_FILE_NAMES: list[str] = SERVER_HTTP["memory_system_file_names"]
 _MAX_CONTENT_LENGTH: int = SERVER_HTTP["memory_max_content_length"]
 _FILE_BY_TARGET: dict[str, str] = {
     "memory": "MEMORY.md",

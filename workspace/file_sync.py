@@ -2,11 +2,11 @@
 
 The ``workspace/`` root may not ship with its persona files (AGENTS.md,
 SOUL.md, USER.md) pre-created; they are instead copied in from
-``workspace/template/<lang>/`` on first use. Memory system files
-(``MEMORY_SYSTEM_FILE_NAMES``, e.g. FACTS.md) are copied from the same
-template directory into ``workspace/memory/``. User-authored edits stay
+``workspace/template/<lang>/`` on first use. User-authored edits stay
 authoritative — existing files are never overwritten — while any task
-expecting a system file still finds it present.
+expecting a system file still finds it present. Long-term memory is SQLite
+now, so the legacy ``workspace/memory/*.md`` files are no longer seeded; the
+one-shot migration still imports any that an older install left behind.
 """
 
 from __future__ import annotations
@@ -14,25 +14,10 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from config.path import MEMORY_DIR, WORKSPACE_DIR, resolve_workspace_template_dir
+from config.path import WORKSPACE_DIR, resolve_workspace_template_dir
 from loguru import logger
 
-from workspace import ALL_SYSTEM_FILE_NAMES, MEMORY_SYSTEM_FILE_NAMES
-
-
-def _memory_file_has_content(path: Path) -> bool:
-    """True when a memory file exists with non-whitespace content.
-
-    A file created empty (first-boot ``touch()``) counts as missing so the
-    template's purpose comment can still land; authored content is never
-    overwritten.
-    """
-    if not path.exists():
-        return False
-    try:
-        return bool(path.read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
+from workspace import ALL_SYSTEM_FILE_NAMES
 
 
 def _copy_template_file(name: str, source: Path, target: Path) -> bool:
@@ -64,19 +49,15 @@ def ensure_workspace_system_files(lang: str | None = None) -> list[str]:
 
     For each file name in ``ALL_SYSTEM_FILE_NAMES``, if it does not already
     exist under the workspace root, copy the matching template from the
-    language directory resolved for ``lang``. For each name in
-    ``MEMORY_SYSTEM_FILE_NAMES``, do the same under ``workspace/memory/`` —
-    there an empty file also counts as missing. Existing files are left
-    untouched so user customisations are never overwritten (idempotent).
+    language directory resolved for ``lang``. Existing files are left untouched
+    so user customisations are never overwritten (idempotent).
 
-    Returns the list of files actually copied (empty when nothing was needed);
-    memory files are reported as ``memory/<name>``.
+    Returns the list of files actually copied (empty when nothing was needed).
     """
-    # The packaged app's first run has neither directory: the write path opens
+    # The packaged app's first run has no workspace root: the write path opens
     # ``workspace/<file>`` directly, so "no template got copied" must still
-    # leave the roots in place instead of surfacing a FileNotFoundError.
+    # leave the root in place instead of surfacing a FileNotFoundError.
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
     template_dir = resolve_workspace_template_dir(lang)
     copied: list[str] = []
@@ -87,12 +68,5 @@ def ensure_workspace_system_files(lang: str | None = None) -> list[str]:
             continue
         if _copy_template_file(name, template_dir / name, target):
             copied.append(name)
-
-    for name in MEMORY_SYSTEM_FILE_NAMES:
-        target = MEMORY_DIR / name
-        if _memory_file_has_content(target):
-            continue
-        if _copy_template_file(name, template_dir / name, target):
-            copied.append(f"memory/{name}")
 
     return copied

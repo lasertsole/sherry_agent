@@ -98,8 +98,6 @@ export {
 
 // ── Memory & heartbeat ──────────────────────────────────
 export {
-  readMemory,
-  writeMemory,
   readHeartbeat,
   writeHeartbeat,
   fetchHeartbeatStatus,

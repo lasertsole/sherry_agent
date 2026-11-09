@@ -10,7 +10,7 @@
 
 동결된 메모리 스냅샷에는 의도적인 예외가 하나 있습니다. 세션 모델 전환은 새로운 provider 캐시 네임스페이스로 들어가고, 사고 모드 전환은 동일한 prefix에서 `cache_read`가 0이 되는 것이 실측되었습니다——어느 쪽이든 캐시는 이미 차갑습니다. `ThinkingControlMiddleware`의 `before_model` 훅은 해당 턴의 `(thinking key, profile fingerprint, mapping fingerprint)`을 마지막 적용 값과 비교하고(그래프가 매 턴 재구성되므로 프로세스 수준에서 보관), 변경이 있으면 `system_prompt_injection` 전에 `MemoryStore` 스냅샷을 다시 로드하고 두 레지스터에서 `StateKey.SYSTEM_PROMPT`를 삭제합니다. 전환된 턴의 첫 모델 호출은 세션 중간에 기록된 메모리 항목(SQLite 백엔드. 이전 Markdown 파일은 부팅 시 한 번만 가져옴)을 봅니다. 첫 턴, 변경 없음, 재로드 실패는 캐시를 유지하며, 전송이 없으면 발화하지 않습니다.
 
-FACTS.md는 전역이므로 디렉터리 전환이 메모리용 캐시 프롬프트를 무효화하지 않습니다. 같은 턴의 `project_instructions` 리마인더는 새 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`)를 다시 읽고, `only_if_changed`로 내용이 달라질 때만 재주입합니다.
+facts 메모리 대상은 전역이므로 디렉터리 전환이 메모리용 캐시 프롬프트를 무효화하지 않습니다. 같은 턴의 `project_instructions` 리마인더는 새 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`)를 다시 읽고, `only_if_changed`로 내용이 달라질 때만 재주입합니다.
 
 | 관심사 | 규칙 |
 |---|---|

@@ -311,13 +311,11 @@ def _seed_persona(workspace: Path, *, persona: str = "neutral", template_lang: s
     instead: its ``AGENTS.md`` template (the operating rules, including the
     task-management guidance) with SOUL / USER / ROLE empty — exactly the files
     that preset applies. Only the rules file is copied; the template directory's
-    persona files are never seeded. The memory note stays empty either way, so
-    the memory store finds an empty page rather than a missing template.
+    persona files are never seeded.
     """
     global _PERSONA_MODE, _PERSONA_TEMPLATE_LANG
     if persona not in ("neutral", "coding"):
         raise ValueError(f"unknown persona {persona!r} (expected 'neutral' or 'coding')")
-    (workspace / "memory").mkdir(parents=True, exist_ok=True)
     if persona == "coding":
         template = REPO_ROOT / "workspace" / "template" / template_lang / "AGENTS.md"
         if not template.is_file():
@@ -326,7 +324,6 @@ def _seed_persona(workspace: Path, *, persona: str = "neutral", template_lang: s
     else:
         rules = _NEUTRAL_AGENTS_MD
     (workspace / "AGENTS.md").write_text(rules, encoding="utf-8")
-    (workspace / "memory" / "FACTS.md").write_text("", encoding="utf-8")
     for name in _EMPTY_PERSONA_FILES:
         (workspace / name).write_text("", encoding="utf-8")
     _PERSONA_MODE = persona

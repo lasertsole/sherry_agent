@@ -10,7 +10,7 @@ The system prompt holds **stable** content only: persona files, the memory block
 
 The frozen memory snapshot has one deliberate exception. A session model switch starts a new provider cache namespace, and a thinking switch was measured to drop `cache_read` to 0 on an identical prefix; the cache is already cold either way. `ThinkingControlMiddleware`'s `before_model` hook compares the turn's `(thinking key, profile fingerprint, mapping fingerprint)` with the last applied one (process-level, because the graph is rebuilt every turn) and, on a change, reloads `MemoryStore`'s snapshot and deletes `StateKey.SYSTEM_PROMPT` from both registers before `system_prompt_injection` runs. The first model call of the switched turn therefore sees mid-session memory-entry writes (the store is SQLite-backed; the legacy Markdown files are only imported once). A first turn, an unchanged control, and a failed reload all keep the cached prompt; no turn is triggered without a send.
 
-FACTS.md is global, so a directory switch no longer invalidates the cached prompt for memory. The same turn's `project_instructions` reminder still re-reads the new project's `AGENTS.md` (fallback `CLAUDE.md`) and injects it once per distinct content (`only_if_changed`).
+the facts memory target is global, so a directory switch no longer invalidates the cached prompt for memory. The same turn's `project_instructions` reminder still re-reads the new project's `AGENTS.md` (fallback `CLAUDE.md`) and injects it once per distinct content (`only_if_changed`).
 
 | Concern | Rule |
 |---|---|

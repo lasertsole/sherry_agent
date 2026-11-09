@@ -173,7 +173,7 @@ client/
 │   │           ├── SessionPresetButton.vue    # 상단 바 보기 전용 진입점: 현재 세션의 프리셋 탭 열기
 │   │           ├── SessionPresetPanel.vue     # 「현재 세션」탭: 세션 자체의 프리셋(읽기 전용, 에이전트 모델 탭이 첫 번째)
 │   │           ├── NewSessionPresetDialog.vue # 「새 대화」마다 필수인 프리셋 선택 대화상자(적용 후 세션 생성)
-│   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
+│   │           ├── MemoryPanel.vue            # 장기 메모리 탭(SQLite 항목)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
 │   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
 │   │           ├── WebSearchPanel.vue         #「모델 검색」탭: 세션의 검색 백엔드(Tavily / SearXNG 라디오) + Tavily 키와 SearXNG 연결 폼 — 이 .network 키를 편집하는 유일한 창구(GET /network-config에서 숨김)
@@ -312,7 +312,6 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 | `getHistory(sessionId, lastTurnCount)`                                                                                               | 히스토리 조회(`session_history` IPC 또는 `GET /n_turns_history_messages`)                      |
 | `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                    | 백그라운드 서브에이전트 작업 관리                                                              |
 | `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                         | 시스템 프롬프트 파일 CRUD                                                                      |
-| `readMemory` / `writeMemory`                                                                                                         | 장기 메모리 파일(`workspace/memory/*`)                                                         |
 | `readHeartbeat` / `writeHeartbeat`                                                                                                   | `workspace/HEARTBEAT.md`(항상 직접 HTTP)                                                       |
 | `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                   | cron 작업 관리                                                                                 |
 | `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                           | 스킬 관리                                                                                      |

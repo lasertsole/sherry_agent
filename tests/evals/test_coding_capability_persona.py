@@ -54,7 +54,6 @@ def test_coding_persona_copies_the_shipped_template(tmp_path) -> None:
     # The preset keeps the persona FILES empty; only the rules template is used.
     for name in harness._EMPTY_PERSONA_FILES:
         assert (tmp_path / name).read_text(encoding="utf-8") == ""
-    assert (tmp_path / "memory" / "FACTS.md").read_text(encoding="utf-8") == ""
 
 
 def test_an_unknown_persona_is_refused(tmp_path) -> None:

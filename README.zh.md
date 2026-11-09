@@ -295,7 +295,6 @@ sherry_agent/
 │   ├── file_sync.py        # 工作区模板懒同步（按语言）
 │   ├── template/           # 人设模板（en / zh / ja / ko）
 │   ├── sessions/           # Per-session runtime workspace data
-│   └── memory/             # 长期记忆存储
 │
 ├── .env                    # 应用配置，入库（沙箱 / 网关 / 登录——不放密钥）
 ├── .models.example         # 模型配置模板（首次启动生成 .models）

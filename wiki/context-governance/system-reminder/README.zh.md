@@ -10,7 +10,7 @@
 
 冻结的记忆快照有一个刻意的例外。切换会话模型会进入新的提供方缓存命名空间；切换思考模式经实测在同一前缀上把 `cache_read` 打到 0——两种情况下缓存本来就要冷。`ThinkingControlMiddleware` 的 `before_model` 钩子比较本轮 `(thinking key, profile fingerprint, mapping fingerprint)` 与上次实际应用值（进程级保存，因为图每轮重建），变化时在 `system_prompt_injection` 之前重载 `MemoryStore` 快照并从两个寄存器删除 `StateKey.SYSTEM_PROMPT`。切换后的首轮首个模型调用因此能看到会话中途写入的记忆条目（底层是 SQLite；遗留 Markdown 文件只在启动时导入一次）。首轮、控制未变、重载失败都保留原缓存；没有发送就不会触发。
 
-FACTS.md 是全局文件，目录切换不再使缓存提示词失效。同一轮的 `project_instructions` 提醒仍会重新读取新项目的 `AGENTS.md`（回退 `CLAUDE.md`），并靠 `only_if_changed` 每份不同内容只注入一次。
+facts 记忆目标是全局的，目录切换不再使缓存提示词失效。同一轮的 `project_instructions` 提醒仍会重新读取新项目的 `AGENTS.md`（回退 `CLAUDE.md`），并靠 `only_if_changed` 每份不同内容只注入一次。
 
 | 关注点 | 规则 |
 |---|---|
