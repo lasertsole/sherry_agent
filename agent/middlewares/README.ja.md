@@ -283,7 +283,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/tool_guardrails/core.py` · **クラス：** `ToolGuardrails(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
-5 つの失敗病理を検出し、4 段階エスカレーション `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 列挙型）で反応します：
+以下の失敗病理を検出し、4 段階エスカレーション `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 列挙型）で反応します：
 
 | 病理                 | トリガー                                                                                                  | WARN 後                             | BLOCK 後                            | hard-stop モード |
 | -------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------- | ---------------- |
@@ -292,6 +292,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 冪等な無進捗         | 同一の冪等ツール（メタデータ `idempotent: true`）が、そのターン内で既に返したことのある結果ハッシュを返す | 2（`no_progress_warn_after`）       | 5（`no_progress_block_after`）      | 5 で HALT        |
 | ピンポン             | 2 つのツール間の途切れない A → B → A → B の往復で、連続する 2 呼び出しがともに無進捗                      | 4（`ping_pong_warn_after`）         | 6（`ping_pong_block_after`）        | 6 で HALT        |
 | 引数改変             | 同じ冪等ツールが、結果の変わらない引数バリアントを巡回                                                    | 3 変種（`arg_churn_warn_after`）    | 5 変種（`arg_churn_block_after`）   | 5 で HALT        |
+| シグネチャ連続（状態非依存） | 同じツール + 同じ引数ハッシュの連続呼び出し。結果ステータスは問わない（terminal は metadata で 5 を宣言） | 3（`streak_warn_after`） | 警告予算を使い切った後、その正確なシグネチャ | hard-stop モードで HALT |
+| 結果反復             | 非冪等ツールが、引数の異なる連続呼び出しでバイト単位に同一の結果を返す                                    | 3（`result_repetition_warn_after`） | 6（`result_repetition_block_after`） | 6 で HALT        |
 
 - `before_agent` はターン単位のガード状態をリセットします（`state_register_mem` のキー `tool_guardrail_state`）— 厳密にターン範囲なので、新しいターンはクリーンに始まります。
 - `wrap_tool_call` はブロック済みツールと停止状態を事前チェック（実行せずエラー `ToolMessage` を返す）し、ツールを実行してから結果を評価します：
@@ -831,7 +833,7 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`。それ以外はフェイルセーフのスキルパス）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` に加え、`Summarization` と `summarization/background_reviews.py` が読む保持/試行/クールダウン/しきい値の各定数                                                                                      |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、プレビュー先頭/末尾 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
-| `tool_guardrails.py`      | ToolGuardrails セクションに列挙した 5 病理のしきい値と復帰デフォルト                                                                                                                                                     |
+| `tool_guardrails.py`      | ToolGuardrails セクションに列挙した病理のしきい値と復帰デフォルト                                                                                                                                                     |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                         |
 | `repetition_guard.py`     | `max_identical_outputs=3`、`warn_after=2`、`internal_repeat_ratio=0.6`、`internal_min_lines=6`、`char_run_min=8`、`tail_chars=500`、`max_history=30`                                                                     |
 | `max_tokens_boost.py`     | `base_max_tokens`（`MAIN_LLM_OUTPUT_MAX_TOKEN`、既定 8192）、`default_max_tokens=8192`、`max_cap=32 768`、`max_retries=3`                                                                                                |

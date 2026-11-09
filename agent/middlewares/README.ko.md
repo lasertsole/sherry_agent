@@ -283,7 +283,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/tool_guardrails/core.py` · **클래스:** `ToolGuardrails(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
-다섯 가지 실패 병리를 감지하고 4단계 에스컬레이션 `ALLOW → WARN → BLOCK → HALT`(`GuardrailAction` 열거형)으로 대응합니다:
+다음 실패 병리를 감지하고 4단계 에스컬레이션 `ALLOW → WARN → BLOCK → HALT`(`GuardrailAction` 열거형)으로 대응합니다:
 
 | 병리                | 트리거                                                                                   | WARN 이후                          | BLOCK 이후                         | hard-stop 모드 |
 | ------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- | -------------- |
@@ -292,6 +292,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 멱등 무진행         | 동일한 멱등 도구(메타데이터 `idempotent: true`)가 그 턴에서 이미 반환한 결과 해시를 반환 | 2 (`no_progress_warn_after`)       | 5 (`no_progress_block_after`)      | 5에서 HALT     |
 | 핑퐁                | 두 도구 사이의 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진행            | 4 (`ping_pong_warn_after`)         | 6 (`ping_pong_block_after`)        | 6에서 HALT     |
 | 인자 갱신           | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환                                     | 3개 변형 (`arg_churn_warn_after`)  | 5개 변형 (`arg_churn_block_after`) | 5에서 HALT     |
+| 시그니처 연속(상태 무관) | 같은 도구 + 같은 인자 해시의 연속 호출. 결과 상태와 무관(terminal은 metadata로 5 선언) | 3 (`streak_warn_after`) | 경고 예산 소진 후 해당 정확한 시그니처 차단 | hard-stop 모드에서 HALT |
+| 결과 반복           | 비멱등 도구가 인자가 다른 연속 호출에서 바이트 단위로 동일한 결과를 반환              | 3 (`result_repetition_warn_after`) | 6 (`result_repetition_block_after`) | 6에서 HALT     |
 
 - `before_agent`는 턴 단위 가드 상태를 리셋합니다(`state_register_mem`의 키 `tool_guardrail_state`) — 엄격히 턴 범위이므로 새 턴은 깨끗하게 시작합니다.
 - `wrap_tool_call`은 차단된 도구와 정지 상태를 사전 점검(실행하지 않고 오류 `ToolMessage` 반환)한 뒤 도구를 실행하고 결과를 평가합니다:
@@ -826,7 +828,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`(`"true"` / `"false"` / `"auto"`, 그 외 값은 페일세이프 스킬 경로), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/background_reviews.py`가 읽는 보존/시도/쿨다운/임계값 상수                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, 미리보기 머리/꼬리 5줄, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                         |
-| `tool_guardrails.py`      | ToolGuardrails 섹션에 나열된 다섯 병리 임계값과 복구 기본값                                                                                                                                                       |
+| `tool_guardrails.py`      | ToolGuardrails 섹션에 나열된 병리 임계값과 복구 기본값                                                                                                                                                       |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                  |
 | `repetition_guard.py`     | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30`                                                              |
 | `max_tokens_boost.py`     | `base_max_tokens`(`MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3`                                                                                           |

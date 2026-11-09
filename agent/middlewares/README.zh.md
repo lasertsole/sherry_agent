@@ -281,7 +281,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/tool_guardrails/core.py` · **类：** `ToolGuardrails(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
-检测五种失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
+检测以下失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
 
 | 病理           | 触发条件                                                                    | WARN 阈值                           | BLOCK 阈值                          | hard-stop 模式 |
 | -------------- | --------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------- | -------------- |
@@ -290,6 +290,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 幂等无进展     | 同一幂等工具（元数据 `idempotent: true`）返回本回合中它已产出过的结果哈希   | 2（`no_progress_warn_after`）       | 5（`no_progress_block_after`）      | 5 次时 HALT    |
 | 乒乓           | 两个工具之间不间断的 A → B → A → B 往返，且相邻两次调用均无进展（stagnant） | 4（`ping_pong_warn_after`）         | 6（`ping_pong_block_after`）        | 6 次时 HALT    |
 | 参数翻新       | 同一幂等工具轮换参数变体，但结果保持不变（无进展）                          | 3 种变体（`arg_churn_warn_after`）  | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT    |
+| 签名连击（不看状态） | 同一工具 + 相同参数哈希连续重复，无论结果状态（terminal 通过 metadata 声明 5） | 3（`streak_warn_after`） | 警告预算用尽后，拦截该精确签名 | hard-stop 模式下 HALT |
+| 结果重复       | 非幂等工具在参数不同的连续调用中返回逐字节相同的结果                        | 3（`result_repetition_warn_after`） | 6（`result_repetition_block_after`） | 6 次时 HALT    |
 
 - `before_agent` 重置回合级护栏状态（`state_register_mem` 中的键 `tool_guardrail_state`）——严格回合作用域，新回合从干净状态开始。
 - `wrap_tool_call` 先做拦截预检（对被阻止的工具/终止状态直接返回错误 `ToolMessage`，不执行），再运行工具，然后评估结果：
@@ -809,7 +811,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/background_reviews.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
-| `tool_guardrails.py`      | ToolGuardrails 小节列出的五类病态阈值与恢复默认值                                                                                                                                                               |
+| `tool_guardrails.py`      | ToolGuardrails 小节列出的病态阈值与恢复默认值                                                                                                                                                               |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                |
 | `repetition_guard.py`     | `max_identical_outputs=3`、`warn_after=2`、`internal_repeat_ratio=0.6`、`internal_min_lines=6`、`char_run_min=8`、`tail_chars=500`、`max_history=30`                                                            |
 | `max_tokens_boost.py`     | `base_max_tokens`（`MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192）、`default_max_tokens=8192`、`max_cap=32 768`、`max_retries=3`                                                                                       |

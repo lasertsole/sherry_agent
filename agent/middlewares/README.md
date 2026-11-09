@@ -273,7 +273,7 @@ Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE 
 **Module:** `agent/middlewares/tool_guardrails/core.py` · **Class:** `ToolGuardrails(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
-Detects five failure pathologies and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
+Detects the failure pathologies below and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
 
 | Pathology                      | Trigger                                                                                                                            | WARN after                          | BLOCK after                          | hard-stop mode |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------ | -------------- |
@@ -282,6 +282,8 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
 | Idempotent no-progress         | Same idempotent tool (metadata `idempotent: true`) returning a result hash an earlier call of that tool already produced this turn | 2 (`no_progress_warn_after`)        | 5 (`no_progress_block_after`)        | HALT at 5      |
 | Ping-pong                      | Unbroken A → B → A → B bouncing between two tools where both consecutive calls are stagnant                                        | 4 (`ping_pong_warn_after`)          | 6 (`ping_pong_block_after`)          | HALT at 6      |
 | Argument churn                 | Same idempotent tool cycling through argument variants whose result stays unchanged (stagnant)                                     | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5      |
+| Signature streak (status-blind) | Same tool + same args hash repeated, regardless of the result status (terminal declares 5 via metadata)                     | 3 (`streak_warn_after`)             | warning budget spent → that exact signature | HALT in hard-stop mode |
+| Result repetition              | A non-idempotent tool returns a byte-identical result on consecutive calls with different arguments                        | 3 (`result_repetition_warn_after`)  | 6 (`result_repetition_block_after`)  | HALT at 6      |
 
 - `before_agent` resets the per-turn guard state (key `tool_guardrail_state` in `state_register_mem`) — strictly turn-scoped, so a fresh turn starts clean.
 - `wrap_tool_call` pre-checks blocked tools and halt state (returns an error `ToolMessage` without executing), runs the tool, then evaluates the result:
@@ -825,7 +827,7 @@ Middleware tuning lives in per-object TypedDict modules — the env only supplie
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"` (`"true"` / `"false"` / `"auto"`; any other value takes the fail-safe skill path), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` plus the preserve/attempt/cooldown/threshold constants read by `Summarization` and `summarization/background_reviews.py`                                                                                     |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, preview head/tail 5, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                                            |
-| `tool_guardrails.py`      | the five-pathology thresholds and recovery defaults listed in the ToolGuardrails section                                                                                                                                          |
+| `tool_guardrails.py`      | the pathology thresholds and recovery defaults listed in the ToolGuardrails section                                                                                                                                          |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                                  |
 | `repetition_guard.py`     | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30`                                                                              |
 | `max_tokens_boost.py`     | `base_max_tokens` (`MAIN_LLM_OUTPUT_MAX_TOKEN`, default 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3`                                                                                                       |
