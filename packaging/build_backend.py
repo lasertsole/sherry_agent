@@ -25,6 +25,7 @@ target (Linux/Windows/macOS) right before ``tauri build`` there.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,26 @@ EXCLUDES = (
 )
 
 
+def add_data_args(data: tuple[tuple[str, str], ...] = DATA, *, root: Path = ROOT) -> list[str]:
+    """PyInstaller ``--add-data`` args for the shipped payload.
+
+    ``--add-data``'s destination is a DIRECTORY. Passing the filename as the
+    destination (``.models.example:.models.example``) copies the file into a
+    directory of that name (``_internal/.models.example/.models.example``), so
+    the first-run seeder sees a directory and skips it — the 0.1.9 config-tab
+    bug. A file therefore goes to the bundle root (``.``); a directory keeps
+    its destination path.
+    """
+    args: list[str] = []
+    for source, dest in data:
+        src = root / source
+        if not src.exists():
+            raise FileNotFoundError(f"shipped data source not found: {src}")
+        target = "." if src.is_file() else dest
+        args += ["--add-data", f"{src}{os.pathsep}{target}"]
+    return args
+
+
 def installer_version() -> str:
     """The version the Tauri installer reports — ``tauri.conf.json``'s ``version``.
 
@@ -161,8 +182,7 @@ def main() -> int:
         "--log-level",
         "WARN",
     ]
-    for source, dest in DATA:
-        args += ["--add-data", f"{ROOT / source}{__import__('os').pathsep}{dest}"]
+    args += add_data_args()
     for package in COLLECT_ALL:
         args += ["--collect-all", package]
     for package in COLLECT_SUBMODULES:

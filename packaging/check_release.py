@@ -123,6 +123,26 @@ def audit_backend(tree: Path) -> list[str]:
     return sorted(set(leaks))
 
 
+#: Files the first run seeds into the writable app home. They must be regular
+#: files in ``_internal`` — an ``--add-data`` dest treated as a directory
+#: (``.models.example/.models.example``) makes the seeder skip and leaves the
+#: model/app config tabs empty.
+SEED_FILES: tuple[str, ...] = (".env", "sherry.jsonc", ".models.example", ".network.example")
+
+
+def check_seed_files(tree: Path) -> list[str]:
+    """Problems with the frozen tree's first-run seed templates (empty = ok)."""
+    internal = tree / "_internal"
+    base = internal if internal.is_dir() else tree
+    problems: list[str] = []
+    for name in SEED_FILES:
+        path = base / name
+        if path.is_file():
+            continue
+        problems.append(f"{name}: {'a directory' if path.is_dir() else 'missing'} at {path}")
+    return problems
+
+
 def audit_frontend(dist: Path) -> list[str]:
     """Leaks in the generated SPA directory (tests/evals/docs/wiki, Markdown files)."""
     if not dist.is_dir():

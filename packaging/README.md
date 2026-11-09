@@ -45,7 +45,12 @@ lock and silently put CUDA PyTorch back on Linux.
   size is PyTorch. A first run seeds the app-data home's `.env` from the tracked
   one and its `.models` / `.network` from the two templates; those template
   lookups use `sys._MEIPASS` (`_internal`) via `config/_home.resolve_code_root`,
-  because a frozen module's `__file__` is not a reliable anchor. The QQ channel
+  because a frozen module's `__file__` is not a reliable anchor. Single-file
+  entries are added with the bundle root as the `--add-data` destination
+  (`<file>:.`) — its DEST is a DIRECTORY, so using the filename created a
+  directory named like the template and the seeder skipped it; the build now
+  refuses a tree whose seed templates are not regular files
+  (`check_release.check_seed_files`). The QQ channel
   SDK (`botpy`) is collected with `COLLECT_ALL`, so a frozen process never tries
   to `pip install` it at runtime.
 - **Code embedder (optional)** — the code-intel semantic layer's Jina v2 Base

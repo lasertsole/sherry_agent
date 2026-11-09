@@ -89,3 +89,71 @@ def test_a_missing_version_falls_back_to_a_placeholder(tmp_path: Path, monkeypat
     monkeypatch.setattr(module, "TAURI_CONF", empty)
 
     assert module.installer_version() == "0.0.0"
+
+
+# ── First-run seed templates: regular files, not directories ────────────────
+
+
+def _load_check_release():
+    """Import ``packaging/check_release.py`` by path (script, not a package)."""
+    path = ROOT / "packaging" / "check_release.py"
+    spec = importlib.util.spec_from_file_location("packaging_check_release", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_file_source_is_copied_to_the_bundle_root(tmp_path: Path):
+    (tmp_path / "x.env").write_text("A=1\n", encoding="utf-8")
+    (tmp_path / "skills").mkdir()
+    module = _load_build_backend()
+
+    args = module.add_data_args((("x.env", "x.env"), ("skills", "skills")), root=tmp_path)
+
+    assert args == [
+        "--add-data",
+        f"{tmp_path / 'x.env'}{__import__('os').pathsep}.",
+        "--add-data",
+        f"{tmp_path / 'skills'}{__import__('os').pathsep}skills",
+    ]
+
+
+def test_a_missing_shipped_source_fails_loudly(tmp_path: Path):
+    module = _load_build_backend()
+
+    with pytest.raises(FileNotFoundError, match="shipped data source"):
+        module.add_data_args((("missing", "missing"),), root=tmp_path)
+
+
+def test_the_real_payload_sends_every_file_to_the_root():
+    module = _load_build_backend()
+    sep = __import__("os").pathsep
+    args = module.add_data_args()
+    pairs = {
+        args[index + 1].rsplit(sep, 1)[0]: args[index + 1].rsplit(sep, 1)[1]
+        for index in range(0, len(args), 2)
+    }
+
+    for source, dest in module.DATA:
+        src = str(module.ROOT / source)
+        assert pairs[src] == ("." if Path(src).is_file() else dest)
+
+
+def test_check_seed_files_accepts_files_and_flags_directories(tmp_path: Path):
+    check = _load_check_release()
+    internal = tmp_path / "_internal"
+    internal.mkdir()
+    for name in check.SEED_FILES:
+        (internal / name).write_text("x", encoding="utf-8")
+
+    assert check.check_seed_files(tmp_path) == []
+
+    (internal / ".models.example").unlink()
+    (internal / ".models.example").mkdir()
+    (internal / "sherry.jsonc").unlink()
+
+    problems = check.check_seed_files(tmp_path)
+
+    assert any(".models.example" in p and "a directory" in p for p in problems)
+    assert any("sherry.jsonc" in p and "missing" in p for p in problems)

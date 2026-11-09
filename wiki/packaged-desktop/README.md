@@ -8,6 +8,9 @@
 
 The shell passes `--sherry-home <app-data>`; `config/_home.resolve_code_root()` prefers `sys._MEIPASS` (the onedir `_internal` directory) for SHIPPED templates, while `ROOT_DIR` keeps its existing role as the project/skills root. `sherry.jsonc`, `.models`, `.network` and `.env` seed from that template root on first import. A missing template now logs a warning instead of silently skipping the seed, so a broken packaged layout is diagnosable from the log.
 
+Single-file templates need one more packaging rule: PyInstaller `--add-data`'s DEST is a DIRECTORY. Passing `.models.example` as the destination creates a directory of that name, so the first-run seeder sees a directory and skips it — the model/app config tabs then render empty. The build adds every file entry to the bundle root (`.`), `check_seed_files` rejects a frozen tree whose four seed templates are not regular files, and `tests/packaging/test_build_backend.py` pins both.
+
+
 ## Frozen channels and QQ
 
 A frozen backend has no virtual environment and cannot install packages into its own interpreter. `channels/deps.install_requirements()` and `channels/registry._ensure_deps()` short-circuit when `sys.frozen` is true. The QQ SDK (`botpy`, package `qq-botpy`) is a project dependency and is collected by `packaging/build_backend.py`, so the plugin imports it normally. If a build omits it, the channel logs one INFO and disables itself instead of retrying `uv pip install` on every start.
