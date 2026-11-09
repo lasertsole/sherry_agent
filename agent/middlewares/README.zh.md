@@ -298,6 +298,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `halt` 为本回合剩余时间设置粘性终止（`halt_decision`）。
 - **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，_precheck_ 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT——一个受管的重试窗口，而不是一堵立即竖起的墙。
 - **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
+- **测试文件读取豁免：** `read_file` 命中测试路径（含 `tests/` 段、`test_*.py`、`*_test.py`）属于验收反馈，不是无效探查：它不推进签名连击，no-progress / 配对路径也会跳过它。只有 `read_file` 享受豁免；terminal/search 和源码读取仍按正常规则计数。
 - `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1`——当 `hard_stop_enabled=True` 时，每个*阻止*阈值都会变成 HALT（旧的严格之墙）；`recovery_mode_enabled=False` 则恢复立即阻止的行为。
 
 ▶️ 完整文档：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)

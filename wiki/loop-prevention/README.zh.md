@@ -54,6 +54,8 @@
 
 网络命令失败现在会桥接为工具错误：`curl`/`wget`/`git fetch`/`git clone` 等非零退出码会 raise `ToolException`，经 `handle_tool_error` 变成 `ToolMessage(status="error")`，让 exact-failure 计数生效。本地命令（pytest、编译器、脚本）的非零退出仍作为普通文本返回（`status="success"`），agent 可以读取失败并继续迭代。`web_fetch` 的 HTTP 4xx/5xx 同样 raise。签名连击补上另一个盲区：参数完全相同、结果看似成功的重复。它最多警告 `streak_max_warnings_per_turn` 次；预算用尽后，该精确的工具 + 参数签名会在本回合剩余时间内被拦截，因此反复重跑同一条命令的退化循环无法耗尽整个迭代预算。拦截只作用于该签名——其他参数和工具仍然可用——且绕过恢复模式（重复拦截不应被当作一次性重试放行）。
 
+有一个刻意豁免：`read_file` 读取测试文件（路径含 `tests/`、`test_*.py`、`*_test.py`）属于验收反馈，不是无效探查。它不推进签名连击，也不进入 no-progress / 配对路径，方便 agent 在断言失败后重新读取期望值。只有 `read_file` 享受豁免；terminal/search 和源码文件读取仍按正常规则计数。
+
 **结果重复**补上签名检测仍看不到的循环：参数每次都在变，输出却逐字节相同。SWE 20261103_203547 的 Sympy 运行就是典型：agent 写了 `probe1.py` 到 `probe19.py`，每次打印同一个 `prettyForm`，耗尽 90 次调用却没碰库代码。检测器对非幂等工具维护“每工具连续相同结果”的计数（幂等工具已由 no-progress 链覆盖），达到 `result_repetition_warn_after` 时每工具警告一次，达到 `result_repetition_block_after` 时拦截整个工具；与签名拦截一样绕过恢复模式，拦截持续到本回合结束。其他工具（包括写工具）仍然可用，agent 仍能完成它一直绕圈的那次修改。
 
 **成功的源码编辑会解除这些拦截**：`patch_file` 在自己的 metadata 中声明 `clears_guardrail_blocks`，ToolGuardrails 在该调用成功时清空所有已累计的拦截、签名、结果连击，以及失败/无进展计数与调用记录。触发护栏的探针是由编辑前的旧文件回答的，继续封锁验证工具只会让 agent 无法测试新候选；而新建 `probeN.py` 的 `write_file` 不携带该标记，因此无法重新打开它自己所在的循环。

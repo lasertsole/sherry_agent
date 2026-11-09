@@ -300,6 +300,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `halt`는 턴의 나머지 기간에 대한 스티키 정지를 설정(`halt_decision`).
 - **복구 모드** (`recovery_mode_enabled=True` 기본값): 첫 BLOCK은 턴을 벽돌로 만들지 않습니다. 턴은 복구 상태로 들어가고, _precheck_ 경로가 차단된 도구를 풀어주어 재시도가 새로 평가됩니다. 이후 BLOCK마다 위반 카운터가 증가하고, 카운터가 `recovery_max_violations`(기본 1)를 초과하면 HALT로 격상됩니다 — 즉석 벽이 아니라 관리되는 재시도 창입니다.
 - **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, _연속된 두_ 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
+- **테스트 파일 읽기 예외:** 테스트 경로(`tests/` 세그먼트, `test_*.py`, `*_test.py`)를 대상으로 하는 `read_file`은 인수 검증 피드백이지 무의미한 탐색이 아닙니다. 시그니처 연속을 진행시키지 않고 no-progress/페어 경로에서도 제외됩니다. 예외는 `read_file`뿐이며, terminal/search와 소스 읽기는 정상적으로 계산합니다.
 - `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 _차단_ 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
 
 ▶️ 전체 문서: [wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)

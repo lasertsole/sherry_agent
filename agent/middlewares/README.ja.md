@@ -300,6 +300,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `halt` はターンの残りに対する粘着性の停止を設定（`halt_decision`）。
 - **リカバリモード**（`recovery_mode_enabled=True` がデフォルト）: 最初の BLOCK でターンが死ぬことはありません。ターンはリカバリ状態に入り、_precheck_ 経路がブロックされたツールを解放するので、再試行は新鮮に評価されます。それ以降の BLOCK ごとに違反カウンタが増え、カウンタが `recovery_max_violations`（デフォルト 1）を超えると HALT に格上げされます — 即席の壁ではなく管理された再試行ウィンドウです。
 - **無進捗とは停滞（stagnation、`is_stagnant`）のこと**：成功した冪等呼び出しは、**同一ツール**がそのターン内で既に同じ `result_hash` を返していた場合にのみ無進捗と判定されます。結果が変われば進捗です。**ピンポンペア**は隣接する 2 つの呼び出しのツール名をハッシュし、*連続する 2 つ*の呼び出しが両方とも無進捗である間だけ累積します。エラーが一度でも出たり、結果が変化（非停滞）したり、成功した非冪等（変異）呼び出しが一度でもあると、累積済みのすべてのペア連続記録がゼロに戻ります。冪等ツールの結果変化も同様に引数改変として数えられなくなり、非冪等ツールの成功は引数改変状態を完全にクリアします。
+- **テストファイル読み取りの例外：** テストパス（`tests/` セグメント、`test_*.py`、`*_test.py`）を対象とする `read_file` は受け入れ検証のフィードバックであり、無駄な探索ではありません。シグネチャ連続を進めず、no-progress / ペア経路からも除外されます。例外は `read_file` のみで、terminal/search とソース読み取りは通常どおり数えます。
 - `ToolCallGuardrailConfig` の既定値：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1` — `hard_stop_enabled=True` にするとすべての _ブロック_ しきい値が HALT に変わり（旧来の厳格な壁）、`recovery_mode_enabled=False` にすると即時ブロックの挙動に戻ります。
 
 ▶️ 詳細：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
