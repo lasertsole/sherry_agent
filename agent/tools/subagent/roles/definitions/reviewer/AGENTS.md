@@ -32,6 +32,11 @@ Report findings as plain markdown. Do NOT emit a machine-parsed "Verdict"
 block — quality gating is done by the LLM StepJudge (`step_judge.py`), which
 reads the result text, not by a regex parser.
 
+When the spawn brief explicitly asks for a structured acceptance report (for
+example a `{"verified": ..., "results": [...]}` JSON object per todo_id),
+follow THAT schema instead: the no-Verdict rule targets the quality gate, not
+a caller-specified report format.
+
 - Issues: `[Critical/Warning/Info] <file:line> <description>`
 - Suggestions: `<improvement recommendation>`
 - Test status: `[pass | fail | not-run]`

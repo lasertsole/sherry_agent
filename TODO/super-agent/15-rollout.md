@@ -6,13 +6,30 @@
 
 | 期 | 名称 | 周期估计 | 验收门 |
 |---|---|---|---|
+| **P-Spike** | **Sherry 接缝验证** | **3 天** | **3 个承重假设验证通过** |
 | P0 | 骨架 + 域 + Store | 1.5 周 | Engine 在内存仓库跑通域规则 |
-| P1 | Engine 五部件 + Effects + Policy | 2 周 | Ticket 全生命周期（accept→work→ready→end）on simulated host |
+| P1 | Engine 五部件 + Effects + Policy | 2 周 | Ticket 全生命周期 on simulated host |
 | P2 | Sources（GitHub）+ Executor + Sherry 接缝 | 2.5 周 | GitHub issue→Ticket→PR 单链路（mock CI） |
 | P3 | Feishu + 面板 + HTTP API + Prompts | 2.5 周 | 面板可视 + Settings 可改 + Feishu mention→Ticket |
 | P4 | 部署 + service 脚本 + E2E + 文档 | 1.5 周 | 真实仓库 E2E + 四语言 README + service 脚本 |
 
-总计约 10 周（全职单人体；多人并行可压到 6-7 周）。每期详细如下。
+总计约 10 周 + 3 天 spike（全职单人体；多人并行可压到 6-7 周）。**P-Spike 必须先做**——验证不过 P2 返工。每期详细如下。
+
+## 1b. P-Spike Sherry 接缝验证（3 天，开工前必做）
+
+### 交付
+
+- `tests/superagent/test_spike_completion_resets_latch.py`：Sherry main session spawn subagent → subagent 完成 → 观察 main session 续跑 latch 重置。
+- `tests/superagent/test_spike_mcp_tool.py`：最小 MCP server → Sherry 配 `mcp.servers.test` → subagent 调 MCP 工具。
+- `tests/superagent/test_spike_http_loopback.py`：Sherry `/internal/test` 路由 + 双向 HTTP。
+
+### 验收门
+
+- spike 1：subagent 完成**重置** main session 续跑 latch（AGENTS.md 既定行为验证）。不重置 → 整个 L7 模型返工，停。
+- spike 2：subagent 能调到 MCP 工具。调不到 → 评估 SSE 或退到改 `build_main_tools()`（侵入 Sherry）。
+- spike 3：HTTP loopback 双向通。
+
+**失败处理**：任一 spike 不过，回到 `12-sherry-integration.md` 重新设计集成层。不盲开 P2。
 
 ## 2. P0 骨架 + 域 + Store（1.5 周）
 
@@ -198,12 +215,18 @@ Troubleshooting section of wiki/super-agent/deployment.md, fix what you can, and
 
 | 风险 | 回退 |
 |---|---|
-| Sherry hooks 接缝竞态 | P2 mock 测试先全绿再接真 Sherry；E2E 在 P4 才跑真链路 |
-| Sherry subagent 行为与 Harness Session 差异大 | P2 早期一个 spike：手动起一个 superagent Ticket + Sherry subagent，验证 spawn/cancel/add_messages/jobs 全路径；差异大则调整映射或退到选项 B（独立 router subagent） |
+| **Sherry hooks 接缝竞态** | P-Spike 先验证承重假设（completion 重置 latch / MCP 工具 / HTTP 双向），过才开 P2 |
+| **workers 不能无父 spawn**（已修正） | 架构改为 workers 是 superagent main session 子代理；`12-sherry-integration.md §4` 已改。spike 1 验证 |
+| **`orchestrator_*` 工具注入 Sherry**（已修正） | 走 MCP 暴露，不侵入 `build_main_tools()`。spike 2 验证；失败退 SSE 或改工具表 |
+| **Worker Session 持久性**（已决策） | MVP 选 A（每次 wake 新 subagent）；P2 评估 B（持久 session）。`06-executor.md §4` + `12-sherry-integration.md §4.2` |
+| **Store 生成列无效**（已修正） | 显式列替代 JSON path 生成列。`04-store.md §2` 已改 |
+| **Prompt 不是翻译是重写**（已修正） | `10-sessions-prompts.md §10` 加重写指引；工作量比初估大，P3 周期可能延长 |
+| Sherry subagent 行为与 Harness Session 差异大 | P-Spike + P2 早期持续验证；差异大则调整映射 |
 | GitHub CLI 行为变化 | `test_commands.py` mock CLI 输出；真实 `gh` 在 E2E 验 |
-| Windows worktree | P4 在 Windows 跑一次 E2E；Git Bash 兜底 |
+| Windows worktree | P4 在 Windows 跑一次 E2E；Git Bash 兜底；prepare 用 `bash -c` 非 `/bin/sh` |
 | 面板工程量超预期 | 降级到静态 HTML MVP（Overview + Settings），P2+ 迁 Nuxt |
 | LLM 成本（E2E 真调用） | E2E 标 `llm_e2e`，CI 不跑；验收时手动跑一次 |
+| **Sherry 挂了 superagent 停摆**（已修正） | degraded 模式（只入队 Trigger）；`12-sherry-integration.md §10` 已改。不是"worker spawn 失败" |
 
 ## 10. 该册验收门
 
@@ -215,12 +238,17 @@ Troubleshooting section of wiki/super-agent/deployment.md, fix what you can, and
 
 ## 11. 开工前最后清单
 
+- [ ] **P-Spike 通过**（3 个承重假设验证：completion 重置 latch / MCP 工具 / HTTP 双向）。
 - [ ] 确认 `superagent/` 包根（与 `agent/` 平级）。
-- [ ] 确认旁进程部署 + loopback 通信。
-- [ ] 确认 Sherry hooks 接缝不破坏 Sherry 现有功能（最小改动清单 `12-sherry-integration.md §11`）。
+- [ ] 确认旁进程部署 + HTTP loopback 双向 + MCP stdio。
+- [ ] 确认 workers 是 superagent main session 子代理（非孤儿）。
+- [ ] 确认 `orchestrator_*` 工具走 MCP（不侵入 `build_main_tools()`）。
+- [ ] 确认 Assignment 模型选 A（每次 wake 新 subagent）。
+- [ ] 确认 Sherry 侧只加 `server/trigger/http/superagent.py` + 配置（核心零改动）。
 - [ ] 确认 GitHub 测试仓库 + agent 账号 + `gh` wrapper 已备。
 - [ ] 确认 Feishu bot（可选，P3 才需要）。
-- [ ] 确认 `pyproject.toml` 加 pydantic/aiohttp 依赖不冲突。
-- [ ] 确认 `lint-imports` contract 更新。
+- [ ] 确认 `pyproject.toml` 加 pydantic/aiohttp/mcp 依赖不冲突。
+- [ ] 确认 `lint-imports` contract 更新（含 `superagent.mcp` 层）。
 - [ ] 读一遍原型 `docs/000-008` + `07-architecture.md`（实施者必读）。
-- [ ] 读一遍 Sherry `AGENTS.md` 的相关段（subagent/taskflow/hooks/state_port）。
+- [ ] 读一遍 Sherry `AGENTS.md` 的 subagent/taskflow/state_port/continuation 段。
+- [ ] 读一遍 `REVISIONS.md` 了解初稿后的修正。

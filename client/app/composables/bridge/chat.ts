@@ -20,7 +20,7 @@ import { getInvoke, getListen, isTauri } from './transport';
 import { sendChatMessageWs } from './ws-stream';
 import { acquireAgentSocket } from './agent-socket';
 
-/** Tauri stream-event payloads (mirror `src-tauri/src/commands/events.rs`). */
+/** Local Tauri stream-event payload shapes used by the listener below. */
 interface AgentStreamStart {
   session_id: string;
 }
@@ -43,7 +43,7 @@ interface AgentStreamEnd {
 }
 interface AgentStreamError {
   session_id: string;
-  code: number;
+  code: string;
   message: string;
 }
 interface ChatChunk {
@@ -131,7 +131,7 @@ async function sendChatMessageTauri(
       unlistenErr = fn;
     });
 
-    // Invoke the Rust command (triggers the SSE bridge)
+    // Invoke the Rust command (triggers the WebSocket-backed agent turn)
     invoke<ChatChunk[]>('agent_chat', { request }).catch(err => {
       cleanup();
       reject(err);

@@ -311,7 +311,7 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
-영속적 플로우를 `INITIAL_REVISION = 1`, 상태 `running`으로 생성. 플로우 id, 상태, 리비전을 반환. id가 이미 사용 중이면 `FlowExistsError` (현재 리비전을 포함한 에러 문자열 반환, 재조회 가능).
+영속적 플로우를 `INITIAL_REVISION = 1`, 상태 `running`으로 생성. 플로우 id, 상태, 리비전을 반환. 같은 id의 비종단 플로우는 멱등 성공(`TaskFlow already exists ...`)을 반환합니다. 종단 플로우는 새 id 또는 `resumed_from`을 요구하는 에러를 반환합니다.
 
 
 
@@ -597,10 +597,7 @@ async def taskflow_inspect(action="list", status_filter: str = "active") -> str
 
 ```python
 
-async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None,
-                          todo: dict | None = None, plan_path: str | None = None,
-
-                          checkbox_label: str | None = None) -> str
+async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
 
 async def taskflow_flow(action="fail", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
@@ -608,7 +605,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 기록합니다. 디스패치된 자식 세션은 계속 돌고, 플로우가 취소되기 전까지 `taskflow_step(action="resume")`으로 결과를 전달할 수 있습니다.
+종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 기록합니다. 디스패치된 자식 세션은 계속 돌 수 있지만, 플로우가 종단 상태가 되면 `taskflow_step(action="resume")`은 모든 결과를 거부합니다. finish/fail/cancel 전에 주입해야 합니다.
 
 
 
@@ -664,7 +661,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필요). `StepStatus` 열거형이 4개 상태를 정의하고, `_shared.py`의 3개 순수 함수가 전환을 관리:
+DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필요). `StepStatus` 열거형은 7개 상태(`blocked`, `ready`, `dispatched`, `done`, `failed`, `skipped`, `cancelled`)를 정의하고, `_shared.py`의 3개 순수 함수가 전환을 관리:
 
 
 

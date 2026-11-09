@@ -20,6 +20,7 @@
 
 | 文件 | 主题 | 对应原型文档 |
 |---|---|---|
+| [REVISIONS.md](REVISIONS.md) | **修订日志**（推演后承重问题修正） | — |
 | [00-overview.md](00-overview.md) | 目标、范围、复刻清单、非目标、命名约定 | 000 Philosophy |
 | [01-architecture.md](01-architecture.md) | Python 端口架构、模块树、依赖规则、Harness→Sherry 适配总览 | 007 Architecture |
 | [02-domain-model.md](02-domain-model.md) | 域类型 → Python dataclass / enum 全表 | 001 Domain model |
@@ -39,11 +40,15 @@
 
 ## 关键决策（开工前必须确认）
 
+> **2026-11-09 修订**：经推演发现 2 个承重问题（worker 不能无父 spawn、orchestrator 工具无法注入 Sherry），已修正架构。详见 [REVISIONS.md](REVISIONS.md)。开工前必须先跑 P-Spike（3 天）验证承重假设。
+
 1. **包根**：`superagent/`（与 `agent/`、`server/`、`context_engine/` 并列）。Python 3.13、uv 管理、basedpyright 检查、ruff lint/format。详见 `01-architecture.md §包根与工具链`。
-2. **Executor 后端**：复刻品 **不依赖 DeepSeek Harness**。原型的 `DshExecutor` + `Sessions` 走 Harness 的 Session API；Python 版用 **Sherry 自己的 subagent 系统**作为 Executor。这是最大的工程差异，详见 `06-executor.md` 与 `12-sherry-integration.md`。
-3. **面板**：原型用 React/TSX 面板嵌入 Harness。Python 版用 Sherry 现有的 Nuxt 4 前端加一个新页面（或独立 FastAPI + 静态 HTML MVP），详见 `11-panel-http.md`。
-4. **进程宿主**：原型是 Harness 插件。Python 版是一个**独立 Python 进程**（Robyn 或独立 ASGI），与 Sherry 后端**同进程或旁进程**——默认旁进程，避免污染主后端的重启周期。详见 `01-architecture.md §进程拓扑`。
-5. **CLI 传输**：原型用 `gh` / `lark-cli` 命令行子进程。Python 版沿用同样契约（`subprocess.run` 封装），不直接调 GitHub REST API——保持与原型行为一致并保留 idempotency key 路径。
+2. **Executor 后端**：复刻品 **不依赖 DeepSeek Harness**。原型的 `DshExecutor` + `Sessions` 走 Harness 的 Session API；Python 版用 **Sherry 的 subagent 系统**作为 Executor——**workers 是 superagent 持久 main session 的子代理**（非孤儿），completion drain 回 main session 并重置续跑 latch（L7 核心）。详见 `06-executor.md` 与 `12-sherry-integration.md`。
+3. **工具暴露**：`orchestrator_*` 工具经 **MCP server** 暴露（`superagent/mcp/server.py`），Sherry 以 MCP client 加载，不侵入 `build_main_tools()`。详见 `01-architecture.md §5b` 与 `12-sherry-integration.md §5`。
+4. **面板**：原型用 React/TSX 面板嵌入 Harness。Python 版用 Sherry 现有的 Nuxt 4 前端加一个页面（或独立 FastAPI + 静态 HTML MVP），详见 `11-panel-http.md`。
+5. **进程宿主**：原型是 Harness 插件。Python 版是一个**独立 Python 进程**（Robyn 或独立 ASGI），与 Sherry 后端**旁进程**——HTTP loopback 双向 + MCP stdio。Sherry 挂了 superagent 进 degraded（只入队 Trigger）。详见 `01-architecture.md §进程拓扑` 与 `12-sherry-integration.md §10`。
+6. **CLI 传输**：原型用 `gh` / `lark-cli` 命令行子进程。Python 版沿用同样契约（`subprocess.run` 封装），不直接调 GitHub REST API——保持与原型行为一致并保留 idempotency key 路径。
+7. **Assignment 模型**：MVP 选 A（每次 Trigger 唤醒起新 subagent run，goal-bounded）；P2 评估 B（持久 worker session）。详见 `12-sherry-integration.md §4.2`。
 
 ## 执行原则（从原型 000 Philosophy 继承）
 

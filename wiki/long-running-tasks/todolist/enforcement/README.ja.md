@@ -126,6 +126,8 @@ for todo in validated:
 
 三段階完了検証で「虚偽完了」に対する最終防線：
 
+ランタイムゲートは `SubagentCompletionDrainMiddleware` で、`[GATE] Completion blocked: verification evidence missing or failing` を注入します。
+
 ```
 Worker 返却 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NOT done
   Gate 1: Plan reread（計画再読取、验收基準確認）

@@ -159,8 +159,13 @@ async def repair_extraction(
             plan_ref=None,
         )
         await KnowledgeStore.write(identity, layer="success", data=merged)
-    except Exception:
+    except Exception as exc:
         # Persistence is best-effort; the in-memory merge still returns.
         logger.exception("LDW repair: failed to persist success knowledge for {}", plan_key)
-    await recompile_ldw_workflow(plan_key, merged)
+        merged["persist_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        await recompile_ldw_workflow(plan_key, merged)
+    except Exception as exc:  # noqa: BLE001 - repair is fail-open
+        logger.exception("LDW repair: recompile failed for {}", plan_key)
+        merged["recompile_error"] = f"{type(exc).__name__}: {exc}"
     return merged

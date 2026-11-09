@@ -39,7 +39,7 @@ Code Intel は 5 つの検索エンジンでコード理解の問いに答えま
 ```text
 child agent assembly (spawn/core.py)
   base tools → role policy (allow / deny / main_only gate)
-    ├─ role ∈ CODE_INTEL_ROLES?  → + explore/callers/callees/impact/semantic_code_search
+    ├─ role ∈ CODE_INTEL_ROLES?  → + explore/callers/callees/impact/path (+ semantic_code_search when enabled)
     │                              + the eight lsp_* tools
     └─ always                    → + ast_grep_search / ast_grep_rewrite
 ```
@@ -231,7 +231,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime ディレクトリ、5 s のバージョンプローブ、5 s / 5 s の回収猶予。スキャン予算とマッチ上限は `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` と `librarian` |
 
-インデックスのデータベースは**セッションのプロジェクトディレクトリ**に従います：spawn 時は `<project_root>/.sherry/codeintel/index.db` に索引します（`agent/tools/code_intel/roots.py::index_db_for_root`）。プロジェクトを交互に使っても共有インデックスを再構築しません（保存されるパスはプロジェクト相対で、ルートをまたぐと衝突します）。プロジェクトルートが無い呼び出しは共有の `CODE_INTEL_DIR / "index.db"`（`config/path.py` の `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`）にフォールバックし、`code_intel_index_db_path` で明示的に固定でき、`SHERRY_CODE_INTEL_DB` が呼び出し時にパスを上書きします（`SHERRY_CODE_INTEL_ROOT` はルートを上書き）。
+インデックスのデータベースは**セッションのプロジェクトディレクトリ**に従います：spawn 時は `<project_root>/.sherry/codeintel/index.db` に索引します（`agent/tools/code_intel/roots.py::index_db_for_root`）。プロジェクトを交互に使っても共有インデックスを再構築しません（保存されるパスはプロジェクト相対で、ルートをまたぐと衝突します）。プロジェクトルートが無い呼び出しは共有の `CODE_INTEL_DIR / "index.db"`（`config/path.py` の `CODE_INTEL_DIR = APP_HOME / ".codeintel"`）にフォールバックし、`code_intel_index_db_path` で明示的に固定でき、`SHERRY_CODE_INTEL_DB` が呼び出し時にパスを上書きします（`SHERRY_CODE_INTEL_ROOT` はルートを上書き）。
 
 ## 🖥️ 環境能力マトリクス
 

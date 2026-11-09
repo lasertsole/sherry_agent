@@ -236,7 +236,6 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
         span_results_by_id: dict[str, ToolMessage] = {}
         remainder: list[ToolMessage] = []
 
-        # Find subsequent tool results
         j = i + 1
         while j < len(messages):
             next_msg = messages[j]
@@ -266,7 +265,6 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
 
             j += 1
 
-        # Add assistant message
         out.append(msg)
 
         if len(span_results_by_id) > 0 and len(remainder) > 0:
@@ -287,7 +285,6 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
                     )
                 )
 
-        # Add remaining messages
         for rem in remainder:
             out.append(rem)
 

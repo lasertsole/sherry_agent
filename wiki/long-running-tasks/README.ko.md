@@ -189,7 +189,7 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 완료율, 내역, 다음 단계, 예상 남은 시간 |
 | `taskflow_flow(action="budget")` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 예산 보고서, 또는 설정 확인 |
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | 이 세션의 보드(`active` / `all` / 상태 이름) |
-| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 종단 `done`(4개 게이트, 페일오픈) |
+| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, session_id)` | 종단 `done`(4개 게이트, 페일오픈) |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 목표 + 완료 결과 + 실패 사유로 **미완료** 단계 재생성(완료/실행 중은 유지, 변경된 단계의 하류는 blocked로 복귀, 플로우당 ≤ 3회) |
 | `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 목표를 의존성 순서의 새 플로우로 분해; 초기 ready 형제 step은 자동 dispatch |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 종단 `failed` |
@@ -236,7 +236,7 @@ step은 `skills: ["browser", "code-wiki"]`를 선언할 수 있습니다. dispat
 
 ## 🧪 테스트
 
-TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(24개 `unit` 테스트 파일 + 공유 `conftest.py`):
+TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(48개 `unit` 테스트 파일 + 공유 `conftest.py`):
 
 | 테스트 파일 | 커버 내용 |
 | :--- | :--- |
@@ -268,7 +268,7 @@ TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(24개 `unit`
 | `test_index_audit.py` | SQLite 인덱스 업그레이드 경로와 쿼리 플랜 감사 |
 | `test_update_steps.py` | 단계 목록 전면 교체: 추가/삭제/재작성/재정렬과 dispatched/done 안전 규칙 |
 
-교차 스위트: `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 게이트), `tests/agent/middlewares/test_completion_drain_gate.py`(무조건적 프로그램 게이트), `tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`(완료 판정기와 유계 goal loop), `tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`(evidence 기록, stale 이벤트, 원장 뷰), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 흐름 프롬프트 주입), `tests/server/test_session_project.py`(프로젝트 디렉터리 바인딩: 보류/승격, 부팅 워밍), `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`(파일 브라우저의 `resolve_within` 게이트를 도구 경계에서 재실행).
+교차 스위트: `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 게이트), `tests/agent/middlewares/test_completion_drain_gate.py`(무조건적 프로그램 게이트), `tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`(완료 판정기와 유계 goal loop), `tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`(evidence 기록, stale 이벤트, 원장 뷰), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_plan_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 흐름 프롬프트 주입), `tests/server/test_session_project.py`(프로젝트 디렉터리 바인딩: 보류/승격, 부팅 워밍), `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`(파일 브라우저의 `resolve_within` 게이트를 도구 경계에서 재실행).
 
 표준 uv/pytest 도구로 이 영역만 실행:
 

@@ -33,10 +33,10 @@ def test_role_file_is_editable_through_the_persona_api():
 def test_templates_ship_every_declared_system_file(lang):
     """Every language template directory carries every declared file (a missing ROLE.md is silent otherwise)."""
     from config.path import WORKSPACE_TEMPLATE_DIR
-    from workspace import ALL_SYSTEM_FILE_NAMES, MEMORY_SYSTEM_FILE_NAMES
+    from workspace import ALL_SYSTEM_FILE_NAMES
 
     template_dir = WORKSPACE_TEMPLATE_DIR / lang
-    for name in (*ALL_SYSTEM_FILE_NAMES, *MEMORY_SYSTEM_FILE_NAMES):
+    for name in ALL_SYSTEM_FILE_NAMES:
         path = template_dir / name
         assert path.is_file(), f"{lang} template is missing {name}"
         assert path.read_text(encoding="utf-8").strip(), f"{lang}/{name} is empty"
@@ -77,7 +77,6 @@ def test_role_statement_reaches_the_system_prompt(tmp_path, monkeypatch):
             return {"memory": "MEMORY-V1", "user": "USER-V1", "facts": None}.get(target)
 
     monkeypatch.setattr("workspace.file_sync.WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr("workspace.file_sync.MEMORY_DIR", tmp_path / "memory")
     monkeypatch.setattr(
         "workspace.file_sync.resolve_workspace_template_dir",
         lambda lang=None: WORKSPACE_TEMPLATE_DIR / "zh",

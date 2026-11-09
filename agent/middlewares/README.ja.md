@@ -89,49 +89,44 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 
 ```python
 middleware = [
-    # after_agent フックはリスト逆順に走る: 最初に登録された enforcer が
-    # ターン終了時に最後に実行され、本当に終わったターンを観測する。
     PlanContinuationEnforcer(),
-    system_prompt_injection,  # @dynamic_prompt：システムプロンプト注入
-    # 作業ディレクトリ変更通知: ターン開始時に、プロジェクト ディレクトリが前回
-    # 伝えたルートから動いていれば HumanMessage の直前に AIMessage を挿入する
-    # （通知は 1 つだけ、最終ルートを記載）
+    system_prompt_injection,
     WorkspaceNoticeMiddleware(),
     PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+    TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
     DynamicReminderMiddleware(),
+    InputSafetyFilter(),
+    LLMModerationMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
-    # per-session thinking toggle (client switch → /sessions/thinking):
-    # swaps request.model for the thinking on/off or low/high/max variant
     ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
-    # after_model ノードは登録逆順に走る: HITL の直後に登録することで、
-    # モデル応答後に最初に実行されるフックとなり、HITL が拒否呼び出しを
-    # 剥がす / interrupt する前に AI メッセージが永続化される。
     MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
+    OutputSafetyFilter(),
     Summarization(
         need_update_system_prompt=True,
-        model=auxiliary_llm,
+        model=compression_llm or auxiliary_llm,
         main_llm_context_window=main_llm_max_tokens,
-        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+        trigger=[("tokens", resolve_compression_threshold(
+            main_llm_max_tokens, max_output_tokens,
+            fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+        )[0])],
     ),
-    # wrap_model_call の最内層、生のモデル呼び出しに最も近い位置：
-    # JSON 引数の解析に失敗したツール呼び出しを修復し（そうしないとループは
-    # 呼び出しなしの最終回答と見なしてターンを終了させる）、修復不能な場合は
-    # モデルを一度だけ再呼び出しする。
     InvalidToolCallRepairMiddleware(),
 ]
+# DelegationPressureGate is appended when DELEGATION_PRESSURE["enabled"] is on.
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # コンパイル済みグラフは apply_graph_wrappers() がラップする（内側 → 外側）：
 # RepetitionGuardWrapper、次に ContextLimitGuardWrapper。
@@ -277,7 +272,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/iteration_budget/core.py` · **クラス：** `IterationBudget(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-1 ターン内の**モデル呼び出し回数**に対するハード上限。ツール呼び出しのペアは合計 1 回だけ消費します（呼び出しを行う `AIMessage` を生成したモデル呼び出し）。その `ToolMessage` 結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントと executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
+1 ターン内の**モデル呼び出し回数**に対するハード上限。ツール呼び出しのペアは合計 1 回だけ消費します（呼び出しを行う `AIMessage` を生成したモデル呼び出し）。その `ToolMessage` 結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントは `IterationBudget(180)`、executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
 
 - `before_agent` は `state_register_mem` のカウンターをリセット：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` はモデル呼び出しごとに 1 消費。予算が尽きると**モデルを呼ばずに**終端 `AIMessage` を返します。
@@ -288,7 +283,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/tool_guardrails/core.py` · **クラス：** `ToolGuardrails(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
-5 つの失敗病理を検出し、4 段階エスカレーション `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 列挙型）で反応します：
+以下の失敗病理を検出し、4 段階エスカレーション `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 列挙型）で反応します：
 
 | 病理                 | トリガー                                                                                                  | WARN 後                             | BLOCK 後                            | hard-stop モード |
 | -------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------- | ---------------- |
@@ -297,6 +292,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 冪等な無進捗         | 同一の冪等ツール（メタデータ `idempotent: true`）が、そのターン内で既に返したことのある結果ハッシュを返す | 2（`no_progress_warn_after`）       | 5（`no_progress_block_after`）      | 5 で HALT        |
 | ピンポン             | 2 つのツール間の途切れない A → B → A → B の往復で、連続する 2 呼び出しがともに無進捗                      | 4（`ping_pong_warn_after`）         | 6（`ping_pong_block_after`）        | 6 で HALT        |
 | 引数改変             | 同じ冪等ツールが、結果の変わらない引数バリアントを巡回                                                    | 3 変種（`arg_churn_warn_after`）    | 5 変種（`arg_churn_block_after`）   | 5 で HALT        |
+| シグネチャ連続（状態非依存） | 同じツール + 同じ引数ハッシュの連続呼び出し。結果ステータスは問わない（terminal は metadata で 5 を宣言） | 3（`streak_warn_after`） | 警告予算を使い切った後、その正確なシグネチャ | hard-stop モードで HALT |
+| 結果反復             | 非冪等ツールが、引数の異なる連続呼び出しでバイト単位に同一の結果を返す                                    | 3（`result_repetition_warn_after`） | 6（`result_repetition_block_after`） | 6 で HALT        |
 
 - `before_agent` はターン単位のガード状態をリセットします（`state_register_mem` のキー `tool_guardrail_state`）— 厳密にターン範囲なので、新しいターンはクリーンに始まります。
 - `wrap_tool_call` はブロック済みツールと停止状態を事前チェック（実行せずエラー `ToolMessage` を返す）し、ツールを実行してから結果を評価します：
@@ -305,6 +302,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `halt` はターンの残りに対する粘着性の停止を設定（`halt_decision`）。
 - **リカバリモード**（`recovery_mode_enabled=True` がデフォルト）: 最初の BLOCK でターンが死ぬことはありません。ターンはリカバリ状態に入り、_precheck_ 経路がブロックされたツールを解放するので、再試行は新鮮に評価されます。それ以降の BLOCK ごとに違反カウンタが増え、カウンタが `recovery_max_violations`（デフォルト 1）を超えると HALT に格上げされます — 即席の壁ではなく管理された再試行ウィンドウです。
 - **無進捗とは停滞（stagnation、`is_stagnant`）のこと**：成功した冪等呼び出しは、**同一ツール**がそのターン内で既に同じ `result_hash` を返していた場合にのみ無進捗と判定されます。結果が変われば進捗です。**ピンポンペア**は隣接する 2 つの呼び出しのツール名をハッシュし、*連続する 2 つ*の呼び出しが両方とも無進捗である間だけ累積します。エラーが一度でも出たり、結果が変化（非停滞）したり、成功した非冪等（変異）呼び出しが一度でもあると、累積済みのすべてのペア連続記録がゼロに戻ります。冪等ツールの結果変化も同様に引数改変として数えられなくなり、非冪等ツールの成功は引数改変状態を完全にクリアします。
+- **テストファイル読み取りの例外：** テストパス（`tests/` セグメント、`test_*.py`、`*_test.py`）を対象とする `read_file` は受け入れ検証のフィードバックであり、無駄な探索ではありません。シグネチャ連続を進めず、no-progress / ペア経路からも除外されます。例外は `read_file` のみで、terminal/search とソース読み取りは通常どおり数えます。
 - `ToolCallGuardrailConfig` の既定値：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1` — `hard_stop_enabled=True` にするとすべての _ブロック_ しきい値が HALT に変わり（旧来の厳格な壁）、`recovery_mode_enabled=False` にすると即時ブロックの挙動に戻ります。
 
 ▶️ 詳細：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
@@ -565,7 +563,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | フォールバック（`should_fallback=True`、非リトライ）     | `auth_permanent`、`billing`、`upstream_rate_limit`、`ssl_cert_verification`、`model_not_found`、`provider_policy_blocked`、`content_policy_blocked` | 次のフォールバック候補へ切替。チェーン尽きで再スロー                                                                                                                                               |
 | ハードフェイル                                           | `format_error`                                                                                                                                      | 再スロー（リトライもフォールバックもしない）                                                                                                                                                       |
 
-**スタイル連続ブレーカー（ターン間）：** timeout と分類された失敗ごとに — および timeout 分類の部分ストリームスタブ再試行ごとに — セッション単位の `llm_stale_streak`（`state_register_mem` 内）がインクリメントされ、成功した handler 呼び出しがあれば 0 にリセットされます。連続が `stale_giveup_threshold` に達すると、次のモデル呼び出しは LLM を呼ぶ**前に** `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")` を送出し、プロバイダーが応答しない状態のスパイラルをターン間で断ち切ります。
+**スタイル連続ブレーカー（既定はターン単位。`stale_giveup_scope="session"` は opt-in）：** timeout と分類された失敗ごとに — および timeout 分類の部分ストリームスタブ再試行ごとに — セッション単位の `llm_stale_streak`（`state_register_mem` 内）がインクリメントされ、成功した handler 呼び出しがあれば 0 にリセットされます。連続が `stale_giveup_threshold` に達すると、次のモデル呼び出しは LLM を呼ぶ**前に** `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")` を送出し、プロバイダーが応答しない状態のスパイラルを断ち切ります。既定では各ターン開始時にリセットされます。
 
 **モデルフォールバックチェーン：** `FallbackCandidate(provider, model_name, model)` エントリは、`models/LLMs/main_llm.py::build_fallback_chain()` が環境変数 `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` から構築します（i = 1…、最初に `NAME` が欠けた時点で停止。`PROVIDER` のデフォルトは `openai`。クライアントを構築できない候補は警告付きでスキップ）。1 起点のアクティブインデックスはセッション単位で `llm_fallback_index` に粘着的に保持され、毎回のモデル呼び出しの開始時に `request.override(model=...)` で既に活性化済みの候補へリバインドされ、フォールバック分類の失敗（またはコンテンツフィルタフラグ）で次の候補が活性化します。`FALLBACK_LLM_*` が未設定（デフォルト）の場合、このミドルウェアは単なる有界リトライループです。
 
@@ -584,19 +582,19 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 **モジュール：** `agent/middlewares/summarization/core.py` · **クラス：** `Summarization(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`（カウンターリセット）、`wrap_model_call` / `awrap_model_call`
 
-最内層のミドルウェア — LLM に最も近い位置。スクラッチで実装された `AgentMiddleware` です（LangChain の `SummarizationMiddleware` **ではありません**）：トリガーが発火すると、予算ベースのカットオフで履歴を圧縮します — 非 LLM 戦略を優先し、テキスト劣化が安全な場合にのみ補助 LLM による要約を使用。`keep` パラメータは受け付けますが未使用で、末尾保持は予算ベースです：`clamp(context_window × 0.25, 2 000, 15 000)` トークン（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
+最も内側のミドルウェア層の 1 つです — `InvalidToolCallRepairMiddleware`（および有効時の `DelegationPressureGate`）だけがより LLM に近い位置にあります。スクラッチで実装された `AgentMiddleware` です（LangChain の `SummarizationMiddleware` **ではありません**）：トリガーが発火すると、予算ベースのカットオフで履歴を圧縮します — 非 LLM 戦略を優先し、テキスト劣化が安全な場合にのみ補助 LLM による要約を使用。`keep` パラメータは受け付けますが未使用で、末尾保持は予算ベースです：`clamp(context_window × 0.25, 2 000, 15 000)` トークン（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
 - **ライフサイクルとルーティング：** ミドルウェアは 5つのトリガーポイント（T1–T5）を網羅します — T1 事前点検（`before_agent` / `abefore_agent`）、T2 呼び出し前ディスパッチ（`wrap_model_call` / `awrap_model_call`）、T3 応答後の再確認（実際の報告トークン）、T4（413 Payload Too Large）/ T5（コンテキストオーバーフロー）エラー復帰リング — どのトリガーも 4ルート・オーバーフロー判定（truncate / compact / both / pass）を実行し、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/tool_args_truncate.py`（ツール呼び出し引数の切り詰め）、`pub/func/message/llm_error_classifier.py` に委譲します。状態はセッション単位の `summarization_*` キー（計 13 個、ターンごとに 11 個をリセット）に保持されます。詳細は下記のリンクを参照。
-- **トリガーセマンティクス**：節は `("messages", N)` または `("tokens", N)` で、節リスト間は **OR** — いずれかの節が発火すると圧縮が始まります。メインエージェント：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。ワーカー：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
+- **トリガーセマンティクス**：節は `("messages", N)` または `("tokens", N)` で、節リスト間は **OR** — いずれかの節が発火すると圧縮が始まります。メインエージェント：`[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])]`。ワーカー：`[("messages", 40), ("tokens", _compression_threshold_for_children(main_llm_max_tokens))]`。
 - **カットオフの安全性：** `_determine_cutoff` がカットオフ位置を選び、続いて `_adjust_for_orphan_pairs` が `ToolMessage` が自身の `AIMessage` ツール呼び出しから分離されなくなるまで位置を手前に戻します。最後のユーザーターンが推定トークンの ≥ 50 % を占める場合（`LAST_TURN_RATIO_THRESHOLD = 0.5`）、そのターンを要約で消すのではなく、ターン自体を圧縮します（`self._compress_last_turn` フラグ）。
 - **アンチスラッシング：** 1 セッションあたり最大 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 回の圧縮（ターンごとではない）。連続 `INEFFECTIVE_THRESHOLD = 2` 回の無効な圧縮で（有効 = メッセージ数の減少、またはトークン削減 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`）、LLM ステップを無効化（`summarization_skip_llm`）し非 LLM 戦略のみを実行します。カウンターはセッション単位の `summarization_*` キーとして `state_register_mem` に保持されます（圧縮回数、無効連続回数、直近トークン、直近戦略、スキップフラグ、リカバリ状態など）。
 - **圧縮時のメディア退避：** 破棄されるプレフィックスは要約される前に `offload_inline_media`（`summarization/media_offload.py`）を通り、インラインメディア（`data:` URL、生の `base64` フィールド、生バイト）を `SESSIONS_DIR/<session_id>/media/{sha256[:16]}{ext}` へ書き出し（内容ハッシュで重複排除、このサブディレクトリは `clear_session` が丸ごと削除）、各ブロックを `[evicted to: <path>]` テキストポインタに置換します — `_collect_evicted_refs` が走査するこのマーカーにより、パスは `SummaryDoc.evicted_refs` に入り要約チェーン上で生き残ります。書き換えられるのは要約対象の範囲のみで、保持される末尾ウィンドウのメディアブロックはそのままです。すべての失敗は fail-open で、デコード / 書き込みできないブロックは `<media error="failed_to_offload" />` になります。
-- **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `SUMMARY_TOTAL_MAX_CHARS = 16 000` 文字を超えると再切り詰めされ、先頭 30 % / 末尾 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）を保持し省略マーカーが入ります。
+- **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `SUMMARY_TOTAL_MAX_TOKENS = 4 000` トークンを超えると再切り詰めされ、先頭 30 % / 末尾 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）を保持し省略マーカーが入ります。
 - **出力：** 置換後のメッセージは `HumanMessage` / `AIMessage` の**ペア**です — 中立的な `"What did we do so far?"` に続き、`additional_kwargs={"lc_source": "summarization"}` を持つ `AIMessage` が続きます — モデルが連続した同役割メッセージを見ることはなく、事後のペア修復も不要です。
 - **構造化要約：** 補助呼び出しは `with_structured_output(SummaryDoc, method="json_mode")`（`summarization/summary_doc.py`）を通ります。Markdown はドキュメントからコードでレンダリングされ、cap 後のドキュメント本体は AIMessage の `additional_kwargs["summary_doc"]` に保存されます（チェイニング再要約は `<prior-summary-json>` として再入力）。解析失敗は `json_repair`、次にレガシー free-form パスへ降格します。項目上限は配列スライス（`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`、`evicted_refs[-20:]`）で、Markdown の再解析ではありません。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
 - **永続化は行いません：** 圧縮パスは MesMemory へ何も書き込みません。メッセージ永続化は各モデル境界で `MessagePersistenceMiddleware` が実行します；旧 `compaction_persistence.py` の破棄プレフィックスフラッシュと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。
-- **圧縮時メモリレビュー：** `schedule_memory_review`（`summarization/background_reviews.py`）は圧縮のたびに**メモリレビュー**だけを派遣し、渡すのは**破棄される**メッセージです——残すべき事実はそこにあります。既定の `cache_warm` モードでは `_execute_memory_review` がそのスライスを**原文のまま**、そのターンが実際に使ったモデル構成（`_build_session_model`：セッションのモデル上書きと思考バリアント、または環境既定）で送り、セッション自身のシステムプロンプトとツール面も再現します。圧縮の切れ目は**プレフィックス切断**なので、`[ツール][システムプロンプト][破棄メッセージ][レビュー指示]` はメインモデルが直前に処理したリクエストのプレフィックスをそのまま再現します——プロバイダはプレフィックスキャッシュから応答し、レビューは実テキストを読みつつキャッシュ読み込み価格で済み、新規入力は指示だけです。`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` は先に折り畳みます（`digest_history`：直近 24 件は原文、以前は 1 行に切詰め）——キャッシュが効きにくいプロバイダや小窓のレビューモデル向け。ガードは二段のまま：レビューはちょうどコンテキストが最も満ちている時に走り、渡されるのは破棄スライスのみ（会話全体は決して渡しません）で、ターンをブロックしません。BACKGROUND_REVIEW レーン上の fire-and-forget タスクとして走ります；レビューロックが保持されている間、圧縮は派遣を完全にスキップします。スキルレビューはこの経路にはありません（プラン完了時に fork、下記参照）。
+- **圧縮時メモリレビュー：** `schedule_memory_review`（`summarization/background_reviews.py`）は圧縮のたびに**メモリレビュー**だけを派遣し、渡すのは**破棄される**メッセージです——残すべき事実はそこにあります。既定の `cache_warm` モードでは `_execute_memory_review` がそのスライスを**原文のまま**（`[tools][system prompt][discarded messages][review instruction]` のプレフィックスを再現して）、そのターンが実際に使ったモデル構成（`_build_session_model`：セッションのモデル上書きと思考バリアント、または環境既定）で送り、セッション自身のシステムプロンプトとツール面も再現します。圧縮の切れ目は**プレフィックス切断**なので、`[ツール][システムプロンプト][破棄メッセージ][レビュー指示]` はメインモデルが直前に処理したリクエストのプレフィックスをそのまま再現します——プロバイダはプレフィックスキャッシュから応答し、レビューは実テキストを読みつつキャッシュ読み込み価格で済み、新規入力は指示だけです。`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` は先に折り畳みます（`digest_history`：直近 24 件は原文、以前は 1 行に切詰め）——キャッシュが効きにくいプロバイダや小窓のレビューモデル向け。ガードは二段のまま：レビューはちょうどコンテキストが最も満ちている時に走り、渡されるのは破棄スライスのみ（会話全体は決して渡しません）で、ターンをブロックしません。BACKGROUND_REVIEW レーン上の fire-and-forget タスクとして走ります；レビューロックが保持されている間、圧縮は派遣を完全にスキップします。スキルレビューはこの経路にはありません（プラン完了時に fork、下記参照）。
 
 **バックグラウンドレビュー サブエージェント**（`summarization/background_reviews.py`、圧縮パイプラインが派遣）：独立した `create_agent` インスタンスで、2 つのパスはそれぞれ別のトリガー・別のモデル・別のツール障壁を持ちます：
 
@@ -831,15 +829,15 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 
 | モジュール                | ノブ                                                                                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                    |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                    |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`。それ以外はフェイルセーフのスキルパス）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` に加え、`Summarization` と `summarization/background_reviews.py` が読む保持/試行/クールダウン/しきい値の各定数                                                                                      |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、プレビュー先頭/末尾 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
-| `tool_guardrails.py`      | ToolGuardrails セクションに列挙した 5 病理のしきい値と復帰デフォルト                                                                                                                                                     |
+| `tool_guardrails.py`      | ToolGuardrails セクションに列挙した病理のしきい値と復帰デフォルト                                                                                                                                                     |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                         |
 | `repetition_guard.py`     | `max_identical_outputs=3`、`warn_after=2`、`internal_repeat_ratio=0.6`、`internal_min_lines=6`、`char_run_min=8`、`tail_chars=500`、`max_history=30`                                                                     |
 | `max_tokens_boost.py`     | `base_max_tokens`（`MAIN_LLM_OUTPUT_MAX_TOKEN`、既定 8192）、`default_max_tokens=8192`、`max_cap=32 768`、`max_retries=3`                                                                                                |
-| `llm_retry.py`            | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`                                                                                                                            |
+| `llm_retry.py`            | `max_retries=10`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`                                                                                                                            |
 | `context_guard.py`        | `output_cut_ratio=0.20`、`check_interval=20`                                                                                                                                                                             |
 
 > **関連だが独立：** ツールごとのタイムアウトはフィーチャーレジストリに束縛されたモジュール定数です（`config/features/agent_side/tools_timeouts.py` の `TOOLS_TIMEOUTS`） — `WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal/core.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`。期限切れで子プロセスは kill されます）。`TOOL_CALL_TIMEOUT_MINUTES`（既定 5）は `sherry.jsonc` の設定で、`config/sherry_settings.py` を通り設定サービスから公開されますが、**これを消費するツール実行経路はありません** — 有効なタイムアウトノブではありません。要約パイプラインは `config/features/agent_side/summarization.py` から定数を読み取ります。
@@ -869,7 +867,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt：システムプロンプト注入
         MultimodalProcessor(),  # マルチモーダル入力の正規化
-        IterationBudget(90),  # ターン単位の呼び出し予算
+        IterationBudget(180),  # ターン単位の呼び出し予算
         ToolGuardrails(),  # 失敗病理の検知
         ToolCallNormalize(),  # tool_use/tool_result の修復
         PathGuard(),  # パス引数のスクリーニング
@@ -900,7 +898,7 @@ agent = create_agent(
 | `HeartbeatStaleness`       | （既定）                          | 間隔 1 分、アイドル 7 / ツール内 20                                                                 | 既定値                                                |
 | `OutputRepetitionGuard`    | （既定）                          | 3 / 2 / 0.6 / 6 / 8                                                                                 | 既定値                                                |
 | `MaxTokensBoostMiddleware` | （環境変数）                      | base：リクエストの `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`（8192）→ 8192、上限 32768、3 リトライ | 既定値                                                |
-| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`       | 既定値（＋ `FALLBACK_LLM_*` 由来の `fallback_chain`） |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=10`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`       | 既定値（＋ `FALLBACK_LLM_*` 由来の `fallback_chain`） |
 
 ---
 

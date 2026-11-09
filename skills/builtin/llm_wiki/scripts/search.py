@@ -104,7 +104,6 @@ def lint_wiki() -> dict:
 
     report["total_pages"] = len(all_md_files)
 
-    # Build the wikilink reference graph
     inbound_links = defaultdict(set)
     outbound_links = defaultdict(set)
 
@@ -133,7 +132,6 @@ def lint_wiki() -> dict:
                             {"file": rel_path, "missing_fields": missing}
                         )
 
-            # Check file size
             lines = content.split("\n")
             if len(lines) > 200:
                 report["large_pages"].append({"file": rel_path, "lines": len(lines)})

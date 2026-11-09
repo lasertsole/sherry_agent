@@ -49,7 +49,7 @@ pub trait DownloadEvents {
     fn started(&self);
     /// A throttled progress report.
     fn progress(&self, progress: DownloadProgress);
-    /// The payload is downloaded, installed AND running.
+    /// The payload is downloaded and installed.
     fn complete(&self);
     /// The download, extraction or launch failed.
     fn failed(&self, error: &str);

@@ -149,7 +149,7 @@ Worker 返回 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
   Gate 5: Cleanup（清理临时资源）
 ```
 
-**文件**：`verifier.py`（~80 行）+ `subagent_completion_drain/core.py` 扩展（~15 行，追加验证提醒）。
+这是提示词中的 orchestrator 教条，不是运行时验证器：不存在 `verifier.py`。运行时门是证据驱动的 `SubagentCompletionDrainMiddleware`，在子代理完成后注入 `[GATE] Completion blocked: verification evidence missing or failing`；flow 级由 TaskFlow finish 的 A–C/E 门覆盖。
 
 ### E6: 委派路由 ★
 

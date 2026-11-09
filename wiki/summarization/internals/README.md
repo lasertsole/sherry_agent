@@ -40,8 +40,8 @@ The TTL registry itself (`record_first_seen` / `select_expired` / `truncate_expi
    ```
 
    Non-LLM shrinking is given the first chance; the auxiliary LLM is only spent when the history is still more than twice the preserve budget (or LLM summarization was disabled by the governor, or non-LLM strategies reduced nothing).
-4. **Aggressive backstop** (`_aggressive_truncate`, compression.py:360): if the result is *still* too big, every `ToolMessage` > `AGGRESSIVE_TRUNCATE_CHARS (1 000)` chars is hard-cut with a marker — and so is every tool-call args JSON beyond the same cap (head-only, `PROTECTED_TOOLS` exempt, replaced with `{"_truncated_args": ...}`).
-5. **Summary self-truncation** (`_truncate_summary_messages`, compression.py:417): any existing summary message (`lc_source == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS (16 000)` chars is re-truncated head 30% / tail 30% (`_truncate_content`, compression.py:414).
+4. **Aggressive backstop** (`_aggressive_truncate`, compression.py:360): if the result is *still* too big, every `ToolMessage` beyond `AGGRESSIVE_TRUNCATE_TOKENS (250)` tokens is hard-cut with a marker — and so is every tool-call args JSON beyond the same cap (head-only, `PROTECTED_TOOLS` exempt, replaced with `{"_truncated_args": ...}`).
+5. **Summary self-truncation** (`_truncate_summary_messages`, compression.py:417): any existing summary message (`lc_source == "summarization"`) longer than `SUMMARY_TOTAL_MAX_TOKENS (4 000)` tokens is re-truncated head 30% / tail 30% (`_truncate_content`, compression.py:414).
 6. **Recovery injection** (`_inject_recovery_context`, compression.py:379): the captured file-ops ratchet is rewritten into the summary's `## Relevant Files` section, so the checkpoint always carries an up-to-date read/modified file map.
 7. **Bookkeeping** (`_record_compression`, thrash.py:117) and finally `request.override(messages=..., system_message=...)`.
 
@@ -148,7 +148,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 - **AIMessage** with `additional_kwargs={"lc_source": "summarization"}` — the marker that later turns use to (a) find and chain the prior checkpoint, (b) strip the pair from a chained re-summarization input and make pruning stop at the checkpoint, and (c) let tests assert the summary is swallable from the model view once superseded.
 - The pair never enters MesMemory: `MessagePersistenceMiddleware._is_persistable` skips both `lc_source="summarization"` halves (the human row builder applies the same gate).
 - The AIMessage also carries the structured document itself: `additional_kwargs["summary_doc"]` (the capped `SummaryDoc` as a plain JSON-serializable dict — the chain carrier, fed back as `<prior-summary-json>`). Legacy/free-form rounds omit it and `_extract_previous_summary` falls back to the `<summary>` body.
-- Total content is capped at `SUMMARY_TOTAL_MAX_CHARS (16 000)` with a head/tail 30/30 keep.
+- Total content is capped at `SUMMARY_TOTAL_MAX_TOKENS (4 000)` with a head/tail 30/30 keep.
 
 ## 🛡️ Anti-Thrash Guard Matrix & Degradation Recovery
 
@@ -177,9 +177,12 @@ Main agent only (`need_update_system_prompt=True`): after a compression the midd
 # InvalidToolCallRepairMiddleware; Summarization sits directly inside LLMRetry)
 Summarization(
     need_update_system_prompt=True,
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
-    trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+    trigger=[("tokens", resolve_compression_threshold(
+        main_llm_max_tokens, max_output_tokens,
+        fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+    )[0])],
 )
 
 # agent/tools/subagent/spawn/core.py:1106 — worker agent (first middleware)
@@ -188,7 +191,10 @@ Summarization(
     main_llm_context_window=main_llm_max_tokens,
     trigger=[
         ("messages", 40),
-        ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ("tokens", resolve_compression_threshold(
+            main_llm_max_tokens, max_output_tokens,
+            fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+        )[0]),
     ],
 )
 ```

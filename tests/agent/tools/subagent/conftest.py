@@ -324,12 +324,11 @@ def _real_dependencies_for_llm_e2e(request: pytest.FixtureRequest):
 
 @pytest.fixture(autouse=True)
 def _stub_lt5_memory_backflow(monkeypatch):
-    """Keep this suite off the real workspace memory files.
+    """Keep this suite off the developer's real SQLite memory store.
 
-    A non-empty completion drain reconciles ``MEMORY.md``/``USER.md`` on disk.
-    The queue/drain tests here exercise carrier plumbing, not memory
-    I/O, and must not rewrite the tracked ``workspace/memory/`` files; the backflow's
-    own reconcile coverage lives in
+    A non-empty completion drain reloads the shared ``MemoryStore`` rows. The
+    queue/drain tests here exercise carrier plumbing, not memory I/O; the
+    backflow's own coverage lives in
     ``tests/agent/middlewares/test_lt5_memory_backflow.py``.
     """
     from agent.middlewares.subagent_completion_drain import core as drain_mod

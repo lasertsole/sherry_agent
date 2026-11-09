@@ -57,6 +57,19 @@
 - AdversarialVerify：运行验收标准，排查陈旧状态、脏工作区、遗留资源。
 - FullyDone：只有验证通过后，才把复选框标记为 completed。
 - 如果验证失败，任务就没有完成，需要重新派发或修复。
+- VerifyTodo（系统自动）：含 2 个以上 work todo 的计划末尾会有一个 SYSTEM [VERIFY] todo。
+  到达它时不要自己内联跑验收：
+  1. 读取每个 work todo 的验收标准。
+  2. 用 sessions_spawn(functional_role="reviewer") 派只读 reviewer；brief 里列出每个
+     todo_id + 验收标准 + 要跑的命令，并要求返回 JSON：
+     {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  3. 把返回的 child_session_key 用 todowrite action=patch 写进 verify todo 的 subagent_id。
+     转换屏障会在该 reviewer 结束前拒绝完成 verify。
+  4. 收到 {"verified": false} 时，只把 failed=true 的 todo_id 用 patch 标回 pending，把
+     evidence 写进对应 todo 的 notes，修完再跑 reviewer；通过的 todo 保持 completed，
+     不要重写整张列表。
+  5. 只有 {"verified": true} 才能完成 verify todo。若报告不可读，重新派 reviewer；达到
+     重派上限后，门会提供“自己跑验收并 cancel verify”的降级收尾。
 
 ### 反模式（BLOCKING）
 

@@ -18,7 +18,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 ## Harness and slices
 
 - Dataset: `princeton-nlp/SWE-bench_Lite`, test split.
-- HARD slice: `django__django-17051`, `sympy__sympy-20639`.
+- HARD slice: `django__django-17051` and `django__django-16820`. `sympy__sympy-20639` was removed from the runnable slice on 2026-11-08: its test patch changes a long-standing NumberSymbol-vs-Symbol semantic distinction that is not derivable from the issue and the pre-fix test. Historical Sympy runs remain in `evals/swebench/RESULTS.md`.
 - Instance cache: `--instance-cache-dir /tmp/swebench-instance-cache`.
 - Arms: neutral prompt, `--persona coding`, and delegation pressure
   (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). The delegate-only arm was removed
@@ -26,12 +26,21 @@ HARD instances?” — not “what is the leaderboard position?”.
 - The report is `evals/results/swebench/<run_id>/eval_report.json`; the
   per-instance diffs are next to it.
 
-- Since 2026-11-04 the task prompt includes the instance's test patch and
-  FAIL_TO_PASS names (read-only). The checkout is NOT pre-patched; the official
-  test patch is still applied at judging time, and the per-instance report
-  records `target_tests_exposed`.
+- Since 2026-11-04 the task prompt includes the instance's test patch and the
+  FAIL_TO_PASS + PASS_TO_PASS names; the test patch is also pre-applied to the
+  checkout so the agent can run the target tests. The prompt now also carries
+  the exact runner command for each set (`python tests/runtests.py <labels>` for
+  Django, `python -m pytest <node ids>` otherwise). Judging resets those files
+  and re-applies the published patch, and the report records
+  `target_tests_exposed` and `tests_preapplied`.
+- Deterministic decoding: every eval turn builds through a pinned `built_agent`
+  at temperature 0. `SHERRY_EVAL_MAX_ITERATIONS` optionally raises the main
+  model-call ceiling (unset/0 keeps the shipped 180); the report states
+  `model.temperature` and `budget.main_max_iterations`.
 
 ## The failure history (2026-11-01)
+
+> **2026-11-09:** the table below is full history. The current-code tally (test patch pre-applied + temperature 0 + default 180 + current prompt) lives in `evals/swebench/RESULTS.md`: 17051 4/4, 16820 3/4, HARD 7/8 on two instances — not a leaderboard position. Runs of removed arms are archived there.
 
 | Run | Arm | Result | What happened |
 | :--- | :--- | :--- | :--- |
@@ -47,6 +56,14 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-04 003521 | + target tests in the prompt (HARD 2) | 0/2 | Tests were visible but not runnable; both instances exhausted 90 calls |
 | 2026-11-04 004714 | + target tests pre-applied to the checkout (HARD 2) | 1/2 | Django resolved; Sympy used `e.is_Symbol` (wrong for `1/x_17`) and looped on a repro script |
 | 2026-11-04 005721 | stronger post-failure prompt (Sympy only) | 0/1 | Same wrong condition; still 0 F2P |
+| 2026-11-08 111407 | HARD Django only; F2P+P2P in prompt | 1/1 | Django resolved; first run 0/1 on a P2P `NoneType` regression, second resolved |
+| 2026-11-08 133112 | temperature=0 + F2P/P2P in prompt | invalid | isolation failed: the temperature pin imported `config.path` before the workspace override, so the run used the live workspace; its 1/1 is not counted |
+| 2026-11-08 133743 | temperature=0 after the pin-order fix | 1/1 | Django resolved in 17 calls / 60.6 s; clean F2P+P2P, no scratch files |
+| 2026-11-08 135604 | temperature=0, four valid repeats total | 4/4 | All resolved; calls vary 16–82 (60.6–286.3 s). The longest used 82 of the 90-call budget |
+| 2026-11-08 145011 | new HARD instance `django__django-16820`, temperature=0 | 0/1 | Gold check passes (5 F2P + 91 P2P); agent hit the 90-call cap at 92 calls, F2P passed, P2P did not |
+| 2026-11-08 184144 | same instance, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | Resolved in 24 calls / 96.5 s; the larger cap removed the truncation ceiling but did not cause the fix (same temperature, very different trajectory) |
+| 2026-11-08 222819 | final code: exact command + default 180 budget (16820) | 0/1 | F2P 5/5, five real P2P assertion failures; the agent stopped after a guardrail blocked more test-file reads |
+| 2026-11-09 204854 | final code with the verify-todo template (16820) | 1/1 | 31 calls / 117.3 s; the agent used no todo plan, so the verify branch was covered by the deterministic tests |
 
 ## Problems exposed
 
@@ -61,14 +78,26 @@ HARD instances?” — not “what is the leaderboard position?”.
    required a move to edit and verification.
 4. **The eval harness did not reject test-file edits.** A clean diff is part of
    the product contract, but `changed_paths` was only recorded. A test file
-   could pass the target tests and still be a dirty success. This gap is still
-   open; the current successful run happened not to edit tests.
+   could pass the target tests and still be a dirty success. The gap is closed:
+   `dirty_test_edits` flags a test file the agent touched outside the harness's
+   own patch and forces `resolved=False`, whatever the tests say.
 5. **Writing is not verification.** The first no-edit arm produced a patch but
    did not run the existing test file; the P2P regression was only discovered at
    judging time.
 6. **Child results and child tokens were hard to observe.** A timed-out child’s
    checkpoint may be gone; the main agent sometimes re-spawned to learn status,
    and reports counted only the main session’s tokens.
+8. **Django's parallel runner can lose the failure it crashed on.** A test
+   whose exception cannot be pickled aborts the pool with `TypeError: cannot
+   pickle 'traceback' object`, and the report then names no failing test. The
+   Django judge now runs with `--parallel 1`; the same diff then yields 91
+   parsed outcomes and 5 named failures.
+
+7. **A measurement pin can defeat the sandbox.** Importing the eval seam before
+   `SHERRY_WORKSPACE_DIR` froze `WORKSPACE_DIR` onto the live persona directory.
+   The run still reported 1/1, but `eval_workspace_has_sessions=false` and
+   `live_sessions_unchanged=false` exposed it; the report’s isolation block is
+   the gate that keeps such a run out of the capability count.
 
 ### Current resolutions
 
@@ -110,21 +139,21 @@ reset, and the main agent then made roughly 70 `patch_file` attempts on
 `compiler.py`. That loop was a **patch-retry pathology**, not an unlicensed
 `write_file` overwrite, so the license never fired. The earlier 8/16 gate
 blocked `patch_file` too, which is how the 2026-11-01 run ended; the current
-7/14 advisory design deliberately removed blocking.
+7/12 advisory design deliberately removed blocking.
 
-## The current design: DelegationPressureGate (7/14 advisory)
+## The current design: DelegationPressureGate (7/12 advisory)
 
-The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/14
-behavior below is the design reconciled on 2026-11-02. The 2026-11-03 rerun (0/2) is its first measurement; it did not resolve the HARD slice — see `evals/swebench/RESULTS.md`.
+The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/12
+behavior below is the current design (the 2026-11-03 rerun measured the earlier 7/14 setting); it did not resolve the HARD slice — see `evals/swebench/RESULTS.md`.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
 - Counts **read/exploration** calls cumulatively within one turn.
 - At **7** reads, injects one `<system-reminder source="delegation_pressure">` warning through the gate's own mid-turn `abefore_model` path.
-- At **14** reads, injects the escalated system-reminder with stronger language. Tools remain available; the gate advises, never blocks.
+- At **12** reads, injects the escalated system-reminder with stronger language. Tools remain available; the gate advises, never blocks.
 - Browser debugging tools are excluded from counting.
 - An accepted/pending successful spawn restarts the count, so the main agent
-  can inspect/verify and the gate re-arms on another 7/14 reads. A failed spawn
+  can inspect/verify and the gate re-arms on another 7/12 reads. A failed spawn
   and writes alone do not reset it; `after_agent` also resets at the turn
   boundary.
 

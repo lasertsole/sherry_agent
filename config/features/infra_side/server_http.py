@@ -24,7 +24,6 @@ class ServerHttpConfig(TypedDict):
     env_model_group_prefixes: tuple[str, ...]
     env_split_out_keys: frozenset[str]
     env_panel_hidden_prefixes: tuple[str, ...]
-    memory_system_file_names: list[str]
     memory_max_content_length: int
     # The persona/system prompt files can be longer than memory entries; the
     # shipped AGENTS.md template is ~4.6K chars, so the old 2K cap rejected the
@@ -102,7 +101,7 @@ SERVER_HTTP: ServerHttpConfig = {
     # the .models.example / .network.example templates —
     # the chat model first, then the auxiliary model it delegates simple work to,
     # then TaskFlow / compression. The trailing entries double as the group order
-    # for the network.jsonc groups (GET /network-config): the browser feature's
+    # for the .network groups (GET /network-config): the browser feature's
     # switches and LangSmith tracing render after the model families.
     "env_group_prefixes": (
         "MAIN_LLM_",
@@ -151,7 +150,6 @@ SERVER_HTTP: ServerHttpConfig = {
             "WORKSPACE_TEMPLATE_LANG",
         }
     ),
-    "memory_system_file_names": ["MEMORY.md", "USER.md", "FACTS.md"],
     "memory_max_content_length": 8000,
     "system_prompt_max_content_length": 12000,
 }

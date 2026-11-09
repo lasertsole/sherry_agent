@@ -58,8 +58,8 @@ You are working inside a checkout of `{repo}` at the commit the issue was
 reported against; that checkout is the session's project directory. Fix the
 issue in the library source.
 
-- The project's environment interpreter is the `python` on PATH (`python -m
-  pytest <path>` runs a test file). Use it if you want to run tests.
+- The project's environment interpreter is the `python` on PATH. The
+  Evaluation tests section below gives the exact command for this instance.
 - Before you stop: run the tests that cover every source file you changed —
   the neighboring test module, plus your reproduction of the reported issue.
   A patch that fixes the reported case but breaks a neighboring test is not
@@ -67,9 +67,12 @@ issue in the library source.
 - Do not repeat an identical command after its output has told you what you
   need. Once a candidate patch exists, spend the remaining budget verifying
   and refining it, not re-probing the environment.
-- The target tests are in the checkout. Run them after every source edit. If
-  one fails, the next change must be in the library source (or a read of the
-  failing test); do not keep rewriting a reproduction script.
+- The target tests are in the checkout. Before editing, read the
+  FAIL_TO_PASS and PASS_TO_PASS test bodies and extract their exact input →
+  expected-output cases; derive the predicate from those cases, not only from
+  the issue prose. Run both lists after every source edit. If one fails, the
+  next change must be in the library source (or a read of the failing test);
+  do not keep rewriting a reproduction script.
 {target_tests}
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
@@ -83,7 +86,11 @@ _TEST_EXPOSURE_MAX_CHARS = 12000
 
 
 def _target_tests_block(
-    instance: Instance, fail_to_pass: list[str], *, preapplied: bool = False
+    instance: Instance,
+    fail_to_pass: list[str],
+    pass_to_pass: list[str] | None = None,
+    *,
+    preapplied: bool = False,
 ) -> str:
     """Render the read-only evaluation-tests block for the task prompt."""
     patch = instance.test_patch.strip()
@@ -95,6 +102,7 @@ def _target_tests_block(
             + "\n...[test patch truncated; read the test files in the checkout]"
         )
     names = "\n".join(f"- {name}" for name in fail_to_pass[:20]) or "- (none listed)"
+    keep_names = "\n".join(f"- {name}" for name in (pass_to_pass or [])[:20]) or "- (none listed)"
     if preapplied:
         intro = (
             "The evaluation test patch is ALREADY APPLIED to this checkout. "
@@ -106,6 +114,7 @@ def _target_tests_block(
             "The grader will apply this test patch and run the FAIL_TO_PASS tests "
             "below. Do not modify the tests; make the library source satisfy them."
         )
+    commands = _suggested_commands(instance, fail_to_pass, pass_to_pass)
     return f"""
 ## Evaluation tests (read-only)
 
@@ -114,15 +123,68 @@ def _target_tests_block(
 FAIL_TO_PASS:
 {names}
 
+PASS_TO_PASS (must keep passing):
+{keep_names}
+
+Suggested feedback loop (run after every source edit; a non-zero exit is the
+actionable failure — fix the library source and rerun):
+{commands}
+
 ```diff
 {patch}
 ```
 """
 
 
+def _suggested_commands(
+    instance: Instance,
+    fail_to_pass: list[str],
+    pass_to_pass: list[str] | None,
+) -> str:
+    """The exact runner command for both target sets, in this repo's dialect.
+
+    Django test ids are labels (``app.module.Class.test``); a pytest repo uses
+    node ids. Running the apps that own PASS_TO_PASS is cheaper than listing
+    every id and still covers them, which is what the successful runs did.
+    """
+    if getattr(instance, "judge_mode", "") == "django":
+        exact = " ".join(fail_to_pass[:20])
+        apps = sorted(
+            {
+                label.split(".", 1)[0]
+                for label in [*fail_to_pass, *(pass_to_pass or [])]
+                if "." in label
+            }
+        )
+        lines = [f"- `python tests/runtests.py {exact}` — the exact FAIL_TO_PASS set."]
+        if apps:
+            lines.append(
+                f"- `python tests/runtests.py {' '.join(apps)}` — the apps that own PASS_TO_PASS."
+            )
+        return "\n".join(lines)
+
+    exact = " ".join(fail_to_pass[:20])
+    files = sorted({node.split("::", 1)[0] for node in [*fail_to_pass, *(pass_to_pass or [])]})
+    lines = [f"- `python -m pytest {exact}` — the exact FAIL_TO_PASS set."]
+    if files:
+        lines.append(f"- `python -m pytest {' '.join(files)}` — the files that own PASS_TO_PASS.")
+    return "\n".join(lines)
+
+
 def _looks_like_test(path: str) -> bool:
     """Heuristic for the dirty-diff gate: a test path or a ``test_*.py`` file."""
     return "tests" in path.split("/") or Path(path).name.startswith("test_")
+
+
+def _dirty_test_edits(changed: list[str], test_paths: list[str]) -> list[str]:
+    """Agent edits to test files, excluding the harness's own test patch.
+
+    A clean diff is part of the product contract: touching a test file (other
+    than the harness-owned patch, which is reset before judging) makes the run
+    dirty even when the target tests pass.
+    """
+    harness_owned = set(test_paths)
+    return [path for path in changed if path not in harness_owned and _looks_like_test(path)]
 
 
 #: Appended to the neutral working rules for the swebench arm ONLY (the
@@ -252,7 +314,7 @@ def main() -> None:
             args.append(item)
         index += 1
     # ``--hard`` runs the HARD slice (multi-test regressions, 100+ PASS_TO_PASS
-    # tests, one repo each); without it the small sympy spike is the default.
+    # tests); without it the small sympy spike is the default.
     default_slice = instances.HARD_INSTANCES if "--hard" in flags else instances.SPIKE_INSTANCES
     wanted = tuple(args) or default_slice
     raise SystemExit(
@@ -297,6 +359,12 @@ def _run(
     # imported it at module load, so this import must happen before the
     # sandbox redirects persistence.
     import agent.core  # noqa: F401
+
+    # Pin after the workspace override and config hydration: importing
+    # ``server.service.messages`` too early would freeze WORKSPACE_DIR onto the
+    # live persona directory, defeating the sandbox isolation.
+    harness.pin_eval_budget()
+    harness.pin_eval_temperature()
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(
@@ -395,7 +463,12 @@ def _run(
             "instance_python": instances.INSTANCE_PYTHON,
             "slice": "hard" if hard else "spike",
         },
-        "model": {**harness._model_info(), "thinking_enabled": False},
+        "model": {
+            **harness._model_info(),
+            "thinking_enabled": False,
+            "temperature": harness.EVAL_TEMPERATURE,
+        },
+        "budget": {"main_max_iterations": harness.eval_main_max_iterations()},
         "agent_config": harness._coding_preset_payload(),
         # This run's probed network reality (default-off philosophy: the record
         # says what was reachable; nothing was switched on for it).
@@ -692,6 +765,7 @@ def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
         "pass_to_pass_ok": False,
         "test_patch_applied": False,
         "target_tests_exposed": bool(instance.test_patch.strip()),
+        "unrunnable_test_ids": instance.unrunnable_ids(),
         "judge_detail": "",
         "judge_tests": None,
         "duration_s": 0.0,
@@ -744,11 +818,14 @@ async def _run_instance(
     instance: Instance, results_dir: Path, *, hard: bool = False
 ) -> dict[str, Any]:
     fail_to_pass, pass_to_pass = instance.node_ids()
+    unrunnable = instance.unrunnable_ids()
     test_paths = instances.test_files_of(instance.test_patch)
     tests_preapplied = bool(instance.test_patch.strip()) and instances.apply_patch(
         instance, instance.test_patch
     )
-    target_tests = _target_tests_block(instance, fail_to_pass, preapplied=tests_preapplied)
+    target_tests = _target_tests_block(
+        instance, fail_to_pass, pass_to_pass, preapplied=tests_preapplied
+    )
     prompt = _TASK_TEMPLATE.format(
         problem=instance.problem_statement.strip(),
         repo=instance.repo,
@@ -837,6 +914,7 @@ async def _run_instance(
                 "pass_to_pass_ok": False,
                 "test_patch_applied": False,
                 "target_tests_exposed": bool(instance.test_patch.strip()),
+                "unrunnable_test_ids": unrunnable,
                 "judge_detail": "",
                 "judge_tests": None,
                 "duration_s": round(time.monotonic() - started, 1),
@@ -874,9 +952,7 @@ async def _run_instance(
             resolved = False
             detail = "the test patch does not apply — the agent changed test files"
 
-        dirty_test_edits = [
-            path for path in changed if path not in set(test_paths) and _looks_like_test(path)
-        ]
+        dirty_test_edits = _dirty_test_edits(changed, test_paths)
         if dirty_test_edits:
             resolved = False
             detail += f"\nDIRTY TEST EDITS: {', '.join(dirty_test_edits)}"
@@ -894,6 +970,7 @@ async def _run_instance(
             "pass_to_pass_ok": bool(test_patch_applied and ok_p2p),
             "test_patch_applied": test_patch_applied,
             "target_tests_exposed": bool(instance.test_patch.strip()),
+            "unrunnable_test_ids": unrunnable,
             "tests_preapplied": tests_preapplied,
             "dirty_test_edits": dirty_test_edits,
             "judge_detail": detail[-3000:],

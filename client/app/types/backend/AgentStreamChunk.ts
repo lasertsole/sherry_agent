@@ -25,7 +25,8 @@ export type AgentStreamChunk = {
    */
   content: string;
   /**
-   * Chunk type: "text" (conversational), "tool_start" (tool begins), "tool_end" (tool completes).
+   * Chunk type: "text", "reasoning", "tool_start", "tool_result", "tool_end"
+   * (see `bridge/chat-types.ts::AgentChunkType`).
    */
   chunk_type: string;
 };

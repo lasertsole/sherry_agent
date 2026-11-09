@@ -89,57 +89,45 @@ Details in [Shared State System](#shared-state-system).
 
 ```python
 middleware = [
-    # after_agent hooks run in reverse list order: registered FIRST, the
-    # enforcer runs LAST at turn end and observes the truly finished turn.
     PlanContinuationEnforcer(),
-    system_prompt_injection,  # @dynamic_prompt: system prompt injection
-    # working-directory change notice: at each turn start, splice an AIMessage
-    # in front of the human message when the project directory moved since the
-    # agent was last told (one notice, naming the final root)
+    system_prompt_injection,
     WorkspaceNoticeMiddleware(),
     PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+    TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
     DynamicReminderMiddleware(),
+    InputSafetyFilter(),
+    LLMModerationMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
-    # per-session thinking toggle (client switch → /sessions/thinking):
-    # swaps request.model for the thinking on/off or low/high/max variant
     ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
-    # after_model nodes run in reverse registration order: registered right
-    # after HITL, this becomes the FIRST hook to run after `model`, so the AI
-    # message is persisted before HITL strips denied calls / interrupts.
     MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
+    OutputSafetyFilter(),
     Summarization(
         need_update_system_prompt=True,
-        model=auxiliary_llm,
+        model=compression_llm or auxiliary_llm,
         main_llm_context_window=main_llm_max_tokens,
-        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+        trigger=[("tokens", resolve_compression_threshold(
+            main_llm_max_tokens, max_output_tokens,
+            fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+        )[0])],
     ),
-    # the innermost wrap_model_call layer, closest to the raw model call:
-    # repairs tool calls whose JSON arguments failed to parse (the loop would
-    # otherwise see a call-less message and end the turn), and re-calls the
-    # model once for the unrepairable case.
     InvalidToolCallRepairMiddleware(),
 ]
-# create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
-# the compiled graph is then wrapped by apply_graph_wrappers() (innermost →
-# outermost): RepetitionGuardWrapper, then ContextLimitGuardWrapper.
+# DelegationPressureGate is appended when DELEGATION_PRESSURE["enabled"] is on.
 ```
-
-`main_llm_max_tokens` is read from the `MAIN_LLM_MAX_TOKEN` environment variable (`models/LLMs/main_llm.py`), so the main-agent summarization trigger sits at 80 % of the main model's context window (`COMPRESSION_TRIGGER_RATIO = 0.80`).
-
-> **Note:** `OutputRepetitionGuard` **is** registered as main-agent middleware (per-call interception) **and** the compiled graph is additionally wrapped by `RepetitionGuardWrapper` for stream-level detection — see [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper).
 
 ### Worker / Subagent Pipeline (`agent/tools/subagent/spawn/core.py`)
 
@@ -148,21 +136,17 @@ middleware = [
     Summarization(
         model=auxiliary_llm,
         main_llm_context_window=main_llm_max_tokens,
-        trigger=[
-            ("messages", 40),
-            ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
-        ],
+        summary_total_max_tokens=_effective_child_summary_tokens(spawn_depth),
+        trigger=[("messages", 40), ("tokens", _compression_threshold_for_children(main_llm_max_tokens))],
     ),
-    IterationBudget(90 if functional_role == EXECUTOR else 60),
+    IterationBudget(iteration_limit),
+    ChildTokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
-    # invalid tool-call salvage: innermost wrap layer here too (a child's
-    # only call failing JSON parsing used to end its invocation on a
-    # narration); ainvoke means the resend never strips callbacks.
     InvalidToolCallRepairMiddleware(),
 ]
 # the child graph is wrapped the same way:
@@ -170,6 +154,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ```
 
 Differences vs the main agent:
+
 
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
@@ -277,7 +262,7 @@ The gate applies only while a plan is open; a session outside plan mode sees the
 **Module:** `agent/middlewares/iteration_budget/core.py` · **Class:** `IterationBudget(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Constructor: `__init__(max_iterations: int = 50)`; the main agent and the executor subagent register `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
+Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Constructor: `__init__(max_iterations: int = 50)`; the main agent registers `IterationBudget(180)`, the executor subagent `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
 
 - `before_agent` resets the counters in `state_register_mem`: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call` consumes 1 per model call; when the budget is exhausted it returns a terminal `AIMessage` **without calling the model**.
@@ -288,7 +273,7 @@ Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE 
 **Module:** `agent/middlewares/tool_guardrails/core.py` · **Class:** `ToolGuardrails(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_tool_call` / `awrap_tool_call`
 
-Detects five failure pathologies and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
+Detects the failure pathologies below and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
 
 | Pathology                      | Trigger                                                                                                                            | WARN after                          | BLOCK after                          | hard-stop mode |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------ | -------------- |
@@ -297,6 +282,8 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
 | Idempotent no-progress         | Same idempotent tool (metadata `idempotent: true`) returning a result hash an earlier call of that tool already produced this turn | 2 (`no_progress_warn_after`)        | 5 (`no_progress_block_after`)        | HALT at 5      |
 | Ping-pong                      | Unbroken A → B → A → B bouncing between two tools where both consecutive calls are stagnant                                        | 4 (`ping_pong_warn_after`)          | 6 (`ping_pong_block_after`)          | HALT at 6      |
 | Argument churn                 | Same idempotent tool cycling through argument variants whose result stays unchanged (stagnant)                                     | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5      |
+| Signature streak (status-blind) | Same tool + same args hash repeated, regardless of the result status (terminal declares 5 via metadata)                     | 3 (`streak_warn_after`)             | warning budget spent → that exact signature | HALT in hard-stop mode |
+| Result repetition              | A non-idempotent tool returns a byte-identical result on consecutive calls with different arguments                        | 3 (`result_repetition_warn_after`)  | 6 (`result_repetition_block_after`)  | HALT at 6      |
 
 - `before_agent` resets the per-turn guard state (key `tool_guardrail_state` in `state_register_mem`) — strictly turn-scoped, so a fresh turn starts clean.
 - `wrap_tool_call` pre-checks blocked tools and halt state (returns an error `ToolMessage` without executing), runs the tool, then evaluates the result:
@@ -305,6 +292,7 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
   - `halt` sets a sticky halt for the rest of the turn (`halt_decision`).
 - **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the _precheck_ path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT — a managed retry window instead of an immediate wall.
 - **No progress means stagnation** (`is_stagnant`): a successful idempotent call only counts as no-progress when the _same tool_ already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while _both_ consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
+- **Test-file read exemption:** a `read_file` targeting a test path (`tests/` segment, `test_*.py`, `*_test.py`) is acceptance feedback, not probing: it does not advance the signature streak and the no-progress/pair paths skip it. Only `read_file` is exempt; terminal/search and source reads keep the normal counting.
 - `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every _block_ threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
 
 ▶️ Full details: [wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
@@ -565,7 +553,7 @@ Each handler call runs through a classify → act loop built on `pub/func/messag
 | Fallback (`should_fallback=True`, non-retryable) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | Switch to the next fallback candidate; chain exhausted → re-raise                                                                                                                           |
 | Hard fail                                        | `format_error`                                                                                                                                      | Re-raise (no retry, no fallback)                                                                                                                                                            |
 
-**Stale-streak circuit breaker (cross-turn):** every timeout-classified failure — and every timeout-classified partial-stream-stub retry — increments the session-scoped `llm_stale_streak` in `state_register_mem`; any successful handler call resets it to 0. When the streak reaches `stale_giveup_threshold`, the next model call raises `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")` **before** the LLM is invoked, ending a persistent provider stall across turns.
+**Stale-streak circuit breaker (turn-scoped by default; `stale_giveup_scope="session"` is opt-in):** every timeout-classified failure — and every timeout-classified partial-stream-stub retry — increments the session-scoped `llm_stale_streak` in `state_register_mem`; any successful handler call resets it to 0. When the streak reaches `stale_giveup_threshold`, the next model call raises `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")` **before** the LLM is invoked, ending a persistent provider stall. The streak resets at each turn start unless the session scope is selected.
 
 **Model fallback chain:** `FallbackCandidate(provider, model_name, model)` entries are built by `models/LLMs/main_llm.py::build_fallback_chain()` from `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` env vars (i = 1…, stops at the first missing `NAME`; `PROVIDER` defaults to `openai`; candidates whose client cannot be constructed are skipped with a warning). The 1-based active index is sticky per session in `llm_fallback_index`: at the start of every model call the request is re-bound to the already-activated candidate via `request.override(model=...)`, and on a fallback-classified failure (or a content-filter flag) the next candidate is activated. With no `FALLBACK_LLM_*` configured (the default) the middleware is a plain bounded retry loop.
 
@@ -584,14 +572,14 @@ Each handler call runs through a classify → act loop built on `pub/func/messag
 **Module:** `agent/middlewares/summarization/core.py` · **Class:** `Summarization(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent` (counter reset), `wrap_model_call` / `awrap_model_call`
 
-The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware` (**not** LangChain's `SummarizationMiddleware`): when the trigger fires, it compacts history with a budget-based cutoff — non-LLM strategies first, auxiliary-LLM summarization only when text degradation is safe. The `keep` parameter is accepted but unused; tail retention is budget-based: `clamp(context_window × 0.25, 2 000, 15 000)` tokens (`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
+One of the innermost middleware layers — only `InvalidToolCallRepairMiddleware` (and `DelegationPressureGate` when enabled) sits closer to the LLM. A from-scratch `AgentMiddleware` (**not** LangChain's `SummarizationMiddleware`): when the trigger fires, it compacts history with a budget-based cutoff — non-LLM strategies first, auxiliary-LLM summarization only when text degradation is safe. The `keep` parameter is accepted but unused; tail retention is budget-based: `clamp(context_window × 0.25, 2 000, 15 000)` tokens (`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`).
 
 - **Lifecycle & routing:** the middleware now spans five trigger points (T1–T5) — T1 preflight (`before_agent` / `abefore_agent`), T2 pre-call dispatch (`wrap_model_call` / `awrap_model_call`), T3 post-response re-check on real (reported) tokens, and the T4 (413 Payload Too Large) / T5 (context overflow) error-recovery ring — and every trigger runs the four-route overflow decision (truncate / compact / both / pass), delegated to `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/tool_args_truncate.py` (tool-call args truncation), and `pub/func/message/llm_error_classifier.py`. State lives in session-scoped `summarization_*` keys (13 total, 11 reset per turn). Full docs: see the link row below.
-- **Trigger semantics**: a clause is `("messages", N)` or `("tokens", N)`; a list of clauses is an **OR** — any clause firing starts compression. Main agent: `[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. Worker: `[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`. `COMPRESSION_TRIGGER_RATIO = 0.80`.
+- **Trigger semantics**: a clause is `("messages", N)` or `("tokens", N)`; a list of clauses is an **OR** — any clause firing starts compression. Main agent: `[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])]`. Worker: `[("messages", 40), ("tokens", _compression_threshold_for_children(main_llm_max_tokens))]`. `COMPRESSION_TRIGGER_RATIO = 0.80` is only the unset-cap fallback.
 - **Cutoff safety:** `_determine_cutoff` picks the cut point, then `_adjust_for_orphan_pairs` walks it backwards until no `ToolMessage` is separated from its `AIMessage` tool-call; when the last user turn accounts for ≥ 50 % of the estimated tokens (`LAST_TURN_RATIO_THRESHOLD = 0.5`), the last turn itself is compressed (the `self._compress_last_turn` flag) instead of being summarized away.
 - **Anti-thrashing:** at most `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` compressions **per session** (not per turn); after `INEFFECTIVE_THRESHOLD = 2` consecutive ineffective attempts (effectiveness = message-count reduction or token reduction ≥ `MIN_EFFECTIVENESS_PCT = 0.05`) the LLM step is disabled (`summarization_skip_llm`) and only non-LLM strategies run. Counters live in `state_register_mem` under session-level `summarization_*` keys (compression count, ineffective streak, last tokens, last strategy, skip flag, recovery state, …).
 - **Compression-time media offload:** before the discarded prefix is summarized, `offload_inline_media` (`summarization/media_offload.py`) rewrites its inline media (`data:` URLs, bare `base64` fields, raw bytes) to `SESSIONS_DIR/<session_id>/media/{sha256[:16]}{ext}` (content-hash deduplicated; the subdirectory is removed wholesale by `clear_session`) and replaces each block with an `[evicted to: <path>]` text pointer — the marker `_collect_evicted_refs` scans, so the path lands in `SummaryDoc.evicted_refs` and survives on the summary chain. Only the range being summarized is rewritten; the preserved tail keeps its media blocks untouched. Every failure is fail-open: an undecodable / unwritable block becomes `<media error="failed_to_offload" />`.
-- **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS = 16 000` characters are re-truncated, keeping head 30 % / tail 30 % (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
+- **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `SUMMARY_TOTAL_MAX_TOKENS = 4 000` tokens are re-truncated, keeping head 30 % / tail 30 % (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
 - **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.
 - **Structured summary:** the auxiliary call goes through `with_structured_output(SummaryDoc, method="json_mode")` (`summarization/summary_doc.py`); the Markdown is code-rendered from the document and the capped document itself is stored on the AIMessage as `additional_kwargs["summary_doc"]` (the chained re-summarization feeds it back as `<prior-summary-json>`). Parse failures degrade to `json_repair`, then to the legacy free-form path; item caps are array slices (`completed[-5:]`, `key_decisions[-5:]`, `active_plan_notes[-20:]`, `evicted_refs[-20:]`), not a Markdown re-parse.
 - `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`. Both delivery paths (directly after compaction, and the anti-thrash gate path) skip the injection when the request already carries a `SystemMessage` with identical content — no `override`, no new `SystemMessage` — keeping the model-visible prefix byte-identical.
@@ -600,7 +588,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 
 **Background-review sub-agents** (`summarization/background_reviews.py`): separate `create_agent` instances. Two passes exist, on two different triggers, two different models and two different tool barriers:
 
-- `_MEMORY_REVIEW_PROMPT` (memory review): fired by the compression pipeline, on the MAIN model configuration rebuilt from the turn's own (`_build_session_model` — the cache-warm seam above), with the session's full tool face; its graph carries `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`, and `_BackgroundReviewLimitTool` rejects any tool whose metadata lacks `background_review: true`, so the review may only EXECUTE the tagged set (`memory`, `knowledge`, `question`, plan mode). The face is full for prefix-cache parity while the gate is the execution barrier. The skills toolset is deliberately NOT tagged — skill extraction can never happen here.
+- `_MEMORY_REVIEW_PROMPT` (memory review): fired by the compression pipeline, on the MAIN model configuration rebuilt from the turn's own (`_build_session_model` — the cache-warm seam above), with the session's full tool face; its graph carries `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`, and `_BackgroundReviewLimitTool` rejects any tool whose metadata lacks `background_review: true`, so the review may only EXECUTE the tagged set (`memory`, `question`, plan mode). The face is full for prefix-cache parity while the gate is the execution barrier. The skills toolset is deliberately NOT tagged — skill extraction can never happen here.
 - `_SKILL_REVIEW_PROMPT` (skill review): fired by the plan-COMPLETION hook (`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_skill_review`), on the AUXILIARY model (`_create_skill_review_agent`, `temperature=0`), with no conversation. Its tool face is bound to `skill_list` / `skill_view` / `skill_manage` only; knowledge and memory are absent. It snapshots `skills/auto`, runs the review, and the runtime judge (`skill_review.judge_skill_update`) checks grounded/reusable/trigger/quality. A rejected attempt restores the snapshot and retries with feedback; exhaustion records a failure marker without advancing the success fingerprint. It writes no knowledge or FACTS; `handoff-tree.json` remains the raw audit file.
 - **Skill-review dedup:** `_detect_todo_all_complete` fires when every todo is `completed`/`cancelled` and the plan's **snapshot fingerprint** (`_plan_snapshot_hash`: id + content + status + plan_ref) differs from the one stored under `skill_review_snapshot_hash` after the last SUCCESSFUL pass — so an in-place edit of a completed todo re-extracts, an unchanged plan does not, and a failed pass retries on the next completion turn. Gates in front of it: the `BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]` master switch, the `skill_review_lock`, and a running event loop.
 - **Post-compression todo update:** when `compression_todo_update_enabled` (default on) is set and a compaction actually discards messages, the async path fire-and-forgets a dedicated background-review agent (`_COMPRESSION_TODO_PROMPT`) whose graph runs under a derived session key (`<id>::compression-todo`, so `IterationBudget` / `ToolGuardrails` state can never touch the main session) and whose tool set is exactly one metadata-marked `todowrite` shim (`todo_update: True`, admitted by `_BackgroundReviewLimitTool(allowed_metadata_key="todo_update")`) bound to the main session. It reconciles the session todo list with the discarded slice — marking actually-finished items `completed` / `cancelled`, adding evidenced new work as `pending`, writing the COMPLETE list back via `todowrite`. It never blocks or fails compression; a per-session `compression_todo_update_lock` prevents overlapping runs and the sync path only schedules when an event loop is already running.
@@ -835,15 +823,15 @@ Middleware tuning lives in per-object TypedDict modules — the env only supplie
 
 | Module                    | Knobs                                                                                                                                                                                                                             |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                               |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                               |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"` (`"true"` / `"false"` / `"auto"`; any other value takes the fail-safe skill path), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` plus the preserve/attempt/cooldown/threshold constants read by `Summarization` and `summarization/background_reviews.py`                                                                                     |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, preview head/tail 5, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                                            |
-| `tool_guardrails.py`      | the five-pathology thresholds and recovery defaults listed in the ToolGuardrails section                                                                                                                                          |
+| `tool_guardrails.py`      | the pathology thresholds and recovery defaults listed in the ToolGuardrails section                                                                                                                                          |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                                  |
 | `repetition_guard.py`     | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30`                                                                              |
 | `max_tokens_boost.py`     | `base_max_tokens` (`MAIN_LLM_OUTPUT_MAX_TOKEN`, default 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3`                                                                                                       |
-| `llm_retry.py`            | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                                     |
+| `llm_retry.py`            | `max_retries=10`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                                     |
 | `context_guard.py`        | `output_cut_ratio=0.20`, `check_interval=20`                                                                                                                                                                                      |
 
 > **Related but separate:** per-tool timeouts are module constants bound to the feature registry (`TOOLS_TIMEOUTS` in `config/features/agent_side/tools_timeouts.py`) — `WEB_SEARCH_TIMEOUT = 15` (`agent/tools/web/web_search.py`), `TERMINAL_TIMEOUT = 30` (`agent/tools/terminal/core.py`), `PYTHON_REPL_TIMEOUT = 30` (`agent/tools/python_repl.py`; the child process is killed on expiry). `TOOL_CALL_TIMEOUT_MINUTES` (default 5) is a `sherry.jsonc` setting plumbed through `config/sherry_settings.py` and exposed by the config service, but **no tool-execution path consumes it** — it is not an active timeout knob. The summarization pipeline reads its constants from `config/features/agent_side/summarization.py`.
@@ -872,7 +860,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt: system prompt injection
         MultimodalProcessor(),  # multimodal input normalization
-        IterationBudget(90),  # per-turn call budget
+        IterationBudget(180),  # per-turn call budget
         ToolGuardrails(),  # failure-pathology detection
         ToolCallNormalize(),  # tool_use/tool_result repair
         PathGuard(),  # path-argument screening
@@ -903,7 +891,7 @@ agent = create_agent(
 | `HeartbeatStaleness`       | (defaults)                        | interval 1 min, idle 7 / in-tool 20                                                           | defaults                                            |
 | `OutputRepetitionGuard`    | (defaults)                        | 3 / 2 / 0.6 / 6 / 8                                                                           | defaults                                            |
 | `MaxTokensBoostMiddleware` | (env)                             | base: request `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN` (8192) → 8192, cap 32768, 3 retries  | defaults                                            |
-| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | defaults (+ `fallback_chain` from `FALLBACK_LLM_*`) |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=10`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | defaults (+ `fallback_chain` from `FALLBACK_LLM_*`) |
 
 ---
 

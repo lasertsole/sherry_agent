@@ -39,7 +39,7 @@ Code Intel 用五个检索引擎回答代码理解问题，每个引擎对应一
 ```text
 child agent assembly (spawn/core.py)
   base tools → role policy (allow / deny / main_only gate)
-    ├─ role ∈ CODE_INTEL_ROLES?  → + explore/callers/callees/impact/semantic_code_search
+    ├─ role ∈ CODE_INTEL_ROLES?  → + explore/callers/callees/impact/path (+ semantic_code_search when enabled)
     │                              + the eight lsp_* tools
     └─ always                    → + ast_grep_search / ast_grep_rewrite
 ```
@@ -228,7 +228,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime 目录、5 s 版本探针超时、5 s / 5 s 回收宽限；扫描预算与匹配上限在 `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` 与 `librarian` |
 
-索引数据库跟随**会话的项目目录**：spawn 时索引写入 `<project_root>/.sherry/codeintel/index.db`（`agent/tools/code_intel/roots.py::index_db_for_root`），因此在多个项目间交替使用不再重建同一个共享索引（索引里存的是项目相对路径，跨根会互相冲突）。无项目根时回退到共享的 `CODE_INTEL_DIR / "index.db"`（`config/path.py` 定义 `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`），`code_intel_index_db_path` 可显式固定一份，`SHERRY_CODE_INTEL_DB` 在调用时覆盖数据库路径（`SHERRY_CODE_INTEL_ROOT` 覆盖根）。
+索引数据库跟随**会话的项目目录**：spawn 时索引写入 `<project_root>/.sherry/codeintel/index.db`（`agent/tools/code_intel/roots.py::index_db_for_root`），因此在多个项目间交替使用不再重建同一个共享索引（索引里存的是项目相对路径，跨根会互相冲突）。无项目根时回退到共享的 `CODE_INTEL_DIR / "index.db"`（`config/path.py` 定义 `CODE_INTEL_DIR = APP_HOME / ".codeintel"`），`code_intel_index_db_path` 可显式固定一份，`SHERRY_CODE_INTEL_DB` 在调用时覆盖数据库路径（`SHERRY_CODE_INTEL_ROOT` 覆盖根）。
 
 ## 🖥️ 环境能力矩阵
 

@@ -16,10 +16,10 @@ file, per revision. This module is that memory:
   moved by its own delta, so an EXISTING license advances and no license is
   invented for a file the session never read.
 
-:func:`licensed_revision` returns the revision ``write_file`` may cite as the
-atomic write's ``expected_revision`` (``None`` = no license: the write must be
-refused). The value is a plain revision id, so a license that went stale is
-refused by the same check that catches a concurrent writer.
+:func:`licensed` returns the :class:`FileLicense` whose ``.revision``
+``write_file`` cites as ``expected_revision`` (``None`` = no license: the write
+must be refused). A license that went stale is refused by the same check that
+catches a concurrent writer.
 
 The registry is process-local and deliberately not persisted: a restart forgets
 the licenses, and the next overwrite of an existing file answers "read it

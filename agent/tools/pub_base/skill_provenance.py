@@ -1,20 +1,17 @@
-"""Skill write-origin provenance — ContextVar for distinguishing agent-sediment skill writes from foreground user-directed writes.
+"""Skill write-origin provenance — ContextVar for agent-sediment vs user writes.
 
-The curator only consolidates/prunes skills it autonomously created via the
-background self-improvement review fork. Skills a user asks a foreground
-agent to write belong to the user and must never be auto-curated.
+The curator only consolidates/prunes skills it autonomously created. Skills a
+user asks a foreground agent to write belong to the user and must never be
+auto-curated.
 
-This module exposes a ContextVar that run_agent.py sets before each tool
-loop so tool handlers (e.g. skill_manage create) can check whether they
-are executing inside the background-review fork.
-
-The signal piggybacks on AIAgent._memory_write_origin, which is already
-set to "background_review" for review-fork instances (see
-_spawn_background_review in run_agent.py) and defaults to "assistant_tool"
-for normal (foreground) agents.
+The background-review fork in
+``agent/middlewares/summarization/background_reviews.py`` sets this ContextVar
+around its tool loop (``set_current_write_origin(BACKGROUND_REVIEW_ORIGIN)``),
+and tool handlers such as ``skill_manage`` read it to mark the created skill as
+agent-created.
 
 Usage:
-    from tools.skill_provenance import (
+    from agent.tools.pub_base.skill_provenance import (
         set_current_write_origin,
         reset_current_write_origin,
         get_current_write_origin,
@@ -25,10 +22,6 @@ Usage:
         ...  # tool runs here
     finally:
         reset_current_write_origin(token)
-
-    # inside a tool:
-    if get_current_write_origin() == "background_review":
-        mark_agent_created(skill_name)
 """
 
 import contextvars
@@ -39,9 +32,7 @@ _write_origin: contextvars.ContextVar[str] = contextvars.ContextVar(
     default="foreground",
 )
 
-# The sentinel value the background review fork uses; mirrors
-# run_agent.py's AIAgent._memory_write_origin override in
-# _spawn_background_review().
+# The sentinel value the background-review fork uses.
 BACKGROUND_REVIEW = "background_review"
 
 

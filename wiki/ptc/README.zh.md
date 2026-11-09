@@ -56,7 +56,7 @@ executor child agent
 
 **做桥接，而非传递工具对象。** 真实工具是异步 `BaseTool`：需要父进程事件循环、模型提供方配置，以及用于解析状态的会话——这些恰恰不该进入一次性解释器。生成的 stub 只通过 socket 传参数，父进程用 `asyncio.run_coroutine_threadsafe` 把每个请求派发到自己的事件循环上，因此阻塞的子进程永远不会阻塞父进程的异步工作。
 
-**与 `python_repl` 的分工。** 两个执行面都以镜像的受限 builtins 集合与同一个 `scrub_env` 执行模型编写的 Python，也都把子进程的启动目录设为 `ROOT_DIR`。它们的形态不同：`python_repl` 在 30 秒预算内运行单个代码片段且没有任何工具访问；`execute_code` 则运行更长的脚本（120 秒预算），可以同步调用最多 50 次真实工具。正是这份额外的触达使 PTC 仅限 executor，也正是它额外引入进程组、RPC 桥、调用预算与导入白名单的原因。executor 角色保留 `python_repl`；PTC 是增量能力，不是替代品。两者也解析同一套 OS 原生沙箱后端：PTC 子进程的 argv 会被完全按 `sandbox=True` 的 `python_repl` 调用那样包装（见[工具沙箱页](../sandbox/README.zh.md)），`auto` 降级与 `required` 拒绝的语义见[限制](#-限制)。
+**与 `python_repl` 的分工。** 两个执行面都以镜像的受限 builtins 集合与同一个 `scrub_env` 执行模型编写的 Python，也都从会话的项目目录解析子进程启动目录（只有未绑定项目时才回退 `ROOT_DIR`）。它们的形态不同：`python_repl` 在 30 秒预算内运行单个代码片段且没有任何工具访问；`execute_code` 则运行更长的脚本（120 秒预算），可以同步调用最多 50 次真实工具。正是这份额外的触达使 PTC 仅限 executor，也正是它额外引入进程组、RPC 桥、调用预算与导入白名单的原因。executor 角色保留 `python_repl`；PTC 是增量能力，不是替代品。两者也解析同一套 OS 原生沙箱后端：PTC 子进程的 argv 会被完全按 `sandbox=True` 的 `python_repl` 调用那样包装（见[工具沙箱页](../sandbox/README.zh.md)），`auto` 降级与 `required` 拒绝的语义见[限制](#-限制)。
 
 **工具面只有一处命名闸门。** `PTC_ROLES`——`agent/tools/subagent/types/functional_role.py` 中包含 `executor` 的唯一集合——同时被注入点（`spawn/core.py`，位于角色 allow/deny 策略之后）与提示词构建器（`spawn/system_prompt.py`，一个 PTC 指引小节）读取。因此工具面与它的提示词小节不可能各自漂移，executor 的角色定义文件也不必携带任何 PTC 专属接线。
 
@@ -118,7 +118,7 @@ TaskFlow step spawn
 
 **脚本归属与查找。** 编译器只返回源码；调用方静态校验后通过 `skill_manage(action="write_file")` 写入变更 skill 的顶层 `scripts/`。查找是 `AUTO_SKILLS_DIR/**/scripts/` 下精确 basename 的文件扫描：0 个、多个、路径越界、symlink、非法 `step_id`、超大文件全部回退 React，绝不猜。`compiler.py` 负责 prompt/静态校验，`scripts.py` 负责查找/读取。
 
-**已知限制。** 仅 executor，保持 PTC 角色边界。MVP 不做跨 step 重试的 journal：重新 spawn 可能重复脚本副作用。plan/代码变化后脚本可能过期；观察开关就是为了先量化这一点。PTC 处理工具调用级预跑；LDW 若落地，负责 step/subagent 级 journal 重放。
+**已知限制。** 仅 executor，保持 PTC 角色边界。MVP 不做跨 step 重试的 journal：重新 spawn 可能重复脚本副作用。plan/代码变化后脚本可能过期；观察开关就是为了先量化这一点。PTC 处理工具调用级预跑；LDW 负责 step 级 journal 重放。
 
 ## 🔒 安全模型
 
@@ -155,7 +155,7 @@ TaskFlow step spawn
 - **它本身并不是 OS 级沙箱。** 受限命名空间与导入守卫约束的是字面脚本能指称的名字，但 `getattr` 及其他内省 builtins 仍然可用，因此有决心的脚本可以沿可达对象继续走，触及其字面表面之外的更多能力。这属于受限命名空间层级——与既有 `python_repl` 包装器 builtins 同级。在此之上，只要存在可用的后端，子进程 argv 现在就会被 `terminal` 与 `python_repl` 所解析的同一套 OS 原生沙箱后端（Linux 的 bubblewrap、macOS 的 Seatbelt）包装，从而获得它们的写包含与敏感路径读屏蔽。仍有两个诚实的提醒：`SANDBOX_POLICY=auto`（默认）且无可用后端时，运行会在恰好一条 loguru 警告后降级为无沙箱；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net`——子进程必须能连到父进程的 loopback RPC 监听，私有网络命名空间会让工具桥不可达。写/读沙箱不变。后端本身见[工具沙箱](../sandbox/README.zh.md)。
 - **超时取消是尽力而为。** 当工具调用超出派发窗口，服务会取消自己持有的 future，但已开始在父循环上执行的协程仍可能跑完；脚本收到超时错误，而工具的副作用可能仍在继续。
 - **每次调用都付启动成本。** 没有预热池：每次 `execute_code` 都创建临时目录、生成 stub、启动 RPC 线程与全新解释器，再全部拆除。一次再简单的调用也要付出一次进程启动。
-- **子进程的工作目录是仓库根目录。** runner 将子进程的 `cwd` 默认为 `ROOT_DIR`，且 PTC 工具不会转发子代理的派生工作目录，因此脚本内的相对路径从仓库根解析，而不是从 executor 的派生位置。
+- **子进程的工作目录是会话的项目目录。** `ExecuteCodeTool._resolve_cwd()` 使用会话绑定，spawn 侧重放会转发 `run.spawned_cwd`；`ROOT_DIR` 只在没有绑定项目时兜底，因此脚本内的相对路径跟随 executor 当前所在的项目。
 - **输出截断按设计有损。** 超过 stdout 50 KB 或 stderr 10 KB 之后，尾部被替换为字节数标记；打印大表格的脚本只会得到被截断的版本。
 - **报告依赖信封。** 如果解释器在包装器打印信封之前失败，就没有可解析的结构化输出；runner 把原始 stderr 作为错误回传，stdout 可能为空。
 - **RPC token 不是跨用户边界。** 监听器现在要求一次性 token，因此读不到它的本机进程既无法调用工具，也无法完成请求。但 token 经由子进程环境传递，因此任何能在脚本短暂生命周期内读取 `/proc/<pid>/environ` 的*同用户*进程仍可恢复它；该 token 防的是无关的本机进程，而不是同用户攻击者。监听器也仍然只绑 loopback，且只存活于单个脚本的执行期间。

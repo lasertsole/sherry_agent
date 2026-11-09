@@ -8,9 +8,12 @@ Rules for entries:
 
 - an entry cites the RUN that produced it (a report directory under
   `evals/results/…`, or a log line), never a recollection;
-- `status` ∈ `TODO` / `IN-PROGRESS` / `FIXED` / `WONTFIX-ENV` — `WONTFIX-ENV`
-  means the finding is about the measurement HOST, not about Sherry, and must
-  still travel with any number we quote;
+- `status` ∈ `TODO` / `IN-PROGRESS` / `FIXED` / `WONTFIX-ENV` / `ARCHIVED` —
+  `WONTFIX-ENV` means the finding is about the measurement HOST, not about
+  Sherry, and must still travel with any number we quote; `ARCHIVED` means the
+  identifying arm/instance was removed (the lesson stays as history, not as
+  backlog). The removed arms' runs are archived in
+  `evals/swebench/RESULTS.md`; no active finding below belongs to them;
 - a HARNESS problem is fixed in the suite, never filed against the model: the
   split between "the model failed" and "the harness failed" is the whole point
   of the external suites (`coding_capability` = self-designed; `swebench`,
@@ -18,14 +21,15 @@ Rules for entries:
 
 | # | Finding | Found by | Status |
 | --- | --- | --- | --- |
-| F1 | Provider 400 on the thinking-mode replay path | `coding_capability` run `20261014_010112` | TODO (product) |
-| F2 | The orchestrator steering fights a coding task | every `coding_capability` / `swebench` run | TODO (config) |
-| F3 | Near-miss fixes are not verified against the reported behaviour | `swebench` `sympy__sympy-24909` (two runs) | TODO (skill) |
+| F1 | Provider 400 on the thinking-mode replay path | `coding_capability` run `20261014_010112` | FIXED (2026-11-09, payload injection) |
+| F2 | The orchestrator steering fights a coding task | every `coding_capability` / `swebench` run | RESOLVED (2026-10-31) |
+| F3 | Near-miss fixes are not verified against the reported behaviour | `swebench` `sympy__sympy-24909` (two runs) | FIXED (2026-11-09, verify todo + reviewer) |
 | F4 | Harness: the local pytest gate is load-sensitive | gate runs 2026-10-14 | WONTFIX-ENV |
 | F5 | The measurement host has no OS sandbox backend | every eval run | WONTFIX-ENV |
 | F6 | The auxiliary model's provider returned 429 "balance exhausted" | unit run 2026-10-14 (review factory fix) | RESOLVED (aux → DeepSeek) |
 | F7 | External instances whose own suite fights a hand-built venv | hard-slice gold checks 2026-10-14 | WONTFIX-ENV (documented) |
 | F8 | Eval leftovers inside the repo slow a repo-wide search test | gate run 2026-10-14 (`test_search_engines`) | FIXED (suite cleans up) |
+| F9 | ToolGuardrails blocks legitimate test-file reads during repair | `swebench` run `20261108_222819` | FIXED (2026-11-09, test-path read exemption) |
 
 ## F1 — Provider 400 on the thinking-mode replay path (product)
 
@@ -49,9 +53,19 @@ tool calls and re-ask — never replay a tool-call turn stripped of its reasonin
 Until then the suites pin `LLM_THINKING_ENABLED=false` per session and record it
 in the report (`model.thinking_enabled`).
 
-**Status.** TODO (product). The harness side is already handled: provider
-failures are classified `invalid_run`, retried once in a fresh session and
-excluded from the pass rate (the invalid-run rule).
+**Fix (2026-11-09).** `ReasoningDeepSeekChat` and `ReasoningChatOpenAI`
+(`models/LLMs/reasoning_openai.py`) now inject each assistant turn's
+`additional_kwargs["reasoning_content"]` into the outgoing request payload;
+langchain's message converter drops unknown kwargs, which was the 400. The
+DeepSeek client is selected in `_build_inner_chat_model_from`; the GLM client
+already existed and now shares the same injection. Unit tests cover both
+classes, the absent-reasoning case and the system-message ordering. A live
+thinking-mode provider run remains the final verification.
+
+**Status.** FIXED (payload injection; live thinking-mode run pending). The
+harness side is already handled: provider failures are classified `invalid_run`,
+retried once in a fresh session and excluded from the pass rate (the invalid-run
+rule).
 
 ## F2 — The orchestrator steering fights a coding task (config) — resolved 2026-10-31
 
@@ -97,7 +111,10 @@ reproduction: a playbook line in the coding skills (`code-wiki` /
 `ulw-execute`) on "reproduce the symptom, fix, re-run the reproduction" is the
 lever. Worth measuring again on the same instance after the change.
 
-**Status.** TODO (skill/prompt).
+**Status.** FIXED (2026-11-09). The acceptance loop (auto-inserted SYSTEM verify
+todo → reviewer subagent → failed todo_ids re-opened with notes) is the code
+enforcement; the four-language VerifyTodo prompt is the workflow text. See
+`wiki/loop-prevention/README.md` ("Plan level: the SYSTEM verify todo").
 
 ## F4 — Harness: the local pytest gate is load-sensitive (WONTFIX-ENV)
 
@@ -227,3 +244,26 @@ then the limitation travels with the numbers: task repositories are throwaway
 directories and the prompts are ours, but that mitigation is absent.
 
 **Status.** WONTFIX-ENV (documented, not silent).
+
+## F9 — ToolGuardrails cuts legitimate test-file reads during repair (FIXED)
+
+**Symptom.** In `swebench` run `20261108_222819` (django__django-16820) the
+patch was close but five P2P assertions failed. The agent tried to re-read the
+test file to align the remaining expectations; the signature-streak guard
+counted those identical reads as a loop and blocked the call. The agent then
+stopped and listed the remaining work instead of fixing it.
+
+**Evidence.** `evals/results/swebench/20261108_222819/eval_report.json` —
+`fail_to_pass_ok=true`, `pass_to_pass_ok=false`, `final_text` names the
+guardrail block; the serial re-judge of the same diff lists the five failing
+test ids.
+
+**Fix (2026-11-09).** `ToolGuardrails._is_test_file_read` exempts `read_file`
+on a test path (`tests/` segment, `test_*.py`, `*_test.py`) from the signature
+streak, no-progress counting, pair pathologies and the signature block. The
+exemption is narrow: only `read_file`, only test paths; terminal/search and
+source-file reads keep the normal streak. The iteration budget and the other
+guardrail paths still bound the turn.
+
+**Status.** FIXED (unit tests in `tests/agent/middlewares/test_tool_guardrails.py`;
+the 16820 rerun is the acceptance check).

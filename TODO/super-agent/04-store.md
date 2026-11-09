@@ -16,7 +16,9 @@
 
 ## 2. 表 schema
 
-全部 SQL 写在 `superagent/app/store.py` 顶部常量 + `migration.py`。SQLite 用 `sqlite3`（stdlib）+ `WAL` 模式（与 Sherry 一致）。**不**引入 SQLAlchemy/ORM（原型也不用 ORM，手写 SQL）。
+> **修正(问题 4)**:不用 SQLite JSON path 生成列(`$[#-1]` 算术不被支持,且序列化 shape 变化会让生成列静默失效)。改用**显式列**——Engine 写时维护,查询走普通索引。原型用生成列是因为 TS 侧 JSON 直接存;Python 侧用 dataclass,显式列更稳。
+
+全部 SQL 写在 `superagent/app/store.py` 顶部常量 + `migration.py`。SQLite 用 `sqlite3`(stdlib)+ `WAL` 模式。**不**引入 ORM。
 
 ```sql
 -- SCHEMA_VERSION = 11
@@ -24,23 +26,22 @@
 CREATE TABLE trigger (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL,
-  actor_json TEXT NOT NULL,        -- Actor 序列化
-  human INTEGER NOT NULL,          -- 0/1
-  addressed TEXT,                  -- NULL|mention|direct
-  at TEXT NOT NULL,                -- ISO8601 文本比较
+  actor_json TEXT NOT NULL,
+  human INTEGER NOT NULL,
+  addressed TEXT,
+  at TEXT NOT NULL,
   text TEXT NOT NULL,
-  channel_json TEXT,               -- ChannelAddress 序列化
+  channel_json TEXT,
   url TEXT,
-  meta_json TEXT NOT NULL          -- dict
+  meta_json TEXT NOT NULL
 );
 
 CREATE TABLE disposition (
   trigger_id TEXT PRIMARY KEY REFERENCES trigger(id),
-  filtered INTEGER NOT NULL,       -- 0/1，filtered 时 reason_code
+  filtered INTEGER NOT NULL,
   filter_reason TEXT,
   eval_id TEXT,
   decision_id TEXT,
-  -- 扇出/attach/handback/ack 记录（JSON 数组）
   reached_json TEXT,
   handed_back_json TEXT,
   acknowledged_json TEXT,
@@ -49,7 +50,7 @@ CREATE TABLE disposition (
 
 CREATE TABLE trigger_thread (
   trigger_id TEXT NOT NULL REFERENCES trigger(id),
-  thread_key TEXT NOT NULL,         -- key(source, id)
+  thread_key TEXT NOT NULL,
   source TEXT NOT NULL,
   thread_id TEXT NOT NULL,
   at TEXT NOT NULL,
@@ -62,41 +63,43 @@ CREATE TABLE thread (
   thread_key TEXT PRIMARY KEY,
   source TEXT NOT NULL,
   thread_id TEXT NOT NULL,
-  subscriptions_json TEXT NOT NULL,   -- [{ticket_id, own, context_only}]
-  context_json TEXT,                  -- 仅上下文订阅的 ticket_id 列表
-  queued_trigger_ids_json TEXT,       -- 排队等 Eval 的
+  subscriptions_json TEXT NOT NULL,
+  context_json TEXT,
+  queued_trigger_ids_json TEXT,
   eval_id TEXT,
   expired_count INTEGER DEFAULT 0,
   meta_json TEXT,
-  -- 生成列
-  active INTEGER GENERATED ALWAYS AS (CASE WHEN json_array_length(queued_trigger_ids_json) > 0 OR eval_id IS NOT NULL THEN 1 ELSE 0 END) VIRTUAL,
-  subscribed INTEGER GENERATED ALWAYS AS (CASE WHEN json_array_length(subscriptions_json) > 0 THEN 1 ELSE 0 END) VIRTUAL
+  -- 显式列(Engine 写时维护)
+  has_queued INTEGER NOT NULL DEFAULT 0,        -- queued_trigger_ids 非空时 1
+  has_eval INTEGER NOT NULL DEFAULT 0,           -- eval_id 非空时 1
+  is_active INTEGER GENERATED ALWAYS AS (has_queued OR has_eval) VIRTUAL,  -- 简单 OR,无 JSON path
+  is_subscribed INTEGER NOT NULL DEFAULT 0      -- subscriptions 非空时 1
 );
-CREATE INDEX ix_thread_active ON thread(active) WHERE active = 1;
-CREATE INDEX ix_thread_subscribed ON thread(subscribed) WHERE subscribed = 1;
+CREATE INDEX ix_thread_active ON thread(is_active) WHERE is_active = 1;
+CREATE INDEX ix_thread_subscribed ON thread(is_subscribed) WHERE is_subscribed = 1;
 
 CREATE TABLE ticket (
   id TEXT PRIMARY KEY,
-  origin_json TEXT NOT NULL,          -- {trigger_id, trigger_ids}
+  origin_json TEXT NOT NULL,
   mandate_json TEXT NOT NULL,
-  execution_json TEXT NOT NULL,       -- {name, directory, assignment_id, ...}
+  execution_json TEXT NOT NULL,
   channels_json TEXT NOT NULL,
   inputs_json TEXT NOT NULL,
   follows_json TEXT NOT NULL,
   assignments_json TEXT NOT NULL,
   latest_report_json TEXT,
   ended_json TEXT,
-  -- 生成列
-  open INTEGER GENERATED ALWAYS AS (CASE WHEN ended_json IS NULL THEN 1 ELSE 0 END) VIRTUAL,
-  active INTEGER GENERATED ALWAYS AS (
-    CASE WHEN ended_json IS NULL AND (
-      json_extract(inputs_json, '$[#-1].delivered') = 0
-      OR json_extract(assignments_json, '$[#-1].status') IN ('pending', 'running')
-    ) THEN 1 ELSE 0 END
+  -- 显式列(Engine 写时维护)
+  ended_at TEXT,                                 -- NULL = open
+  is_open INTEGER GENERATED ALWAYS AS (CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) VIRTUAL,
+  latest_assignment_status TEXT,                 -- pending|running|ended
+  has_undelivered_input INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER GENERATED ALWAYS AS (
+    CASE WHEN ended_at IS NULL AND (has_undelivered_input = 1 OR latest_assignment_status IN ('pending','running')) THEN 1 ELSE 0 END
   ) VIRTUAL
 );
-CREATE INDEX ix_ticket_open ON ticket(open) WHERE open = 1;
-CREATE INDEX ix_ticket_active ON ticket(active) WHERE active = 1;
+CREATE INDEX ix_ticket_open ON ticket(is_open) WHERE is_open = 1;
+CREATE INDEX ix_ticket_active ON ticket(is_active) WHERE is_active = 1;
 
 CREATE TABLE decision (
   id TEXT PRIMARY KEY,
@@ -112,8 +115,8 @@ CREATE TABLE effect (
   kind TEXT NOT NULL,
   key TEXT NOT NULL,
   payload_json TEXT NOT NULL,
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,   -- 全局顺序
-  status TEXT NOT NULL DEFAULT 'pending',  -- pending|running|done|failed
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER DEFAULT 0,
   last_error TEXT,
   due_at TEXT,
@@ -122,28 +125,28 @@ CREATE TABLE effect (
 CREATE INDEX ix_effect_due ON effect(due_at) WHERE status = 'pending';
 
 CREATE TABLE outbox (
-  id TEXT PRIMARY KEY,                -- message id（idempotency key）
+  id TEXT PRIMARY KEY,
   ticket_id TEXT,
   channel_json TEXT NOT NULL,
-  purpose TEXT NOT NULL,              -- acknowledgement|answer|result|attention
+  purpose TEXT NOT NULL,
   text TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',  -- pending|sent|dropped
+  status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER DEFAULT 0,
   last_error TEXT,
-  -- 生成列
-  dropped INTEGER GENERATED ALWAYS AS (CASE WHEN status = 'dropped' THEN 1 ELSE 0 END) VIRTUAL,
   dropped_at TEXT,
-  dropped_reason TEXT
+  dropped_reason TEXT,
+  is_dropped INTEGER GENERATED ALWAYS AS (CASE WHEN status = 'dropped' THEN 1 ELSE 0 END) VIRTUAL
 );
 CREATE INDEX ix_outbox_ticket_conv ON outbox(ticket_id, channel_json);
+CREATE INDEX ix_outbox_dropped ON outbox(is_dropped) WHERE is_dropped = 1;
 
 CREATE TABLE kv (
   key TEXT PRIMARY KEY,
-  value TEXT                          -- JSON 序列化
+  value TEXT
 );
 ```
 
-注意 SQLite 生成列：原型用 `generated columns` 让 pass 只读 active 集；Python 版同样用 `GENERATED ALWAYS AS (...) VIRTUAL`。SQLite ≥ 3.31 支持，Sherry 已用 SQLite，版本足够。
+**保留的生成列**只做简单 `CASE WHEN` 或 `OR`,不碰 JSON path。复杂状态(`has_queued`/`has_undelivered_input`/`latest_assignment_status`)是**显式列**,Engine 在写 Ticket/Thread 时同步更新。`TicketRepo.save` 必须在事务内更新这些显式列(单测覆盖)。
 
 ## 3. Repository 接口
 

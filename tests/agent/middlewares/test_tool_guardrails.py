@@ -503,6 +503,73 @@ def test_signature_streak_warns_on_identical_successful_args():
     assert gs.last_pathology == ("tool_repetition", 3, 3)
 
 
+def test_test_file_reads_are_exempt_from_the_signature_streak():
+    mw = make_mw(streak_warn_after=3, streak_max_warnings_per_turn=1)
+    gs = mod._TurnGuardrailState()
+
+    actions = []
+    for index in range(8):
+        actions.append(
+            mw._evaluate(
+                gs,
+                "read_file",
+                "same-args",
+                f"r{index}",
+                False,
+                True,
+                False,
+                tool_args={"path": "tests/test_bulk_create.py"},
+            )
+        )
+
+    assert actions == [ALLOW] * 8
+    assert gs.signature_streak == 0
+    assert gs.blocked_signatures == set()
+
+
+def test_a_non_test_read_still_trips_the_signature_streak():
+    mw = make_mw(streak_warn_after=3)
+    gs = mod._TurnGuardrailState()
+
+    actions = [
+        mw._evaluate(
+            gs,
+            "read_file",
+            "same-args",
+            f"r{index}",
+            False,
+            True,
+            False,
+            tool_args={"path": "django/db/models/query.py"},
+        )
+        for index in range(3)
+    ]
+
+    assert actions[:2] == [ALLOW, ALLOW]
+    assert actions[2] == WARN
+
+
+def test_only_read_file_gets_the_test_path_exemption():
+    mw = make_mw(streak_warn_after=3)
+    gs = mod._TurnGuardrailState()
+
+    actions = [
+        mw._evaluate(
+            gs,
+            "terminal",
+            "same-args",
+            f"r{index}",
+            False,
+            False,
+            False,
+            tool_args={"command": "cat tests/test_x.py"},
+        )
+        for index in range(3)
+    ]
+
+    assert actions[2] == WARN
+
+
 def test_signature_streak_resets_when_the_signature_changes():
     mw = make_mw(streak_warn_after=3)
     gs = mod._TurnGuardrailState()

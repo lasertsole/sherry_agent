@@ -1401,16 +1401,6 @@ function onSelectionAdd(payload: SelectionPayload): void {
 }
 
 /**
- * "在辅助会话中提问" (ask in a side session): create a normal session derived from this one (same
- * preset binding and character snapshot, no subagent semantics), open it in a
- * right-sidebar side-chat tab and hand it the quoted text.
- *
- * The child is an ephemeral session: it inherits a model-only snapshot of this
- * session's history, is hidden from the normal session list, and is purged
- * when this tab closes (or this parent session is deleted).
- * @param payload The quoted selection.
- */
-/**
  * Refresh the branch flag for a session (fail-open: unknown reads as root).
  * @param sid
  */
@@ -1443,6 +1433,16 @@ async function onForkTurn(turnNum: number): Promise<void> {
   }
 }
 
+/**
+ * "在辅助会话中提问" (ask in a side session): create a normal session derived from this one (same
+ * preset binding and character snapshot, no subagent semantics), open it in a
+ * right-sidebar side-chat tab and hand it the quoted text.
+ *
+ * The child is parent-scoped, not tab-scoped: it inherits a model-only snapshot
+ * of this session's history, stays in the normal session list, and is purged
+ * only when this parent session is deleted (closing the tab only detaches it).
+ * @param payload The quoted selection.
+ */
 async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
   if (!payload?.text || creatingSideChat.value || !mySid) return;
   creatingSideChat.value = true;

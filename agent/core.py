@@ -453,7 +453,6 @@ async def _build_graph(
     """Compile the agent graph and apply the wrapper chain."""
     checkpointer: ThreadSafeAsyncSqliteSaver = await build_async_sqlite_checkpointer()
 
-    # create table before using
     await checkpointer.setup()
 
     # NOTE: no global checkpoint prune here. This function runs on EVERY turn
@@ -487,7 +486,6 @@ async def _build_graph(
         len(agent_middleware),
     )
 
-    # Build the agent
     compiled = create_agent(
         model=main_llm.bind(temperature=temperature),
         state_schema=StateSchema,

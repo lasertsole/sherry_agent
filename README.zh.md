@@ -25,13 +25,13 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **上下文治理**：超大工具结果与人类消息被驱逐出提示词并保留可恢复的磁盘副本，`read_file` 结果被切片，任何压缩之前先运行不调 LLM 的尾部裁剪，链式摘要被挡在对话载荷之外
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
-- **经验抽取（Experience Extraction）**：三条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取，以及压缩后的 todo fork。它们分别写入记忆存储（SQLite `memory_entries` 表的 `memory` / `user` target）、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、计划在回合边界完成时的技能审查（不是压缩时）、压缩后的 todo fork，以及 MAIN 会话删除前的记忆抢救。它们分别写入记忆存储（SQLite `memory_entries` 表的 `memory` / `user` / `facts` target）、`skills/auto/`、`todos.db`，以及原始 `handoff-tree.json` 审计文件；面向模型的 `knowledge` 工具与提示块已退役
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
 - ▶️ _详见 [Experience README](wiki/experience/README.zh.md) 了解三条抽取路径与技能策展_
 
 ### 2. 🛠️ 动态技能系统
-- **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
-- **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
+- **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 只扫描 `skills/` 下的 `builtin/`、`auto/`、`plugins/` 三个根目录
+- **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`bugfix-contract`、`code_wiki`、`llm_wiki`，以及受功能开关控制的 `browser` 技能
 - **技能管理工具**：Agent 可在运行时列出、查看、管理技能；第三方上传的技能（`skills/plugins/`）默认停用，需显式启用
 - **SkillSpector 安全扫描**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：第三方技能在启用前由 NVIDIA SkillSpector 扫描（静态 YARA/规则分析 + 可选的 LLM 语义分析，使用 auxiliary LLM）；被标记的技能将被禁止安装
 - **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](wiki/experience/README.zh.md)
@@ -39,11 +39,11 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - ▶️ _详见 [Middlewares README](agent/middlewares/README.md) 了解中间件流水线（护栏、迭代预算、HITL、规范化、摘要、多模态处理）_
 
 ### 3. 🤖 多层级子代理系统
-- **7 个运行时工具**：`sessions_spawn`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
+- **8 个运行时工具**：`sessions_spawn`、`sessions_messages`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
 - **层级角色**：深度受限的嵌套（默认最大 2 层，硬上限 2），MAIN → ORCHESTRATOR → LEAF 角色与最小权限工具作用域
 - **独立上下文**：每个子代理都在全新、独立的上下文中运行 —— 永不继承父级对话记录；支持文件附件
 - **可靠投递**：结果通过 EventBus announce 流水线回传，具备幂等校验与指数退避重试
-- **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器在配置了运行超时时强制超时（默认不配置）
+- **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器强制默认 600 秒运行超时（`run_timeout_seconds=0` 关闭）
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
 - **验证式完成**：每次 spawn 都会在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由配置的 `COMPLETION_JUDGE["goal_max_turns"]` 预算限定（默认 5）
 - **功能角色（可选）**：`sessions_spawn(functional_role=...)` 可让 worker 专业化（general / researcher / executor / reviewer / librarian）；该角色决定 LLM 层级、工具 allow-list 与子代理系统提示词段落
@@ -64,15 +64,16 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **文档解析**：基于 MinerU 的多模态文档摄取，服务于知识图谱 RAG 流水线
 
 ### 6. ⏰ 定时与主动行为
-- **Cron 服务**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：支持一次性（`at`）、间隔（`every`）与 cron 表达式（`cron`，基于 croniter + 时区）三类定时任务，持久化到 JSON 任务文件，带运行历史与渠道投递
+- **Cron 服务**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：支持一次性（`at`）、间隔（`every`）与 cron 表达式（`cron`，基于 croniter + 时区）三类定时任务，持久化到 JSON 任务文件（仅保留最近一次运行状态），每次执行日志写入 `logs/output/cron/<job_id>.log`，并支持渠道投递
 - **Heartbeat 服务**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：周期性唤醒（默认 30 分钟），检查 `HEARTBEAT.md` 中的待办任务，由 LLM 决定 skip/run，结果经过通知门控过滤
 
 ### 7. ⚙️ 运行时、并发与会话控制
-- **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录。根目录的 `AGENTS.md`（回退 `CLAUDE.md`）在内容变化时作为 `project_instructions` 提醒注入；显式绑定的项目会在首条消息时获得一个统一的 `.sherry/` 目录——代码索引与 shadow git——仅在绑定时不创建
+- **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录。根目录的 `AGENTS.md`（回退 `CLAUDE.md`）在内容变化时作为 `project_instructions` 提醒注入；显式绑定的项目会在首条消息时获得一个统一的 `.sherry/` 目录，用于项目级代码索引；写快照的 shadow git 全局存放在 `APP_HOME/checkpoints/store`（绑定时不创建）
 - **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框。行的右键菜单提供 打开 / 打开方式 / 用内置浏览器打开（HTML）/ 在文件管理器中显示 / 复制绝对或相对路径 / 添加到聊天；行（或文件查看器标签）还可拖入输入框——两种方式都只往消息里插入 `@./path` 引用 chip，绝不带文件内容：文件由 agent 自己读取
 - **选区引用与辅助会话**：在单条聊天消息内选中文字后右键会弹出小菜单——「添加到当前会话」把原子引用 chip 插入输入框（发送为 markdown 引用块），「在辅助会话中提问」新建一个父会话的**完整 fork** 子会话：首轮注入父会话 checkpoint 中的完整历史（仅模型可见，辅助会话自身的可见历史仍为空），并复制父会话的预设、agent 配置、会话级模型设置与项目目录；fork 截止到父会话最后一个完成的回答，未完成的工具调用绝不会被重放。它在「当前会话」右栏标签页中打开并预填引用；关闭该标签页只会收起面板，子会话及其全部状态都会保留，并继续出现在会话列表中以便重新打开，只有删除父会话时才会清除。标签条最左侧的下箭头菜单会按「当前会话 / 全局」列出最近关闭的 10 个标签页（当前会话的记录只属于该会话，随会话销毁而清除），恢复已关闭的辅助会话时历史对话原样保留。「当前会话」标签组按会话隔离——切换会话只显示该会话自己的标签（没有则为空），不会带出上一个会话的页面；「全局」标签则跨会话共享。跨消息行、从控件/审批卡片开始、或超过 8,000 字符的选区不弹菜单，保留浏览器原生右键
 - **智能体可控浏览器（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py))：需显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED=1` 加一次重启）——关闭时不注册任何 browser 工具、每个 `/browser/*` 路由都答 404，也不会派生任何 Chromium。开启后，主智能体通过合并后的主代理专用 `browser` 工具（navigate / snapshot / click / type / press / scroll / screenshot），以及 `browser_evaluate`（还需 `SHERRY_BROWSER_ALLOW_EVALUATE=1`）驱动真实的 loopback Chromium；工具箱的浏览器面板作为第二个 CDP 客户端观看同一页面（`/browser/ws` 截图流 + 输入）；调试端口从不离开后端进程
-- **用户生命周期 Hook** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/))：`sherry.jsonc` 的 `hooks` 段让运维者自配的命令挂到回合上——`PostToolUse` / `PostToolUseFailure`（载荷含 `toolName`、`toolCallId`、有界的结果/错误预览与 `durationMs`）与 `Stop`（`responsePreview`、`toolCallCount`）。设计上只读：hook 只能审计、通知、计量，不能阻断工具、改写参数或注入上下文。默认关闭（入库的配置文件不能自行让 agent 执行命令）；命令经 `shlex` 拆分、不经 shell、环境已擦洗，每个 hook 有超时且超时会杀进程，stdout 有上限并按可选 JSON 解析（非 JSON 输出视为成功）。注册在工具护栏之后，可按会话关闭- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`BACKGROUND_REVIEW`（后台评审调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + background_review`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
+- **用户生命周期 Hook** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/))：`sherry.jsonc` 的 `hooks` 段让运维者自配的命令挂到回合上——`PostToolUse` / `PostToolUseFailure`（载荷含 `toolName`、`toolCallId`、有界的结果/错误预览与 `durationMs`）与 `Stop`（`responsePreview`、`toolCallCount`）。设计上只读：hook 只能审计、通知、计量，不能阻断工具、改写参数或注入上下文。默认关闭（入库的配置文件不能自行让 agent 执行命令）；命令经 `shlex` 拆分、不经 shell、环境已擦洗，每个 hook 有超时且超时会杀进程，stdout 有上限并按可选 JSON 解析（非 JSON 输出视为成功）。注册在工具护栏之后，只能通过全局 `hooks.enabled` 开启（链成员是构建期契约，不是会话级开关）
+- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`BACKGROUND_REVIEW`（后台评审调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + background_review`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
 - **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
 - **并行步骤派发与血缘指针** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py))：一波派发以并发方式 spawn，上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（2；设为 1 即还原顺序行为）——部分失败时已 spawn 的子代理全部持久化、失败的步骤 id 逐个点名；两个子代理同时完成时两个结果都会落地（resume 的写入经 `update_flow_with_conflict_retry` 重新应用已判定的结论，结果不会因冲突丢失，同一步骤也不会被派发两次）。`taskflow_flow(action="create", resumed_from=…)` 记录血缘（`resumed_from` / `superseded_by` 两列，属于当前 schema）；被取代的流退出 active 读取，但仍留在看板上
 - **TaskFlow 进度** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py))：每个流程的扁平步骤列表（id、任务、状态）与按状态计数会进入浮动进度面板；调度器仍按各自的 `depends_on` 逐个解锁步骤。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
@@ -127,7 +128,7 @@ sherry_agent/
 │       ├── subagent/       # 多层级子代理系统（spawn/registry/swarm 等）
 │       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
 │       ├── todolist/       # 会话级 todo 规划层
-│       │   └── knowledge/  # Plan 知识库 + `knowledge` 工具
+│       │   └── knowledge/  # KnowledgeStore + handoff-tree 审计（模型工具已退役）
 │       ├── file_tools/     # 文件 I/O 工具（读、写、补丁、搜索）
 │       ├── skill_tools/    # 技能管理工具（列表、查看、管理）
 │       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
@@ -190,13 +191,13 @@ sherry_agent/
 │   └── auth/               # 可选登录保护（账户与会话）
 │
 ├── evals/                  # 评估框架（dispatcher + 11 个套件）
-│   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
+│   ├── evals.py            # 套件运行器：uv run --group evals python evals/evals.py [suite]
 │   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
 │   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
 │   ├── subagent/           # 子代理派生管线基准
 │   ├── long_running_task/  # TaskFlow DAG 评估
 │   ├── session_memory/     # 会话内存栈检查
-│   ├── skill_review/   # AI 评判的 plan 抽取
+│   ├── skill_review/   # AI 评判的技能审查
 │   └── results/            # 每次运行的报告（已 gitignore）
 │
 ├── logs/                   # 日志系统
@@ -294,7 +295,6 @@ sherry_agent/
 │   ├── file_sync.py        # 工作区模板懒同步（按语言）
 │   ├── template/           # 人设模板（en / zh / ja / ko）
 │   ├── sessions/           # Per-session runtime workspace data
-│   └── memory/             # 长期记忆存储
 │
 ├── .env                    # 应用配置，入库（沙箱 / 网关 / 登录——不放密钥）
 ├── .models.example         # 模型配置模板（首次启动生成 .models）
@@ -393,7 +393,7 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 > 首次下载需要访问 huggingface.co（中国大陆用户可能需要代理或镜像）。下载中断后下次启动会继续；删除 `models/<model>/model_weight/` 可强制重新下载。
 
 ### 4. 启动后端
-`start.sh` 会激活 uv 管理的 `.venv` 并启动 Robyn 后端（不启动 Ollama 或任何前端）：
+`start.sh` 在 `pnpm` 可用时先在后台启动 Nuxt 开发服务器，然后启动 Robyn 后端（不启动 Ollama）：
 
 ```bash
 chmod +x start.sh
@@ -428,13 +428,13 @@ uv run --no-sync python packaging/build_backend.py   # 后端 → client/src-tau
 cd client && pnpm tauri build                         # 后端 + 前端 + 外壳打进同一个安装包
 ```
 
-`.github/workflows/desktop-build.yml` 在三个平台分别构建统一安装包。后端构建与安装包打包都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env` / `.models` / `.network`——写进系统的应用数据目录（`SHERRY_HOME`，由外壳注入），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
+`.github/workflows/desktop-build.yml` 在三个平台分别构建统一安装包。后端构建与安装包打包都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env` / `.models` / `.network`——写进系统的应用数据目录（由外壳以 `--sherry-home` 传入；`SHERRY_HOME` 只是回退），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
 
 ---
 
 ## 🧪 测试
 
-测试位于 `tests/` 下，**镜像源码树**（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`），通过 uv 用 **pytest** 运行（单个测试文件或小范围选择用 `uv run pytest`）。每个测试文件都带一个模块级 `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`），决定它属于哪个 runner 分组。
+测试位于 `tests/` 下，**镜像源码树**（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`），通过 uv 用 **pytest** 运行（单个测试文件或小范围选择用 `uv run pytest`）。大多数测试文件带一个模块级 `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`），决定它属于哪个 runner 分组。
 
 ### 推荐：进程隔离 runner
 
@@ -475,8 +475,8 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数�
 `evals/` 是与 pytest 并列的自建、沙箱化评估框架。可运行全部已注册套件，或按名称运行单个：
 
 ```bash
-uv run python evals/evals.py                # 全部已注册套件
-uv run python evals/evals.py graph_rag      # 按名称运行单个套件
+uv run --group evals python evals/evals.py                # 全部已注册套件
+uv run --group evals python evals/evals.py graph_rag      # 按名称运行单个套件
 ```
 
 | 套件 | 评估内容 |
@@ -485,7 +485,7 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `subagent` | 真实 `spawn_subagent_direct` 管线在一组确定性任务上的表现（任务成功率 + 延迟） |
 | `long_running_task` | TaskFlow 编排环在有依赖的 DAG 上的表现（步骤成功率、流程完成度、墙钟时间） |
 | `session_memory` | 会话内存栈的 6 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、语义搜索排序 |
-| `skill_review` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
+| `skill_review` | 计划完成时的技能审查，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
 | `coding_capability` | 真实主 agent 在一小批自设计编码任务上的表现，每道题由该任务仓库自己的 pytest 运行判定——是基线，不是外部基准 |
 | `swebench` | 外部 SWE-bench_Lite 实例，走同一套 harness（钉住 base commit + 每实例独立 venv + 该实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定；agent 只看到问题描述） |
 | `deepswe` | 外部 DeepSWE 任务，在基准自己的 Docker 镜像中运行：agent 编辑绑定挂载的 checkout，`terminal` 在容器内执行，任务独立的 verifier 镜像对 agent 的 diff 判分（先跑 gold patch 自检） |
@@ -495,7 +495,7 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 
 每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
 
-`deepswe` 与 `terminal_bench` 依赖可用的 Docker daemon；`toolbench` 需要 `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY` 与 OpenAI 兼容的 ToolEval judge key；`agentbench` 需要 `MAIN_LLM_API_KEY`。缺少前置条件时它们会**显式 SKIP 并以非零码退出**（跳过的套件不算通过）。任务树与基准数据克隆/下载到 `~/.cache/sherry_evals`（可用 `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` 覆盖），不放进仓库；`--dry-run` 可在没有 Docker、模型或 ToolBench 大文件下载时校验任务选择。
+`terminal_bench` 需要 Docker；`deepswe` 默认走 Docker，而 `deepswe --local` 可在宿主机上无 Docker 运行；`toolbench` 需要 `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY` 与 OpenAI 兼容的 ToolEval judge key；`agentbench` 需要 `MAIN_LLM_API_KEY`。缺少前置条件时它们会**显式 SKIP 并以非零码退出**（跳过的套件不算通过）。任务树与基准数据克隆/下载到 `~/.cache/sherry_evals`（可用 `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` 覆盖），不放进仓库；`--dry-run` 可在没有 Docker、模型或 ToolBench 大文件下载时校验任务选择。
 
 `coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench` 与 `toolbench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
 
@@ -519,9 +519,9 @@ Agent 的行为由 `workspace/` 下的文件驱动：
 
 欢迎提交 Issue 与 Pull Request！添加新技能的方法：
 
-1. 在 `skills/` 下创建一个文件夹（第三方技能放在 `skills/plugins/`）。
+1. 在 `skills/builtin/` 下创建一个文件夹（或 `skills/auto/` / `skills/plugins/`，第三方技能放后者）。
 2. 编写带 YAML frontmatter（`name`、`description`、可选 `scope`）的 `SKILL.md`，描述技能的用法与步骤。
-3. 重启 Agent —— loader 会自动发现所有 `SKILL.md` 并暴露给模型。（也可以让运行中的 Agent 使用内置 `skill_creator` 技能自动生成。）
+3. 重启 Agent —— loader 只扫描这三个根目录下的 `SKILL.md`，并暴露给模型。（也可以让运行中的 Agent 使用内置 `skill_creator` 技能自动生成。）
 
 `skills/plugins/` 下的第三方技能会经过 SkillSpector 扫描，并保持停用直到被显式启用。
 

@@ -131,9 +131,9 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     ├── LLM: model_override → build_llm_by_name(); ORCHESTRATOR →
   │     │   build_main_llm(); LEAF → build_auxiliary_llm()
   │     ├── child_session_key별로 독립적인 비동기 SQLite checkpointer
-  │     └── create_agent()로 7겹의 미들웨어 구성:
+  │     └── create_agent()로 10겹의 미들웨어 구성:
   │           ├── Summarization(model=<보조 LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",0.80×main_window)])
+  │           │                  ("tokens", _compression_threshold_for_children(main_llm_max_tokens))])
   │           ├── IterationBudget(executor 90 / 기타 60) — 최대 반복 횟수
   │           ├── ToolGuardrails()         — 도구 안전 가드레일
   │           ├── OutputRepetitionGuard()  — 출력 반복 억제
@@ -509,7 +509,7 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 **능력 봉쇄.** 전문화 역할(`researcher` / `executor` / `reviewer` / `librarian`)은 허용 목록(`SPAWN_ALLOWED_CHILD_ROLES`, `types/functional_role.py`)의 역할만 spawn할 수 있습니다: **자기 역할**, 그리고 executor는 **읽기 전용** `researcher` / `librarian`(쓰기 전 조사), researcher와 librarian은 서로를 spawn할 수 있습니다. 항목이 없는 역할은 종전대로 ‘같은 역할만’이며, reviewer는 그대로입니다. 이 규칙이 없으면 read-only researcher가 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 spawn해 대신 쓰게 할 수 있습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오며, 부모 역할로 걸러지지 않습니다. `MAIN`(run 레코드 없음)과 `general`(inherit = 모든 도구)은 무제한입니다——전문화 역할의 allow-list는 그 부분집합이기 때문입니다. 허용되지 않는 역할은 거부되며(결코 조용히 바뀌지 않습니다) 오류 문구가 허용 집합과 출구를 함께 알려줍니다: `Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` 안전성은 테스트로 고정된 두 불변식이 지킵니다: 모든 항목은 부모 역할 자신을 포함하고, 허용되는 **부모 이외의 자식은 반드시 읽기 전용**입니다. 이 단일 홉 규칙 덕분에 조상 체인 순회 없이 다단계도 안전합니다——쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 같은 종류에만 도달합니다.
 
-**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None); `goal_max_turns`는 goal loop 예산을 덮어씁니다. 모델이 호출하는 런타임 도구가 가진 것은 `functional_role`·`run_timeout_seconds`·`isolation`이며, 여기 나머지는 build-time 클래스의 것입니다.
+**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None); `goal_max_turns`는 goal loop 예산을 덮어씁니다. 모델이 호출하는 런타임 도구가 가진 것은 `functional_role`·`run_timeout_seconds`·`isolation`·`output_schema`이며, 여기 나머지는 build-time 클래스의 것입니다.
 
 **설정**(`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. 역할 해석은 모든 spawn에서 항상 실행됩니다; `functional_role`을 전달하지 않는 spawn 동작은 **바이트 단위로 불변** — GENERAL은 항등 역할입니다.
 
@@ -771,7 +771,7 @@ Progress 훅(hooks/progress.py): spawned(자식 등록), progress(실행 중), e
 ### 12. 호스트 통합
 
 - **시작**: `server/trigger/subagent/core.py`가 채널 이벤트 루프에서 1회 `init_registry()`를 스케줄(테이블 생성, run 복원, settle-wake 상태 로드, EventBus bridge 시작)
-- **도구 배선**: `build_subagent_runtime_tools`는 `agent/tools/__init__.py::_MAIN_TOOLS_BUILDERS`에 등록되어 있어, `build_main_tools()`가 7개의 sessions_* / list 도구를 메인 에이전트에 노출합니다
+- **도구 배선**: `build_subagent_runtime_tools`는 `agent/tools/__init__.py::_MAIN_TOOLS_BUILDERS`에 등록되어 있어, `build_main_tools()`가 8개의 sessions_* / list 도구를 메인 에이전트에 노출합니다
 - **이벤트 전달** (events/bridge.py): 단일 컨슈머가 전용 EventBus(events/core.py)를 배출합니다. 내부 주입은 소비 후 폐기되고, 그 외 메시지는 `relation_register` 경유로 세션의 채널 채팅으로, websocket 세션은 `{"event": "notification", "content": ...}` 형태로 전송됩니다. 대상 불명은 드롭됩니다
 - **세션 키 라우팅**: announce 원본 해석(announce/origin.py)은 requester보다 controller를 우선하며, 요청자 자신이 subagent인 경우 requester의 controller로 라우팅해 통지가 최상위 오케스트레이터에 도달하게 합니다
 

@@ -1,234 +1,305 @@
-# 12 Sherry 集成：Ticket↔TaskFlow、Executor↔subagent、hooks 接缝
+# 12 Sherry 集成:main session 持久化、worker 子代理、MCP 工具
 
-这是 Python 版 super-agent 与原型最大的差异，也是把它从"复刻品"变成"Sherry 的 L7 指挥层"的关键。原型依赖 DeepSeek Harness 的 Session API；Python 版用 Sherry 本体的 subagent + TaskFlow + hooks。
+> **修订说明**:本册经推演重写。原版的"worker 无父独立 spawn + hooks 直调"方案不成立——Sherry 的 `spawn_subagent_direct` 要求 `requester_session_key`(父),且续跑 latch 靠**子代理完成通知**重置。正确架构:workers 是 superagent main session 的子代理;`orchestrator_*` 工具经 MCP 暴露;Sherry 挂了 superagent 进 degraded 而非"worker spawn 失败"。
 
-## 1. 集成总览
+## 1. 集成总览(修正后)
 
 ```
 superagent 进程                              Sherry 后端进程
-┌────────────────────┐                    ┌─────────────────────┐
-│ Engine + Sources   │                    │ agent.core          │
-│ SherryExecutor ────┼─── runtime/hooks ──┤ spawn_subagent_direct│
-│   launch effect    │    (HTTP loopback) │ turn_runner.cancel  │
-│   ↓                │                    │ state_port          │
-│   spawn_subagent() │                    │ trajectory_events   │
-│   ↓                │                    │                     │
-│   Ticket = flow    │                    │ TaskFlow DAG        │
-│   Executor = run   │                    │ Evidence ledger     │
-└────────────────────┘                    └─────────────────────┘
+┌────────────────────┐                    ┌─────────────────────────┐
+│ Engine + Sources   │                    │ superagent main Session  │ ← 持久 Sherry main agent
+│ Effects + Outbox   │                    │   (router role, 受限工具) │
+│                    │  HTTP loopback     │   ├─ orchestrator_* MCP 工具│
+│ SherryExecutor ────┼──→ /internal/ ────┤   ├─ spawn worker subagent │
+│   launch effect    │    superagent/*    │   ├─ completion drain 回流 │
+│   ↓ inject         │                    │   └─ 续跑 latch 靠完成重置  │
+│   candidate via    │                    │                          │
+│   auto-turn trigger│←── trajectory/ ────┤ worker subagent (executor)│
+│                    │    completion      │   ├─ Sherry terminal/taskflow│
+│                    │                    │   ├─ MCP orchestrator_read│
+│                    │                    │   └─ 完成 → drain 回 main │
+└────────────────────┘                    └─────────────────────────┘
 ```
 
-**接缝原则**：
+**核心修正**:
 
-- superagent **不 import** `agent/`（lint-imports 强制，见 `01-architecture.md §4`）。
-- superagent 经 `runtime/hooks.py` 注册的回调调 Sherry。
-- Sherry **不 import** `superagent/`；只在启动时注册 hooks（若 superagent 在跑）。
-- 通信走 HTTP loopback（`aiohttp` client），不阻塞事件循环。
-- 两进程独立重启周期。
+1. **superagent 拥有一个持久的 Sherry main agent session**(router role)。它不是孤儿——它是 superagent 在 Sherry 里的"驻Sherry代表"。
+2. **workers 是该 main session 的子代理**(`spawn_subagent_direct(requester_session_key=<main>)`)。完成 drain 回 main session,**这本身重置 main session 的续跑 latch**——这是 L7 能跑长的关键机制。
+3. **`orchestrator_*` 工具经 MCP 暴露**,Sherry 以 MCP 工具加载,不侵入 Sherry 工具注册表。
+4. **Sherry 挂了 → superagent 进 degraded**(只收 Trigger 入队,不 dispatch);恢复后重连 main session + 重放 pending Effects。
 
-## 2. runtime/hooks.py 扩展
+**接缝原则不变**:superagent 不 import `agent/`;Sherry 不 import `superagent/`;通信走 HTTP loopback。
 
-Sherry 现有 `runtime/hooks.py` 是进程级回调注册表（AGENTS.md："`agent`/`skills` resolve server-owned callables without importing `server`"）。新增 superagent 注册点：
+## 2. 两层接缝分清(修正问题 6)
 
-```python
-# runtime/hooks.py（Sherry 侧扩展）
-class SuperAgentHooks:
-    """superagent 进程注册的回调。Sherry 启动时若检测到 superagent
-    进程（HTTP ping），注册这些；否则空实现（superagent 不在跑时
-    Sherry 正常工作）。"""
-    spawn_subagent: Callable[[SpawnRequest], SpawnResult]
-    cancel_turn: Callable[[str], None]                 # session_key
-    add_messages: Callable[[str, list[Message]], None] # session_key, msgs
-    truncate_after: Callable[[str, int], None]         # session_key, turn_ordinal
-    heal_interrupted: Callable[[str], int]             # session_key → healed_calls
-    read_session_state: Callable[[str], SessionState]
-    list_jobs: Callable[[str], list[Job]]
-    kill_job: Callable[[str, str], None]               # session_key, job_id
-    read_trajectory: Callable[[str], Trajectory]
-```
+| 层 | 位置 | 职责 |
+|---|---|---|
+| **进程内 callable 查找** | `runtime/hooks.py`(Sherry 侧) | Sherry 内部组件解耦用(agent/skills 解析 server-owned callable)。**superagent 不直接用这层**——superagent 是另一个进程。 |
+| **HTTP loopback 端点** | `server/trigger/http/superagent.py`(Sherry 侧新增) | Sherry 暴露给 superagent 进程调的 HTTP 路由:`/internal/superagent/*`。这才是 superagent 的接缝。 |
+| **MCP server** | `superagent/mcp/server.py`(superagent 侧) | 把 `orchestrator_*` 工具暴露成 MCP,Sherry main session + worker subagent 以 MCP 工具加载。 |
 
-Sherry 后端实现这些（委托给 `agent/tools/subagent/spawn/core.py`、`server/service/turn_runner.py`、`agent/state_port.py`、`agent/trajectory_events.py`），暴露成 HTTP loopback 端点（`POST /internal/superagent/*`，仅 loopback + shared-secret）。
+superagent 的 `SherryExecutor` 用 **aiohttp HTTP client** 调 Sherry loopback 路由;**不**拿 `runtime/hooks.py` 的 callable。
 
-superagent 的 `SherryExecutor` 通过 `SuperAgentHooks` client 调这些，不直接 import Sherry 代码。
+## 3. Sherry main session(持久 router)
 
-## 3. Ticket ↔ TaskFlow flow 映射
+**这是 superagent 在 Sherry 里的唯一驻点**。一个持久 Sherry main agent session,router role,受限工具子集 + MCP orchestrator 工具。
 
-**映射规则**：
+### 3.1 职责
 
-| superagent | Sherry TaskFlow |
-|---|---|
-| Ticket | 一个 flow（`taskflow_flow(action="create")`） |
-| Ticket 的 steps | flow 的 steps（Executor 自己拆，或 accept 时由 main Session 拆） |
-| Assignment | flow 的一个执行波次 |
-| Report `ready` | `taskflow_flow(action="finish")` 触发 gate |
-| Report `failed`/`blocked` | step 标 failed/blocked |
-| Ticket end | flow 终止（finish/cancel） |
-| Evidence ledger | 复用 Sherry `agent/tools/pub_base/sqlite_store.py` 的 evidence ledger |
-| 回归门 | 复用 Sherry finish gate A-C + E |
+- 收 superagent 注入的 candidate/follow-up/report 消息(经 auto-turn trigger)。
+- turn 跑 routing 决策,调 `orchestrator_route`/`orchestrator_eval` 等 MCP 工具。
+- accept → Engine 创建 Ticket → SherryExecutor 让 main session `spawn_subagent_direct` 起 worker。
+- worker 完成 → completion drain 回 main session → main session turn 跑 → 调 `orchestrator_report` 报 Engine。
+- **worker 完成事件重置 main session 的续跑 latch**(Sherry 既定行为,见 `agent/middlewares/README.md:361`)。
 
-**为什么不强制 1:1**：
+### 3.2 持久性与续跑
 
-- 不是每个 Ticket 都需要 TaskFlow DAG（简单 bug fix 一步到位）。Executor（Sherry subagent）自己决定是否开 flow。
-- Ticket 是 superagent 的授权/编排单位；flow 是 Sherry 的执行编排单位。Ticket 的 `execution.directory` + `mandate.scope` 是 flow 的上下文。
-- 默认映射：Ticket accept 时 main Session 可选 `taskflow_flow(action="create")` 开一个 flow，flow_id 记在 Ticket `execution` 字段；Executor 每个 Assignment 在该 flow 下跑 steps。
+- main session 是普通 Sherry main agent session,checkpoint latest-only,WAL 持久化。
+- Sherry 续跑 cap(15)对它生效,但每次 worker 完成(=子代理完成通知)重置 latch——所以只要持续有 worker 完成,main session 一直活跃。
+- 无 worker 完成 + 无 Trigger → main session 进 idle(续跑 latch 静默),等下一个 Trigger(auto-turn trigger 注入)唤醒。
+- **这取代了原计划"worker 跑满报 waiting → Ticket idle"的孤儿模型**:现在是 main session 的 idle 由 Trigger 唤醒,worker 是一次性的。
 
-**finish gate 复用**：
+### 3.3 创建与恢复
 
-- Sherry 的 finish gate（DAG 完整性 + 无未决 step + evidence 无 FAIL/stale/broken + goal judge）作为 Ticket `ready` Report 的前置。
-- 即：Executor 报 `ready` 前，Sherry 的 finish gate 必须先过。这把 Sherry 的本地静态验证 + superagent 的外部交付验证 合流。
-- 实现：`SherryExecutor.report` handler 在转 `Engine.report` 前，若 `kind=ready`，先调 Sherry `taskflow_flow(action="finish")` 的 gate 结果；gate 不过 → 转 `blocked` Report（带 gate 反馈）。
+- superagent 启动时,经 HTTP `/internal/superagent/session/ensure` 让 Sherry 建(或复用)`superagent-main` session。
+- Sherry 重启后,superagent ping `/internal/superagent/session/exists`——在则复用,不在则重建(checkpoint latest-only,丢失的是 in-flight turn,不影响 Ticket 持久状态)。
+- superagent 进程重启不影响 main session(它在 Sherry 进程里)。
 
-## 4. Executor Session ↔ Sherry subagent run
+## 4. Worker↔Sherry subagent(修正问题 1、3)
 
-**映射规则**：
+### 4.1 映射(MVP 选 A:每次 wake 一个新 subagent)
 
 | superagent | Sherry subagent |
 |---|---|
-| Executor Session（`worker-<ticket_id>`） | 一个 subagent run（`spawn_subagent_direct`） |
-| Session preset（worker/router） | functional_role + tool 集裁剪 |
-| turn | subagent 的一个执行轮 |
-| shell job（5s 转后台） | Sherry terminal 工具的 background job |
-| nested subagent | Sherry subagent（嵌套） |
-| inbox（消息注入） | `state_port.add_messages` |
-| turn event | `trajectory_events` + completion callback |
-| Session restart | subagent checkpoint 恢复（Sherry latest-only） |
+| Assignment 的一次 wake | 一个 `spawn_subagent_direct` run |
+| Assignment(整个) | 多个 subagent run 的序列(同一 Ticket,跨多个 Trigger 唤醒) |
+| worker preset | functional_role=executor + tool 集(MCP + Sherry WORK_TOOLS) |
+| shell job 5s 转后台 | Sherry terminal bg |
+| nested subagent | Sherry subagent(嵌套,role containment) |
+| turn event | trajectory_events + completion drain |
+| worker 完成重置 main latch | Sherry 既定行为(wake_on_descendant_settle) |
 
-**spawn 调用**：
+### 4.2 为什么选 A(每次新 subagent)而非 B(持久 worker session)
+
+- **A 用 Sherry 现有机制**:每个 subagent run 是 goal-loop-bounded 一次性,完成 drain。不需要新 Sherry 代码。
+- **B 需要新机制**:持久 worker session 跨多消息注入(turn 间保持活跃、background job 完成唤醒续 turn)——这是 Sherry 没有的能力,要改 turn_runner + state_port + checkpoint 复用。工程量大且破坏 Sherry 现有 subagent 语义。
+- **代价**:A 失去"Assignment 内 background job 完成唤醒 executor 续跑"——subagent 完成就 drain,job 结果只能由下一个 wake 的 subagent 读。这符合原型"Executor reads killed-job results on its next turn"。
+- **决策**:MVP 选 A。`06-executor.md` 的 Assignment 模型按"一个 Assignment = N 个 subagent run(N = Trigger 唤醒次数)"重写。P2 评估 B 是否值得。
+
+### 4.3 spawn 调用(修正)
 
 ```python
 # superagent/executor/sherry.py
 async def _spawn_worker(self, ticket, assignment_id):
     req = SpawnRequest(
-        session_key=self.worker_session_id(ticket.id),
-        parent_session=None,                  # 独立（非主 agent 子）
+        requester_session_key="superagent-main",   # ← 父是 superagent main session
         functional_role="executor",
         step_model=self.settings.executor_model,
         run_timeout_seconds=_work_budget(ticket),
         cwd=ticket.execution.directory,
         env=self._worker_env(ticket),
-        system_prompt=self.prompts.compose(role="worker", ticket=ticket),
-        tools=_worker_tools(),                # 受限集
+        # tools 不在这里传——Sherry subagent 工具来自 registry + MCP
+        # orchestrator_* 工具经 MCP server 加载(见 §5)
         response_schema=None,
-        announce=True,                        # 完成时通知（superagent 收）
+        expects_completion_message=True,            # ← drain 回 main session
+        announce=True,
     )
-    result = self.hooks.spawn_subagent(req)
+    result = await self.http.post(
+        f"{self.sherry_url}/internal/superagent/spawn",
+        json=req.dict(),
+    )
     # result.run_id 存 Ticket execution
 ```
 
-**关键差异处理**：
+`requester_session_key="superagent-main"` 是关键修正——不再是 None。worker 的 completion drain 回 `superagent-main`,既触发 main session 的下一 turn(routing/report),又重置它的续跑 latch。
 
-1. **Sherry subagent 的 continuation 上限**：Sherry 有 `max_continuation_turns=15`。一个 worker subagent 跑满 15 轮会 latch 静默。**superagent 不绕过它**——而是让 worker 报 `progress`（自动续跑 cap 内），cap 到了 worker 报 `waiting`（idle），Ticket 进 idle stage，等下一个 Trigger 唤醒（CI 结果/review/人消息）新 Assignment 续跑。这是 L7 的正确模型：不无限续跑一个 session，而是事件驱动多 session。
+### 4.4 Token attribution
 
-2. **Sherry HITL 在 worker 内**：worker subagent 的 HITL（question/exit_plan_mode/sherry-self-file）在无人模式 fail-closed（AGENTS.md 已有 headless 行为）。superagent 的 per-ticket 准入已授权，worker 内 HITL 拒绝时 worker 报 `blocked`（带问题）→ main Session forward `attention` → 人答 → resume。这是把 Sherry 的 HITL 升级为 superagent 的 Attention 机制。
+AGENTS.md:token 归属到 root parent 的 current turn。superagent main session 是 root(无更上层),worker 的 model 调用归属 main session 的 turn。要确认 `state_register` 对 root main session 的 `TOKEN_BUDGET_PARENT` 正确(应该是 main session 自己)。spike 验证(见 §8)。
 
-3. **subagent completion judge**：Sherry 的 CompletionJudge（goal loop）在 worker 完成时跑。superagent 的 `SherryExecutor` 收 completion → 转 `Engine.report`（kind 由 completion verdict 决定：pass→ready、retry→progress、block→blocked）。
+## 5. `orchestrator_*` 工具经 MCP 暴露(修正问题 2)
 
-## 5. main Session ↔ Sherry 主 agent 或独立 subagent
+### 5.1 为什么 MCP
 
-**选项 A（推荐 MVP）**：main Session 是 Sherry 主 agent 的一个特殊 mode，用 `dsh-superagent-router` preset（受限工具子集 + noWait 守卫）。superagent 经 hooks 向主 agent 注入 candidate/follow-up/report 消息。
+Sherry 工具经 `agent/tools/__init__.py::build_main_tools()` 返回 `list[BaseTool]`——进程级注册表,无"spawn 时传外部 callable"入口。要让 main session + worker 调到 superagent 的 `orchestrator_route`/`orchestrator_eval`/`orchestrator_read` 等工具:
 
-**选项 B**：main Session 是独立 subagent（router role），与 worker 同等但工具集不同。隔离更好但多一层 RPC。
+- **(A) MCP**(选):superagent 起 MCP server,Sherry 以 MCP 工具加载。不动 Sherry 工具注册表,不动 `build_main_tools()`。
+- (B) 改 `build_main_tools()` 条件加载:侵入 Sherry 核心,违背"Sherry 不动"。
+- (C) prompt 协议替代:失去工具校验。
 
-**选 A 的理由**：main Session 主要是 routing（轻 LLM 调用），与 Sherry 主 agent 共享 provider 配置/cache。MVP 走 A，P2 可迁 B。
+### 5.2 MCP server 设计(`superagent/mcp/server.py`)
+
+```python
+# superagent/mcp/server.py
+# 用 mcp Python SDK(或自写 JSON-RPC over stdio/SSE)
+class SuperAgentMCPServer:
+    """暴露 orchestrator_* 工具给 Sherry main session + worker subagent。
+    Sherry 经 MCP client 连接(配置在 sherry.jsonc 的 mcp.servers)。"""
+    tools = [
+        orchestrator_read,        # main + worker
+        orchestrator_route,       # main only
+        orchestrator_eval,        # main only
+        orchestrator_eval_read,   # main only
+        orchestrator_eval_decide, # main only
+        orchestrator_ticket_retry,# main only
+        orchestrator_ticket_request_status,
+        orchestrator_ticket_note,
+        orchestrator_trigger_requeue,
+        orchestrator_reply,
+        orchestrator_thread_unsubscribe,
+        orchestrator_settings_save,
+        orchestrator_policy_sync,
+        orchestrator_prompts_save,
+        # worker-only:
+        orchestrator_ack,
+        orchestrator_report,
+        orchestrator_thread_unrelated,
+        orchestrator_thread_follow,
+        orchestrator_trigger_handback,
+    ]
+```
+
+**传输**:stdio(superagent 进程作为 Sherry MCP 子进程)或 SSE(HTTP)。MVP 选 stdio(Sherry 已支持 stdio MCP);Sherry 配置 `mcp.servers.superagent = {command: "python", args: ["-m","superagent.mcp"]}`。
+
+**鉴权**:MCP 工具调 superagent 的 Engine(同进程函数调用),无 HTTP。worker 的 `orchestrator_*` 调用经 MCP → superagent Engine → 按 ticket_id 鉴权(worker 只能操作自己 Ticket,Engine 层 force)。
+
+**角色裁剪**:main session 加载全部 14 个;worker 加载 6 个 worker 工具 + `orchestrator_read`。裁剪在 MCP server 的 tool list 层做(按调用方 session 角色返回不同 tool 集),或在 Sherry preset 层配。MVP 简化:全暴露,Engine 层鉴权拒绝越权(如 worker 调 `orchestrator_route` → Engine 拒)。
+
+### 5.3 工具实现
+
+每个 `orchestrator_*` 工具是 `superagent/app/tools/*.py` 里的函数,调 Engine 对应方法。MCP server 包装成 MCP tool schema。工具描述(prompt 给模型看的)从 `prompts/` 文本读。
 
 ## 6. auto-turn trigger 接缝
 
-Sherry 的 auto-turn trigger（AGENTS.md：PlanContinuationEnforcer 经 auto-turn trigger 投递）是 superagent 唤醒 idle Ticket 的关键路径：
+superagent 的 `Engine.evaluate_due` 决定唤醒 main session:
 
-- superagent 的 `Engine.evaluate_due` 决定要唤醒 idle Ticket → 经 hooks 向 main Session 注入 candidate 消息 → Sherry auto-turn trigger 投递 → main Session turn 跑（routing 决策）。
-- superagent 的 `relay`/`notice` effect 也经 auto-turn trigger 投递 main Session。
-- `runtime/effects/` 二层（Sherry 重启韧性）可选启用：superagent 的三个 restart-sensitive delivery（plan continuation / subagent completion / auto-turn）经 Sherry effects 二层保活。但 superagent 自己有 Effects 持久队列 + restart replay，所以**不依赖** Sherry effects 二层——superagent 进程重启后自己的 Effects 重放。
+- 决定要投 candidate/follow-up/report → 经 HTTP `/internal/superagent/session/inject` 向 main session 注消息 → Sherry auto-turn trigger 投递 → main session turn 跑。
+- relay/notice effect 同样经 inject 端点。
+- main session 的 turn 完成后,Sherry trajectory_events 回调 superagent(`/internal/superagent/events`,反向——superagent 起 HTTP server 收)。
+
+**注意**:这是 Sherry → superagent 的反向调用。superagent 进程也要起一个 loopback HTTP server 收 Sherry 的事件回调(或用 MCP 的 notification 机制)。MVP 用 HTTP loopback 双向。
 
 ## 7. state_port 接缝
 
-`agent/state_port.py`（AGENTS.md：read live message list / pending HITL / heal interrupted turn）用于：
+- `sessions_messages` tool(MCP)后端调 Sherry `/internal/superagent/session/messages` → `state_port.read_messages`。
+- restart 时 heal worker 的 interrupted turn:`/internal/superagent/session/heal` → `state_port.heal_interrupted_turn`。
+- truncate(retry 时):`/internal/superagent/session/truncate` → `truncate_messages_after_turn`。
 
-- `SherryExecutor` 读 worker Session 的 live transcript（`sessions_messages` 等价）—— superagent 的 `sessions_messages` tool 后端调 `state_port.read_messages`。
-- restart 时 heal worker Session 的 interrupted turn（dangling tool call）—— `heal_interrupted` 调 `state_port.heal_interrupted_turn`。
-- truncate：retry/restart 时 `truncate_messages_after_turn` 清掉旧 turn。
+## 8. HITL 重定向(不变,承重问题 1 修正后更顺)
 
-## 8. HITL 重定向
+worker subagent 内的 HITL 在无人模式 fail-closed(Sherry 既定 headless 行为):
 
-worker subagent 内的 HITL：
+- `question` decline → worker 报 `blocked` + Attention(问题文本)→ MCP `orchestrator_report` → Engine → main session forward attention → GitHub/Feishu 消息。
+- 人答 GitHub/Feishu → Source Trigger → 唤醒 → main session turn → Engine resume Ticket → 新 worker subagent(选 A)起 → 读 Thread context(含人答案)→ 续跑。
+- `exit_plan_mode` error → worker 报 `waiting`/`dropped`。
+- sherry-self-file fail closed → worker 不能改 Sherry/superagent 代码。
 
-- `question` 工具：无人模式 decline（Sherry 已有 `NO_OPERATOR_MESSAGE`）。worker 收 decline → 报 `blocked` + Attention（问题文本）→ main Session forward → 人答 → Trigger 唤醒 worker resume。
-- `exit_plan_mode`：无人模式 error（"stop"）。worker 收 error → 报 `waiting` 或 `dropped`。
-- sherry-self-file 审批：无人模式 fail closed。worker 不能改 Sherry 自身代码（superagent 也不该）。
-- `interrupt_on` 通用策略：无人模式 deny。
+per-ticket 准入已授权执行;HITL 只在"需人判断"时触发,转 attention 流。**修正后**:worker 是 main session 子代理,question decline 的"无人 operator"判定成立(main session 的 operator 是 superagent,不是人——headless)。
 
-这些 fail-closed 行为**正是 superagent 想要的**——worker 不挂起等人，而是把"需要人"转成 Report + Attention。superagent 的 per-ticket 准入已授权执行，HITL 只在"需要人判断"时触发，转成 attention 流。
+## 9. 长时无人续跑(修正后的核心价值)
 
-## 9. 长时无人续跑（核心价值）
+**对比**:
 
-**对比 Sherry 单独**：
+- Sherry 单独:main agent 跑满 15 轮 latch 静默,必须真人消息解锁。
+- Sherry + superagent:superagent main session 也受 15 轮 cap,但**每次 worker subagent 完成都重置 latch**。一个 Ticket 的工作 = N 个 worker subagent run(每个 goal-bounded),每个完成 drain 回 main session 重置 latch + 触发下一 routing turn。Ticket 跨多 session run,由 Trigger 事件驱动延续。
 
-- Sherry 单独：`max_continuation_turns=15` 后 latch 静默，必须真人消息解锁。
-- Sherry + superagent：一个 worker subagent 跑满 15 轮报 `waiting` → Ticket idle → **下一个 Trigger（CI/review/人消息/cron）唤醒新 Assignment** → 新 worker subagent 续跑。Ticket 跨越多 session，由事件驱动延续，不受单 session 续跑 cap。
+**事件源**:GitHub CI/review/comment、Feishu 消息、superagent Passes、worker completion drain。
 
-**事件源**：
+**跨天**:Ticket 持久 SQLite;main session checkpoint 持久;重启后各自恢复。
 
-- GitHub CI 结果（PR 推后 CI 跑完 → Trigger）。
-- GitHub review（人 review → Trigger）。
-- GitHub comment（人评论 → Trigger）。
-- Feishu 消息。
-- superagent 自己的 Passes（每 2 秒 Eval due）。
-- Sherry auto-turn trigger（main Session 的 routing turn）。
+**关键**:这套依赖 worker 完成回流重置 latch——**只有 workers 是 main session 子代理才成立**。这是承重问题 1 修正的根本理由。
 
-**跨天目标延续**：Ticket 持久化在 SQLite，重启后重放。一个跨三天的 Ticket：今天跑到 idle 关掉，明天 CI 跑完 Trigger 唤醒，后天人 review Trigger 再唤醒。这是 L7 的"长时无人值守"。
+## 10. 旁进程部署与失败模式(修正问题 7)
 
-## 10. 旁进程部署细节
+### 10.1 进程拓扑(修正)
 
-### 10.1 进程启停
+```
+┌─────────────────────────┐      ┌──────────────────────────┐
+│  Sherry 后端进程          │      │  superagent 进程           │
+│  (Robyn)                 │      │  (Robyn/ASGI, 独立端口)    │
+│                          │      │                            │
+│  superagent-main session │◄─────┤  Engine + Sources + Effects│
+│  (持久 main agent)       │ HTTP │  SherryExecutor            │
+│  worker subagents        │ 双向 │  MCP server (stdio→Sherry) │
+│                          │      │  HTTP server (收 Sherry 事件)│
+│  /internal/superagent/*  │      │                            │
+│  SQLite: sherry.db       │      │  SQLite: orchestrator.db   │
+└─────────────────────────┘      └──────────────────────────┘
+```
 
-- `scripts/superagent start` 起 superagent 进程（tmux 会话 `superagent`，与 Sherry 后端独立）。
-- 进程入口 `superagent/__main__.py`：建 Runtime + 注册 Source plugins + start Passes/Effects。
-- Sherry 后端启动时（`server/__main__.py`）ping superagent loopback（`GET /state`）—— 在跑则注册 `SuperAgentHooks` client；不在跑则空实现。
-- superagent 启动时 ping Sherry 后端 loopback —— 在跑则 `SherryExecutor` 用真 hooks；不在跑则退化（worker 起不来，fail Ticket）。
+双向 HTTP:superagent → Sherry(spawn/inject/heal);Sherry → superagent(trajectory/completion 回调)。MCP 走 stdio(superagent 作为 Sherry MCP 子进程)或 SSE。
 
-### 10.2 配置
+### 10.2 失败模式(修正)
 
-- `superagent.jsonc`（在 Sherry home 或独立）：
-  - `stateDir`：superagent 数据目录。
-  - `sherry_backend_url`：Sherry loopback（默认 `http://127.0.0.1:8080`）。
-  - `port`：superagent 面板/API 端口（默认 3082，与原型一致）。
-  - `shared_secret`：internal API 鉴权（loopback 仍同源守卫，secret 双保险）。
-- Sherry `sherry.jsonc` 加 `superagent` 段（enabled/url/port/secret）。
+| 失败 | 影响 | 恢复 |
+|---|---|---|
+| superagent 挂了 | Sherry 正常(用户用 Sherry 原生功能);main session idle 等注入;面板不可达 | superagent 重启 → 重连 main session → 重放 pending Effects |
+| Sherry 挂了 | **superagent 进 degraded**:只收 Trigger 入队、不 dispatch worker、不跑 main session turn;Ticket 卡在 working/idle | Sherry 恢复 → superagent ping main session → 复用或重建 → 重放 pending Effects(Effects 持久,main session checkpoint latest-only) |
+| 都挂了 | 各自重启恢复 | superagent Effects 重放;Sherry checkpoint 重放;main session 可能丢 in-flight turn(可接受) |
+| MCP server 挂了 | main session/worker 调不到 orchestrator 工具 → turn 报工具错误 | superagent 进程级 MCP server 随进程重启 |
 
-### 10.3 失败模式
+**关键修正**:Sherry 挂了 ≠ "worker spawn 失败"。Sherry 挂了 = superagent main session 没了 = superagent 整体停摆(不能路由/spawn/跑 turn)。degraded 模式 = 只入队 Trigger,等 Sherry 恢复。这与原型"processing paused, Sources 仍记 Trigger"语义一致。
 
-- superagent 挂了：Sherry 后端继续正常工作（hooks 空实现）；面板 `/superagent` 页显示不可达。
-- Sherry 挂了：superagent 的 worker spawn 失败 → Report `failed`（transient，重试 3 次）→ Ticket `person/failed` 等人。
-- 都挂了：重启后各自恢复（superagent 重放 Effects；Sherry 重放 checkpoint）。
+### 10.3 配置
 
-## 11. Sherry 侧最小改动清单
+- `superagent.jsonc`:`stateDir`/`sherry_backend_url`/`port`/`shared_secret`/`mcp_transport`(stdio|sse)。
+- Sherry `sherry.jsonc` 加 `superagent` 段(enabled/url/port/secret)+ `mcp.servers.superagent`(command/args)。
 
-| 文件 | 改动 |
-|---|---|
-| `runtime/hooks.py` | 加 `SuperAgentHooks` 注册点 + HTTP client |
-| `server/__main__.py` | 启动时 ping superagent，注册 hooks |
-| `server/trigger/http/` | 加 `/internal/superagent/*` loopback 路由（spawn/cancel/add_messages/truncate/heal/read_state/list_jobs/kill_job/read_trajectory） |
-| `agent/tools/subagent/spawn/core.py` | 暴露 `spawn_subagent_direct` 给 hooks（已存在，加 HTTP 包装） |
-| `server/service/turn_runner.py` | 暴露 cancel/heal 给 hooks |
-| `agent/state_port.py` | 暴露 read_messages/truncate/heal 给 hooks（已存在） |
-| `agent/trajectory_events.py` | 暴露 read_trajectory 给 hooks |
-| `client/app/pages/superagent.vue` | 新页面（MVP 可选） |
-| `sherry.jsonc` | 加 `superagent` 段 |
-| `pyproject.toml` | 加 `superagent` 包 + 依赖（pydantic/aiohttp） |
-| `scripts/superagent` | service 脚本 |
-| `wiki/super-agent/` | 四语言 README |
+## 11. Sherry 侧最小改动清单(修正)
 
-**Sherry 核心代码（agent/core.py、middleware、tools）不动**——只暴露 hooks。这是依赖反转的关键。
+| 文件 | 改动 | 说明 |
+|---|---|---|
+| `server/trigger/http/superagent.py` | **新增**:loopback 路由 `/internal/superagent/*`(spawn/inject/heal/messages/truncate/exists/ensure/events 回调) | 这是 superagent 进程的接缝,不是 hooks.py |
+| `server/__main__.py` | 注册上述路由 + 启动时 ping superagent(可选) | |
+| `agent/tools/subagent/spawn/core.py` | 不改(spawn_subagent_direct 已存在,superagent 经 HTTP 调) | |
+| `server/service/turn_runner.py` | 不改(cancel 经现有 session 管理) | |
+| `agent/state_port.py` | 不改(read_messages/truncate/heal 已存在,经 HTTP 包装暴露) | |
+| `agent/trajectory_events.py` | 不改(读 trajectory 经 HTTP 包装;completion drain 是 subagent 既有) | |
+| `runtime/hooks.py` | **不改**(superagent 不用这层,见 §2) | |
+| `sherry.jsonc` | 加 `superagent` 段 + `mcp.servers.superagent` | |
+| `client/app/pages/superagent.vue` | 新页面(MVP 可选) | |
+| `pyproject.toml` | 加 `superagent` 包 + 依赖 | |
+| `scripts/superagent` | service 脚本 | |
+| `wiki/super-agent/` | 四语言 README | |
 
-## 12. 该册验收门
+**Sherry 核心代码(agent/core.py、middleware、tools、spawn core、turn_runner、state_port、trajectory_events)零改动**——只加 HTTP 包装层 + 配置。这是依赖反转的关键。
 
-- `runtime/hooks.py` 的 `SuperAgentHooks` 注册点定义 + 空 + HTTP client 实现。
-- Sherry `/internal/superagent/*` loopback 路由：spawn/cancel/add_messages/truncate/heal/read_state/list_jobs/kill_job/read_trajectory 全实现 + loopback + shared-secret 守卫。
-- `SherryExecutor` 全部经 hooks 调 Sherry，不 import `agent/`（lint-imports 强制）。
-- Ticket↔flow 映射：accept 可开 flow；ready 前 finish gate 过；blocked 时转 gate 反馈。
-- Executor↔subagent：spawn/cancel/add_messages/jobs 全路径单测（mock hooks）。
-- HITL 重定向：worker question/exit_plan_mode/sherry-self-file 在无人模式 fail-closed → Report blocked/Attention。
-- 长时无人：worker 跑满 15 轮报 waiting → Ticket idle → Trigger 唤醒新 Assignment（单测模拟 CI Trigger）。
-- 旁进程：superagent 挂了 Sherry 正常；Sherry 挂了 superagent worker spawn failed→Ticket person/failed。
-- `tests/superagent/test_sherry_integration.py`：mock Sherry HTTP，覆盖 spawn/cancel/relay/heal/restart 全路径。
-- Sherry 侧 `tests/server/test_superagent_hooks.py`：hooks 注册 + loopback 守卫 + 各端点。
-- 端到端（`tests/superagent/test_e2e.py`，可标 `system`/`llm_e2e`）：真实 GitHub 测试仓库 + Sherry 后端 + superagent 进程，issue→Ticket→PR→CI→修→merge 全链路。
+## 12. spike(开工前必做,2-3 天)
+
+P2 开工前先验证两个承重假设:
+
+### spike 1:completion drain 重置 main session 续跑 latch
+
+- 在 Sherry 起一个 main agent session。
+- spawn 一个 subagent(短任务,如"echo hello")。
+- 让 main session 跑满接近 15 轮续跑(注入 busy-work directives)。
+- subagent 完成 → 观察 main session 的 latch 是否重置(下一 turn 能否正常跑)。
+- **预期**:重置(AGENTS.md 既定行为)。若不重置,整个 L7 模型要重新设计。
+
+### spike 2:MCP 工具被 subagent 调到
+
+- 起一个最小 MCP server(python,stdio,一个 echo tool)。
+- Sherry 配 `mcp.servers.test`。
+- spawn 一个 subagent,让它调该 MCP 工具。
+- **预期**:调到,返回结果。若调不到,MCP 路径要换(评估 SSE 或改 build_main_tools)。
+
+### spike 3:HTTP loopback 双向
+
+- Sherry 起 `/internal/test` 路由;外部进程调。
+- Sherry turn 完成后回调外部 HTTP。
+- **预期**:双向通。
+
+三个 spike 通过,P2 才有底。失败则架构返工。
+
+## 13. 该册验收门(修正)
+
+- `12-sherry-integration.md` 的架构与 §1 图一致:workers 是 main session 子代理(非孤儿)。
+- MCP server 暴露 `orchestrator_*` 全工具;main + worker 经 MCP 调到。
+- HTTP loopback 双向:superagent→Sherry(spawn/inject/heal);Sherry→superagent(trajectory/completion)。
+- `runtime/hooks.py` 不改(确认 superagent 不用这层)。
+- Sherry 核心代码零改动(只加 `server/trigger/http/superagent.py` + 配置)。
+- HITL fail-closed → blocked + attention 流(修正后 worker 是 main 子代理,headless 成立)。
+- 长时无人:worker 完成重置 main latch(单测模拟 + spike 验证)。
+- 失败模式:superagent 挂 Sherry 正常;Sherry 挂 superagent degraded(入队不 dispatch)。
+- spike 1/2/3 全通过(开工前)。
+- `tests/superagent/test_sherry_integration.py`:mock HTTP + MCP,覆盖 spawn/drain/inject/heal/degraded 全路径。

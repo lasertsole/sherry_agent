@@ -35,7 +35,7 @@ Anti-loop guarantees (design intent; see this module + skills/builtin/core/ulw-e
   turn is already in flight and the middleware is a no-op.
 - **Completion-carrier skip**: a final message carrying the frozen task-4
   contract (``metadata.internal`` + ``provenance == "subagent_completion"``,
-  see ``subagent_completion_drain.py``) never triggers steering — the drained
+  see the ``subagent_completion_drain`` middleware) never triggers steering — the drained
   carrier drives that turn.
 - **System-directive filtering**: ``[SYSTEM DIRECTIVE`` / ``<sherry-ulw-execute>``
   / ``metadata.internal`` messages are never mistaken for user input, so

@@ -6,11 +6,11 @@
 
 ---
 
-システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、プロジェクト指示（`AGENTS.md`、フォールバック `CLAUDE.md`）、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。最低優先度の `current_time` ソースが同じブロックに毎ターンローカル時計を追加します。英語の 1 行で、例: `Current local time: 2026-11-06 09:41:07 (Friday) (CST, UTC+08:00)`。`transient=True` なので前ターンの行は取り除かれ、累積しません。また意図的に `only_if_changed` を使いません — 時計は進む必要があるためです。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
+システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、プロジェクト指示（`AGENTS.md`、フォールバック `CLAUDE.md`）、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。最低優先度の `current_time` ソースが同じブロックに毎ターンローカル時計を追加します。英語の 1 行で、例: `Current local time: 2026-11-06 09:41:07 (Friday) (CST, UTC+08:00)`。`transient=True` なので前ターンの行は取り除かれ、累積しません。また意図的に `only_if_changed` を使いません — 時計は進む必要があるためです。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
 
 凍結されたメモリスナップショットには意図的な例外が 1 つあります。セッションのモデル切替は新しい provider キャッシュ名前空間に入り、思考モード切替は同一プレフィックスで `cache_read` が 0 になることを実測済みです——どちらもキャッシュは元々冷えます。`ThinkingControlMiddleware` の `before_model` フックは、そのターンの `(thinking key, profile fingerprint, mapping fingerprint)` を最後に適用した値と比較し（グラフは毎ターン再構築されるためプロセスレベルで保持）、変化があれば `system_prompt_injection` より前に `MemoryStore` のスナップショットを再読み込みし、両レジスタから `StateKey.SYSTEM_PROMPT` を削除します。切替後のターンの最初のモデル呼び出しは、セッション途中に書かれたメモリエントリ（SQLite バックエンド。旧 Markdown ファイルは起動時に一度だけインポート）を見ます。初回ターン、変化なし、再読み込み失敗ではキャッシュを保持し、送信なしでは発火しません。
 
-FACTS.md はグローバルなので、ディレクトリ切替でメモリ用のキャッシュプロンプトは無効化されません。同じターンの `project_instructions` リマインダーは新しいプロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`）を読み直し、`only_if_changed` により内容が変わるまで再注入しません。
+facts メモリターゲットはグローバルなので、ディレクトリ切替でメモリ用のキャッシュプロンプトは無効化されません。同じターンの `project_instructions` リマインダーは新しいプロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`）を読み直し、`only_if_changed` により内容が変わるまで再注入しません。
 
 | 関心事 | ルール |
 |---|---|
@@ -25,7 +25,7 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 
 ## 📋 登録ソース
 
-カタログは 10 個のソースを登録します（`agent/middlewares/reminder_catalog/sources.py::register_default_sources`）。すべて同じチャネル（`CURRENT_TURN`）に乗り、`current_time` と `memory_recall` を除き、すべて `only_if_changed=True` を持ちます——前回注入と**バイト同一**のペイロードは、クールダウンが過ぎていても再注入**されません**。カタログは**1 ターンにつき 1 回のみ、最初のモデル呼び出しで**解決されます（最後のメッセージが本物のユーザーメッセージのとき）。再開ターンがユーザーメッセージより前に既にブロックを持っていれば再注入をスキップします。
+カタログは 9 個のソースを登録します（`agent/middlewares/reminder_catalog/sources.py::register_default_sources`）。すべて同じチャネル（`CURRENT_TURN`）に乗り、`current_time` と `memory_recall` を除き、すべて `only_if_changed=True` を持ちます——前回注入と**バイト同一**のペイロードは、クールダウンが過ぎていても再注入**されません**。カタログは**1 ターンにつき 1 回のみ、最初のモデル呼び出しで**解決されます（最後のメッセージが本物のユーザーメッセージのとき）。再開ターンがユーザーメッセージより前に既にブロックを持っていれば再注入をスキップします。
 
 | ソース（`source_id`） | 優先度 | 予算（文字） | クールダウン | Transient | 注入内容 |
 |---|---|---|---|---|
@@ -37,7 +37,6 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 | `continuity_context` | 65 | 1 000 | 0 —— 毎ターン | No | ターン間の継続コンテキスト |
 | `project_instructions` | 62 | 8 000 | 0 —— 毎ターン | Yes | プロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`） |
 | `project_dir_notice` | 60 | 500 | 0 —— 毎ターン | No | 作業ディレクトリ通知 |
-| `knowledge_index` | 50 | 1 000 | 0 —— 毎ターン | No | 知識索引 |
 | `current_time` | 10 | 120 | 0 —— 毎ターン | Yes | ローカル時計（英語、日付・曜日・秒・UTC オフセット） |
 
 **頻度の読み方。** `cooldown_turns = 0` は*毎ターン対象*——前回注入から内容が変化すれば再注入されます; 内容がめったに変わらないソース（`project_instructions` など）は毎ターン対象でも注入はまれで、頻繁に変わるソース（`todo_block` など）はほとんどのターンで注入されます。`cooldown_turns = 5`（TaskFlow ボード、boulder）は*最大でも 5 ターンに 1 回*、かつ内容も変化したときのみ。変化していないボードは対象であっても 5 ターン沈黙します。スロットル管理状態は実際に注入されたソースだけ進み、抑制されたソースはクールダウンを「無駄に消費」しません。`current_time` は例外です: 内容に秒を含み `only_if_changed` をオフにしているため、毎ターン現れます。

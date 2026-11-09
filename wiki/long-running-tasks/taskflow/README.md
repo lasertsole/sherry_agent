@@ -311,7 +311,7 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
-Creates a durable flow at `INITIAL_REVISION = 1` with status `running`. Returns the flow id, status, and revision. `FlowExistsError` if the id is already taken (returns an error string with the current revision for re-read).
+Creates a durable flow at `INITIAL_REVISION = 1` with status `running`. Returns the flow id, status, and revision. An existing non-terminal flow with the same id returns an idempotent success (`TaskFlow already exists ...`); a terminal flow returns an error telling the caller to pick a new id or pass `resumed_from`.
 
 
 
@@ -605,10 +605,7 @@ Read-only board of this session's flows: `"active"` (running + waiting), `"all"`
 
 ```python
 
-async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None,
-                          todo: dict | None = None, plan_path: str | None = None,
-
-                          checkbox_label: str | None = None) -> str
+async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
 
 async def taskflow_flow(action="fail", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
@@ -616,7 +613,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-Terminal transitions. `finish` records a `summary`, `fail` records a `failure_reason`, `cancel` records a `cancel_reason` in the flow state. Already-dispatched child sessions keep running; their results are still deliverable via `taskflow_step(action="resume")` until the flow was cancelled.
+Terminal transitions. `finish` records a `summary`, `fail` records a `failure_reason`, `cancel` records a `cancel_reason` in the flow state. Already-dispatched child sessions may keep running, but once the flow is terminal `taskflow_step(action="resume")` refuses every result; resume them before finishing, failing, or cancelling.
 
 
 
@@ -674,7 +671,7 @@ Terminal flows are immutable: every mutating tool checks `is_terminal(status)` b
 
 
 
-DAG fields live entirely inside `state_json` (no DB migration). The `StepStatus` enum defines four states, and three pure functions in `_shared.py` manage transitions:
+DAG fields live entirely inside `state_json` (no DB migration). The `StepStatus` enum defines seven states (`blocked`, `ready`, `dispatched`, `done`, `failed`, `skipped`, `cancelled`), and three pure functions in `_shared.py` manage transitions:
 
 
 

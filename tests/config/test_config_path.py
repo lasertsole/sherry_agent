@@ -136,11 +136,6 @@ class TestSubPaths:
 
         assert HEARTBEAT_PATH == WORKSPACE_DIR / "HEARTBEAT.md"
 
-    def test_memory_index_dir(self):
-        from config.path import MEMORY_DIR, MEMORY_INDEX_DIR
-
-        assert MEMORY_INDEX_DIR == MEMORY_DIR / "index"
-
     def test_knowledge_index_dir(self):
         from config.path import KNOWLEDGE_DIR, KNOWLEDGE_INDEX_DIR
 

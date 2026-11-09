@@ -41,6 +41,13 @@ class TodoListInfraConfig(TypedDict):
     #: turn resets it. Hitting the cap injects one final "stop and summarize"
     #: directive and the session then stays silent until the user speaks.
     max_continuation_turns: int
+    #: Auto-insert exactly one system verify todo at the end of a plan with at
+    #: least ``verify_min_work_todos`` work todos (MAIN agent only).
+    verify_todo_enabled: bool
+    verify_min_work_todos: int
+    #: How many reviewer links a verify todo may replace before the gate offers
+    #: the exhausted escape (cancel + verify yourself).
+    max_verify_respawns: int
 
 
 TODOLIST_INFRA: TodoListInfraConfig = {
@@ -62,4 +69,7 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     # stagnation cannot see is the "edits the plan every turn, never finishes"
     # loop this ceiling exists for.
     "max_continuation_turns": 15,
+    "verify_todo_enabled": True,
+    "verify_min_work_todos": 2,
+    "max_verify_respawns": 2,
 }

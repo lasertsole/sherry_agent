@@ -173,7 +173,7 @@ client/
 │   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
 │   │           ├── SessionPresetPanel.vue     # 「当前会话」标签页：本会话自己的预设，只读（代理模型排在第一页）
 │   │           ├── NewSessionPresetDialog.vue # 每次「新建对话」必选的预设选择对话框（先应用预设，再创建会话）
-│   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
+│   │           ├── MemoryPanel.vue            # 长期记忆标签页（SQLite 条目）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页 + 全局心跳开关
 │   │           ├── CronPanel.vue              # 定时任务标签页（/cron）
 │   │           ├── WebSearchPanel.vue         #「模型联网」标签页：会话的搜索后端（Tavily / SearXNG 单选）+ Tavily 密钥与 SearXNG 连接表单——这些 .network 键的唯一编辑入口（GET /network-config 已隐藏它们）
@@ -312,7 +312,6 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 | `getHistory(sessionId, lastTurnCount)`                                                                                                 | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`）                   |
 | `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                      | 后台子智能体任务管理                                                                   |
 | `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                           | 系统提示词文件 CRUD                                                                    |
-| `readMemory` / `writeMemory`                                                                                                           | 长期记忆文件（`workspace/memory/*`）                                                   |
 | `readHeartbeat` / `writeHeartbeat`                                                                                                     | `workspace/HEARTBEAT.md`（始终走 HTTP）                                                |
 | `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                     | 定时任务管理                                                                           |
 | `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                             | 技能管理                                                                               |

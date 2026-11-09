@@ -26,6 +26,9 @@ class StepStatus(StrEnum):         # config.py:21
     READY = "ready"
     DISPATCHED = "dispatched"
     DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})   # config.py:35
 ```
@@ -44,7 +47,11 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
     deadline_ts REAL,
-    session_id TEXT NOT NULL DEFAULT ''
+    session_id TEXT NOT NULL DEFAULT '',
+    resumed_from TEXT,
+    superseded_by TEXT,
+    terminal_reason TEXT,
+    updated_at REAL
 );
 ```
 
@@ -62,6 +69,9 @@ blocked ──(依存満足)──▶ ready ──(ディスパッチ)──▶ 
 | `ready` | すべての依存が満たされ、ディスパッチ待ち | 登録時、または再開後の `unlock_dependents` |
 | `dispatched` | 分離された子セッションが生成され、`child_session_key` と `dispatched_at` を記録 | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | `taskflow_step(action="resume")` によって結果が注入された | `taskflow_step(action="resume")` |
+| `failed` | 確定的な失敗（`step_outcome="failure"`、または schema/判定器の再試行予算切れ）。依存側は `blocked` のまま | `taskflow_step(action="resume")` |
+| `skipped` | スキップ宣言、または依存がスキップ/キャンセルされ下流へ連鎖 | `taskflow_step(action="resume")` / `unlock_dependents` |
+| `cancelled` | ステップ完了前にフローがキャンセルされた | `taskflow_flow(action="cancel")` |
 
 `done` の意味は**「結果が注入された」**であり、「子が成功した」ではありません（[既知の制限](../README.ja.md#-既知の制限)を参照）。`status` フィールドを持たない旧ステップは導出されます：`child_session_key` を持つステップは `dispatched`、それ以外は `ready` とみなされます（`_shared.py:85`、`step_status`）。
 
@@ -223,7 +233,7 @@ total_cost   = round(existing_total_cost + cost_delta, 6)
 | `glm-5` | 0.5 | 1.5 |
 | `deepseek-chat` | 0.14 | 0.28 |
 | `kimi-latest` | 0.55 | 2.19 |
-| `_default` | 1.0 | 3.0 |
+| `_default` | 0.5 | 1.5 |
 
 `budget_warn_threshold` = `0.80`。
 
@@ -349,9 +359,9 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 | :--- | :--- | :--- |
 | **TaskFlow** | `task_flows.session_id` 列（今回の変更） | `agent/tools/taskflow/registry/store_sqlite.py` |
 | **TodoList** | `session_id` がテーブルの主キー接頭辞——元からセッションスコープ | `agent/tools/todolist/registry/store_sqlite.py` |
-| **Knowledge** | 計画アイデンティティ単位で分離（ツール層で強制）：関連は `ownership.association_plan_refs()`（セッションの `plan_ref` 状態キー、セッション todo の `plan_ref`（SQL で `session_id` をフィルタ）、`src/data/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work）から取得し、`identity.resolve_plan_identity()` が名前を正規化された計画パスへ解決して保存キー `sha1(リポジトリルート相対パス)[:12]` を導出します。別ファイルの同名計画は物理的に隔離され、boulder `session_ids` で共有された 1 つの計画ファイルは列挙された全セッションで同じ `<plan_key>` に解決されます。非関連・曖昧な計画への `read` / `write` は診断可能なエラーで拒否され、`list` は関連付けられた計画のみ（可読名 + key）を返します；`build_knowledge_block(session_id)` はプロンプトブロック用にセッションの主アイデンティティを解決します；`clear_session` はセッション私有のアイデンティティディレクトリを削除し、他セッションと共有された計画は保持します。 | `agent/tools/todolist/knowledge/identity.py` |
+| **Knowledge (retired)** | The model-facing `knowledge` tool and `build_knowledge_tools` are no longer registered; only internal `KnowledgeStore` audit/repair reads and writes remain. | `agent/tools/todolist/knowledge/identity.py` |
 
-**サブエージェント境界。** 3 ファミリはいずれもビルダー（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）が `metadata["scope"] = "main_only"` を付与します。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）は `main_only` ツールを**最初に無条件で**落とします——allow/deny リストより先で、ORCHESTRATOR の解除でも上書きできません——したがって spawn された子エージェントが `taskflow_*`、`todowrite`/`todoread`、`knowledge` を受け取ることは決してありません。同じタグパターンは既に `memory`、`skill_manage`、`sessions_kill`、`sessions_steer` を覆っています。実ツールセットの表明は `tests/agent/tools/taskflow/test_taskflow_tools.py`、`_build_child_agent` 境界は `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` が固定します。
+**サブエージェント境界。** 残る 2 ファミリはどちらもビルダー（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）が `metadata["scope"] = "main_only"` を付与します。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）は `main_only` ツールを**最初に無条件で**落とします——allow/deny リストより先で、ORCHESTRATOR の解除でも上書きできません——したがって spawn された子エージェントが `taskflow_*`、`todowrite`/`todoread` を受け取ることは決してありません。同じタグパターンは既に `memory`、`skill_manage`、`sessions_kill`、`sessions_steer` を覆っています。実ツールセットの表明は `tests/agent/tools/taskflow/test_taskflow_tools.py`、`_build_child_agent` 境界は `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` が固定します。
 
 **セッション間拒否。** `taskflow_flow(action="create")` で他セッションが使用中の `flow_id` に衝突した場合、存在だけを報告しリビジョンは漏らしません；他セッションの flow への変更は未知 id と同じ "not found" テキストを返します。読み取り/一覧/更新/パージ経路は `tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py`、`tests/server/service/test_session_cleanup_service.py` がカバーします。
 

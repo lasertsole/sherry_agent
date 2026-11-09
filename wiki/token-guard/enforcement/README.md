@@ -93,7 +93,7 @@ for key, value in changes.items():
         )
 ```
 
-The HTTP handler turns that into `{"success": False}` for the client, and the on-disk `.env` stays byte-identical.
+The HTTP handler turns that into `{"success": False}` for the client, and the on-disk `.models` stays byte-identical.
 
 ## 🌐 HTTP API: GET /model-config
 
@@ -160,23 +160,18 @@ When the config is valid, or when the fetch fails, the toast stays silent. The s
 
 ### Env tab banner and pre-save validation
 
-`client/app/pages/home/components/ConfigPanel.vue`:
+`client/app/pages/home/components/LlmModelManager.vue` + `ConfigPanel.vue`:
 
-- When the env tab exposes any `*_MAX_TOKEN` key (`hasMaxTokenKeys`, line 344), an amber banner renders `config.env.maxTokenHint` (line 211).
-- On save, `persistEnvChanges()` pre-validates the guarded token keys (lines 379 to 389). A non-integer or sub-`200000` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
+- `LlmModelManager.vue` renders the amber `config.env.maxTokenHint` under a guarded input when `MAX_TOKEN_GUARD_KEYS` contains its key.
+- On save, `ConfigPanel.vue`'s `persistEnvChanges()` pre-validates the same keys against `MIN_REQUIRED_MAX_TOKEN`. A non-integer or sub-`200000` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
 
 ```ts
-const TOKEN_KEYS = [
-  'MAIN_LLM_MAX_TOKEN',
-  'AUXILIARY_LLM_MAX_TOKEN',
-  'TASKFLOW_LLM_MAX_TOKEN',
-  'COMPRESSION_LLM_MAX_TOKEN'
-];
-const MIN_TOKEN = 200000;
+import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
+
 for (const [key, value] of Object.entries(changes)) {
-  if (TOKEN_KEYS.includes(key)) {
+  if (MAX_TOKEN_GUARD_KEYS.includes(key)) {
     const num = parseInt(value, 10);
-    if (Number.isNaN(num) || num < MIN_TOKEN) {
+    if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
       envLoadError.value = t('config.env.maxTokenError', { key });
       return false;
     }
@@ -184,7 +179,7 @@ for (const [key, value] of Object.entries(changes)) {
 }
 ```
 
-- After a successful write (line 756), `invalidateModelConfigCache()` runs so the toast guard re-reads fresh values.
+- After a successful write, `invalidateModelConfigCache()` runs so the toast guard re-reads fresh values.
 
 ### i18n keys
 
@@ -192,5 +187,5 @@ for (const [key, value] of Object.entries(changes)) {
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | Toast title |
 | `chat.tokenGuard.detail` | same locale files | Toast body (points to System Config then Environment) |
-| `config.env.maxTokenHint` | `ConfigPanel.vue` `<i18n>` block | Amber banner text |
-| `config.env.maxTokenError` | `ConfigPanel.vue` `<i18n>` block | Pre-save rejection message; `{key}` interpolates the offending var |
+| `config.env.maxTokenHint` | locale files + component `<i18n>` fallbacks | Amber banner text |
+| `config.env.maxTokenError` | locale files + component `<i18n>` fallbacks | Pre-save rejection message; `{key}` interpolates the offending var |

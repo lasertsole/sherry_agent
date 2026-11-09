@@ -212,7 +212,6 @@ class WavFrontendOnline(WavFrontend):
         frame_num = self.compute_frame_num(
             input.shape[-1], self.frame_sample_length, self.frame_shift_sample_length
         )
-        # update self.in_cache
         self.input_cache = input[
             :, -(input.shape[-1] - frame_num * self.frame_shift_sample_length) :
         ]
@@ -266,7 +265,6 @@ class WavFrontendOnline(WavFrontend):
             mat = input[i, : input_lengths[i], :]
             lfr_splice_frame_idx = -1
             if self.lfr_m != 1 or self.lfr_n != 1:
-                # update self.lfr_splice_cache in self.apply_lfr
                 mat, self.lfr_splice_cache[i], lfr_splice_frame_idx = self.apply_lfr(
                     mat, self.lfr_m, self.lfr_n, is_final
                 )
@@ -328,7 +326,6 @@ class WavFrontendOnline(WavFrontend):
                     ) * self.frame_shift_sample_length + self.frame_sample_length
                     self.waveforms = self.waveforms[:, :sample_length]
             else:
-                # update self.reserve_waveforms and self.lfr_splice_cache
                 self.reserve_waveforms = self.waveforms[
                     :, : -(self.frame_sample_length - self.frame_shift_sample_length)
                 ]

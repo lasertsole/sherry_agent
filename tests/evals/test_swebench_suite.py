@@ -27,6 +27,7 @@ def _instance(tmp_path: Path):
         python_exe=Path("/usr/bin/python3"),
         version="",
         node_ids=lambda: (["t"], []),
+        unrunnable_ids=lambda: {},
     )
 
 
@@ -133,11 +134,15 @@ def test_target_tests_block_exposes_the_patch_and_f2p_names():
         test_patch="diff --git a/tests/test_x.py b/tests/test_x.py\n+assert x\n"
     )
 
-    block = suite._target_tests_block(instance, ["tests/test_x.py::test_x"])
+    block = suite._target_tests_block(
+        instance, ["tests/test_x.py::test_x"], ["tests/test_x.py::test_old"]
+    )
 
     assert "Evaluation tests (read-only)" in block
     assert "FAIL_TO_PASS" in block
     assert "tests/test_x.py::test_x" in block
+    assert "PASS_TO_PASS (must keep passing)" in block
+    assert "tests/test_x.py::test_old" in block
     assert "diff --git a/tests/test_x.py" in block
 
 
@@ -164,9 +169,85 @@ def test_target_tests_block_marks_preapplied_tests():
     assert "ALREADY APPLIED" in block
 
 
+def test_target_tests_block_gives_the_exact_django_runner_commands():
+    instance = SimpleNamespace(test_patch="diff --git a/x b/x\n", judge_mode="django")
+
+    block = suite._target_tests_block(
+        instance,
+        ["bulk_create.tests.BulkCreateTests.test_x"],
+        ["migrations.test_optimizer.OptimizerTests.test_y"],
+    )
+
+    assert "python tests/runtests.py bulk_create.tests.BulkCreateTests.test_x" in block
+    assert "python tests/runtests.py bulk_create migrations" in block
+
+
+def test_target_tests_block_gives_the_exact_pytest_node_ids():
+    instance = SimpleNamespace(test_patch="diff --git a/x b/x\n", judge_mode="pytest")
+
+    block = suite._target_tests_block(
+        instance, ["tests/test_x.py::test_x"], ["tests/test_x.py::test_old"]
+    )
+
+    assert "python -m pytest tests/test_x.py::test_x" in block
+    assert "python -m pytest tests/test_x.py" in block
+
+
+def test_dirty_test_edits_excludes_the_harness_patch_and_flags_agent_test_files():
+    changed = [
+        "django/db/models/query.py",
+        "tests/bulk_create/test_agent_scratch.py",
+        "django/tests/test_x.py",
+    ]
+    assert suite._dirty_test_edits(changed, ["tests/bulk_create/tests.py"]) == [
+        "tests/bulk_create/test_agent_scratch.py",
+        "django/tests/test_x.py",
+    ]
+
+    assert (
+        suite._dirty_test_edits(["tests/bulk_create/tests.py"], ["tests/bulk_create/tests.py"])
+        == []
+    )
+
+
 def test_the_dirty_diff_gate_recognises_test_paths():
     assert suite._looks_like_test("tests/bulk_create/test_dbg.py") is True
     assert suite._looks_like_test("pkg/tests/test_x.py") is True
     assert suite._looks_like_test("test_dbg.py") is True
     assert suite._looks_like_test("django/db/models/query.py") is False
     assert suite._looks_like_test("fix_compiler.py") is False
+
+
+def test_task_template_requires_reading_the_target_tests_before_editing():
+    assert "Before editing, read the" in suite._TASK_TEMPLATE
+    assert "FAIL_TO_PASS and PASS_TO_PASS" in suite._TASK_TEMPLATE
+    assert "derive the" in suite._TASK_TEMPLATE
+
+
+def test_eval_temperature_is_pinned_at_the_message_seam(monkeypatch):
+    import asyncio
+    import server.service.messages as messages
+    from evals.coding_capability import suite as coding_suite
+
+    async def _original(*_args, **kwargs):
+        return kwargs.get("temperature")
+
+    monkeypatch.setattr(messages, "built_agent", _original)
+    coding_suite.pin_eval_temperature()
+
+    assert asyncio.run(messages.built_agent(force_rebuild=True)) == coding_suite.EVAL_TEMPERATURE
+
+
+def test_eval_budget_override_is_opt_in(monkeypatch):
+    from config.features import ITERATION_BUDGET
+    from evals.coding_capability import suite as coding_suite
+
+    monkeypatch.setitem(ITERATION_BUDGET, "main_agent_max_iterations", 90)
+
+    monkeypatch.setattr(coding_suite, "EVAL_MAX_ITERATIONS", 0)
+    coding_suite.pin_eval_budget()
+    assert coding_suite.eval_main_max_iterations() == 90
+
+    monkeypatch.setattr(coding_suite, "EVAL_MAX_ITERATIONS", 180)
+    coding_suite.pin_eval_budget()
+    assert coding_suite.eval_main_max_iterations() == 180

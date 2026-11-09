@@ -153,7 +153,7 @@ Worker returns result
   → NOT done: any gate fails → re-dispatch or fix
 ```
 
-Implementation: `verifier.py` (~80 lines) + `subagent_completion_drain/core.py` extension (~15 lines, appends Sisyphus verification reminder after subagent completion).
+This is orchestrator doctrine in the prompt, not a runtime verifier: there is no `verifier.py`. The runtime gate is the evidence-based `SubagentCompletionDrainMiddleware`, which injects `[GATE] Completion blocked: verification evidence missing or failing` after a child completion; TaskFlow finish gates A–C/E cover the flow level.
 
 ### E6: Delegation Routing — Todo & Subagent Linkage ★
 

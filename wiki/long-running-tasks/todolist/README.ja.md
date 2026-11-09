@@ -25,7 +25,7 @@
   - [E2: ツール説明強制 — フォーマット + 委譲ルール](enforcement/README.ja.md#e2-ツール説明強制--フォーマット--委譲ルール)
   - [E3: 継続強制器 — 事後クロージャのコア ★★](enforcement/README.ja.md#e3-継続強制器--事後クロージャのコア-)
   - [E4: 遷移バリア — 二重保険](enforcement/README.ja.md#e4-遷移バリア--二重保険)
-  - [E5: Sisyphus 完了契約 ★★](enforcement/README.ja.md#e5-sisyphus-完了契約-)
+  - [E5: Sisyphus ドクトリン（プロンプトのみ。ランタイムゲートは completion drain） ★★](enforcement/README.ja.md#e5-sisyphus-完了契約-)
   - [E6: 委譲ルーティング ★](enforcement/README.ja.md#e6-委譲ルーティング-)
   - [E7: 意図認識とガイダンス — 事前トリガー ★★](enforcement/README.ja.md#e7-意図認識とガイダンス--事前トリガー-)
 - [フロントエンド](#フロントエンド)
@@ -122,7 +122,7 @@ Before (message arrives)    During                     After
 Layer 9  │ UI コンポーネント  │ ProgressFloat.vue (PrimeVue)、TaskFlow flow ごとにグループ化
 Layer 8  │ フロントエンド状態  │ useTodoList.ts（モジュールレベルシングルトン）+ flow ごとにグループ化
 Layer 7  │ リアルタイム通信    │ WS: todo_updated プッシュ + todo_refresh 再接続時再送
-Layer 6  │ 圧縮保護 ★        │ build_system_prompt が現在の todos + boulder 状態を注入
+Layer 6  │ 圧縮保護 ★        │ DynamicReminderMiddleware が毎ターンの system-reminder として todos + boulder を注入
 Layer 5  │ DAG 実行 ★        │ TaskFlow が提供: depends_on + blocked/ready/dispatched/done（本層は不実装）
 Layer 4  │ オーケストレーション ★ │ ulw-execute: plan→checkbox→sub-task→worker→verify、TaskFlow を呼び出し
 Layer 3  │ ツール            │ todowrite + todoread（DAG は taskflow_* ツールファミリーが実行）
@@ -133,7 +133,7 @@ E1       │ システムプロンプト  │ AGENTS.md: MANDATORY orchestrator 
 E2       │ ツール説明          │ todowrite docstring フォーマットルール
 E3       │ 継続強制 ★★       │ after_agent ミドルウェア: idle+未完了→自動継続（バックオフ/停滞/abort/リカバリ）
 E4       │ 遷移バリア ★       │ TaskFlow step 未 done / subagent 実行中 → completed をブロック
-E5       │ Sisyphus 検証 ★★  │ DoneClaim → AdversarialVerify → FullyDone（5 gates）
+E5       │ Sisyphus 検証 ★★  │ ドクトリンのみ: DoneClaim → AdversarialVerify → FullyDone（ランタイムゲート = 証跡 drain）
 E6       │ 委譲ルーティング ★ │ #a fan-out + #b category ルート + #c 委譲コマンド + #d バリア
 E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タスク意図→注入) + plan-active(計画あり→reminder)
 ```
@@ -244,7 +244,7 @@ def build_todolist_tools() -> list[BaseTool]:
 
 todolist をいつ使うか（3+ ステップの複雑な作業）、利用可能ツール、ステータス/優先度/委譲フィールド、DAG フィールド（TaskFlow に委譲）、ルール（ローカル action を優先し、全量書き換えのときだけ replace、同時に1つの in_progress、subagent 返却前に completed をマークしない）を定義します。
 
-### knowledge — 計画アイデンティティ分離
+### knowledge — 廃止（レガシー計画アイデンティティストア）
 
 `knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名ではなく**計画アイデンティティ**をキーとします。関連は 3 つのソース（`ownership.association_plan_refs()`）から取得します：セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、`src/data/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`identity.resolve_plan_identity()` が名前を正規化された計画パスへ解決し、保存ディレクトリ `workspace/knowledge/plans/<plan_key>/` を導出します（`plan_key = sha1(リポジトリルート相対の計画パス)[:12]`）。各ディレクトリの `meta.json` に可読な `plan_name` / `plan_ref` を記録します。結果：
 
@@ -254,6 +254,8 @@ todolist をいつ使うか（3+ ステップの複雑な作業）、利用可�
 - 名前が複数パスに一致する場合はセッション自身の `plan_ref` を優先；それでも曖昧な場合（自セッションのフォールバック名でない）は診断可能なエラーで拒否し、別の場所へ黙って書き込みません。
 
 `list` は関連付けられた計画のみ（可読名 + key）を返し、`read` / `write` の他セッション・曖昧計画へのアクセスは拒否されます（沈黙の空結果にはしません）。レガシーの名前キー・ディレクトリ `workspace/knowledge/plans/<plan-name>/` は key ディレクトリが現れるまで読み取り可能；書き込みは常に key ディレクトリへ。`clear_session` はセッション私有のアイデンティティディレクトリを削除し、boulder `session_ids` で他セッションと共有された計画は保持します；レガシー・ディレクトリは決して削除しません。boulder ファイルの欠落/破損、空の `session_id`、未知の計画はいずれも安全に拒否されます——例外もクロスセッション読み取りもありません。
+
+歴史的実装は `KnowledgeStore` と `plan_key = sha1(repo-relative plan path)[:12]` を使います。
 
 ---
 
@@ -279,7 +281,7 @@ Phase 5: 進捗マーク → checkbox - [ ] → - [x]、継続するか尋ねな
 
 1. `taskflow_flow(action="create", flow_id, description, initial_state)` — flow 作成。
 2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — step 登録：依存なし → `dispatched`；依存未充足 → `blocked`（ディスパッチしない）；未知の依存 id → エラー、状態変更なし。
-3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 結果注入：step が `done` になり、`blocked` 依存が `ready` にアンロック。**resume は自動ディスパッチしない。**
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 結果注入：step が `done` になり、`blocked` 依存が `ready` にアンロック。`auto_dispatch=True`（既定）は ready 集合全体を即座にディスパッチします。`auto_dispatch=False` ならアンロックのみです。
 4. `taskflow_step(action="dispatch", flow_id, step_ids)` — ready step を一括並行ディスパッチ。
 5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — ディスパッチした子セッションの完了を待機。
 6. `taskflow_flow(action="finish", flow_id, summary)` — 完了；`taskflow_inspect(action="summary")` でいつでも再読取可能。
@@ -327,7 +329,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | -------------------------- | ----------------- | ------------------ | --------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5行               | アクティブワーク状態                                      |
-| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20行              | key_failures + key_successes + reusable_patterns（アイデンティティ解決） |
+| `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
 ### 実装
 

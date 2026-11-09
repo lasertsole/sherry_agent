@@ -172,7 +172,7 @@ client/
 │   │           ├── SessionPresetButton.vue    # Top-bar view-only entry: opens the current session's preset tab
 │   │           ├── SessionPresetPanel.vue     # 当前会话 tab: the session's own preset, read-only (代理模型 leads its tab strip)
 │   │           ├── NewSessionPresetDialog.vue # Mandatory preset-choice dialog behind every 新建对话 (applies the preset, then creates the session)
-│   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
+│   │           ├── MemoryPanel.vue            # Long-term memory tab (SQLite entries)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
 │   │           ├── CronPanel.vue              # Cron job tab (/cron)
 │   │           ├── WebSearchPanel.vue         # 模型联网 (Web Search) tab: the session's search backend (Tavily / SearXNG radio) + the Tavily key and SearXNG connection forms — the ONLY surface editing those .network keys (withheld from GET /network-config)
@@ -312,7 +312,6 @@ app.vue (root: toast layer, connection banner, locale restore)
 | `getHistory(sessionId, lastTurnCount)`                                                                                                | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`)                    |
 | `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                     | Background subagent task management                                                            |
 | `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                          | System prompt files CRUD                                                                       |
-| `readMemory` / `writeMemory`                                                                                                          | Long-term memory files (`workspace/memory/*`)                                                  |
 | `readHeartbeat` / `writeHeartbeat`                                                                                                    | `workspace/HEARTBEAT.md` (always direct HTTP)                                                  |
 | `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                    | Cron job management                                                                            |
 | `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                            | Skill management                                                                               |

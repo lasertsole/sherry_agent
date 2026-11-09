@@ -21,7 +21,7 @@ Layer 1 is managed by `MemoryStore` (`agent/tools/memory.py::load_from_store`): 
 
 The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
 
-**Graph-state checkpoint store.** Sessions also persist their LangGraph state to `src/checkpoints/sqlite.db`, separate from the two layers above: every `built_agent()` call prunes it to the latest checkpoint per thread (`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), and because `auto_vacuum=0` that DELETE only frees pages instead of shrinking the file, the same call reads `PRAGMA freelist_count × page_size` right after pruning and runs `VACUUM` only when the freed space exceeds `_VACUUM_THRESHOLD_BYTES` (10 MB, `agent/checkpointer/thread_safe_checkpointer.py`) — fail-open: a VACUUM error is logged and the prune result stands.
+**Graph-state checkpoint store.** Sessions also persist their LangGraph state to `src/checkpoints/sqlite.db`, separate from the two layers above. The global keep-latest prune runs ONCE at boot (`server/service/checkpoint_maintenance.py`), not on every `built_agent()` call (that put a competing writer on the shared DB every turn); per-thread prunes still run on child release and session purge. With `auto_vacuum=0` a DELETE only frees pages, so the maintenance pass reads `PRAGMA freelist_count × page_size` and runs `VACUUM` only when the freed space exceeds `_VACUUM_THRESHOLD_BYTES` (10 MB, `agent/checkpointer/thread_safe_checkpointer.py`) — fail-open: a VACUUM error is logged and the prune result stands.
 
 ## 🔎 Semantic Recall & Consolidation
 
@@ -105,11 +105,11 @@ A session never receives its own state (`last_session_id == session_id → ""`).
 
 ## ♻️ TaskFlow Auto-Resume
 
-Active flows are re-surfaced into the system prompt so a fresh session can pick up unfinished work. Three independent readers use the same recipe — the session-scoped `get_active_flows_sync(session_id)` reached through `PromptDataProvider.get_active_flows(session_id)`:
+Active flows are re-surfaced as a per-turn `taskflow_status` system reminder (not into the cached system prompt) so a fresh session can pick up unfinished work. Three independent readers use the same recipe — the session-scoped `get_active_flows_sync(session_id)` reached through `PromptDataProvider.get_active_flows(session_id)`:
 
 | Reader | Location | Purpose |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | `## Pending TaskFlows` in the system prompt |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | `## Pending TaskFlows` in the per-turn reminder block |
 | `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | TaskFlow block in the compression summary prompt |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | `taskflow_ids` in the persisted continuity state |
 

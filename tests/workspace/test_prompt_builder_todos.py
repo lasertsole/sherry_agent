@@ -169,6 +169,13 @@ class TestTodoBlock:
         assert "[○]" in prompt
         assert "(high)" in prompt
 
+    def test_notes_render_under_the_todo(self, prompt_env):
+        _seed_todos(prompt_env, [_todo("Fix it", notes="test_x failed: assert 1 == 2")])
+
+        prompt = _reminder("sess-todos", "todo_block")
+
+        assert "notes: test_x failed: assert 1 == 2" in prompt
+
     def test_todo_id_is_rendered_as_stable_marker(self, prompt_env):
         _seed_todos(prompt_env, [_todo("Patch me", todo_id=42)])
 

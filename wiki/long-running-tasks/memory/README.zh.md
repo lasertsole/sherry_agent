@@ -21,7 +21,7 @@
 
 `memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
-**图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:227`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
+**图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层。全局 keep-latest 剪枝只在启动时执行一次（`server/service/checkpoint_maintenance.py`），不再挂到每次 `built_agent()` 调用上（那会让每轮都在共享 DB 上产生竞争写）；每线程剪枝仍在 child 释放和 session purge 时执行。由于 `auto_vacuum=0`，DELETE 只释放页面，因此维护流程读取 `PRAGMA freelist_count × page_size`，仅当释放空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
 
 ## 🔎 语义召回与整理
 
@@ -109,7 +109,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 | 读取者 | 位置 | 用途 |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 系统提示词中的 `## Pending TaskFlows` |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 每轮 reminder 块中的 `## Pending TaskFlows` |
 | `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 压缩摘要提示词中的 TaskFlow 区块 |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | 持久化连续性状态中的 `taskflow_ids` |
 

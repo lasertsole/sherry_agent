@@ -26,6 +26,9 @@ class StepStatus(StrEnum):         # config.py:21
     READY = "ready"
     DISPATCHED = "dispatched"
     DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})   # config.py:35
 ```
@@ -44,7 +47,11 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
     deadline_ts REAL,
-    session_id TEXT NOT NULL DEFAULT ''
+    session_id TEXT NOT NULL DEFAULT '',
+    resumed_from TEXT,
+    superseded_by TEXT,
+    terminal_reason TEXT,
+    updated_at REAL
 );
 ```
 
@@ -62,8 +69,11 @@ blocked ──(deps satisfied)──▶ ready ──(dispatch)──▶ dispatch
 | `ready` | all dependencies satisfied, awaiting dispatch | registration, or `unlock_dependents` after a resume |
 | `dispatched` | a detached child session was spawned; `child_session_key` + `dispatched_at` recorded | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | a result was injected by `taskflow_step(action="resume")` | `taskflow_step(action="resume")` |
+| `failed` | definitive failure (`step_outcome="failure"` or an exhausted schema/judge retry budget); dependents stay blocked | `taskflow_step(action="resume")` |
+| `skipped` | declared skip, or a dependency was skipped/cancelled; cascades downstream | `taskflow_step(action="resume")` / `unlock_dependents` |
+| `cancelled` | the flow was cancelled before this step finished | `taskflow_flow(action="cancel")` |
 
-`done` means **"a result was injected"**, not "the child succeeded" (see [Known Limitations](../README.md#-known-limitations)). Legacy steps without a `status` field are derived: a step carrying `child_session_key` is treated as `dispatched`, otherwise `ready` (`_shared.py:85`, `step_status`).
+`done` means a result was injected **and the step's configured gates passed** (see [Known Limitations](../README.md#-known-limitations)). Legacy steps without a `status` field are derived: a step carrying `child_session_key` is treated as `dispatched`, otherwise `ready` (`_shared.py:85`, `step_status`).
 
 ### `depends_on` semantics
 
@@ -234,7 +244,7 @@ total_cost   = round(existing_total_cost + cost_delta, 6)
 | `glm-5` | 0.5 | 1.5 |
 | `deepseek-chat` | 0.14 | 0.28 |
 | `kimi-latest` | 0.55 | 2.19 |
-| `_default` | 1.0 | 3.0 |
+| `_default` | 0.5 | 1.5 |
 
 `budget_warn_threshold` = `0.80`.
 
@@ -360,9 +370,9 @@ The schema carries an `updated_at` REAL column (every `update_flow` and `create_
 | :--- | :--- | :--- |
 | **TaskFlow** | `task_flows.session_id` column (this plan) | `agent/tools/taskflow/registry/store_sqlite.py` |
 | **TodoList** | `session_id` is the table's primary-key prefix — the family was already session-scoped | `agent/tools/todolist/registry/store_sqlite.py` |
-| **Knowledge** | per plan identity, enforced in the tool: association comes from `ownership.association_plan_refs()` (the session's `plan_ref` state key, its todos' `plan_ref`s SQL filtered by `session_id`, and `src/data/boulder.json` works whose `plan_name` matches and whose `session_ids` contain the session); `identity.resolve_plan_identity()` then maps the name to the canonical plan path and derives the storage key `sha1(repo-relative path)[:12]`. Same-named plans in different files are physically isolated; one plan file shared through boulder `session_ids` resolves one `<plan_key>` for every listed session. `read` / `write` on a foreign or ambiguous plan are refused with a diagnosable error and `list` returns only associated plans (readable name + key); `build_knowledge_block(session_id)` resolves the session's primary identity for the prompt block; `clear_session` purges the session's private identity directories and keeps plans shared with another session. | `agent/tools/todolist/knowledge/identity.py` |
+| **Knowledge (retired)** | The model-facing `knowledge` tool and `build_knowledge_tools` are no longer registered; only internal `KnowledgeStore` audit/repair reads and writes remain. | `agent/tools/todolist/knowledge/identity.py` |
 
-**Subagent boundary.** All three families are tagged `metadata["scope"] = "main_only"` by their builders (`build_taskflow_tools`, `build_todolist_tools`, `build_knowledge_tools`). `apply_tool_policy` (`agent/tools/subagent/spawn/inherited_tool_policy.py`) drops `main_only` tools **first and unconditionally** — before any allow/deny list and non-overridably by ORCHESTRATOR unblocking — so a spawned child never receives a `taskflow_*`, `todowrite`/`todoread`, or `knowledge` tool. The same tag pattern already covered `memory`, `skill_manage`, `sessions_kill` and `sessions_steer`. `tests/agent/tools/taskflow/test_taskflow_tools.py` locks the real-toolset assertion, and `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` locks it at the `_build_child_agent` boundary.
+**Subagent boundary.** Both remaining families are tagged `metadata["scope"] = "main_only"` by their builders (`build_taskflow_tools`, `build_todolist_tools`). `apply_tool_policy` (`agent/tools/subagent/spawn/inherited_tool_policy.py`) drops `main_only` tools **first and unconditionally** — before any allow/deny list and non-overridably by ORCHESTRATOR unblocking — so a spawned child never receives a `taskflow_*` or `todowrite`/`todoread` tool. The same tag pattern already covered `memory`, `skill_manage`, `sessions_kill` and `sessions_steer`. `tests/agent/tools/taskflow/test_taskflow_tools.py` locks the real-toolset assertion, and `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` locks it at the `_build_child_agent` boundary.
 
 **Cross-session refusal.** A foreign `flow_id` collision on `taskflow_flow(action="create")` reports existence without leaking the revision, and a mutation attempt against another session's flow returns the same "not found" text as an unknown id. `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py` and `tests/server/service/test_session_cleanup_service.py` cover the read/list/update/purge paths.
 

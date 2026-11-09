@@ -39,7 +39,7 @@ Completion is then verified by four always-on layers, ordered from the single ch
 2. **`general` is the identity role.** With no functional-role hint, spawn behavior is unchanged: no definition is loaded, and the depth role supplies the LLM tier.
 3. **Spawn privilege is depth-gated twice** — at assembly time (tool-policy intersection) and at call time (a permission check inside the tool itself).
 4. **Role spawning is allow-listed per hop, never chain-walked.** A specialized parent may spawn its own role plus the read-only extras its `SPAWN_ALLOWED_CHILD_ROLES` entry lists; the invariant is single-hop (no permitted non-parent child may be write-capable), which is what makes multi-hop safe without ancestor traversal.
-5. **Completion gates are always on.** There is no enable/disable switch anywhere in the stack; only budgets and criteria are inputs.
+5. **Completion gates are on by default.** `COMPLETION_JUDGE["enabled"]` and `GOAL_GATE["enabled"]` are master switches; when on, only budgets and criteria are inputs.
 6. **Fail-open means model error, unparseable output, or an unavailable lookup — never a negative verdict.** A parsed `RETRY`, `BLOCK`, or failing evidence row still blocks.
 7. **Child context is isolated.** A child starts from its own empty message list; the parent transcript is never inherited, and there is no mode that changes this.
 8. **Completion carriers are claims, not verified results.** The parent turn receives the child's report as a claim; when the session has no passing evidence, the drain gate appends a mandatory-verification message.
@@ -66,10 +66,10 @@ Built-in definitions ship inside the package, tracked and distributable, at `age
 | Role | Purpose | Effective LLM tier | Role tool set |
 |------|---------|--------------------|---------------|
 | `general` | Default worker; identity role (its package definition is never loaded) | depth role | all tools + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
+| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `search_files`, `terminal`, `web_search`, `web_fetch`, `message_search`, `skill_view`, `skill_list` + code-intel `explore`, `callers`, `callees`, `impact`, `path`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
 | `executor` | Write-capable implementation and command execution; the one role that may also spawn read-only `researcher` / `librarian` children | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `claim_scope`, `share_finding`, `peers_findings` |
 | `reviewer` | Read-only diff and quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
-| `librarian` | Read-only external codebase retrieval: clone, index, and search third-party repos | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
+| `librarian` | Read-only external codebase retrieval: clone, index, and search third-party repos | `auxiliary` | `read_file`, `search_files`, `terminal`, `web_search`, `web_fetch`, `message_search`, `skill_view`, `skill_list` + code-intel `explore`, `callers`, `callees`, `impact`, `path`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
 
 **ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite`. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` / `semantic_code_search` go to the two code-intel roles, `researcher` and `librarian`, because they need the symbol index; `semantic_code_search` is the embedding-backed concept search over that index. The LSP tools `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` reach the same two roles for the same reason: they need a running language server, which the child starts lazily and stops when idle. `lsp_rename` and `lsp_format` preview by default, `lsp_diagnostics` waits for the asynchronous diagnostics notification, and `lsp_status` reports availability without starting anything. The `execute_code` tool (Programmatic Tool Calling) is executor-only: the executor role receives it, and no other functional role does.
 
@@ -148,9 +148,8 @@ with a `source` label
 (`depth-1:label > depth-2:label`). The raw merged tree is written to
 `handoff-tree.json` BEFORE the extraction LLM runs (atomic, idempotent
 overwrite), so an interrupted synthesis never loses it; the LLM's
-`plan-summary.json` is a second, lossy layer on top. `knowledge(action="read",
-layer="handoff")` returns the raw tree, and the system-prompt knowledge block
-adds a one-line count (failed branches / success steps / hard constraints).
+`plan-summary.json` is a second, lossy layer on top. the raw tree is available on disk as `handoff-tree.json`; the model-facing
+`knowledge` tool and its system-prompt block are retired.
 
 The child's summarizer carries the handoff through compression: `SummaryDoc`
 gained `failed_branches` (capped by `failed_branches_max_items`) and
@@ -163,16 +162,16 @@ while the main agent keeps its flat 4000.
 
 ## 🚦 Layered Completion Gates
 
-Four gates stack from the child run outward. All four are always on; the only inputs are budgets and criteria.
+Four gates stack from the child run outward. All four are on by default; `COMPLETION_JUDGE["enabled"]` and `GOAL_GATE["enabled"]` can disable the judge and goal gate respectively, while budgets and criteria remain the normal inputs.
 
 | # | Layer | Gate | Input it needs | Fail-open behavior |
 |---|-------|------|----------------|--------------------|
 | 1 | Child run | completion judge + goal loop (`spawn/completion_judge.py`) | task, latest response, evidence summary; budget `goal_max_turns` (default `5`) | model error / unparseable → `done` |
-| 2 | Step | TaskFlow step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (absent → no judge call) | model error / unparseable → `pass` |
+| 2 | Step | TaskFlow step judge (`agent/tools/taskflow/step_judge.py`) | the step's `judge_criteria` (legacy `validation_criteria`; absent → no judge call) | model error / unparseable → `pass` |
 | 3 | Flow | `taskflow_flow(action="finish")` gates A–C (`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG state and flow evidence | unreadable ledger → pass |
 | 4 | Parent turn | completion-drain programmatic gate (`agent/middlewares/subagent_completion_drain/`) | the session's verification-evidence summary | lookup failure → gate skipped |
 
-**Layer 2 — step judge.** After `taskflow_step(action="resume")` injects a child result, a step that carries `validation_criteria` is judged `PASS` / `RETRY` / `BLOCK`. A `RETRY` re-dispatches the step with the judge's feedback while the step's retry count is below `STEP_JUDGE["max_retries"]` (default `2`); exhausting the budget blocks the step. Criteria are the judge's input, not a switch — a step without them is never sent to the judge.
+**Layer 2 — step judge.** After `taskflow_step(action="resume")` injects a child result, a step that carries `judge_criteria` (or legacy `validation_criteria`) is judged `PASS` / `RETRY` / `BLOCK`. A `RETRY` re-dispatches the step with the judge's feedback while the step's retry count is below `STEP_JUDGE["max_retries"]` (default `2`); exhausting the budget blocks the step. Criteria are the judge's input, not a switch — a step without them is never sent to the judge.
 
 **Layer 3 — flow gates.** `taskflow_flow(action="finish")` refuses the `DONE` transition until Gate A sees every step `done` or `blocked`, Gate B sees no blocked steps, and Gate C sees no `FAIL` or `[stale]` flow evidence (plus the opt-in Gate E goal judge for a described flow of `GOAL_GATE["min_steps"]` steps or more).
 
@@ -186,7 +185,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 
 | Subsystem | What crosses this boundary | Details |
 |-----------|---------------------------|---------|
-| TaskFlow engine | step dispatch, `validation_criteria`, `aggregate_deps`, finish gates A–C (+ Gate E) | [Long-Running Tasks](../long-running-tasks/README.md) |
+| TaskFlow engine | step dispatch, `judge_criteria`, `aggregate_deps`, finish gates A–C (+ Gate E) | [Long-Running Tasks](../long-running-tasks/README.md) |
 | Loop prevention | completion gates, judge budgets, drain and announce retry behavior | [Loop Prevention](../loop-prevention/README.md) |
 | Context engine | only the completion carrier is persisted to MesMemory; child transcripts stay checkpoint-only | [Context Engine README](../../context_engine/README.md) |
 | Runtime lanes | the `SUBAGENT` lane bounds concurrent child runs; over-limit spawns queue as `PENDING` | [Loop Prevention](../loop-prevention/README.md) |

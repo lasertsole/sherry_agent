@@ -31,15 +31,17 @@
 1. **誰が spawn でき、何を制御できるか？**——**深度ロール**（`SubagentSessionRole`）。ネスト深度から導出され、spawn 権限と制御スコープを単独で決めます。
 2. **どの種類の worker か？**——**機能ロール**（`FunctionalRole`）。明示的な特化であり、子 LLM のティア、ツール許可リスト、ロール固有のプロンプト節を単独で決めます。
 
-完了判定はその後、子実行から親ターンへと外側に積まれた四つの常時有効な層で検証されます：子実行の完了判定器と goal loop、TaskFlow のステップ判定器、`taskflow_flow(action="finish")` のフローゲート、そして親ターンの完了 drain プログラム的ゲートです。二つのロール軸とゲートスタックが本ページの主題です。API の詳細は[モジュール README](../../agent/tools/subagent/README.ja.md) にあります。
+完了判定はその後、子実行から親ターンへと外側に積まれた四つの既定で有効な層で検証されます：子実行の完了判定器と goal loop、TaskFlow のステップ判定器、`taskflow_flow(action="finish")` のフローゲート、そして親ターンの完了 drain プログラム的ゲートです。二つのロール軸とゲートスタックが本ページの主題です。API の詳細は[モジュール README](../../agent/tools/subagent/README.ja.md) にあります。
 
 ### 🧱 不変条件
+
+完了ゲートは既定で有効で、`COMPLETION_JUDGE["enabled"]` と `GOAL_GATE["enabled"]` がマスタースイッチです。
 
 1. **二つの軸は決して融合しない。** 機能ロールが spawn 権限を与えることはなく、深度ロールがツール許可リストやプロンプトを変えることもありません。すべての spawn で両者が合成されます。
 2. **`general` は恒等ロール。** 機能ロールのヒントがなければ spawn 挙動は不変です：定義は読み込まれず、LLM ティアは深度ロールが供給します。
 3. **spawn 権限は二度にわたり深度でゲートされる**——組み立て時（ツールポリシーの交差）と、呼び出し時（ツール自身の中の権限チェック）。
 4. **ロール派生はホップ単位の許可リストで、チェーンを辿らない。** 特化した親は自分のロールに加え、`SPAWN_ALLOWED_CHILD_ROLES` のエントリが列挙する読み取り専用の拡張を spawn できます。不変条件は単一ホップ（許可される親以外の子は書き込み能力を持ってはならない）であり、これが祖先走査なしで多段を安全にする理由です。
-5. **完了ゲートは常時有効。** スタックのどこにも有効/無効スイッチはなく、入力は予算と判定基準だけです。
+5. **完了ゲートは既定で有効。** スタックのどこにも有効/無効スイッチはなく、入力は予算と判定基準だけです。
 6. **フェイルオープンはモデルエラー、解析不能な出力、利用不能な参照に限られ、否定的な判定には決して適用されない。** 解析済みの `RETRY`、`BLOCK`、失敗した証跡行は依然としてブロックします。
 7. **子コンテキストは常に独立。** 子は自身の空のメッセージリストから始まり、親のトランスクリプトを継承せず、これを変えるモードも存在しません。
 8. **完了キャリアは主張であり、検証済みの結果ではない。** 親ターンが受け取るのは子の自己申告です。セッションに合格証跡がなければ、drain ゲートが検証必須メッセージを追記します。
@@ -66,10 +68,10 @@
 | ロール | 用途 | 有効 LLM ティア | ロールのツールセット |
 |--------|------|------------------|----------------------|
 | `general` | 既定 worker；恒等ロール（パッケージ定義は決して読み込まれない） | 深度ロール | 全ツール + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
+| `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`search_files`、`terminal`、`web_search`、`web_fetch`、`message_search`、`skill_view`、`skill_list` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`path`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
 | `executor` | 書き込み可能な実装とコマンド実行。読み取り専用の `researcher` / `librarian` を追加で spawn できる唯一のロール | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`claim_scope`、`share_finding`、`peers_findings` |
 | `reviewer` | 読み取り専用の diff・品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
-| `librarian` | 読み取り専用の外部コードベース検索：サードパーティリポジトリの clone・索引・検索 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
+| `librarian` | 読み取り専用の外部コードベース検索：サードパーティリポジトリの clone・索引・検索 | `auxiliary` | `read_file`、`search_files`、`terminal`、`web_search`、`web_fetch`、`message_search`、`skill_view`、`skill_list` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`path`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
 
 **ast-grep は全ロール共通、コードインテリジェンスは違う。** すべての機能ロール（`general` を含む）は ast-grep の構造検索/リライト `ast_grep_search`、`ast_grep_rewrite` も受け取ります。tree-sitter のコードインテリジェンス `explore` / `callers` / `callees` / `impact` / `semantic_code_search` はシンボル索引を要するため、`researcher` と `librarian` の二つのコード検索ロールに与えられます（`semantic_code_search` はその索引に対する埋め込みベースの概念検索です）。LSP ツール `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` も同じくこの二つのロールに与えられ、実行中の言語サーバーを必要とし、子エージェントが必要時に遅延起動しアイドル時に自動停止します。`lsp_rename` と `lsp_format` は既定でプレビューのみ、`lsp_diagnostics` は非同期の診断通知を待ち、`lsp_status` は何も起動せず可用性のみを報告します。`execute_code` ツール（Programmatic Tool Calling）は executor 専用で、executor ロールだけが受け取り、他の機能ロールは受け取りません。
 
@@ -160,16 +162,18 @@ curated 直行パスへ置換）を追加し、`constraints` のルールは HAR
 
 ## 🚦 階層化された完了ゲート
 
-四つのゲートが子実行から外側へ積まれます。四つとも常時有効で、入力は予算と判定基準だけです。
+完了ゲートは既定で有効で、`COMPLETION_JUDGE["enabled"]` と `GOAL_GATE["enabled"]` で判定器と目標ゲートを無効化できます。
+
+四つのゲートが子実行から外側へ積まれます。四つとも既定で有効です。`COMPLETION_JUDGE["enabled"]` と `GOAL_GATE["enabled"]` で判定器と目標ゲートを無効化できますが、通常の入力は予算と判定基準です。
 
 | # | 層 | ゲート | 必要な入力 | フェイルオープン時の挙動 |
 |---|----|--------|------------|--------------------------|
 | 1 | 子実行 | 完了判定器 + goal loop（`spawn/completion_judge.py`） | タスク、最新応答、証跡サマリ；予算 `goal_max_turns`（既定 `5`） | モデルエラー / 解析不能 → `done` |
-| 2 | ステップ | TaskFlow ステップ判定器（`agent/tools/taskflow/step_judge.py`） | ステップの `validation_criteria`（無ければ判定器を呼ばない） | モデルエラー / 解析不能 → `pass` |
+| 2 | ステップ | TaskFlow ステップ判定器（`agent/tools/taskflow/step_judge.py`） | ステップの `judge_criteria`（旧 `validation_criteria`）（無ければ判定器を呼ばない） | モデルエラー / 解析不能 → `pass` |
 | 3 | フロー | `taskflow_flow(action="finish")` のゲート A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状態とフロー証跡 | 台帳が読めない → 通す |
 | 4 | 親ターン | 完了 drain のプログラム的ゲート（`agent/middlewares/subagent_completion_drain/`） | セッションの検証証跡サマリ | 参照失敗 → ゲートを省略 |
 
-**第 2 層——ステップ判定器。** `taskflow_step(action="resume")` が子結果を注入した後、`validation_criteria` を持つステップは `PASS` / `RETRY` / `BLOCK` と判定されます。`RETRY` はステップのリトライ回数が `STEP_JUDGE["max_retries"]`（既定 `2`）未満なら判定器のフィードバック付きで再ディスパッチし、予算を使い切るとステップをブロックします。判定基準は判定器の入力でありスイッチではありません——基準を持たないステップが判定器に送られることはありません。
+**第 2 層——ステップ判定器。** `taskflow_step(action="resume")` が子結果を注入した後、`judge_criteria`（旧 `validation_criteria`） を持つステップは `PASS` / `RETRY` / `BLOCK` と判定されます。`RETRY` はステップのリトライ回数が `STEP_JUDGE["max_retries"]`（既定 `2`）未満なら判定器のフィードバック付きで再ディスパッチし、予算を使い切るとステップをブロックします。判定基準は判定器の入力でありスイッチではありません——基準を持たないステップが判定器に送られることはありません。
 
 **第 3 層——フローゲート。** `taskflow_flow(action="finish")` は次をすべて満たすまで `DONE` への遷移を拒否します：ゲート A が全ステップを `done` または `blocked` と見なし、ゲート B がブロック済みステップを見ず、ゲート C が `FAIL` や `[stale]` のフロー証跡を見ません（加えて、`description` を持つフローのステップ数が `GOAL_GATE["min_steps"]` 以上のときだけ走るオプトインの Gate E 目標判定）。
 
@@ -183,7 +187,7 @@ curated 直行パスへ置換）を追加し、`constraints` のルールは HAR
 
 | サブシステム | この境界を越えるもの | 詳細 |
 |--------------|----------------------|------|
-| TaskFlow エンジン | ステップディスパッチ、`validation_criteria`、`aggregate_deps`、フローゲート A–C（+ Gate E） | [長期タスク](../long-running-tasks/README.ja.md) |
+| TaskFlow エンジン | ステップディスパッチ、`judge_criteria`、`aggregate_deps`、フローゲート A–C（+ Gate E） | [長期タスク](../long-running-tasks/README.ja.md) |
 | 暴走ループ防止 | 完了ゲート、判定器予算、drain と announce の再試行挙動 | [暴走ループ防止](../loop-prevention/README.ja.md) |
 | コンテキストエンジン | MesMemory に永続化されるのは完了キャリアのみ；子のトランスクリプトは checkpoint のみ | [Context Engine README](../../context_engine/README.ja.md) |
 | ランタイムレーン | `SUBAGENT` レーンが同時子実行を制限；超過 spawn は `PENDING` で待機 | [暴走ループ防止](../loop-prevention/README.ja.md) |

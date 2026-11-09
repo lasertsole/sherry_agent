@@ -28,6 +28,7 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
 | `session_id`        | `string`         | 是   | 唯一会话标识符                    |
 | `text`              | `string \| null` | 否   | 文本消息内容                      |
 | `image_base64_list` | `string[]`       | 否   | Base64 编码的图片，用于多模态输入 |
+| `image_path_list`   | `string[]`       | 否   | 已上传的 HTTP 图片 URL |
 
 ### 返回值
 
@@ -87,8 +88,8 @@ const chunks = await invoke<ChatChunk[]>('agent_chat', {
 
 停止指定会话正在进行的 Agent 生成。
 
-向 Python 后端发送取消请求 (`POST /sessions/agent/sse/stop`)。
-SSE 流将终止并发出 `agent:stream:end` 事件。
+通过 `/sessions/agent/ws` 向 Python 后端发送 stop 帧。
+流将终止并发出 `agent:stream:end` 事件。
 
 ### 签名
 

@@ -13,7 +13,7 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 
 /**
  * Toolbar event vocabulary: every `headerTools` entry (the nine-grid, see
- * ./config.ts), the two `toolboxTools` entries (the hammer dialog) and the one
+ * ./config.ts), the three `toolboxTools` entries (the hammer dialog) and the one
  * top-bar-only button (`notification`). The unit test pins this list against both
  * grids so a new entry without a command fails there.
  */

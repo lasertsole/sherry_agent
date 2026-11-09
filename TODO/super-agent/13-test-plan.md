@@ -26,7 +26,7 @@ tests/superagent/
 │   ├── test_background.py               # 镜像 tests/background.spec.ts
 │   ├── test_sherry.py                   # 镜像 tests/runtime.spec.ts（SherryExecutor）
 │   └── test_runtime_concurrency.py      # 镜像 tests/runtime-concurrency.spec.ts
-├── test_bundle_patch.py                 # 镜像 tests/bundle-patch.spec.ts（Python 改 cordis.patch.yml → superagent.jsonc）
+├── test_settings.py                     # 镜像 tests/settings.spec.ts
 ├── test_effects.py                      # 镜像 tests/effects.spec.ts
 ├── test_passes.py                       # 镜像 tests/passes.spec.ts
 ├── test_outbox.py                       # 镜像 tests/outbox.spec.ts
@@ -220,6 +220,16 @@ CI gate（`tests/run_tests_split.py`）加 superagent 组：
 - CI 结果回灌 Trigger → Executor 据 CI 修。
 - PR 合并 → Ticket `merged`。
 - 杀进程重启：running Assignment recovery note；idle Ticket 不丢；outbox 待发续投。
+
+### 5.13 Spike 验证（`test_spike_*.py`，开工前必跑）
+
+P2 开工前验证承重假设（见 `12-sherry-integration.md §12`）：
+
+- `test_spike_completion_resets_latch.py`：Sherry main session spawn subagent → subagent 完成 → 观察 main session 续跑 latch 重置。**预期重置**；不重置则 L7 模型返工。
+- `test_spike_mcp_tool.py`：起最小 MCP server → Sherry 配 `mcp.servers.test` → spawn subagent 调该 MCP 工具。**预期调到**；调不到则评估 SSE 或改 `build_main_tools()`。
+- `test_spike_http_loopback.py`：Sherry `/internal/test` 路由 + 外部进程调 + Sherry turn 完成回调外部 HTTP。**预期双向通**。
+
+三个 spike 通过 P2 才有底。
 
 ## 6. 该册验收门
 

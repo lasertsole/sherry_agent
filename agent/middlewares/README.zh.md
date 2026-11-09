@@ -89,46 +89,44 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 
 ```python
 middleware = [
-    # after_agent 钩子按列表逆序执行：最先注册的 enforcer 在回合结束时
-    # 最后运行，从而观察到真正结束的回合。
     PlanContinuationEnforcer(),
-    system_prompt_injection,  # @dynamic_prompt：系统提示词注入
-    # 工作目录变更通知：每轮开始时若项目目录与上次告知 Agent 的根不同，
-    # 就在 HumanMessage 之前插入一条 AIMessage（只发一条，写最终根）
+    system_prompt_injection,
     WorkspaceNoticeMiddleware(),
     PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+    TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
     DynamicReminderMiddleware(),
+    InputSafetyFilter(),
+    LLMModerationMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
-    # per-session thinking toggle (client switch → /sessions/thinking):
-    # swaps request.model for the thinking on/off or low/high/max variant
     ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
-    # after_model 节点按注册逆序执行：紧跟 HITL 注册，即为模型产出后
-    # 第一个运行的钩子，AI 消息先落库，之后 HITL 才会剥离被拒调用 / 中断。
     MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
+    OutputSafetyFilter(),
     Summarization(
         need_update_system_prompt=True,
-        model=auxiliary_llm,
+        model=compression_llm or auxiliary_llm,
         main_llm_context_window=main_llm_max_tokens,
-        trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+        trigger=[("tokens", resolve_compression_threshold(
+            main_llm_max_tokens, max_output_tokens,
+            fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+        )[0])],
     ),
-    # wrap_model_call 的最内层，最贴近原始模型调用：
-    # 修复参数 JSON 解析失败的工具调用（否则循环会把消息当成无调用的终答、
-    # 直接结束回合），并对无法修复的情形重呼一次模型。
     InvalidToolCallRepairMiddleware(),
 ]
+# DelegationPressureGate is appended when DELEGATION_PRESSURE["enabled"] is on.
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # 编译后的图再交给 apply_graph_wrappers() 包装（由内到外）：
 # RepetitionGuardWrapper，然后是 ContextLimitGuardWrapper。
@@ -168,7 +166,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 与主 Agent 的差异：
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
-- 更紧的迭代预算（60 而非 90）。
+- 更紧的迭代预算（60 而非 180）。
 - 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`PlanContinuationEnforcer`、`WorkspaceNoticeMiddleware`。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
@@ -272,7 +270,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/iteration_budget/core.py` · **类：** `IterationBudget(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-对**一个回合内模型调用次数**的硬上限。一次工具调用对只计 1 次：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 与执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
+对**一个回合内模型调用次数**的硬上限。一次工具调用对只计 1 次：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 注册 `IterationBudget(180)`，执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
 
 - `before_agent` 在 `state_register_mem` 中重置计数器：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` 每次模型调用消耗 1；预算耗尽时直接返回终止 `AIMessage`，**不再调用模型**。
@@ -283,7 +281,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/tool_guardrails/core.py` · **类：** `ToolGuardrails(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_tool_call` / `awrap_tool_call`
 
-检测五种失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
+检测以下失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
 
 | 病理           | 触发条件                                                                    | WARN 阈值                           | BLOCK 阈值                          | hard-stop 模式 |
 | -------------- | --------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------- | -------------- |
@@ -292,6 +290,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 幂等无进展     | 同一幂等工具（元数据 `idempotent: true`）返回本回合中它已产出过的结果哈希   | 2（`no_progress_warn_after`）       | 5（`no_progress_block_after`）      | 5 次时 HALT    |
 | 乒乓           | 两个工具之间不间断的 A → B → A → B 往返，且相邻两次调用均无进展（stagnant） | 4（`ping_pong_warn_after`）         | 6（`ping_pong_block_after`）        | 6 次时 HALT    |
 | 参数翻新       | 同一幂等工具轮换参数变体，但结果保持不变（无进展）                          | 3 种变体（`arg_churn_warn_after`）  | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT    |
+| 签名连击（不看状态） | 同一工具 + 相同参数哈希连续重复，无论结果状态（terminal 通过 metadata 声明 5） | 3（`streak_warn_after`） | 警告预算用尽后，拦截该精确签名 | hard-stop 模式下 HALT |
+| 结果重复       | 非幂等工具在参数不同的连续调用中返回逐字节相同的结果                        | 3（`result_repetition_warn_after`） | 6（`result_repetition_block_after`） | 6 次时 HALT    |
 
 - `before_agent` 重置回合级护栏状态（`state_register_mem` 中的键 `tool_guardrail_state`）——严格回合作用域，新回合从干净状态开始。
 - `wrap_tool_call` 先做拦截预检（对被阻止的工具/终止状态直接返回错误 `ToolMessage`，不执行），再运行工具，然后评估结果：
@@ -300,6 +300,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
   - `halt` 为本回合剩余时间设置粘性终止（`halt_decision`）。
 - **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，_precheck_ 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT——一个受管的重试窗口，而不是一堵立即竖起的墙。
 - **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
+- **测试文件读取豁免：** `read_file` 命中测试路径（含 `tests/` 段、`test_*.py`、`*_test.py`）属于验收反馈，不是无效探查：它不推进签名连击，no-progress / 配对路径也会跳过它。只有 `read_file` 享受豁免；terminal/search 和源码读取仍按正常规则计数。
 - `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1`——当 `hard_stop_enabled=True` 时，每个*阻止*阈值都会变成 HALT（旧的严格之墙）；`recovery_mode_enabled=False` 则恢复立即阻止的行为。
 
 ▶️ 完整文档：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
@@ -560,7 +561,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | 回退（`should_fallback=True`，不可重试） | `auth_permanent`、`billing`、`upstream_rate_limit`、`ssl_cert_verification`、`model_not_found`、`provider_policy_blocked`、`content_policy_blocked` | 切换到下一个回退候选；链耗尽 → 重新抛出                                                                                              |
 | 硬失败                                   | `format_error`                                                                                                                                      | 重新抛出（不重试、不回退）                                                                                                           |
 
-**过期连击熔断器（跨回合）：** 每一次被分类为 timeout 的失败——以及每一次 timeout 分类的部分流桩（partial-stub）重试——都会把会话级 `llm_stale_streak`（存于 `state_register_mem`）加一；任何一次成功的 handler 调用都会把它清零。当连击达到 `stale_giveup_threshold` 时，下一次模型调用会在**调用 LLM 之前**抛出 `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`，跨回合终结提供方持续无响应的僵局。
+**过期连击熔断器（默认回合级；`stale_giveup_scope="session"` 可选）：** 每一次被分类为 timeout 的失败——以及每一次 timeout 分类的部分流桩（partial-stub）重试——都会把会话级 `llm_stale_streak`（存于 `state_register_mem`）加一；任何一次成功的 handler 调用都会把它清零。当连击达到 `stale_giveup_threshold` 时，下一次模型调用会在**调用 LLM 之前**抛出 `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`，终结提供方持续无响应的僵局；默认每回合开始时清零。
 
 **模型回退链：** `FallbackCandidate(provider, model_name, model)` 条目由 `models/LLMs/main_llm.py::build_fallback_chain()` 从环境变量 `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` 构建（i = 1…，遇到第一个缺失的 `NAME` 即停止；`PROVIDER` 默认 `openai`；客户端无法构造的候选会带警告跳过）。1 起始的激活索引按会话粘性存于 `llm_fallback_index`：每次模型调用开始时，请求都会通过 `request.override(model=...)` 重新绑定到已激活的候选；遇到可回退分类的失败（或内容过滤标志）时激活下一个候选。未配置任何 `FALLBACK_LLM_*`（默认情况）时，中间件就是一个普通的有界重试环。
 
@@ -579,14 +580,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 **模块：** `agent/middlewares/summarization/core.py` · **类：** `Summarization(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`（计数器重置）、`wrap_model_call` / `awrap_model_call`
 
-最内层的中间件——最贴近 LLM。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
+最内层中间件之一——只有 `InvalidToolCallRepairMiddleware`（以及启用时的 `DelegationPressureGate`）比它更贴近 LLM。主 agent 触发子句为 `[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])]`，worker 为 `[("messages", 40), ("tokens", _compression_threshold_for_children(main_llm_max_tokens))]`；记忆复盘的缓存前缀形状是 `[tools][system prompt][discarded messages][review instruction]`。从零实现的 `AgentMiddleware`（**并非** LangChain 的 `SummarizationMiddleware`）：触发条件命中后，按预算制截断点压缩历史——优先非 LLM 策略，仅在文本降级安全时才使用辅助 LLM 摘要。`keep` 参数被接受但未使用；尾部保留纯预算制：`clamp(context_window × 0.25, 2 000, 15 000)` 个 token（`PRESERVE_RATIO` / `MIN_PRESERVE_TOKENS` / `MAX_PRESERVE_TOKENS`）。
 
 - **生命周期与路由**：中间件现覆盖五个触发点（T1–T5）——T1 预检（`before_agent` / `abefore_agent`）、T2 调用前派发（`wrap_model_call` / `awrap_model_call`）、T3 响应后复检（真实上报 token）、T4（413 Payload Too Large）/ T5（上下文溢出）错误恢复环——每次触发都运行四路溢出路由决策（truncate / compact / both / pass），并委托给 `pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/tool_args_truncate.py`（工具调用参数截断）、`pub/func/message/llm_error_classifier.py`。状态存于会话级 `summarization_*` 键（共 13 个，每回合重置 11 个）。完整文档见下方链接。
 - **触发语义**：单个子句是 `("messages", N)` 或 `("tokens", N)`；子句列表之间是 **OR**——任一子句命中即开始压缩。主 Agent：`[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`；worker：`[("messages", 40), ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))]`。`COMPRESSION_TRIGGER_RATIO = 0.80`。
 - **截断点安全：** `_determine_cutoff` 选定截断点，随后 `_adjust_for_orphan_pairs` 向前回退，直到没有任何 `ToolMessage` 与其 `AIMessage` 工具调用被拆开；当最后一个用户回合占估算 token 的 ≥ 50 % 时（`LAST_TURN_RATIO_THRESHOLD = 0.5`），会改为对最后一个回合本身做压缩（`self._compress_last_turn` 标志），而不是把它摘要掉。
 - **防抖动：** 每个**会话**至多 `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` 次压缩（而非每回合）；连续 `INEFFECTIVE_THRESHOLD = 2` 次无效压缩后（有效 = 消息数减少，或 token 缩减 ≥ `MIN_EFFECTIVENESS_PCT = 0.05`），LLM 步骤被禁用（`summarization_skip_llm`），仅运行非 LLM 策略。计数器以会话级 `summarization_*` 键存于 `state_register_mem`（压缩次数、无效连击、上次 token、上次策略、跳过标志、恢复状态等）。
 - **压缩时媒体归档：** 被丢弃的前缀在摘要前会先经 `offload_inline_media`（`summarization/media_offload.py`），把其中的内联媒体（`data:` URL、裸 `base64` 字段、原始字节）改写为 `SESSIONS_DIR/<session_id>/media/{sha256[:16]}{ext}`（按内容哈希去重；该子目录由 `clear_session` 整体删除），并把每个块替换为 `[evicted to: <path>]` 文本指针——`_collect_evicted_refs` 扫描的正是这个标记，因此路径会进入 `SummaryDoc.evicted_refs` 并在摘要链上存活。只有被摘要的区间会被改写；保留的尾窗媒体块不受影响。一切失败都 fail-open：无法解码 / 写入的块变为 `<media error="failed_to_offload" />`。
-- **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `SUMMARY_TOTAL_MAX_CHARS = 16 000` 字符时被重新截断，保留头部 30 % / 尾部 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`），并加入省略标记。
+- **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `SUMMARY_TOTAL_MAX_TOKENS = 4 000` token时被重新截断，保留头部 30 % / 尾部 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`），并加入省略标记。
 - **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。
 - **结构化摘要：** 辅助调用经 `with_structured_output(SummaryDoc, method="json_mode")`（`summarization/summary_doc.py`）；Markdown 由文档代码渲染，cap 后的文档本体存于 AIMessage 的 `additional_kwargs["summary_doc"]`（链式再压缩以 `<prior-summary-json>` 回喂）。解析失败退化为 `json_repair`，再退化为旧 free-form 路径；条目上限是数组切片（`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`、`evicted_refs[-20:]`），不再解析 Markdown。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
@@ -595,14 +596,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **后台评审子 Agent**（`summarization/background_reviews.py`，由压缩管线调度）：独立的 `create_agent` 实例，两条通道各有不同的触发点、模型与工具屏障：
 
-- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：由压缩管线触发，跑在**按本轮配置重建的主模型**上（`_build_session_model`，即上面的 cache_warm 接缝），工具面为会话的完整面；其图携带 `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，`_BackgroundReviewLimitTool` 拒绝一切元数据缺少 `background_review: true` 的工具，因此复盘**只能执行**带标记的那组（`memory`、`knowledge`、`question`、计划模式）。完整工具面是为了前缀缓存一致，门控才是执行屏障。技能三件套**刻意不打标记**——复盘不可能做技能评审。
+- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：由压缩管线触发，跑在**按本轮配置重建的主模型**上（`_build_session_model`，即上面的 cache_warm 接缝），工具面为会话的完整面；其图携带 `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，`_BackgroundReviewLimitTool` 拒绝一切元数据缺少 `background_review: true` 的工具，因此复盘**只能执行**带标记的那组（`memory`、`question`、计划模式）。完整工具面是为了前缀缓存一致，门控才是执行屏障。技能三件套**刻意不打标记**——复盘不可能做技能评审。
 - `_SKILL_REVIEW_PROMPT`（技能评审）：由**计划完成**钩子触发（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_skill_review`），用**辅助模型**（`_create_skill_review_agent`，`temperature=0`），**不带对话**。工具面只绑定 `skill_list` / `skill_view` / `skill_manage`；knowledge 与 memory 不在其中。它先快照 `skills/auto`，运行评审，再由运行时 judge（`skill_review.judge_skill_update`）检查 grounded / reusable / trigger / quality；失败会恢复快照并带反馈重试，耗尽后记录失败标记且不推进成功指纹。不写 knowledge、不写 FACTS；`handoff-tree.json` 保留为原始审计文件。
 - **技能评审去重：** `_detect_todo_all_complete` 在全部 todo 为 `completed`/`cancelled` 且计划的**快照指纹**（`_plan_snapshot_hash`：id + content + status + plan_ref）与上次**成功**评审后存于 `skill_review_snapshot_hash` 的指纹不同时触发——因此就地修改已完成的 todo 会重新评审、计划未变则跳过、失败的一轮会在下次完成轮重试。前置门控：`BACKGROUND_REVIEW_CONFIG["skill_review_enabled"]`、`skill_review_lock`、以及必须有运行中的事件循环。
 - **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用后台评审 agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_BackgroundReviewLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
 
 ▶️ 完整文档：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
-> 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 90（主）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
+> 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 180（主）、90（executor）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
 
 ### MaxTokensBoostMiddleware
 
@@ -806,15 +807,15 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 模块                      | 旋钮                                                                                                                                                                                                            |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                           |
+| `iteration_budget.py`     | `main_agent_max_iterations=180`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                           |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/background_reviews.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
-| `tool_guardrails.py`      | ToolGuardrails 小节列出的五类病态阈值与恢复默认值                                                                                                                                                               |
+| `tool_guardrails.py`      | ToolGuardrails 小节列出的病态阈值与恢复默认值                                                                                                                                                               |
 | `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                |
 | `repetition_guard.py`     | `max_identical_outputs=3`、`warn_after=2`、`internal_repeat_ratio=0.6`、`internal_min_lines=6`、`char_run_min=8`、`tail_chars=500`、`max_history=30`                                                            |
 | `max_tokens_boost.py`     | `base_max_tokens`（`MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192）、`default_max_tokens=8192`、`max_cap=32 768`、`max_retries=3`                                                                                       |
-| `llm_retry.py`            | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`                                                                                                                   |
+| `llm_retry.py`            | `max_retries=10`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`                                                                                                                   |
 | `context_guard.py`        | `output_cut_ratio=0.20`、`check_interval=20`                                                                                                                                                                    |
 
 > **相关但独立：** 各工具的超时是绑定特性注册表的模块常量（`config/features/agent_side/tools_timeouts.py` 中的 `TOOLS_TIMEOUTS`）——`WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal/core.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`；超时会杀死子进程）。`TOOL_CALL_TIMEOUT_MINUTES`（默认 5）是 `sherry.jsonc` 设置，经 `config/sherry_settings.py` 贯通并由配置服务对外暴露，但**没有任何工具执行路径消费它**——它不是生效的超时旋钮。摘要管线从 `config/features/agent_side/summarization.py` 读取其常量。
@@ -844,7 +845,7 @@ agent = create_agent(
     middleware=[
         system_prompt_injection,  # @dynamic_prompt：系统提示词注入
         MultimodalProcessor(),  # 多模态输入规范化
-        IterationBudget(90),  # 回合级调用预算
+        IterationBudget(180),  # 回合级调用预算
         ToolGuardrails(),  # 失败病理检测
         ToolCallNormalize(),  # tool_use/tool_result 修复
         PathGuard(),  # 路径参数筛查
@@ -875,7 +876,7 @@ agent = create_agent(
 | `HeartbeatStaleness`       | （默认）                          | 间隔 1 分钟，空闲 7 / 工具内 20                                                               | 默认值                                                  |
 | `OutputRepetitionGuard`    | （默认）                          | 3 / 2 / 0.6 / 6 / 8                                                                           | 默认值                                                  |
 | `MaxTokensBoostMiddleware` | （环境变量）                      | base：请求 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`（8192）→ 8192，上限 32768，重试 3 次    | 默认值                                                  |
-| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5` | 默认值（外加来自 `FALLBACK_LLM_*` 的 `fallback_chain`） |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=10`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5` | 默认值（外加来自 `FALLBACK_LLM_*` 的 `fallback_chain`） |
 
 ---
 

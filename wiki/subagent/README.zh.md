@@ -35,6 +35,8 @@
 
 ### 🧱 不变量
 
+完成门禁默认开启；`COMPLETION_JUDGE["enabled"]` 与 `GOAL_GATE["enabled"]` 是总开关。
+
 1. **两条轴永不合并。** 功能角色不能授予 spawn 权限，深度角色也不能改变工具白名单或提示词。每次 spawn 都是两者的组合。
 2. **`general` 是恒等角色。** 不传功能角色提示时，spawn 行为不变：不加载任何定义，LLM 档位由深度角色决定。
 3. **spawn 权限有两道深度门**——组装期（工具策略求交）与调用期（工具自身的权限检查）。
@@ -66,10 +68,10 @@
 | 角色 | 用途 | 生效 LLM 档位 | 角色工具集 |
 |------|------|----------------|------------|
 | `general` | 默认 worker；恒等角色（其包内定义永不被加载） | 深度角色 | 全部工具 + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
+| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`search_files`、`terminal`、`web_search`、`web_fetch`、`message_search`、`skill_view`、`skill_list` + 代码智能 `explore`、`callers`、`callees`、`impact`、`path`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
 | `executor` | 可写实现与命令执行；唯一可额外派生只读 `researcher` / `librarian` 子代理的角色 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`claim_scope`、`share_finding`、`peers_findings` |
 | `reviewer` | 只读的 diff 与质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
-| `librarian` | 只读的外部代码库检索：clone、建索引并搜索第三方仓库 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
+| `librarian` | 只读的外部代码库检索：clone、建索引并搜索第三方仓库 | `auxiliary` | `read_file`、`search_files`、`terminal`、`web_search`、`web_fetch`、`message_search`、`skill_view`、`skill_list` + 代码智能 `explore`、`callers`、`callees`、`impact`、`path`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
 
 **ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite`。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` / `semantic_code_search` 归 `researcher` 与 `librarian` 这两个代码检索角色所有，因为它们需要符号索引；`semantic_code_search` 是基于该索引的 embedding 概念搜索。LSP 工具 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 同样归这两个角色：它们需要运行中的语言服务器，由子代理按需惰性启动、空闲时自动关停。`lsp_rename` 与 `lsp_format` 默认仅预览，`lsp_diagnostics` 会等待异步诊断通知，`lsp_status` 只报告可用性、不启动任何服务器。`execute_code` 工具（程序化工具调用）仅 executor 角色可用：只有 executor 会获得它，其它功能角色都不会。
 
@@ -156,16 +158,18 @@ curated 直达路径），其 `constraints` 规则要求优先写 HARD 约束，
 
 ## 🚦 分层完成门禁
 
+完成门禁默认开启；`COMPLETION_JUDGE["enabled"]` 与 `GOAL_GATE["enabled"]` 可分别关闭判官与目标门。
+
 四道门从子运行向外层叠。四道全部恒开；输入只有预算与判据。
 
 | # | 层 | 门禁 | 所需输入 | 失败开放行为 |
 |---|----|------|----------|--------------|
 | 1 | 子运行 | 完成判别器 + goal loop（`spawn/completion_judge.py`） | 任务、最新回复、证据摘要；预算 `goal_max_turns`（默认 `5`） | 模型错误 / 无法解析 → `done` |
-| 2 | 步骤 | TaskFlow 步骤判别器（`agent/tools/taskflow/step_judge.py`） | 步骤的 `validation_criteria`（缺失 → 不调用判官） | 模型错误 / 无法解析 → `pass` |
+| 2 | 步骤 | TaskFlow 步骤判别器（`agent/tools/taskflow/step_judge.py`） | 步骤的 `judge_criteria`（或旧 `validation_criteria`）（缺失 → 不调用判官） | 模型错误 / 无法解析 → `pass` |
 | 3 | 流程 | `taskflow_flow(action="finish")` 门禁 A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状态与 flow 证据 | 账本不可读 → 放行 |
 | 4 | 父回合 | 完成 drain 程序化门禁（`agent/middlewares/subagent_completion_drain/`） | 会话的验证证据摘要 | 查询失败 → 跳过门禁 |
 
-**第 2 层——步骤判官。** `taskflow_step(action="resume")` 注入子结果后，携带 `validation_criteria` 的步骤会被判定 `PASS` / `RETRY` / `BLOCK`。`RETRY` 会在步骤重试计数低于 `STEP_JUDGE["max_retries"]`（默认 `2`）时带着判官反馈重新派发该步骤；预算耗尽则阻塞该步骤。判据是判官的输入而非开关——没有判据的步骤永远不会送到判官面前。
+**第 2 层——步骤判官。** `taskflow_step(action="resume")` 注入子结果后，携带 `judge_criteria`（或旧 `validation_criteria`） 的步骤会被判定 `PASS` / `RETRY` / `BLOCK`。`RETRY` 会在步骤重试计数低于 `STEP_JUDGE["max_retries"]`（默认 `2`）时带着判官反馈重新派发该步骤；预算耗尽则阻塞该步骤。判据是判官的输入而非开关——没有判据的步骤永远不会送到判官面前。
 
 **第 3 层——流程门禁。** `taskflow_flow(action="finish")` 在以下条件全部满足前拒绝转入 `DONE`：门禁 A 看到每一步都是 `done` 或 `blocked`，门禁 B 看不到阻塞步骤，门禁 C 看不到 `FAIL` 或 `[stale]` 的 flow 证据（另有可选的 Gate E 目标判定，仅当带 `description` 的 flow 步骤数达到 `GOAL_GATE["min_steps"]` 时运行）。
 
@@ -179,7 +183,7 @@ curated 直达路径），其 `constraints` 规则要求优先写 HARD 约束，
 
 | 子系统 | 跨越该边界的内容 | 详情 |
 |--------|------------------|------|
-| TaskFlow 引擎 | 步骤派发、`validation_criteria`、`aggregate_deps`、流程门禁 A–C（+ Gate E） | [长期任务](../long-running-tasks/README.zh.md) |
+| TaskFlow 引擎 | 步骤派发、`judge_criteria`、`aggregate_deps`、流程门禁 A–C（+ Gate E） | [长期任务](../long-running-tasks/README.zh.md) |
 | 失控循环防护 | 完成门禁、判官预算、drain 与 announce 重试行为 | [失控循环防护](../loop-prevention/README.zh.md) |
 | 上下文引擎 | 只有完成载体写入 MesMemory；子对话仅存在 checkpoint | [Context Engine README](../../context_engine/README.zh.md) |
 | 运行时车道 | `SUBAGENT` 车道限制并发的子运行；超限 spawn 以 `PENDING` 排队 | [失控循环防护](../loop-prevention/README.zh.md) |

@@ -36,7 +36,7 @@ from langchain_core.runnables import ConfigurableField
 # 1.  Locate model weight directory & read env
 # ---------------------------------------------------------------------------
 
-# .env is loaded from project root via config.path; the network.jsonc overlay wins
+# .env is loaded from project root via config.path; the .network overlay wins
 load_env()
 
 # ITTT_model weight directory (side-by-side with this file)

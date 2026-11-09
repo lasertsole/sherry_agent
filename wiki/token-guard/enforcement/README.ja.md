@@ -160,23 +160,18 @@ if (!cfg.valid) {
 
 ### 環境タブのバナーと保存前検証
 
-`client/app/pages/home/components/ConfigPanel.vue`:
+`client/app/pages/home/components/LlmModelManager.vue` + `ConfigPanel.vue`:
 
-- 環境タブが `*_MAX_TOKEN` キーを一つでも公開すると（`hasMaxTokenKeys`、344 行目）、琥珀色のバナーが `config.env.maxTokenHint`（211 行目）を描画します。
-- 保存時に `persistEnvChanges()` が保護されたトークンキーを事前検証します（379 行目から 389 行目）。非整数または `200000` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
+- `LlmModelManager.vue` の入力キーが `MAX_TOKEN_GUARD_KEYS` に含まれるとき、琥珀色のバナーが `config.env.maxTokenHint` を描画します。
+- 保存時に `ConfigPanel.vue` の `persistEnvChanges()` が `MAX_TOKEN_GUARD_KEYS` / `MIN_REQUIRED_MAX_TOKEN` で事前検証します。非整数または `200000` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
 
 ```ts
-const TOKEN_KEYS = [
-  'MAIN_LLM_MAX_TOKEN',
-  'AUXILIARY_LLM_MAX_TOKEN',
-  'TASKFLOW_LLM_MAX_TOKEN',
-  'COMPRESSION_LLM_MAX_TOKEN'
-];
-const MIN_TOKEN = 200000;
+import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
+
 for (const [key, value] of Object.entries(changes)) {
-  if (TOKEN_KEYS.includes(key)) {
+  if (MAX_TOKEN_GUARD_KEYS.includes(key)) {
     const num = parseInt(value, 10);
-    if (Number.isNaN(num) || num < MIN_TOKEN) {
+    if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
       envLoadError.value = t('config.env.maxTokenError', { key });
       return false;
     }
@@ -184,7 +179,7 @@ for (const [key, value] of Object.entries(changes)) {
 }
 ```
 
-- 書き込み成功後（756 行目）に `invalidateModelConfigCache()` が走り、toast ガードが最新値を読み直します。
+- 書き込み成功後に `invalidateModelConfigCache()` が走り、toast ガードが最新値を読み直します。
 
 ### i18n キー
 

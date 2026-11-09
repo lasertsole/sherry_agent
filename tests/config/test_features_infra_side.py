@@ -410,14 +410,6 @@ class TestCollectionFieldTypes:
         assert isinstance(fs.WS_STREAM["stream_diag_headers"], tuple)
         assert isinstance(fs.HEARTBEAT_SERVICE["main_llm_env_vars"], tuple)
 
-    def test_list_field_is_list(self) -> None:
-        assert isinstance(fs.SERVER_HTTP["memory_system_file_names"], list)
-        assert fs.SERVER_HTTP["memory_system_file_names"] == [
-            "MEMORY.md",
-            "USER.md",
-            "FACTS.md",
-        ]
-
 
 class TestPackageAggregator:
     """The package must re-export both registry halves from one place."""

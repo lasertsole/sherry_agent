@@ -992,3 +992,123 @@ async def test_a_refused_reminder_is_retried(
 
     assert calls, "the gate tried to deliver the reminder"
     assert _SID not in tc._reminded_plans, "a refused reminder must be retried"
+
+
+# ============================================================================
+# (h) the SYSTEM verify todo: wait, drive, and the exhausted escape
+# ============================================================================
+
+
+def _verify_todo(status: str = "pending", **extra: Any) -> dict:
+    return {
+        "content": "[VERIFY] run acceptance with a reviewer",
+        "status": status,
+        "priority": "high",
+        "metadata": {"kind": "verify", "auto_inserted": True},
+        **extra,
+    }
+
+
+def _stub_verify(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    state: str,
+    respawns: int = 0,
+    exhausted: bool = False,
+) -> dict[str, Any]:
+    """Stub the service seams the gate reads for a verify todo."""
+    from agent.tools.todolist import service as todo_service
+
+    calls: dict[str, Any] = {"set": [], "exhausted": exhausted}
+    monkeypatch.setattr(todo_service, "is_verify_todo", lambda todo: bool(todo.get("metadata")))
+    monkeypatch.setattr(todo_service, "verify_subagent_state", lambda _todo: state)
+    monkeypatch.setattr(todo_service, "verify_respawns", lambda _todo: respawns)
+    monkeypatch.setattr(
+        todo_service, "verify_budget_exhausted", lambda _sid: bool(calls["exhausted"])
+    )
+
+    async def _set(_sid: str, value: bool) -> None:
+        calls["set"].append(value)
+        calls["exhausted"] = value
+
+    monkeypatch.setattr(todo_service, "set_verify_budget_exhausted", _set)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_running_reviewer_is_a_wait_not_a_continuation(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _stub_verify(monkeypatch, state="running")
+    _patch_todos(
+        monkeypatch,
+        [_todo("done work", "completed"), _verify_todo(subagent_id="reviewer-1")],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert spy_auto_turn == []
+
+
+@pytest.mark.asyncio
+async def test_a_finished_reviewer_drives_the_report_read(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _stub_verify(monkeypatch, state="finished")
+    _patch_todos(
+        monkeypatch,
+        [_todo("done work", "completed"), _verify_todo(subagent_id="reviewer-1")],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    prompt = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in prompt
+    assert "[VERIFY TODO]" in prompt
+    assert "read its report" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_missing_reviewer_asks_for_the_spawn(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _stub_verify(monkeypatch, state="none")
+    _patch_todos(monkeypatch, [_todo("done work", "completed"), _verify_todo()])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    assert "No reviewer is linked yet" in spy_auto_turn[0][1].content
+
+
+@pytest.mark.asyncio
+async def test_the_respawn_budget_offers_the_exhausted_escape(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    calls = _stub_verify(monkeypatch, state="finished", respawns=2)
+    _patch_todos(
+        monkeypatch,
+        [_todo("done work", "completed"), _verify_todo(subagent_id="reviewer-2")],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    assert "[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]" in spy_auto_turn[0][1].content
+    assert calls["set"] == [True]
+
+
+@pytest.mark.asyncio
+async def test_the_exhausted_flag_latches_the_gate_silent(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _stub_verify(monkeypatch, state="finished", respawns=2, exhausted=True)
+    _patch_todos(
+        monkeypatch,
+        [_todo("done work", "completed"), _verify_todo(subagent_id="reviewer-2")],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert spy_auto_turn == []

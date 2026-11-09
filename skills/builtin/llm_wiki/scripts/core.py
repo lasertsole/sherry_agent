@@ -72,13 +72,11 @@ def init_wiki() -> dict:
     wiki_root = get_wiki_path()
 
     try:
-        # Create the root directory
         wiki_root.mkdir(parents=True, exist_ok=True)
         result["created_dirs"].append(str(wiki_root))
 
         struct = WIKI_STRUCTURE["wiki"]
 
-        # Create subdirectories under raw/
         raw = struct.get("raw", {})
         if isinstance(raw, dict):
             for subdir_name in raw:

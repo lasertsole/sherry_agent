@@ -58,6 +58,21 @@
 - FullyDone：検証が通過した後にのみ、チェックボックスを completed にマークする。
 - 検証に失敗した場合、タスクは未完了。再ディスパッチか修正が必要。
 
+- VerifyTodo（自動）：work todo が 2 件以上の計画は末尾に SYSTEM [VERIFY] todo を持つ。
+  到達しても検証を自分でインライン実行しない：
+  1. 各 work todo の受け入れ条件を読む。
+  2. sessions_spawn(functional_role="reviewer") で読み取り専用 reviewer を spawn し、brief に
+     各 todo_id + 受け入れ条件 + 実行コマンドを列挙し、次の JSON 報告を要求する：
+     {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  3. 返された child_session_key を todowrite action=patch で verify todo の subagent_id に書く。
+     遷移バリアはその reviewer が終了するまで verify の完了を拒否する。
+  4. {"verified": false} のときは failed=true の todo_id だけを pending に戻し、evidence を
+     各 todo の notes に入れて修正し、再度 reviewer を実行する。通過した todo は completed の
+     まま維持し、リスト全体を書き換えない。
+  5. {"verified": true} のみが verify todo を完了できる。報告が読めない場合は reviewer を
+     再 spawn する。再 spawn の上限後は「自分で検証して verify を cancel する」降級クローズを
+     ゲートが提示する。
+
 ### アンチパターン（BLOCKING）
 
 - 些細な変更を委譲して待つ：時間と token の浪費

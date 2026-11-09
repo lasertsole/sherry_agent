@@ -21,11 +21,10 @@ for _stream in (sys.stdout, sys.stderr):
 # Fix nested event loop conflicts
 nest_asyncio.apply()
 
-# Initialize logging
 init_logger()
 
 # Load .env and init LangSmith (must be before any LangChain imports).
-# LangSmith settings live in network.jsonc (see config/network_settings.py).
+# LangSmith settings live in .network (see config/network_settings.py).
 load_env()
 if bool(get_network_setting("LANGSMITH_TRACING_V2")) and str(
     get_network_setting("LANGSMITH_API_KEY")
@@ -37,7 +36,7 @@ if bool(get_network_setting("LANGSMITH_TRACING_V2")) and str(
 else:
     logger.debug(
         "LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY "
-        "in network.jsonc to enable)"
+        "in .network to enable)"
     )
 
 
@@ -293,8 +292,8 @@ def main() -> None:
     # Warm the session project-directory cache: the agent-side readers are
     # mem-only, so an unprimed tier after a restart silently serves the process
     # default (see runtime/session/project_dir.py::prime_mem_from_store). The
-    # git-branch notice baseline rides the same pass: a lost token would silently
-    # re-baseline and swallow a branch change the agent still needs to hear about.
+    # shadow-checkpoint notice baseline rides the same pass: a lost token would silently
+    # re-baseline and swallow a checkpoint change the agent still needs to hear about.
     from runtime.session.git_head import prime_git_head_from_store
     from runtime.session.project_dir import prime_mem_from_store
 

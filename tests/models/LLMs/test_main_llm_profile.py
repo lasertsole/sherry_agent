@@ -186,6 +186,7 @@ class TestPublicBuilder:
                 self.inner = inner
 
         monkeypatch.setattr(main_llm_module, "init_chat_model", _RecordingClient)
+        monkeypatch.setattr(main_llm_module, "ReasoningDeepSeekChat", _RecordingClient)
         monkeypatch.setattr(main_llm_module, "NormalizingChatModel", _FakeNormalizer)
 
         main_llm_module.build_main_llm_for_profile(
@@ -206,6 +207,7 @@ class TestPublicBuilder:
                 self.inner = inner
 
         monkeypatch.setattr(main_llm_module, "init_chat_model", _RecordingClient)
+        monkeypatch.setattr(main_llm_module, "ReasoningDeepSeekChat", _RecordingClient)
         monkeypatch.setattr(main_llm_module, "NormalizingChatModel", _FakeNormalizer)
 
         main_llm_module.build_main_llm_for_profile(
@@ -226,6 +228,7 @@ class TestPublicBuilder:
                 self.inner = inner
 
         monkeypatch.setattr(main_llm_module, "init_chat_model", _RecordingClient)
+        monkeypatch.setattr(main_llm_module, "ReasoningDeepSeekChat", _RecordingClient)
         monkeypatch.setattr(main_llm_module, "NormalizingChatModel", _FakeNormalizer)
 
         main_llm_module.build_main_llm_for_profile(

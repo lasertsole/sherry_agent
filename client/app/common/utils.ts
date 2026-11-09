@@ -5,12 +5,6 @@ import customParseFormat from 'dayjs/plugin/customParseFormat';
 dayjs.extend(customParseFormat);
 
 /**
- * Convert a compact time string (e.g. 20260621004725) into a target format
- * @param timeStr Compact time string, usually 14 digits
- * @param format The desired output format, e.g. 'YYYY-MM-DD HH:mm:ss'
- * @returns The formatted time string, or an empty string when the input is invalid
- */
-/**
  * Elapsed time since a start timestamp (epoch ms), as `mm:ss` or `h:mm:ss`.
  * The ticking value comes from the caller (it re-renders on its own interval).
  * @param startedAtMs Epoch milliseconds, or null/undefined when it never started.
@@ -41,6 +35,12 @@ export function formatToolDuration(durationMs: number | null | undefined): strin
   return `${Math.round(ms / 1000)}s`;
 }
 
+/**
+ * Convert a compact time string (e.g. 20260621004725) into a target format
+ * @param timeStr Compact time string, usually 14 digits
+ * @param format The desired output format, e.g. 'YYYY-MM-DD HH:mm:ss'
+ * @returns The formatted time string, or an empty string when the input is invalid
+ */
 export const formatCompactTimeString = (timeStr: string | number, format: string = 'YYYY-MM-DD HH:mm'): string => {
   if (!timeStr) return '';
 

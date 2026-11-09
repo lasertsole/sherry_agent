@@ -71,7 +71,7 @@ const messages = await invoke<HistoryMessage[]>('session_history', {
 | 字段              | 类型             | 必填 | 说明                        |
 | ----------------- | ---------------- | ---- | --------------------------- |
 | `session_id`      | `string`         | 是   | 要查询的会话 ID             |
-| `last_turn_count` | `number \| null` | 否   | 最近轮次数（`null` = 全部） |
+| `last_turn_count` | `number \| null` | 否   | 返回最近轮数；省略/null = 10 |
 
 ### 返回值
 

@@ -8,6 +8,9 @@
 
 셸은 `--sherry-home <app-data>`를 전달합니다. `config/_home.resolve_code_root()`는 **동봉 템플릿**에 대해 `sys._MEIPASS`(onedir의 `_internal`)를 우선하고, `ROOT_DIR`은 기존처럼 프로젝트/스킬 루트로 남습니다. `sherry.jsonc`, `.models`, `.network`, `.env`는 최초 import 시 이 템플릿 루트에서 시드됩니다. 템플릿이 없으면 조용히 건너뛰지 않고 warning을 남기므로 패키지 구성 이상을 로그에서 바로 진단할 수 있습니다.
 
+단일 파일 템플릿에는 추가 패키징 규칙이 있습니다: PyInstaller `--add-data`의 DEST는 **디렉터리**입니다. `.models.example`을 DEST로 쓰면 같은 이름의 디렉터리가 생기고 최초 실행 시더가 디렉터리를 보고 건너뛰어 모델/앱 설정 탭이 비어 보입니다. 빌드는 모든 파일 항목을 번들 루트(`.`)로 보내고, `check_seed_files`는 시드 템플릿이 일반 파일이 아닌 동결 트리를 거부하며, `tests/packaging/test_build_backend.py`가 둘 다 고정합니다.
+
+
 ## 동결 환경과 QQ
 
 동결 백엔드에는 가상 환경이 없고 자체 인터프리터에 패키지를 설치할 수 없습니다. `channels/deps.install_requirements()`와 `channels/registry._ensure_deps()`는 `sys.frozen`이 참일 때 즉시 반환합니다. QQ SDK(`botpy`, 패키지명 `qq-botpy`)는 프로젝트 의존성에 추가되어 `packaging/build_backend.py`가 수집하므로 플러그인이 정상적으로 import합니다. 누락된 빌드에서는 INFO 한 줄만 남기고 채널을 비활성화하며, 시작할 때마다 `uv pip install`을 재시도하지 않습니다.

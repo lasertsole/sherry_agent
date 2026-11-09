@@ -25,7 +25,7 @@
   - [E2: 工具描述强制 — 格式 + 委派规则](enforcement/README.zh.md#e2-工具描述强制--格式--委派规则)
   - [E3: 续作强制器 — 事后闭环核心 ★★](enforcement/README.zh.md#e3-续作强制器--事后闭环核心-)
   - [E4: 转换屏障 — 双保险](enforcement/README.zh.md#e4-转换屏障--双保险)
-  - [E5: Sisyphus 完成契约 ★★](enforcement/README.zh.md#e5-sisyphus-完成契约-)
+  - [E5: Sisyphus 教条（仅提示词；运行时门是 completion drain） ★★](enforcement/README.zh.md#e5-sisyphus-完成契约-)
   - [E6: 委派路由 ★](enforcement/README.zh.md#e6-委派路由-)
   - [E7: 意图识别与引导 — 事前触发器 ★★](enforcement/README.zh.md#e7-意图识别与引导--事前触发器-)
 - [前端](#前端)
@@ -124,7 +124,7 @@ Before (message arrives)    During                     After
 Layer 9  │ UI 组件层         │ ProgressFloat.vue (PrimeVue)，按 TaskFlow flow 分组
 Layer 8  │ 前端状态层         │ useTodoList.ts (模块级单例) + 按 flow 分组
 Layer 7  │ 实时通信层         │ WS: todo_updated 推送 + todo_refresh 重连重发
-Layer 6  │ 压缩保护层 ★      │ build_system_prompt 注入当前 todos + boulder 状态
+Layer 6  │ 压缩保护层 ★      │ DynamicReminderMiddleware 每轮以 system-reminder 注入当前 todos + boulder
 Layer 5  │ DAG 执行层 ★      │ 由 TaskFlow 提供: depends_on + blocked/ready/dispatched/done（本层不实现）
 Layer 4  │ 编排执行层 ★      │ ulw-execute: plan→checkbox→sub-task→worker→verify，调用 TaskFlow
 Layer 3  │ 工具层            │ todowrite + todoread（DAG 由 taskflow_* 工具家族执行）
@@ -135,7 +135,7 @@ E1       │ 系统提示词强制     │ AGENTS.md: MANDATORY orchestrator doc
 E2       │ 工具描述强制       │ todowrite docstring 格式规则
 E3       │ 续作强制器 ★★     │ after_agent 中间件: idle+未完成→自动续作（含退避/停滞/abort/恢复）
 E4       │ 转换屏障 ★        │ TaskFlow step 未 done / subagent 运行中禁止标 completed
-E5       │ Sisyphus 验证 ★★  │ DoneClaim → AdversarialVerify → FullyDone（5 gates）
+E5       │ Sisyphus 验证 ★★  │ 仅为教条：DoneClaim → AdversarialVerify → FullyDone（运行时门 = 证据 drain）
 E6       │ 委派路由 ★        │ #a fan-out + #b category 路由 + #c 委派指令 + #d 转换屏障
 E7       │ 意图识别器 ★★     │ before_model: arming(无计划+任务意图→注入引导) + plan-active(有计划→追加 reminder)
 ```
@@ -246,7 +246,7 @@ def build_todolist_tools() -> list[BaseTool]:
 
 定义何时使用 todolist（3+ 步复杂工作）、可用工具、状态/优先级/委派字段、DAG 字段（委派给 TaskFlow）以及规则（优先局部 action；只有整体重写才用 replace；同时只有一个 in_progress；subagent 返回前不得标记 completed）。
 
-### knowledge — 按计划身份隔离
+### knowledge — 已退役（遗留计划身份存储）
 
 `knowledge` 工具（`agent/tools/todolist/knowledge/`）以**计划身份**为键，而非计划名。归属来自三个来源（`ownership.association_plan_refs()`）：本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤）、`src/data/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`identity.resolve_plan_identity()` 把该名称映射到规范化计划路径并派生存储目录 `workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的计划路径)[:12]`；每个目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。由此：
 
@@ -256,6 +256,8 @@ def build_todolist_tools() -> list[BaseTool]:
 - 名称命中多个路径时优先本会话 `plan_ref`；仍然歧义（且不是本会话自己的兜底名）时给出可诊断错误并拒绝，绝不静默写到别处。
 
 `list` 只返回本会话关联的计划（可读名 + key）；`read` / `write` 访问他会话或歧义计划会被拒绝（绝不静默返回空）。旧的名称为键目录 `workspace/knowledge/plans/<plan-name>/` 在 key 目录出现前保持可读；写入总是落在 key 目录。`clear_session` 删除本会话私有身份目录，保留通过 boulder `session_ids` 与其他会话共享的计划；旧目录永不删除。boulder 文件缺失/损坏、`session_id` 为空或计划未知时一律安全拒绝——不抛异常，也不发生跨会话读取。
+
+历史实现使用 `KnowledgeStore` 与 `plan_key = sha1(repo-relative plan path)[:12]`。
 
 ---
 
@@ -281,7 +283,7 @@ Phase 5: Mark progress → 编辑 checkbox - [ ] → - [x]，不询问是否继�
 
 1. `taskflow_flow(action="create", flow_id, description, initial_state)` — 建流。
 2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — 登记：无依赖 → `dispatched`；依赖未满足 → `blocked` 不派发；未知依赖 → 报错不改状态。
-3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 注入结果：step 变 `done`，blocked 依赖解锁为 `ready`。**resume 不自动派发。**
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 注入结果：step 变 `done`，blocked 依赖解锁为 `ready`。`auto_dispatch=True`（默认）会立即派发整个 ready 集合；传 `auto_dispatch=False` 才只解锁。
 4. `taskflow_step(action="dispatch", flow_id, step_ids)` — 批量并行派发 ready 步骤。
 5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — 等本流派发的子会话 settle。
 6. `taskflow_flow(action="finish", flow_id, summary)` — 收尾；`taskflow_inspect(action="summary")` 随时回读。
@@ -329,7 +331,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | -------------------------- | ----------------- | ---------- | ------------------------------------------------ |
 | `_build_todo_block()`      | todos.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 行      | 活跃工作状态                                     |
-| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 行     | key_failures + key_successes + reusable_patterns（按身份解析） |
+| `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
 ### 实现
 
@@ -361,7 +363,7 @@ def _build_todo_block(session_id: str) -> str:
 
 | omo 的 5 层             | 本方案                                           |
 | ----------------------- | ------------------------------------------------ |
-| Prune 保护列表          | 不需要（todos 在 system prompt 中）              |
+| Prune 保护列表          | 不需要（todos 在每轮 reminder 块中）              |
 | 压缩前快照 + 压缩后恢复 | 不需要（system prompt 每次从 DB 重建）           |
 | 8 段式压缩上下文注入    | 不需要（todos 不在对话历史中）                   |
 | 60s 压缩保护窗口        | 不需要（无续作注入器需要保护）                   |

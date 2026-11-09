@@ -379,9 +379,8 @@ class HistoryDb extends Dexie {
 
   constructor() {
     super('ema-history-cache');
-    // Fresh-start schema: there is no legacy user data to preserve (no released
-    // users), so the database is declared directly at version(1) with the full
-    // current table set — no migration chain, no upgrade hooks.
+    // version(1) is the fresh-start schema (no legacy user data to preserve);
+    // later versions are additive table bumps, with no upgrade hooks.
     this.version(1).stores({
       // Primary key id; compound index [session_id+turn_num] for per-session queries and deduplication.
       // Single-column session_id is used to clear a session's cache.
@@ -432,16 +431,6 @@ class HistoryDb extends Dexie {
 }
 
 /**
- * Global unique Dexie database instance (used to cache conversation history).
- */
-/**
- * One shortcut override.
- *
- * The id is the `SHORTCUT_BINDINGS` id ('send-message', 'command-palette' …) and
- * `keys` is the JSON form of its `KeyCombo`. Removing a row restores the
- * built-in default, so the table only ever holds what the user changed.
- */
-/**
  * One app-level flag (the onboarding "seen" bit and anything else that must
  * survive a reload). Small scalars only — this is a key/value switchboard, not
  * a cache.
@@ -451,11 +440,21 @@ export interface AppFlag {
   value: unknown;
 }
 
+/**
+ * One shortcut override.
+ *
+ * The id is the `SHORTCUT_BINDINGS` id ('send-message', 'command-palette' …) and
+ * `keys` is the JSON form of its `KeyCombo`. Removing a row restores the
+ * built-in default, so the table only ever holds what the user changed.
+ */
 export interface ShortcutRow {
   id: string;
   keys: string;
 }
 
+/**
+ * Global unique Dexie database instance (used to cache conversation history).
+ */
 export const db = new HistoryDb();
 
 /**

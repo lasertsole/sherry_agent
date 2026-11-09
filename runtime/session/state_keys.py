@@ -121,11 +121,11 @@ class StateKey(StrEnum):
     # at send time, so exactly one notice message names the final root after any
     # number of switches (and a switch back to the old root sends none).
     PROJECT_DIR_ANNOUNCED = "project_dir_announced"
-    # The git branch + HEAD the agent was last told about, as ONE token
-    # (``<branch>@<short-hash>``): a turn whose project directory resolves to a
-    # different token gets one git-change notice before its human message. Same
-    # send-time comparison, same coalescing and same silent first-turn baseline
-    # as the directory above.
+    # The shadow-checkpoint token the agent was last told about, as ONE token
+    # (``checkpoint@<short-hash>``): a turn whose project directory resolves to
+    # a different token gets one workspace-change notice before its human
+    # message. Same send-time comparison, same coalescing and same silent
+    # first-turn baseline as the directory above.
     GIT_HEAD_ANNOUNCED = "git_head_announced"
 
     MULTIMODAL_TRYING_NATIVE = "_multimodal_trying_native"
@@ -216,6 +216,11 @@ class StateKey(StrEnum):
     #: Transient model-facing warning produced by a full todo replacement that
     #: dropped a flow root and auto-cancelled the orphaned flow(s).
     TODO_REFERENCE_WARNING = "todo_reference_warning"
+
+    #: Set by the continuation gate when the verify todo's reviewer was
+    #: re-spawned past its budget: the main agent may then cancel the verify
+    #: todo and run the acceptance checks itself (a degraded but closable plan).
+    VERIFY_BUDGET_EXHAUSTED = "verify_budget_exhausted"
 
 
 def hitl_tool_approved_key(tool_name: str) -> str:

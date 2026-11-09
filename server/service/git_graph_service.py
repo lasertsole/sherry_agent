@@ -49,7 +49,7 @@ _PRETTY = f"%H{_FIELD}%P{_FIELD}%an{_FIELD}%aI{_FIELD}%D{_FIELD}%s{_RECORD}"
 
 
 class GitActionError(Exception):
-    """A refused / failed write with a client-safe message and an HTTP status."""
+    """A refused / failed git read with a client-safe message and an HTTP status."""
 
     def __init__(self, reason: str, status: int = 400) -> None:
         super().__init__(reason)

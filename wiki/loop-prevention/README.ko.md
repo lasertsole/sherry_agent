@@ -19,7 +19,7 @@
 |---|---|---|
 | **텍스트 데스 루프** (모델 호출 1회) | 같은 문장 / 같은 문자열이 영원히 스트리밍됨 | 모델 패밀리별 샘플링 페널티 (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (워커) + `RepetitionGuardWrapper` (메인 에이전트 스트림) |
 | **도구 병리 루프** (턴 1회) | 같은 실패 도구 호출, 핑퐁 쌍, 인자 갱신 | `ToolGuardrails`: 5가지 병리 → WARN → BLOCK → HALT, 복구 모드 포함 |
-| **무한 턴** | 모델 호출이 끝나지 않음 | `IterationBudget` (메인 90 / executor 90 / 기타 워커 60, 모델 호출만 — 도구 결과는 무료) |
+| **무한 턴** | 모델 호출이 끝나지 않음 | `IterationBudget` (메인 180 / executor 90 / 기타 워커 60, 모델 호출만 — 도구 결과는 무료) |
 | **잘림 재시도 나선** | `max_tokens`로 잘린 도구 호출이 쓰레기 인수로 실행 → 오류 → 모델이 재발행하며 반복을 태움 | `MaxTokensBoostMiddleware`: 미들웨어 내 유한 재호출(3회 재시도, 부스트 상한, 예산 +0) |
 | **오버플로 재시도 나선** | 과대한 컨텍스트가 거부됨 → 압축 실행 → 압축된 컨텍스트도 여전히 오버플로 → 프로바이더가 다시 오류 | `Summarization`: LLM 없는 오버플로 테일 클립을 먼저, 그다음 기존 라우트, 마지막으로 강제 복구 |
 | **멈춘 턴** | 수 분간 진행 없음 (도구 행, 끼인 루프) | `HeartbeatStaleness` 와치독 → `HeartbeatTimeoutError` |
@@ -54,6 +54,8 @@
 
 네트워크 명령 실패는 이제 도구 오류로 연결됩니다: `curl`/`wget`/`git fetch`/`git clone` 등의 비영 종료는 `ToolException`을 발생시켜 `handle_tool_error`가 `ToolMessage(status="error")`를 만들고 exact-failure 카운터가 인식합니다. 로컬 명령(pytest, 컴파일러, 스크립트)의 비영 종료는 일반 텍스트(`status="success"`)로 반환되어 agent가 실패를 읽고 반복할 수 있습니다. `web_fetch`의 HTTP 4xx/5xx도 동일하게 raise합니다. 시그니처 연속은 또 다른 사각지대(인자가 같고 성공처럼 보이는 반복)를 잡습니다. `streak_max_warnings_per_turn`회까지 경고하고, 예산을 다 쓰면 그 정확한 도구 + 인자 시그니처를 턴이 끝날 때까지 차단합니다. 따라서 같은 명령을 계속 재실행하는 퇴화 루프가 전체 반복 예산을 소진할 수 없습니다. 차단은 해당 시그니처에만 적용되며(다른 인자와 도구는 계속 사용 가능), 복구 모드를 우회합니다(반복 차단을 일회성 재시도로 풀어서는 안 됩니다).
 
+의도적인 예외가 하나 있습니다. 테스트 파일(경로에 `tests/` 포함, `test_*.py`, `*_test.py`)을 읽는 `read_file`은 인수 검증 피드백이지 무의미한 탐색이 아닙니다. 시그니처 연속을 진행시키지 않고 no-progress/페어 경로에도 들어가지 않으므로, 단언 실패 후 기대값을 다시 읽을 수 있습니다. 예외는 `read_file`뿐이며, terminal/search와 소스 파일 읽기는 정상적으로 계산합니다.
+
 **결과 반복**은 시그니처 탐지가 아직 놓치는 루프를 보완합니다: 호출마다 인자는 바뀌지만 출력은 바이트 단위로 동일한 경우입니다. SWE 20261103_203547의 Sympy 실행이 대표적입니다 — agent는 `probe1.py`부터 `probe19.py`까지 작성해 매번 같은 `prettyForm`을 출력하면서 90회 예산을 모두 쓰고 라이브러리 코드는 건드리지 않았습니다. 탐지기는 비멱등 도구에 대해 '도구별 연속 동일 결과'를 세고(멱등 도구는 기존 no-progress 체인이 담당), `result_repetition_warn_after`에서 도구별로 한 번 경고하며, `result_repetition_block_after`에서 도구 전체를 차단합니다. 시그니처 차단과 마찬가지로 복구 모드를 우회하고 턴이 끝날 때까지 유지됩니다. 다른 도구(쓰기 도구 포함)는 계속 사용할 수 있으므로 agent는 맴돌던 변경을 적용할 수 있습니다.
 
 **성공한 소스 편집은 차단을 해제합니다**: `patch_file`은 자체 metadata에 `clears_guardrail_blocks`를 선언하고, ToolGuardrails는 그 호출이 성공하면 누적된 모든 차단·시그니처·결과 연속 기록과 실패/무진전 카운터 및 호출 기록을 지웁니다. 가드를 작동시킨 프로브는 편집 전 파일이 답한 것이므로, 검증 도구를 계속 차단하면 agent가 새 후보를 테스트할 수 없습니다. 반면 새 `probeN.py`를 만드는 `write_file`은 이 플래그가 없어 자신이 속한 루프를 다시 열 수 없습니다.
@@ -66,11 +68,11 @@
 
 ### 턴 수준: `IterationBudget`
 
-턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
+턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트는 180, executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
 
 ### 턴 수준: `DelegationPressureGate`(메인 에이전트 전용)
 
-메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **14**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/14에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
+메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **12**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/12에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
 
 ### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
 
@@ -249,6 +251,27 @@
 
 `SubagentCompletionDrainMiddleware`는 drain된 각 완료 배치를 세션의 검증 evidence와 대조합니다: 캐리어는 그대로 주입되고, 세션에 통과 evidence가 없으면 그 뒤에 필수 검증 메시지가 덧붙습니다. 게이트는 fail-open이라 evidence 조회가 불가능해도 턴을 막지 않습니다. 주입되는 행은 `metadata.origin`(여기서는 `quality_gate`, 그 밖에 `subagent_completion` / `task_intent` / `todo_continuation`)을 가지며, 그 출처가 영속화되므로 채팅은 이를 "사용자가 쓴 메시지"가 아니라 중립 카드로 표시합니다.
 
+### 계획 수준: SYSTEM verify todo
+
+work todo가 2개 이상인 계획은 끝에 SYSTEM `[VERIFY]` todo
+(`metadata.kind="verify"`, 항상 마지막, priority high)를 가진다. todolist service가
+각 변경(`replace`/`add`/`patch`/`remove`) 후 유지한다: 마지막을 보장하고, work
+todo가 2개 미만이면 제거하며 reviewer를 kill하고, `:subagent:`/`:swarm:` 세션에는
+삽입하지 않는다. 모델은 위조할 수 없다——도구 schema에 `metadata`가 없고, store는
+시스템 전용 인자로만 그 컬럼을 쓰며, `replace`에 복사된 템플릿 줄은 정확히
+제거한다. 증거는 모델이 쓸 수 있는 `notes` 필드에 들어간다.
+
+메인은 읽기 전용 `reviewer`를 spawn하고 `child_session_key`를 `subagent_id`에
+patch한 뒤 기다린다. 전환 배리어는 reviewer 종료와 모든 work todo의 종국을
+요구하며, 직접 cancel은 reviewer 예산 소진이나 계획 전체 cancel일 때만 허용한다.
+`PlanContinuationEnforcer`는 "verify pending + reviewer running"을 대기로 보고
+(주입하지 않고 완료 통지로 재개), reviewer가 끝났거나 registry가 종국이면 보고서
+읽기를 구동하며, `TODOLIST_INFRA["max_verify_respawns"]`(2)회 재spawn 후
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]`를 주입해 "직접 검증하고 verify를
+cancel(미검증으로 기록)"하는 저하 경로를 제공한다. 실패 보고는 지목된 todo_id만
+증거와 함께 다시 열고, 통과한 todo는 completed로 유지한다. cancelled verify는
+skill 추출을 막는다(`_detect_todo_all_complete`).
+
 ## 📊 우선순위 매트릭스
 
 | 가드 | 고도 | 상태의 집 | 리셋 시점 |
@@ -269,7 +292,7 @@
 
 ## 🛠️ 설정과 사용법
 
-- **모든 임계값은 코드 기본값입니다** (dataclass / 생성자 파라미터); 환경 변수는 의도적으로 두지 않았습니다. 특히 `config/schema.py`의 `max_tool_iterations = 40`은 미들웨어가 소비하지 *않고*(예산은 명시적으로 전달됨: 90 / 60), `HeartbeatConfig.interval_s = 1800`은 하트비트 서비스 기본값과 일치하지만 서비스는 기본값으로 생성됩니다.
+- **모든 임계값은 코드 기본값입니다** (dataclass / 생성자 파라미터); 환경 변수는 의도적으로 두지 않았습니다. 특히 `config/schema.py`의 `max_tool_iterations = 40`은 미들웨어가 소비하지 *않고*(예산은 명시적으로 전달됨: 180 / 90 / 60), `HeartbeatConfig.interval_s = 1800`은 하트비트 서비스 기본값과 일치하지만 서비스는 기본값으로 생성됩니다.
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.

@@ -2,8 +2,8 @@
 
 :data:`MIDDLEWARE_ORDER` documents the chain the way ``_build_middlewares``
 registers it. Kept beside the chain rather than derived from it (constructing
-``_build_middlewares`` would build real LLMs); a test pins it against the real
-assembly with the same stubbing trick the order-contract test uses.
+``_build_middlewares`` would build real LLMs). ``DelegationPressureGate`` is
+appended only when its feature flag is enabled.
 
 Chain membership is a BUILD-TIME contract — a user cannot switch an entry off.
 The per-session middleware selection was removed together with the preset
@@ -24,6 +24,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "MultimodalProcessor",
     "IterationBudget",
     "TokenBudget",
+    "ToolResultEnrichmentMiddleware",
     "ToolGuardrails",
     "ToolResourceLockMiddleware",
     "UserHooksMiddleware",
@@ -45,4 +46,5 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "OutputSafetyFilter",
     "Summarization",
     "InvalidToolCallRepairMiddleware",
+    "DelegationPressureGate",
 )

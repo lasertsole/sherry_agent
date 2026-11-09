@@ -105,7 +105,7 @@ async def purge_session_data(session_id: str) -> None:
         raise ValueError(f"invalid session_id: {session_id!r}")
 
     # (0) sqlite checkpointer — checkpoints + writes for this thread. FIRST on
-    # purpose: the purge spans four independent stores and cannot be atomic, so
+    # purpose: the purge spans several independent stores and cannot be atomic, so
     # the surviving half decides whether a retry can finish the job. A leftover
     # checkpoint whose message rows are gone is invisible (nothing lists it) and
     # never re-purged; a leftover message row whose checkpoint is gone is still

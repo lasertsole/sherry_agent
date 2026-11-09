@@ -266,7 +266,6 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     # Session ID is derived from the channel name only
     session_id: str = str(string_to_unique_int(channel.name))
 
-    # Register channel session (idempotent)
     relation_register.register_channel_chat(
         session_id=session_id, channel_id=channel.name, chat_id=message.chat_id
     )
@@ -312,17 +311,15 @@ async def _process_inbound(message: InboundMessage, channel: BaseChannel) -> Non
     # DEDUPED: duplicate delivery (client_msg_id already active) -- silent.
 
 
-# Bind the channel executor + outbound router into the/7 seams.
+# Bind the channel executor + outbound router seams.
 register_channel_turn_infra()
 
-# Set channel inbound consumer
 channel_manager.set_inbound_consumer(_process_inbound)
 
 
 async def _process_outbound(message: OutboundMessage, channel: BaseChannel) -> None:
     session_id: str = str(string_to_unique_int(channel.name))
 
-    # Register channel session (idempotent)
     relation_register.register_channel_chat(
         session_id=session_id, channel_id=channel.name, chat_id=message.chat_id
     )

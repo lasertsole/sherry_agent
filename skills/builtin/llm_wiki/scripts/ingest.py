@@ -42,10 +42,8 @@ def save_source(content: str, category: str = "articles", filename: str = None) 
 
     file_path = raw_dir / filename
 
-    # Compute sha256
     sha256_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    # Write the file (with frontmatter)
     frontmatter = f"""---
 source_url: manual
 ingested: {date.today().isoformat()}

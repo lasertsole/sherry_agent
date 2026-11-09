@@ -39,34 +39,36 @@ sherry_agent/
 
 ## 2. 进程拓扑
 
-原型是 Harness 插件，与 Harness 同进程。Python 版采用**旁进程**部署：
+原型是 Harness 插件，与 Harness 同进程。Python 版采用**旁进程**部署，且 superagent 在 Sherry 里有一个**持久 main session** 作为驻点（修正后架构，见 `12-sherry-integration.md §1`）：
 
 ```
 ┌─────────────────────────┐      ┌──────────────────────────┐
 │  Sherry 后端进程          │      │  superagent 进程           │
-│  (Robyn, server/__main__)│      │  (Robyn 或 ASGI, 独立端口)  │
+│  (Robyn, server/__main__)│      │  (Robyn/ASGI, 独立端口)    │
 │                          │      │                            │
-│  agent.core.built_agent  │◄─────┤  superagent.app.runtime    │
-│  runtime/hooks.py        │ 回调 │  Engine + Sources + Effects│
-│  agent/tools/subagent    │      │  SherryExecutor            │
+│  superagent-main session │◄─────┤  Engine + Sources + Effects│
+│  (持久 main agent, router)│ HTTP │  SherryExecutor            │
+│  worker subagents        │ 双向 │  MCP server (stdio→Sherry) │
+│                          │ +MCP │  HTTP server (收 Sherry 事件)│
 │                          │      │                            │
 │  SQLite: sherry.db       │      │  SQLite: orchestrator.db   │
 └─────────────────────────┘      └──────────────────────────┘
-        ▲                                   │
-        │ spawn_subagent_direct (RPC)        │
-        └───────────────────────────────────┘
-                via runtime/hooks seam
 ```
+
+**关键**：workers 是 superagent main session 的子代理（非孤儿），completion drain 回 main session 并重置续跑 latch（L7 核心）。`orchestrator_*` 工具经 MCP 暴露。详见 `12-sherry-integration.md`。
 
 **为什么旁进程**：
 
-1. superagent 的重启周期（setup 失败、account 改动、Policy reload 触发 restart）与 Sherry 后端独立——原型明确"keep it separate from the profile you work in: the plugin changes process-wide PATH and git settings, and its process needs independent restarts and upgrades"。
-2. worker-bin shim 改 `PATH`、worker-gitconfig 替换 git 配置——这些是进程级副作用，绝不能污染 Sherry 主后端（否则主后端的 `terminal` 工具会拿到 agent 凭据）。
+1. superagent 的重启周期与 Sherry 后端独立——原型明确"keep it separate from the profile you work in"。
+2. worker-bin shim 改 `PATH`、worker-gitconfig 替换 git 配置——进程级副作用，不能污染 Sherry 主后端。
 3. superagent 自己的 SQLite + tmux 会话 + hourly check，与 Sherry 后端解耦。
 
-**接缝**：superagent 进程通过 `runtime/hooks.py` 的注册点调用 Sherry 后端的 `spawn_subagent_direct`（起 Executor Session）、`state_port`（heal/truncate）、`turn_runner`（cancel）。Sherry 后端启动时若检测到 superagent 进程在跑，注册这些回调；否则 superagent 的 `SherryExecutor` 退化为"本地模式"（自己直接跑 LLM，不走 subagent——仅用于单测和离线场景）。
+**接缝**（修正后分清两层）：
+- **HTTP loopback**：`server/trigger/http/superagent.py`（Sherry 新增）暴露 `/internal/superagent/*` 给 superagent 进程调（spawn/inject/heal/messages）。双向：Sherry turn 完成回调 superagent HTTP server。
+- **MCP**：superagent 起 MCP server（stdio），Sherry 配 `mcp.servers.superagent`，main session + worker 经 MCP 调 `orchestrator_*` 工具。
+- **`runtime/hooks.py` 不用**：superagent 是独立进程，不用 Sherry 进程内 callable 查找。
 
-**通信协议**：进程间用 HTTP（loopback，复用 `runtime/hooks` 的现有 WS/HTTP 通道）或直接函数调用（同进程可选）。MVP 走 HTTP loopback，端口配在 `superagent.jsonc`。
+**失败模式**：Sherry 挂了 → superagent 进 degraded（只入队 Trigger，不 dispatch），等 Sherry 恢复。不是"worker spawn 失败"。详见 `12-sherry-integration.md §10`。
 
 ## 3. 模块映射（原型 TS → Python）
 
@@ -183,6 +185,17 @@ layers = [
 - `strict=True`（拒绝未知字段，对齐原型 `.strict()`）。
 
 **不**用 `dataclass` 做 schema 校验（dataclass 用于纯域类型，见 `02-domain-model.md`）。
+
+## 5b. MCP server（`orchestrator_*` 工具暴露）
+
+superagent 起 MCP server 把 `orchestrator_*` 工具暴露给 Sherry main session + worker subagent（见 `12-sherry-integration.md §5`、`10-sessions-prompts.md §3-§4`）。
+
+- 位置：`superagent/mcp/server.py`。
+- 传输：stdio（superagent 作为 Sherry MCP 子进程；Sherry 配 `mcp.servers.superagent = {command: "python", args: ["-m","superagent.mcp"]}`）。MVP 选 stdio；P2 可评估 SSE。
+- 工具实现：`superagent/app/tools/*.py` 的函数调 Engine 对应方法；MCP server 包装成 MCP tool schema。
+- 角色裁剪：main session 加载全 14 个；worker 加载 6 个 + `orchestrator_read`。MVP 简化：全暴露，Engine 层鉴权拒越权（如 worker 调 `orchestrator_route` → Engine 拒）。
+- 依赖：`mcp` Python SDK（或自写 JSON-RPC over stdio）。加到 `pyproject.toml`。
+- **不侵入 Sherry `build_main_tools()`**——Sherry 以 MCP client 加载，工具注册表不动。
 
 ## 6. 异步模型
 

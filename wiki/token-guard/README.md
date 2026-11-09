@@ -139,7 +139,7 @@ An existing `.models` that still carries the previous `131072` default is migrat
 | :---- | :----- | :----- |
 | `tests/config/test_token_guard.py` | `unit` | Threshold is `200_000`; `None` and below-floor raise; the error names the key; at or above floor passes |
 | `tests/agent/core/test_built_agent_guard.py` | `unit` | `built_agent()` rejects main-below, main-unset, and aux-unset-fallback; builds with a valid env |
-| `tests/server/service/test_env_guard.py` | `unit` | `write_env_file()` rejects below-floor and non-integer without writing; a valid value and non-token keys pass |
+| `tests/server/test_env_service.py` + `tests/server/test_models_config_service.py` | `unit` | The env key split; `write_models_config()` rejects below-floor/non-integer max-token values without writing, while valid values pass |
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` shape and `valid` for both-at-minimum, main-below, aux-unset, main-unset |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | fetch cache-busting, fetch-once cache, refetch after invalidate, default-invalid fallback |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend` warns only when invalid; silent when valid and on fetch failure |
@@ -148,7 +148,8 @@ An existing `.models` that still carries the previous `131072` default is migrat
 ```bash
 # Python (unit + integration)
 uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent_guard.py \
-  tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
+  tests/server/test_env_service.py tests/server/test_models_config_service.py \
+  tests/server/trigger/test_model_config.py -q
 
 # Frontend
 cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token

@@ -41,7 +41,7 @@ from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kw
 # 1.  Read and prepare environment
 # ---------------------------------------------------------------------------
 
-# .env plus the network.jsonc overlay (which wins for the network keys)
+# .env plus the .network overlay (which wins for the network keys)
 load_env()
 
 

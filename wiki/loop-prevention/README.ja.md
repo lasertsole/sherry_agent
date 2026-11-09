@@ -19,7 +19,7 @@
 |---|---|---|
 | **テキストデスループ** (モデル呼び出し 1 回) | 同じ文 / 同じ文字列が永遠にストリーミングされる | モデルファミリー別サンプリングペナルティ (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (ワーカー) + `RepetitionGuardWrapper` (メインエージェントのストリーム) |
 | **ツール病理ループ** (ターン 1 回) | 同じ失敗するツール呼び出し、ピンポンペア、引数の改変 | `ToolGuardrails`: 5 種類の病理 → WARN → BLOCK → HALT、リカバリモード付き |
-| **無限ターン** | モデル呼び出しが止まらない | `IterationBudget` (メイン 90 / executor 90 / その他ワーカー 60、モデル呼び出しのみ — ツール結果は無料) |
+| **無限ターン** | モデル呼び出しが止まらない | `IterationBudget` (メイン 180 / executor 90 / その他ワーカー 60、モデル呼び出しのみ — ツール結果は無料) |
 | **切断リトライスパイラル** | `max_tokens` で切断されたツール呼び出しがゴミ引数のまま実行 → エラー → モデルが再発行し、反復回数を無駄に焼く | `MaxTokensBoostMiddleware`: ミドルウェア内の有界再呼び出し(3 リトライ、ブースト上限、予算 +0) |
 | **オーバーフロー再試行スパイラル** | 過大なコンテキストが拒否される → 圧縮が走る → 圧縮後のコンテキストもまだオーバーフローする → プロバイダが再びエラーを返す | `Summarization`: LLM なしのオーバーフロー・テールクリップを最初に、次に既存ルート、最後に強制リカバリ |
 | **スタックしたターン** | 数分間まったく進まない (ハングしたツール、挟まったループ) | `HeartbeatStaleness` ウォッチドッグ → `HeartbeatTimeoutError` |
@@ -54,6 +54,8 @@
 
 ネットワークコマンドの失敗はツールエラーへ橋渡しされます: `curl`/`wget`/`git fetch`/`git clone` などの非ゼロ終了は `ToolException` を投げ、`handle_tool_error` により `ToolMessage(status="error")` となって exact-failure カウンタに届きます。ローカルコマンド（pytest、コンパイラ、スクリプト）の非ゼロ終了は通常のテキスト（`status="success"`）のまま返り、agent は失敗を読んで反復できます。`web_fetch` の HTTP 4xx/5xx も同様に raise します。シグネチャ連続はもう一つの盲点（引数が同一で成功に見える繰り返し）を捉えます。`streak_max_warnings_per_turn` 回まで警告し、予算を使い切るとその正確なツール + 引数シグネチャをターン終了までブロックします。これにより、同一コマンドを再実行し続ける退化的なループが反復予算を食い尽くせなくなります。ブロックはそのシグネチャに限定され（他の引数やツールは利用可能）、リカバリモードもバイパスします（繰り返しブロックを一度限りの再試行として解放してはいけません）。
 
+意図的な例外が 1 つあります。テストファイル（パスに `tests/` を含む、`test_*.py`、`*_test.py`）を読む `read_file` は受け入れ検証のフィードバックであり、無駄な探索ではありません。シグネチャ連続を進めず、no-progress / ペア経路にも入らないため、アサーション失敗後に期待値を読み直せます。例外は `read_file` のみで、terminal/search やソースファイルの読み取りは通常どおり数えます。
+
 **結果反復**はシグネチャ検出がまだ見逃すループを補います: 呼び出しごとに引数は変わるのに出力はバイト単位で同一、という形です。SWE 20261103_203547 の Sympy 実行が典型例で、agent は `probe1.py` から `probe19.py` を書き、毎回同じ `prettyForm` を出力しながら 90 回の予算を使い切り、ライブラリ本体には触れませんでした。検出器は非冪等ツールについて「ツールごとの連続同一結果」を数え（冪等ツールは既存の no-progress 連鎖が担当）、`result_repetition_warn_after` でツールごとに一度警告し、`result_repetition_block_after` でツール全体をブロックします。シグネチャブロック同様リカバリモードをバイパスし、ブロックはターン終了まで続きます。他のツール（書き込みツールを含む）は引き続き利用できるため、agent はぐるぐる回っていた変更を適用できます。
 
 **成功したソース編集はブロックを解除します**: `patch_file` は自身の metadata で `clears_guardrail_blocks` を宣言し、ToolGuardrails はその呼び出しが成功した時点で累積したブロック・シグネチャ・結果連続記録に加え、失敗/無進捗カウンタと呼び出し記録もすべて破棄します。ガードを作動させたプローブは編集前のファイルに答えたものなので、検証ツールをブロックしたままでは新しい候補をテストできません。一方、新しい `probeN.py` を作る `write_file` はこのフラグを持たないため、自分が属するループを再び開くことはできません。
@@ -66,11 +68,11 @@
 
 ### ターンレベル: `IterationBudget`
 
-ターンごとに**モデル呼び出し**だけを 1 回 1 単位で数えます。ツール呼び出しのペアは合計 1 単位です——呼び出しを行う `AIMessage` を生成したモデル呼び出しで、`ToolMessage` の結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。メインエージェントと executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。予算が尽きたモデル呼び出しは**モデルを呼ばずに**ターミナル AIMessage を返すので、最後にツールを要求した AIMessage のツール呼び出しと結果は最後まで実行されます(ペアを壊しません)。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
+ターンごとに**モデル呼び出し**だけを 1 回 1 単位で数えます。ツール呼び出しのペアは合計 1 単位です——呼び出しを行う `AIMessage` を生成したモデル呼び出しで、`ToolMessage` の結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。メインエージェントは 180、executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。予算が尽きたモデル呼び出しは**モデルを呼ばずに**ターミナル AIMessage を返すので、最後にツールを要求した AIMessage のツール呼び出しと結果は最後まで実行されます(ペアを壊しません)。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
 
 ### ターンレベル: `DelegationPressureGate`（メインエージェント専用）
 
-メインエージェントに搭載され、サブエージェントには決して入りません（子ビルダーは追加せず、`_active` も `:subagent:`/`:swarm:` セッションを拒否します）。1 ターン内の**読み取り/探索**ツール呼び出しを累積し、**7** 回で独自の mid-turn `abefore_model` 経路から `<system-reminder source="delegation_pressure">` 警告を 1 回注入し、**14** 回でより強い escalated システムリマインダーを注入します。どちらの段階でもツールは利用可能なまま — ゲートは助言し、ブロックしません（ブラウザのデバッグツールは計数対象外）。accepted/pending の spawn が成功するとカウントをリセットし、メインエージェントは検査/検証でき、その後の 7/14 で再び作動します。失敗した spawn はリセットしません。書き込みだけではリセットされず、ターン内のすべてのグラフ呼び出しは spawn または `after_agent` まで累積します。`SHERRY_EVAL_DELEGATION_PRESSURE=1` は明示的な評価 arm の選択子として残り、製品のメインチェーンには常に含まれます。
+メインエージェントに搭載され、サブエージェントには決して入りません（子ビルダーは追加せず、`_active` も `:subagent:`/`:swarm:` セッションを拒否します）。1 ターン内の**読み取り/探索**ツール呼び出しを累積し、**7** 回で独自の mid-turn `abefore_model` 経路から `<system-reminder source="delegation_pressure">` 警告を 1 回注入し、**12** 回でより強い escalated システムリマインダーを注入します。どちらの段階でもツールは利用可能なまま — ゲートは助言し、ブロックしません（ブラウザのデバッグツールは計数対象外）。accepted/pending の spawn が成功するとカウントをリセットし、メインエージェントは検査/検証でき、その後の 7/12 で再び作動します。失敗した spawn はリセットしません。書き込みだけではリセットされず、ターン内のすべてのグラフ呼び出しは spawn または `after_agent` まで累積します。`SHERRY_EVAL_DELEGATION_PRESSURE=1` は明示的な評価 arm の選択子として残り、製品のメインチェーンには常に含まれます。
 
 ### ターンレベル: `MaxTokensBoostMiddleware`、ツール呼び出し切断からの復旧
 
@@ -250,6 +252,27 @@
 
 `SubagentCompletionDrainMiddleware` は drain された各完了バッチをセッションの検証証跡と照合します：キャリアはそのまま注入され、セッションに合格した証跡がない場合はその後ろに必須検証メッセージが追記されます。ゲートは fail-open で、証跡照会が利用できなくてもターンを止めません。注入される行は `metadata.origin`（ここでは `quality_gate`、他は `subagent_completion` / `task_intent` / `todo_continuation`）を持ち、その出所が永続化されるため、チャットはそれを「ユーザーが書いたメッセージ」ではなく中立なカードとして表示します。
 
+### 計画レベル：SYSTEM verify todo
+
+work todo が 2 件以上の計画は末尾に 1 つの SYSTEM `[VERIFY]` todo
+（`metadata.kind="verify"`、常に最後、priority high）を持つ。todolist service が
+各変更（`replace`/`add`/`patch`/`remove`）後に維持する：末尾を保ち、work todo が
+2 件未満になると削除して reviewer を kill し、`:subagent:`/`:swarm:` セッションには
+挿入しない。モデルは偽造できない——ツール schema に `metadata` はなく、store は
+システム専用引数でのみその列を書き、`replace` にコピーされたテンプレート行は
+正確に剥がす。証拠はモデルが書ける `notes` フィールドに入る。
+
+メインは読み取り専用 `reviewer` を spawn し、`child_session_key` を
+`subagent_id` に patch して待つ。遷移バリアは reviewer の終了と全 work todo の
+終局を要求し、直接 cancel は reviewer 予算切れか計画全体の cancel のときだけ許す。
+`PlanContinuationEnforcer` は「verify pending + reviewer running」を待機として
+扱い（注入せず、完了通知で再開）、reviewer 終了または registry が終局なら報告読取を
+駆動し、`TODOLIST_INFRA["max_verify_respawns"]`（2）回の再 spawn 後に
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]` を注入して「自分で検証して verify を
+cancel（未検証として記録）」の降級を許す。失敗報告は指名された todo_id だけを
+証拠付きで再オープンし、通過済みは completed のまま。cancelled verify は skill 抽出を
+阻止する（`_detect_todo_all_complete`）。
+
 ## 📊 優先順位マトリクス
 
 | ガード | 高さ | 状態の住処 | リセットのタイミング |
@@ -270,7 +293,7 @@
 
 ## 🛠️ 設定と使い方
 
-- **すべてのしきい値はコードのデフォルト値です** (dataclass / コンストラクタパラメータ)。意図的に環境変数は用意していません。注目点として、`config/schema.py` の `max_tool_iterations = 40` はミドルウェアには*消費されず*(予算は明示的に渡されます: 90 / 60)、`HeartbeatConfig.interval_s = 1800` はハートビートサービスのデフォルトと一致しますが、サービスはデフォルト値で構築されます。
+- **すべてのしきい値はコードのデフォルト値です** (dataclass / コンストラクタパラメータ)。意図的に環境変数は用意していません。注目点として、`config/schema.py` の `max_tool_iterations = 40` はミドルウェアには*消費されず*(予算は明示的に渡されます: 180 / 90 / 60)、`HeartbeatConfig.interval_s = 1800` はハートビートサービスのデフォルトと一致しますが、サービスはデフォルト値で構築されます。
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` でデフォルト 5) は現在**ドキュメント専用**です: これを消費するコードはありません。実際に有効なツール別の上限は定数です(web 検索 15s、ターミナル 30s、python REPL 30s)。これをループ境界として当てにしないでください。
 - ワーカーはミドルウェアとして `OutputRepetitionGuard` を受け取り、メインエージェントは `RepetitionGuardWrapper` でラップされます(ミドルウェアフックは生のストリームチャンクを見えません)。
 - `MaxTokensBoostMiddleware` は環境変数ノブを持つ唯一のガードです: `MAIN_LLM_OUTPUT_MAX_TOKEN`(デフォルト 8192)がインポート時に読まれブーストの base になります; 上限(32768)とリトライ回数(3)はコード定数です。

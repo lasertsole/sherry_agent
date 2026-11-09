@@ -25,7 +25,7 @@
   - [E2: 도구 설명 강제 — 형식 + 위임 규칙](enforcement/README.ko.md#e2-도구-설명-강제--형식--위임-규칙)
   - [E3: 계속 강제기 — 사후 클로저 코어 ★★](enforcement/README.ko.md#e3-계속-강제기--사후-클로저-코어-)
   - [E4: 전환 배리어 — 이중 보험](enforcement/README.ko.md#e4-전환-배리어--이중-보험)
-  - [E5: Sisyphus 완료 계약 ★★](enforcement/README.ko.md#e5-sisyphus-완료-계약-)
+  - [E5: Sisyphus 교리(프롬프트 전용; 런타임 게이트는 completion drain) ★★](enforcement/README.ko.md#e5-sisyphus-완료-계약-)
   - [E6: 위임 라우팅 ★](enforcement/README.ko.md#e6-위임-라우팅-)
   - [E7: 의도 인식 및 가이던스 — 사전 트리거 ★★](enforcement/README.ko.md#e7-의도-인식-및-가이던스--사전-트리거-)
 - [프론트엔드](#프론트엔드)
@@ -133,7 +133,7 @@ E1       │ 시스템 프롬프트  │ AGENTS.md: MANDATORY orchestrator doctr
 E2       │ 도구 설명        │ todowrite docstring 형식 규칙
 E3       │ 계속 강제 ★★    │ after_agent 미들웨어: idle+미완료→자동 계속 (백오프/정체/abort/복구)
 E4       │ 전환 배리어 ★   │ TaskFlow step 미 done / subagent 실행 중 → completed 블록
-E5       │ Sisyphus 검증 ★★│ DoneClaim → AdversarialVerify → FullyDone (5 gates)
+E5       │ Sisyphus 검증 ★★│ 교리 전용: DoneClaim → AdversarialVerify → FullyDone(런타임 게이트 = 증거 drain)
 E6       │ 위임 라우팅 ★    │ #a fan-out + #b category 라우팅 + #c 위임 명령 + #d 배리어
 E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태스크 의도→주입) + plan-active(계획 있음→reminder)
 ```
@@ -244,7 +244,7 @@ def build_todolist_tools() -> list[BaseTool]:
 
 todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구, 상태/우선순위/위임 필드, DAG 필드 (TaskFlow에 위임), 규칙(로컬 action 우선, 전체 재작성일 때만 replace, 동시에 하나의 in_progress, subagent 반환 전 completed 마크 금지)을 정의합니다.
 
-### knowledge — 계획 아이덴티티 격리
+### knowledge — 폐기됨(레거시 계획 아이덴티티 저장소)
 
 `knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름이 아니라 **계획 아이덴티티**를 키로 사용합니다. 연결은 세 가지 소스(`ownership.association_plan_refs()`)에서 옵니다: 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), `src/data/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `identity.resolve_plan_identity()`가 그 이름을 정규화된 계획 경로로 해석하고 저장 디렉터리 `workspace/knowledge/plans/<plan_key>/`를 도출합니다(`plan_key = sha1(리포지토리 루트 상대 계획 경로)[:12]`). 각 디렉터리의 `meta.json`에 가독 `plan_name` / `plan_ref`를 기록합니다. 결과:
 
@@ -254,6 +254,8 @@ todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구,
 - 이름이 여러 경로에 걸리면 세션 자신의 `plan_ref`를 우선하며, 그래도 모호하면(자기 세션의 폴백 이름이 아닌 경우) 진단 가능한 오류로 거부하고 다른 곳에 조용히 기록하지 않습니다.
 
 `list`는 연결된 계획만(가독 이름 + key) 반환하고, `read` / `write`의 다른 세션·모호한 계획 접근은 거부됩니다(조용한 빈 결과가 아님). 레거시 이름 키 디렉터리 `workspace/knowledge/plans/<plan-name>/`는 key 디렉터리가 생기기 전까지 읽기 가능하며, 쓰기는 항상 key 디렉터리에 기록됩니다. `clear_session`은 세션 전용 아이덴티티 디렉터리를 삭제하고 boulder `session_ids`로 다른 세션과 공유된 계획은 유지합니다; 레거시 디렉터리는 절대 삭제하지 않습니다. boulder 파일 누락/손상, 빈 `session_id`, 알 수 없는 계획은 모두 안전하게 거부됩니다 — 예외도, 교차 세션 읽기도 없습니다.
+
+역사적 구현은 `KnowledgeStore`와 `plan_key = sha1(repo-relative plan path)[:12]`를 사용합니다.
 
 ---
 
@@ -279,7 +281,7 @@ Phase 5: 진행 마크 → 체크박스 - [ ] → - [x], 계속할지 묻지 않
 
 1. `taskflow_flow(action="create", flow_id, description, initial_state)` — flow 생성.
 2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — step 등록: 의존성 없음 → `dispatched`; 의존성 미충족 → `blocked` (디스패치 안 함); 알 수 없는 의존성 id → 에러, 상태 변경 없음.
-3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 결과 주입: step이 `done`이 되고, `blocked` 의존성이 `ready`로 언록. **resume은 자동 디스패치하지 않음.**
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 결과 주입: step이 `done`이 되고, `blocked` 의존성이 `ready`로 언록. `auto_dispatch=True`(기본값)는 ready 집합 전체를 즉시 디스패치합니다. `auto_dispatch=False`면 언락만 합니다.
 4. `taskflow_step(action="dispatch", flow_id, step_ids)` — ready step 일괄 병렬 디스패치.
 5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — 디스패치한 자식 세션 완료 대기.
 6. `taskflow_flow(action="finish", flow_id, summary)` — 마무리; `taskflow_inspect(action="summary")`로 언제든 재읽기 가능.
@@ -327,7 +329,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | -------------------------- | ----------------- | ------------- | ------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10행         | 현재 todo 리스트 + 상태 + TaskFlow flow/step 연결 |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5행          | 활성 작업 상태                                    |
-| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20행         | key_failures + key_successes + reusable_patterns (아이덴티티 해석) |
+| `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
 ### 구현
 

@@ -33,8 +33,8 @@
 
 `_execute_memory_review`（`agent/middlewares/summarization/background_reviews.py`）は `_create_memory_review_agent` でレビュー agent を構築し、レンダリング済み `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として破棄スライスに追加して呼び出す。**構造としてキャッシュ温存：** 圧縮の切れ目はプレフィックス切断であり、破棄スライスはシステムプロンプトの直後に位置する部分そのもの——同じモデル構成（`_build_session_model`：セッションの provider/model/thinking/temperature。グラフはターンごとに再構築されクライアントが閉じられるため、構成から**新規インスタンス**を構築）、同じシステムプロンプト、同じツール面で送り返せば、メインモデル自身のプレフィックスを再現し、プロバイダはプレフィックスキャッシュから応答します；新規入力はレビュー指示だけで、レビューが読むのは**実テキストのまま**です。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `user` ターゲットへ、システムレベル / プロジェクト横断の落とし穴を `facts` ターゲットへ（プロジェクト固有の事実は MEMORY.md または AGENTS.md へ） `memory` ツールで保存するよう求める。レンダリング時には現在の FACTS.md 内容と文字上限（`_render_prompt_facts`）が渡され、エディタのように維持すること——同一の落とし穴を統合し、陳腐化した項目を置換し、ファイルを膨らませるより何も保存しないことを優先する——を指示する。保存対象がなければ "Nothing to save." と答えて停止させる。
 
-- レビュー agent は**補助 LLM** 上の独立した `create_agent` で、ミドルウェアは `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
-- `_BackgroundReviewLimitTool`（`allowed_metadata_key` 未指定）は metadata に `background_review: True` を持つツールだけを通す。`memory` と `knowledge` がこのマークを持ち（ほかに対話用 `question` とプランモードの 2 つ）、memory review は memory を書けるが任意のメインツールは呼べない。スキル三点セット（`skill_list` / `skill_view` / `skill_manage`）は**意図的に未マーク**——スキル抽出はプラン完了パスの担当で、そちらはタグではなく明示的なツール面をバインドする。
+- レビュー agent はセッション自身のモデル（`_build_session_model`、プレフィックスキャッシュ再利用のため）上の独立した `create_agent` で、ミドルウェアは `[_BackgroundReviewLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
+- `_BackgroundReviewLimitTool`（`allowed_metadata_key` 未指定）は metadata に `background_review: True` を持つツールだけを通す。`memory` がこのマークを持ち（ほかに対話用 `question` とプランモードの 2 つ）、memory review は memory を書けるが任意のメインツールは呼べない。スキル三点セット（`skill_list` / `skill_view` / `skill_manage`）は**意図的に未マーク**——スキル抽出はプラン完了パスの担当で、そちらはタグではなく明示的なツール面をバインドする。
 - fork のメッセージはログのみ。`res["messages"]` の内容はメイングラフへ一切入らない。
 
 ### 2. スキルレビュー（todo 完了、ターン境界）

@@ -276,7 +276,7 @@
 // Panel-level error capture: runtime errors from all descendant components here
 // (G6 graph container / node detail panel, etc.)
 // → logUtil logging + global toast; returning false stops further upward propagation
-// (factory function pattern from 03-errorCapturedFactoryFunction.md)
+// (shared errorCaptured factory pattern)
 useErrorCaptured();
 
 import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';

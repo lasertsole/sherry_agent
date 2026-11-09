@@ -19,7 +19,7 @@ Two design rules run through every guard below:
 |---|---|---|
 | **Text death loop** (one model call) | Same sentence / character run streamed forever | Per-family sampling penalty (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
-| **Unbounded turn** | Model calls never stop | `IterationBudget` (90 main / 90 executor / 60 other workers; model calls only — tool results are free) |
+| **Unbounded turn** | Model calls never stop | `IterationBudget` (180 main / 90 executor / 60 other workers; model calls only — tool results are free) |
 | **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
 | **Overflow retry spiral** | An oversized context is rejected → compression fires → the compacted context still overflows → the provider errors again | `Summarization`: no-LLM overflow tail clip first, then the existing overflow route, then forced recovery |
 | **Stuck turn** | No progress for minutes (hung tool, wedged loop) | `HeartbeatStaleness` watchdog → `HeartbeatTimeoutError` |
@@ -54,6 +54,8 @@ Active on the main agent, worker agents, and background-review sub-agents. Every
 
 Network-command failures are now bridged to tool errors: a non-zero `curl`/`wget`/`git fetch`/`git clone` raises `ToolException`, so `handle_tool_error` produces `ToolMessage(status="error")` and the exact-failure counter sees it. Local commands (pytest, compilers, scripts) keep their non-zero exit as normal text (`status="success"`) so the agent can read the failure and iterate. `web_fetch` HTTP 4xx/5xx likewise raises. The signature streak catches the other blind spot: successful-looking repeats with identical arguments. It warns up to `streak_max_warnings_per_turn` times; once that budget is spent the exact tool+args signature is blocked for the rest of the turn, so a degenerate loop that keeps re-running one command cannot consume the whole iteration budget. The block is scoped to that signature — other arguments and tools stay available — and it bypasses recovery mode (a repetition block must not be released as a one-off retry).
 
+One deliberate exemption: a `read_file` whose path is a test file (`tests/` segment, `test_*.py`, `*_test.py`) is acceptance feedback, not probing. It neither advances the signature streak nor feeds the no-progress/pair paths, so an agent can re-read the expectation after a failed assertion. Only `read_file` is exempt; terminal/search and source-file reads keep the normal counting.
+
 **Result repetition** covers the loop signature detection still misses: the arguments change every call while the output stays byte-identical. The SWE 20261103_203547 Sympy run is the canonical case — the agent wrote `probe1.py` through `probe19.py`, each printing the same `prettyForm`, and burned the 90-call budget without touching the library. The detector keeps a per-tool consecutive-result streak for NON-idempotent tools (idempotent tools already use the no-progress chain), warns once per tool at `result_repetition_warn_after`, and blocks the whole tool at `result_repetition_block_after`; like the signature block it bypasses recovery mode, and the block lasts for the rest of the turn. Other tools (including the write tools) remain available, so the agent can still apply the change it was circling.
 
 A **successful source edit releases the blocks**: `patch_file` declares `clears_guardrail_blocks` in its own metadata, and ToolGuardrails drops every accumulated block, signature, result streak, and failure/no-progress counter (plus the call records) when such a call succeeds. The probes that tripped the guard were answered by the pre-edit file, so keeping the verification tools blocked would only prevent the agent from testing its new candidate. A scratch `write_file` (a new `probeN.py`) does NOT carry the flag, so it cannot re-open the loop it is part of.
@@ -66,11 +68,11 @@ Details that matter:
 
 ### Turn level: `IterationBudget`
 
-Counts **model calls** per turn, one unit each. A tool-call pair costs exactly one unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Main agent and the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage **instead of calling the model**, so a tool call already requested by the last budgeted AIMessage still runs and its pair stays intact. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
+Counts **model calls** per turn, one unit each. A tool-call pair costs exactly one unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Main agent 180, the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage **instead of calling the model**, so a tool call already requested by the last budgeted AIMessage still runs and its pair stays intact. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
 
 ### Turn level: `DelegationPressureGate` (main agent only)
 
-Installed on the MAIN agent and never on a subagent (the child builder does not add it, and `_active` rejects `:subagent:`/`:swarm:` sessions). It counts READ/exploration tool calls cumulatively within one turn: at **7** it injects one `<system-reminder source="delegation_pressure">` warning through its own mid-turn `abefore_model` path; at **14** it injects the escalated system-reminder with stronger language. Tools remain available at both levels — the gate advises, never blocks (browser debugging tools are excluded from counting). A successful accepted/pending `sessions_spawn` resets the counter so the main agent can inspect/verify and a later 7/14 cycle re-arms; a failed spawn does not reset. Writes alone do not reset it, and every graph invocation inside the turn accumulates until the spawn or `after_agent` resets. The env `SHERRY_EVAL_DELEGATION_PRESSURE=1` remains the explicit eval-arm selector; the product main chain always includes the gate.
+Installed on the MAIN agent and never on a subagent (the child builder does not add it, and `_active` rejects `:subagent:`/`:swarm:` sessions). It counts READ/exploration tool calls cumulatively within one turn: at **7** it injects one `<system-reminder source="delegation_pressure">` warning through its own mid-turn `abefore_model` path; at **12** it injects the escalated system-reminder with stronger language. Tools remain available at both levels — the gate advises, never blocks (browser debugging tools are excluded from counting). A successful accepted/pending `sessions_spawn` resets the counter so the main agent can inspect/verify and a later 7/12 cycle re-arms; a failed spawn does not reset. Writes alone do not reset it, and every graph invocation inside the turn accumulates until the spawn or `after_agent` resets. The env `SHERRY_EVAL_DELEGATION_PRESSURE=1` remains the explicit eval-arm selector; the product main chain always includes the gate.
 
 ### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
 
@@ -287,6 +289,30 @@ blocks the turn. Injected rows carry ``metadata.origin`` (``quality_gate`` here,
 which is persisted and makes the chat render them as neutral cards rather than
 as messages the user wrote.
 
+### Plan level: the SYSTEM verify todo
+
+A plan with 2+ work todos ends with one SYSTEM `[VERIFY]` todo
+(`metadata.kind="verify"`, last position, priority high). The todolist service
+inserts it after every mutation (`replace`/`add`/`patch`/`remove`), keeps it
+last, removes it (and kills its reviewer) when the plan shrinks below two work
+todos, and never inserts one for a `:subagent:`/`:swarm:` session. The model
+cannot forge it — the tool schema has no `metadata` field, the store only writes
+that column through a system-only argument, and a copied template line is
+stripped from `replace`. Evidence travels in the model-writable `notes` field.
+
+The main agent spawns a read-only `reviewer`, patches its `child_session_key`
+into `subagent_id`, and waits. The transition barrier refuses completion until
+that reviewer has finished and every work todo is terminal; a direct cancel is
+refused unless the reviewer budget is exhausted or the whole plan was cancelled.
+`PlanContinuationEnforcer` treats "verify pending + reviewer running" as a wait
+(no directive; the completion notice resumes the session), drives the report
+read when the reviewer is finished or its registry run is terminal, and after
+`TODOLIST_INFRA["max_verify_respawns"]` (2) re-spawns injects
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]` with the degraded escape (run the
+checks yourself, cancel verify, record NOT verified). A failed report re-opens
+only the named todo_ids with their evidence; passed todos stay completed. A
+cancelled verify blocks skill extraction (`_detect_todo_all_complete`).
+
 ## 📊 Precedence Matrix
 
 | Guard | Altitude | State home | Reset when |
@@ -307,7 +333,7 @@ Within a turn, the turn guards are orthogonal and fire in parallel: `OutputRepet
 
 ## 🛠️ Configuration & Usage
 
-- **All thresholds are code defaults** (dataclass / constructor parameters); there are intentionally no env vars for them. Notably, `config/schema.py`'s `max_tool_iterations = 40` is *not* consumed by the middleware (budgets are passed explicitly: 90 / 60), and `HeartbeatConfig.interval_s = 1800` matches the heartbeat service default but the service is constructed with defaults.
+- **All thresholds are code defaults** (dataclass / constructor parameters); there are intentionally no env vars for them. Notably, `config/schema.py`'s `max_tool_iterations = 40` is *not* consumed by the middleware (budgets are passed explicitly: 180 / 90 / 60), and `HeartbeatConfig.interval_s = 1800` matches the heartbeat service default but the service is constructed with defaults.
 - `TOOL_CALL_TIMEOUT_MINUTES` (default 5 in `sherry.jsonc`) is currently **documentation-only**: no code consumes it. The active per-tool bounds are constants (web search 15s, terminal 30s, python REPL 30s). Do not rely on it as a loop bound.
 - Workers get `OutputRepetitionGuard` as middleware; the main agent is wrapped by `RepetitionGuardWrapper` (middleware hooks do not see raw stream chunks).
 - `MaxTokensBoostMiddleware` is the one guard with an env knob: `MAIN_LLM_OUTPUT_MAX_TOKEN` (default 8192) sets the boost base read at import time; the cap (32768) and retry count (3) are code constants.

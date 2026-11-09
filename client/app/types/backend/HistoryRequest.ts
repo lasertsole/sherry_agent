@@ -6,7 +6,7 @@
  * | Field | Type | Required | Description |
  * |-------|------|----------|-------------|
  * | `session_id` | `string` | Yes | Session to query |
- * | `last_turn_count` | `number \| null` | No | Number of recent turns (null = all) |
+ * | `last_turn_count` | `number \| null` | No | Number of recent turns (null = default 10) |
  */
 export type HistoryRequest = {
   /**
@@ -14,7 +14,7 @@ export type HistoryRequest = {
    */
   session_id: string;
   /**
-   * Number of recent turns to retrieve. `None` = all.
+   * Number of recent turns to retrieve. `None` = default 10.
    */
   last_turn_count: number | null;
 };

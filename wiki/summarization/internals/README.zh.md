@@ -40,8 +40,8 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
    ```
 
    非 LLM 收缩先拿走第一次机会；只有当历史仍超过保留预算的两倍（或防抖控制器已禁用 LLM 摘要，或非 LLM 策略毫无所得）时才花费辅助 LLM。
-4. **激进兜底**（`_aggressive_truncate`，compression.py:360）：如果结果*依然*过大，每个超过 `AGGRESSIVE_TRUNCATE_CHARS (1 000)` 字符的 `ToolMessage` 被硬切并加标记 —— 每一个超过同一上限的工具调用参数 JSON 也一样（只保留头部，`PROTECTED_TOOLS` 豁免，替换为 `{"_truncated_args": ...}`）。
-5. **摘要自截断**（`_truncate_summary_messages`，compression.py:417）：任何超过 `SUMMARY_TOTAL_MAX_CHARS (16 000)` 字符的既有摘要消息（`lc_source == "summarization"`）被重新截断为头部 30% / 尾部 30%（`_truncate_content`，compression.py:414）。
+4. **激进兜底**（`_aggressive_truncate`，compression.py:360）：如果结果*依然*过大，每个超过 `AGGRESSIVE_TRUNCATE_TOKENS (250)` 字符的 `ToolMessage` 被硬切并加标记 —— 每一个超过同一上限的工具调用参数 JSON 也一样（只保留头部，`PROTECTED_TOOLS` 豁免，替换为 `{"_truncated_args": ...}`）。
+5. **摘要自截断**（`_truncate_summary_messages`，compression.py:417）：任何超过 `SUMMARY_TOTAL_MAX_TOKENS (4 000)` 字符的既有摘要消息（`lc_source == "summarization"`）被重新截断为头部 30% / 尾部 30%（`_truncate_content`，compression.py:414）。
 6. **恢复注入**（`_inject_recovery_context`，compression.py:379）：捕获的文件操作棘轮被改写进摘要的 `## Relevant Files` 段，检查点始终携带最新的读/改文件地图。
 7. **记账**（`_record_compression`，thrash.py:117，最后 `request.override(messages=..., system_message=...)`。
 
@@ -148,7 +148,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 - **AIMessage**，带 `additional_kwargs={"lc_source": "summarization"}` —— 这个标记被后续回合用于：(a) 找到并链起之前的检查点，(b) 在链式再摘要输入中剔除该消息对、并让修剪停在检查点处，(c) 让测试断言被取代后的摘要可以从模型视图整体吞下。
 - 该消息对永不进入 MesMemory：`MessagePersistenceMiddleware._is_persistable` 跳过两条 `lc_source="summarization"` 的消息（human 行构造器有同样的闸门）。
 - AIMessage 还携带结构化文档本体：`additional_kwargs["summary_doc"]`（cap 后的 `SummaryDoc`，纯 JSON 可序列化 dict —— 链式载体，回喂为 `<prior-summary-json>`）。free-form 回退轮次不带该载荷，`_extract_previous_summary` 回退解析 `<summary>` 正文。
-- 总内容以 `SUMMARY_TOTAL_MAX_CHARS (16 000)` 封顶，头部/尾部 30/30 保留。
+- 总内容以 `SUMMARY_TOTAL_MAX_TOKENS (4 000)` 封顶，头部/尾部 30/30 保留。
 
 ## 🛡️ 防抖护栏矩阵与退化恢复
 
@@ -177,18 +177,18 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 # InvalidToolCallRepairMiddleware；Summarization 紧挨 LLMRetry 内侧）
 Summarization(
     need_update_system_prompt=True,
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
-    trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
+    trigger=[("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])],
 )
 
 # agent/tools/subagent/spawn/core.py:1106 — worker agent（第一个中间件）
 Summarization(
-    model=auxiliary_llm,
+    model=compression_llm or auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
     trigger=[
         ("messages", 40),
-        ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
+        ("tokens", resolve_compression_threshold(main_llm_max_tokens, max_output_tokens, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0]),
     ],
 )
 ```

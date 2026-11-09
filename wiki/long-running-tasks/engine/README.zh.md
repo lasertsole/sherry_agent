@@ -26,6 +26,9 @@ class StepStatus(StrEnum):         # config.py:21
     READY = "ready"
     DISPATCHED = "dispatched"
     DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})   # config.py:35
 ```
@@ -44,7 +47,11 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
     deadline_ts REAL,
-    session_id TEXT NOT NULL DEFAULT ''
+    session_id TEXT NOT NULL DEFAULT '',
+    resumed_from TEXT,
+    superseded_by TEXT,
+    terminal_reason TEXT,
+    updated_at REAL
 );
 ```
 
@@ -62,6 +69,9 @@ blocked ──(依赖满足)──▶ ready ──(派发)──▶ dispatched �
 | `ready` | 所有依赖已满足，等待派发 | 注册时，或恢复后的 `unlock_dependents` |
 | `dispatched` | 已派发一个分离的子会话；记录 `child_session_key` 与 `dispatched_at` | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | 已由 `taskflow_step(action="resume")` 注入结果 | `taskflow_step(action="resume")` |
+| `failed` | 确定性失败（`step_outcome="failure"`，或 schema/判官重试预算耗尽）；其依赖者保持 `blocked` | `taskflow_step(action="resume")` |
+| `skipped` | 声明跳过，或某个依赖被跳过/取消；向下游级联 | `taskflow_step(action="resume")` / `unlock_dependents` |
+| `cancelled` | 流在该步骤完成前被取消 | `taskflow_flow(action="cancel")` |
 
 `done` 的含义是**“已注入结果”**，而不是“子 Agent 成功”（参见[已知局限](../README.zh.md#-已知局限)）。没有 `status` 字段的旧步骤会被推导：带 `child_session_key` 的步骤视为 `dispatched`，否则视为 `ready`（`_shared.py:85`，`step_status`）。
 
@@ -223,7 +233,7 @@ total_cost   = round(existing_total_cost + cost_delta, 6)
 | `glm-5` | 0.5 | 1.5 |
 | `deepseek-chat` | 0.14 | 0.28 |
 | `kimi-latest` | 0.55 | 2.19 |
-| `_default` | 1.0 | 3.0 |
+| `_default` | 0.5 | 1.5 |
 
 `budget_warn_threshold` = `0.80`。
 
@@ -349,9 +359,9 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 | :--- | :--- | :--- |
 | **TaskFlow** | `task_flows.session_id` 列（本次变更） | `agent/tools/taskflow/registry/store_sqlite.py` |
 | **TodoList** | `session_id` 本身就是表的主键前缀——该工具族从一开始就是会话作用域 | `agent/tools/todolist/registry/store_sqlite.py` |
-| **Knowledge** | 按计划身份隔离，在工具层强制：归属来自 `ownership.association_plan_refs()`（本会话 `plan_ref` 状态键、本会话 todo 的 `plan_ref`（SQL 按 `session_id` 过滤）、`src/data/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work）；随后 `identity.resolve_plan_identity()` 把名称映射到规范化计划路径并派生存储键 `sha1(相对仓库根路径)[:12]`。不同文件中的同名计划物理隔离；通过 boulder `session_ids` 共享的同一计划文件对每个列出的会话解析出同一个 `<plan_key>`。对非关联或歧义计划的 `read` / `write` 会给出可诊断错误并拒绝，`list` 只返回关联计划（可读名 + key）；`build_knowledge_block(session_id)` 为提示块解析本会话的主身份；`clear_session` 清理本会话私有身份目录，保留与其他会话共享的计划。 | `agent/tools/todolist/knowledge/identity.py` |
+| **Knowledge (retired)** | The model-facing `knowledge` tool and `build_knowledge_tools` are no longer registered; only internal `KnowledgeStore` audit/repair reads and writes remain. | `agent/tools/todolist/knowledge/identity.py` |
 
-**子 Agent 边界。** 三个工具族都由各自的构建器打上 `metadata["scope"] = "main_only"` 标签（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）会**最先且无条件**丢弃 `main_only` 工具——先于任何 allow/deny 列表，且 ORCHESTRATOR 解禁也无法覆盖——因此派生出的子 Agent 永远不会拿到 `taskflow_*`、`todowrite`/`todoread` 或 `knowledge` 工具。同样的标签模式此前已覆盖 `memory`、`skill_manage`、`sessions_kill`、`sessions_steer`。真实工具集断言由 `tests/agent/tools/taskflow/test_taskflow_tools.py` 锁定，`_build_child_agent` 边界由 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` 锁定。
+**子 Agent 边界。** 两个剩余工具族都由各自的构建器打上 `metadata["scope"] = "main_only"` 标签（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）会**最先且无条件**丢弃 `main_only` 工具——先于任何 allow/deny 列表，且 ORCHESTRATOR 解禁也无法覆盖——因此派生出的子 Agent 永远不会拿到 `taskflow_*`、`todowrite`/`todoread` 或 `knowledge` 工具。同样的标签模式此前已覆盖 `memory`、`skill_manage`、`sessions_kill`、`sessions_steer`。真实工具集断言由 `tests/agent/tools/taskflow/test_taskflow_tools.py` 锁定，`_build_child_agent` 边界由 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` 锁定。
 
 **跨会话拒绝。** `taskflow_flow(action="create")` 遇到其他会话已占用的 `flow_id` 时只报告已存在、不泄露 revision；对其他会话的 flow 发起变更会得到与未知 id 相同的 "not found" 文本。`tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py` 与 `tests/server/service/test_session_cleanup_service.py` 覆盖读取/列表/更新/清除路径。
 

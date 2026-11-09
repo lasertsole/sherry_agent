@@ -59,7 +59,7 @@ def _tavily_api_key() -> str | None:
     key edited while the process runs should be picked up on the next build.)
     """
     load_env()
-    # Secret-class value: TAVILY_API_KEY lives in the gitignored network.jsonc.
+    # Secret-class value: TAVILY_API_KEY lives in the gitignored .network.
     return os.getenv("TAVILY_API_KEY")
 
 

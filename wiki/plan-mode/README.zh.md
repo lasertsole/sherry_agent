@@ -4,7 +4,7 @@
 
 会话可以先设计、再执行：Agent 进入**计划模式**，只用只读工具工作，提交计划，在用户批准之前不写任何文件。直接冲向多文件改动正是容易走偏的路径，而用户连纠偏的机会都没有。
 
-事实来源：`agent/tools/plan_mode/`（两个工具 + 共享状态助手）、`agent/middlewares/tool_selection/core.py`（白名单）、`workspace/prompt_builder.py::_build_plan_mode_block`（系统提醒）、`config/features/agent_side/plan_mode.py`（可调参数）。
+事实来源：`agent/tools/plan_mode/`（两个工具 + 共享状态助手）、`agent/middlewares/plan_mode_gate/core.py`（白名单）、`workspace/prompt_builder.py::_build_plan_mode_block`（系统提醒）、`config/features/agent_side/plan_mode.py`（可调参数）。
 
 ## 流程
 

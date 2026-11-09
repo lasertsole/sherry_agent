@@ -663,7 +663,7 @@ class MemoryStore:
                     target, by_target[target], origin_session=origin_session
                 )
 
-        labels = {"memory": "MEMORY.md", "user": "USER.md"}
+        labels = {"memory": "memory", "user": "user"}
         written = [labels[t] for t in ("memory", "user") if results.get(t, {}).get("added", 0) > 0]
         total_added = sum(r["added"] for r in results.values())
         total_deduped = sum(r["deduplicated"] for r in results.values())

@@ -93,7 +93,7 @@ from .core import retrieve_history_by_last_n_prompt, search_messages
 
 ## データモデル
 
-### データベーススキーマ
+### コア messages テーブル（抜粋）
 
 ```sql
 CREATE TABLE IF NOT EXISTS messages (
@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS messages (
     origin        TEXT                -- 注入メッセージの送信元: "user"（WS/チャネルのユーザー入力）、"task_intent"（ステアリング注入）、"subagent_completion"（完了キャリア）、"cron"（Cron 配信ターン）、"heartbeat"（予約）、"project_dir"（作業ディレクトリ変更通知）; NULL = 旧 human 行 または通常の ai/tool 行
 );
 ```
+
+> ここではコア messages 列のみを示します。完全な現行スキーマ（token/cache/compaction 列、`memory_entries`、`message_embeddings`、`persisted_message_ids`、FTS5 トリガー）は `context_engine/store/db.py` にあり、`IF NOT EXISTS` で再作成されます。マイグレーション連鎖はありません。
 
 **インデックス：**
 
@@ -249,7 +251,7 @@ for r in results:
 
 | エントリポイント | インポート | 用途 |
 |------------------|-----------|------|
-| `agent/middlewares/message_persistence/`（`MessagePersistenceMiddleware`） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | モデル境界ごとに新しい human/ai メッセージを MesMemory へ増分フラッシュし（human はターン最初の境界、AI は生成直後）、ツール結果はツール返却時にフラッシュします; 永続ウォーターマーク `persisted_message_ids` が、状態蓄積とプロセス再起動をまたいで write-once を保ちます。圧縮パスはもう何も永続化しません —— `compaction_persistence.py` は削除されました。`system_prompt_injection`（`@dynamic_prompt` ミドルウェア）はシステムプロンプトの注入（`wrap_model_call`/`awrap_model_call`）のみを行い、メモリレビュー / スキルレビュー は引き続き `summarization/background_reviews.py` が圧縮時にスケジュールします。詳細は `agent/middlewares/README.md` を参照。 |
+| `agent/middlewares/message_persistence/`（`MessagePersistenceMiddleware`） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | モデル境界ごとに新しい human/ai メッセージを MesMemory へ増分フラッシュし（human はターン最初の境界、AI は生成直後）、ツール結果はツール返却時にフラッシュします; 永続ウォーターマーク `persisted_message_ids` が、状態蓄積とプロセス再起動をまたいで write-once を保ちます。圧縮パスはもう何も永続化しません —— `compaction_persistence.py` は削除されました。`system_prompt_injection`（`@dynamic_prompt` ミドルウェア）はシステムプロンプトの注入（`wrap_model_call`/`awrap_model_call`）のみを行い、メモリレビューは `summarization/background_reviews.py` が圧縮時にスケジュールし、スキルレビューはターン境界で計画が完了したときに実行されます。詳細は `agent/middlewares/README.md` を参照。 |
 | `agent/tools/message_search.py` → `message_search` ツール | `get_db`、`search_messages`、`get_turns_by_turn_num_scope` | セッション横断の想起ツール：FTS5 検索（limit 50）→ 一致ごとにターン範囲取得 → LLM によるセッション要約。query がない場合は直近セッションのメタデータを返す |
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`、および（`context_engine.curator` からの）`reset_idle_for_seconds` | クライアント向けセッション一覧（トップレベルセッション + 派生タイトル）、ページング履歴、ユーザーターンごとの curator アイドルタイマーリセット |
 | `server/service/session_cleanup_service.py` | `delete_messages_by_session` | 「セッションをクリア」操作 |

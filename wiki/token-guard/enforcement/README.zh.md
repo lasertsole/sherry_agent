@@ -160,23 +160,18 @@ if (!cfg.valid) {
 
 ### 环境标签横幅与保存前校验
 
-`client/app/pages/home/components/ConfigPanel.vue`：
+`client/app/pages/home/components/LlmModelManager.vue` + `ConfigPanel.vue`：
 
-- 当环境标签暴露任意 `*_MAX_TOKEN` 键（`hasMaxTokenKeys`，第 344 行）时，渲染一条琥珀色横幅显示 `config.env.maxTokenHint`（第 211 行）。
-- 保存时，`persistEnvChanges()` 会预校验受保护的 token 键（第 379 至 389 行）。非整数或低于 `200000` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
+- 当 `LlmModelManager.vue` 的输入键属于 `MAX_TOKEN_GUARD_KEYS` 时，渲染琥珀色横幅显示 `config.env.maxTokenHint`。
+- 保存时，`ConfigPanel.vue` 的 `persistEnvChanges()` 会按 `MAX_TOKEN_GUARD_KEYS` / `MIN_REQUIRED_MAX_TOKEN` 预校验这些键。非整数或低于 `200000` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
 
 ```ts
-const TOKEN_KEYS = [
-  'MAIN_LLM_MAX_TOKEN',
-  'AUXILIARY_LLM_MAX_TOKEN',
-  'TASKFLOW_LLM_MAX_TOKEN',
-  'COMPRESSION_LLM_MAX_TOKEN'
-];
-const MIN_TOKEN = 200000;
+import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
+
 for (const [key, value] of Object.entries(changes)) {
-  if (TOKEN_KEYS.includes(key)) {
+  if (MAX_TOKEN_GUARD_KEYS.includes(key)) {
     const num = parseInt(value, 10);
-    if (Number.isNaN(num) || num < MIN_TOKEN) {
+    if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
       envLoadError.value = t('config.env.maxTokenError', { key });
       return false;
     }
@@ -184,7 +179,7 @@ for (const [key, value] of Object.entries(changes)) {
 }
 ```
 
-- 写入成功后（第 756 行）会调用 `invalidateModelConfigCache()`，让 toast 守卫重新读取最新值。
+- 写入成功后会调用 `invalidateModelConfigCache()`，让 toast 守卫重新读取最新值。
 
 ### i18n 键位
 

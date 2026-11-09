@@ -30,6 +30,8 @@
 
 ## 🎯 개요
 
+트리거 임계값은 `resolve_compression_threshold`가 계산하며, `MAIN_LLM_MAX_OUTPUT_TOKEN`이 설정되면 `window - max_output_tokens`, 아니면 `COMPRESSION_TRIGGER_RATIO=0.80`으로 폴백합니다.
+
 `Summarization`(`agent/middlewares/summarization/core.py`, 클래스는 `core.py:234`)은 **처음부터 직접 구현한** `AgentMiddleware`입니다 — LangChain 내장 `SummarizationMiddleware`를 상속하지 **않습니다**. 에이전트 라이프사이클의 정확히 두 지점에만 훅을 겁니다:
 
 - `before_agent` / `abefore_agent`(`core.py:399` / `core.py:403`) — **T1 사전 점검**
@@ -49,8 +51,8 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 사이트 | 트리거 | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| 메인 에이전트(`agent/core.py:204`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `compression_llm`(`COMPRESSION_LLM_*`, 미설정 시 보조 모델) | `True` |
-| 워커/서브에이전트(`agent/tools/subagent/spawn/core.py:909`) | `("messages", 40)` **또는** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`(기본값) |
+| 메인 에이전트(`agent/core.py`) | `("tokens", resolve_compression_threshold(window, max_output, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])` | `compression_llm`(`COMPRESSION_LLM_*`, 미설정 시 보조 모델) | `True` |
+| 워커/서브에이전트(`agent/tools/subagent/spawn/core.py`) | `("messages", 40)` **또는** `("tokens", resolve_compression_threshold(window, max_output, fallback_ratio=COMPRESSION_TRIGGER_RATIO)[0])` | `auxiliary_llm` | `False`(기본값) |
 
 둘 다 `main_llm_context_window=main_llm_max_tokens`(`MAIN_LLM_MAX_TOKEN`에서 유래)를 전달합니다.
 
@@ -60,7 +62,7 @@ AIMessage(<summary>, lc_source="summarization")
 `_filter_summary_messages`는 (a) 직전 요약 쌍
 (`lc_source="summarization"`)과 (b) source가 `compress_exclude`를 선언한
 카탈로그 reminder(기본값: plan mode, todo, TaskFlow, boulder, project
-instructions, 디렉터리 알림, knowledge index)를 제거합니다. 이 내용은 주입된
+instructions, 디렉터리 알림）를 제거합니다. 이 내용은 주입된
 턴의 스냅샷이며 다음 턴에 live state에서 다시 파생되므로 요약에서는 노이즈입니다.
 `continuity_context`는 `compress_exclude=False`를 선언해 남습니다. 태그 도입 전에
 주입된 오래된 reminder에는 키가 없어 기존 동작을 유지합니다.
@@ -140,11 +142,11 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 | `PRUNE_MIN_REDUCTION_TOKENS` ◆ | `5_000` | 프루닝: 적용 최소 수익 |
 | `TARGET_TRUNCATE_RATIO` ◆ | `0.5` | 타깃 트렁케이트: 현재 토큰의 50%로 수축 |
 | `MIN_OUTPUT_CHARS_TO_TRUNCATE` ◆ | `500` | 타깃 트렁케이트: 자격 기준 |
-| `MAX_TOOL_OUTPUT_CHARS` ◆ | `2_000` | 타깃 트렁케이트: 출력당 상한 |
+| `MAX_TOOL_OUTPUT_TOKENS` ◆ | `500` | 타깃 트렁케이트: 출력당 상한 |
 | `MIN_ARGS_CHARS_TO_TRUNCATE` ◆ | `500` | 도구 인자 트렁케이트: 자격 기준 (JSON 직렬화된 인자 길이) |
 | `MAX_TOOL_ARGS_CHARS` ◆ | `2_000` | 도구 인자 트렁케이트: 인자당 상한 |
-| `AGGRESSIVE_TRUNCATE_CHARS` ◆ | `1_000` | 공격적 백스톱 절단 길이 (도구 결과와 도구 호출 인자) |
-| `SUMMARY_TOTAL_MAX_CHARS` ◆ | `16_000` | 요약 메시지 문자 상한 |
+| `AGGRESSIVE_TRUNCATE_TOKENS` ◆ | `250` | 공격적 백스톱 절단 길이 (도구 결과와 도구 호출 인자) |
+| `SUMMARY_TOTAL_MAX_TOKENS` ◆ | `4_000` | 요약 메시지 문자 상한 |
 | `CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO` ◆ | `0.3` / `0.3` | 모든 머리/꼬리 보존 (요약과 TTL 트렁케이션) |
 | `DEGRADATION_NO_TEXT_THRESHOLD` ◆ | `3` | 강제 복구 전 빈 응답 수 |
 | `MAX_RECOVERY_ATTEMPTS` ◆ | `2` | 성능 저하 복구 예산 |
@@ -168,8 +170,8 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 | `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK`(추정기) | `85` / `256` / `1024` / `85` | 멀티모달 content 리스트의 블록별 고정 비용 —— base64는 절대 텍스트로 세지 않음; `config/features/agent_side/token_estimation.py`에 정의 |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 만료 지평 — TTL 트리오만 소비 (오늘날 테스트 전용) |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 최초 관찰 레지스트리 한계 (오늘날 테스트 전용) |
-| `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 미들웨어가 임포트, 절대 읽지 않음 |
-| `AUTO_CONTINUE_PROMPT` ○ | — | 미들웨어가 임포트, 절대 읽지 않음 |
+| `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 설정에 정의되지만 절대 읽히지 않음 |
+| `AUTO_CONTINUE_PROMPT` ○ | — | 설정에 정의되지만 절대 읽히지 않음 |
 | `DEGRADATION_MONITOR_COUNT` ○ | `5` | 정의됨, 임포트되지 않음 |
 | `FILE_OPS_SECTION_MAX_CHARS` ○ | `2_000` | 정의됨, 임포트되지 않음 (실제 사용되는 것은 900자 목록 상한) |
 
@@ -179,7 +181,7 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` 밴드, 후보 규칙, 안정적 라우트 문자열 |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | 제자리 트렁케이션, 페어링 불변식, 비어 있지 않은 플레이스홀더, 레지스트리 한계, 예산 트렁케이션 |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 상태, 텍스트 힌트, 7개 substring + 25개 provider 오버플로 패턴, NON_OVERFLOW 제외, Cerebras bodyless, cause 체인 깊이, 읽기 전용 보장 |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 75 | 413 상태, 텍스트 힌트, 7개 substring + 25개 provider 오버플로 패턴, NON_OVERFLOW 제외, Cerebras bodyless, cause 체인 깊이, 읽기 전용 보장 |
 | `tests/models/test_provider_max_output.py` | 15 | provider 필드 매핑, Responses 하한, 8K 업무 하한, 알 수 없는 gateway 건너뛰기 |
 | `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | 유효 윈도우, 보존/가용 예산, 압력대, reserve 클램프 |
 | `tests/agent/middlewares/test_microcompact.py` | 7 | token/유휴 트리거, 최근 유지, 미디어/정리됨 건너뛰기, 최소 절감, 킬 스위치 |
@@ -192,23 +194,23 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 순수 클립: 꼬리 배치 감지, max_remove/min_keep/enabled 게이트, 토큰 목표, 마커 보존(P0-2 포인터, P2-4 안내), no-op 멱등성, 페어링 불변식 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 미들웨어 통합: T1/T2 LLM 없는 클립, 불충분 클립 퇴화, 킬 스위치, T4/T5 클립 후 재시도와 클립→압축 퇴화, 동기/비동기 패리티, 새니타이저 불변 |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티, 체이닝 요약 필터링 |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 54 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티, 체이닝 요약 필터링 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 압축 시점 인라인 미디어 오프로드: 쓰기 + 포인터, 내용 해시 중복 제거, 디코드/쓰기 실패 플레이스홀더, 보존 윈도우 미디어 불변, 동기/비동기 패리티, `evicted_refs` 수집 |
 | `tests/agent/middlewares/test_license_invalidation.py` | 11 | 읽기 라이선스 무효화: 요약에 버려진 `read_file`은 라이선스를 잃고(이후 `write_file` 거부), 보존 꼬리의 읽기는 유지, 최신 읽기 규칙, 부분 중첩, `patch_file` / append 무영향, 재읽기로 재발급, 동기/비동기 패리티, fail-open |
 | `tests/pub/func/test_estimate_tokens_media.py` | 22 | 블록 단위 멀티모달 추정: 유형별 고정 비용, 5 MB base64 회귀, 미디어를 숨긴 미지 블록, `str` / `None` / 빈 리스트 / 순수 텍스트 경계 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 체이닝 요약 필터링: 이전 쌍을 직렬화된 대화에서 제거, 일반/빈/다중 쌍 입력, 마커 없는 레거시 human 보존, async `_acreate_summary` 미러 |
-| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 구조화 요약: schema 강제 변환, 렌더링 왕복 + 바이트 안정 + 섹션 순서, 코드층 cap + 주석, latest request 그대로, json_mode/json_repair/free-form 3티어, prior-doc JSON 체이닝, 레거시 MD 전환, 퇴출 포인터 수집·승계 |
+| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 50 | 구조화 요약: schema 강제 변환, 렌더링 왕복 + 바이트 안정 + 섹션 순서, 코드층 cap + 주석, latest request 그대로, json_mode/json_repair/free-form 3티어, prior-doc JSON 체이닝, 레거시 MD 전환, 퇴출 포인터 수집·승계 |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: 계획 활성 판정(state/todo 소스, 전체 완료 게이트, fail-open), 최초/업데이트 프롬프트 양 경로 주입, 체인 압축을 넘는 노트 상속/추가/cap/클리어, latest request 그대로 + 퇴출 포인터, 다중 메시지 연속 발송 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 등록 계약(테스트 고정 윈도우): `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
-| `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
+| `tests/agent/middlewares/test_summarization_comprehensive.py` | 143 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
 | `tests/agent/middlewares/message_persistence/` | 31 | 경계 + 도구 반환 증분 플러시: 각 메시지 정확히 1회, 경계 넘어 중복 없음, 영속 워터마크로 재시작 리플레이 시 행 수 불변, 동기 + 비동기 훅, session_id 부재 시 건너뜀, HITL 거부 페어 재장착, 필터 의미론; 추가로 T1/T2/T3 압축 경로의 제로 쓰기 증명과 요약 쌍(양쪽 절반)의 제로 쓰기 증명 |
 | `tests/agent/middlewares/test_compression_background_reviews.py` | 2 | 압축 시점 백그라운드 리뷰 디스패치: memory review + skill review이 compact 경로에서 발화, 컷 없는 압축은 아무것도 디스패치하지 않음 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
-전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **8240 passed / 13 skipped / 0 failed** (GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P).
+전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`)는 CI에서 통과합니다. 정확한 그룹별 합계는 runner가 출력합니다.
 
 ## ⚠️ 정직함과 한계
 
@@ -216,7 +218,7 @@ session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 
 - **Microcompact가 LLM 요약을 앞지를 수 있습니다.** 오래된 도구 결과 정리만으로 이력이 보존 예산 아래로 내려가면 compact 경로가 건너뛰어지고 memory review도 실행되지 않습니다(메시지가 버려지지 않았기 때문).
 - **`compact_now`는 도구이며 클라이언트 명령이 아닙니다.** 사용자가 요청할 때 모델이 호출하며, 입력창에 `/compact` 명령은 없습니다.
 - **꼬리 보존은 예산 기반이며 메시지 개수가 아닙니다.** 보존 예산은 `PRESERVE_RATIO` × 윈도우를 [2 000, 15 000]으로 클램프하고 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. 생성자는 `keep` 인자를 받지 않습니다.
-- **문서 장식용 임포트.** `summarization/core.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
+- **미사용 설정 키.** `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`, `DEGRADATION_MONITOR_COUNT`, `FILE_OPS_SECTION_MAX_CHARS`는 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없고 `summarization/core.py`에서 임포트되지도 않습니다. 실제로 쓰이는 절단 키는 토큰 단위의 `MAX_TOOL_OUTPUT_TOKENS`, `AGGRESSIVE_TRUNCATE_TOKENS`, `SUMMARY_TOTAL_MAX_TOKENS`이며, 문자 단위 레거시 키는 호환/테스트 전용입니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).
 - **남아 있지만 비활성인 코드.** `_preemptive_check`(overflow.py:148)와 `_preemptive_truncate`(compression.py:420)는 참조 전용입니다: 이들이 구현하는 2-밴드 선점에 도달하는 프로덕션 호출 지점은 없습니다.
 - **추정기는 토크나이저가 아니라 3단계 토크나이저프리 휴리스틱입니다.** API 보고 사용량이 있으면 T1이 반환하고, T2는 CJK 인식 휴리스틱(CJK 문자 `CHARS_PER_TOKEN_CJK = 2`, 나머지 `CHARS_PER_TOKEN = 4`), T3의 레거시 `len // 4`는 T2의 순수 ASCII 퇴화 케이스입니다. 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)입니다; `CHARS_PER_TOKEN_CJK = 2`는 중국어가 4가 아닌 1–2자/토큰에 가까움을 반영합니다.

@@ -449,14 +449,6 @@ export function useChatStream(deps: ChatStreamDeps) {
   };
 
   /**
-   * Attach the model metadata carried by the done frame onto the turn's AI message.
-   * @param turnNum
-   * @param meta
-   * @param meta.modelName
-   * @param meta.inputTokens
-   * @param meta.outputTokens
-   */
-  /**
    * The AI row that actually received this turn's streamed content: its LAST AI
    * row. The FIRST row of a turn can be an optimistic placeholder… matching it
    * would stamp the tokens onto a row the reply is not displayed in (live-verified
@@ -472,6 +464,14 @@ export function useChatStream(deps: ChatStreamDeps) {
     return undefined;
   };
 
+  /**
+   * Attach the model metadata carried by the done frame onto the turn's AI message.
+   * @param turnNum
+   * @param meta
+   * @param meta.modelName
+   * @param meta.inputTokens
+   * @param meta.outputTokens
+   */
   const attachDoneMeta = (
     turnNum: number,
     meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }

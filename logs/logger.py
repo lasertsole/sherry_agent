@@ -11,7 +11,7 @@ from config.features import LOGS
 from config.path import load_env
 from config.sherry_settings import get_sherry_setting
 
-# .env plus the network.jsonc overlay (log level / sinks can come from either)
+# .env plus the .network overlay (log level / sinks can come from either)
 load_env()
 
 #: Files modified more recently than this are NEVER deleted by the size sweep:

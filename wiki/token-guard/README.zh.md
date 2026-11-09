@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> Agent 如何对两个 LLM 强制 200K 上下文窗口硬下限：一个共享断言在四个执法点抛出（服务启动、图构建、子 Agent 派生、`.env` 写入），前端在被拦截之前先告警，`GET /model-config` 对外暴露实时判定。
+> Agent 如何对两个 LLM 强制 200K 上下文窗口硬下限：一个共享断言在四个执法点抛出（服务启动、图构建、子 Agent 派生、`.models` 写入），前端在被拦截之前先告警，`GET /model-config` 对外暴露实时判定。
 
 事实来源：`config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、`server/service/models_config.py`，以及 `.models`。本文档中的每一个行号与常量都已对照该代码核对。
 
@@ -121,7 +121,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 
 已有 `.models` 里如果还是旧的 `131072` 默认值，加载时会自动迁移到 `200000`；其他低于下限的值不会被自动修正，仍由启动闸门拒绝。
 
-> 如果你的本地 `.env` 仍然是 `100000`，服务会拒绝启动并报 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked`。启动前把它调到 `>= 200000`。
+> 如果你的本地 `.models` 仍然是 `100000`，服务会拒绝启动并报 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked`。启动前把它调到 `>= 200000`。
 
 ### 症状、原因、修复
 
@@ -129,9 +129,9 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 | :------ | :---- | :-- |
 | 服务立即退出；日志出现 `STARTUP ABORTED: ...` | 某个键未设或低于 `200000` | 把两个键都设为 `>= 200000`，然后重启 |
 | 日志出现 `AUXILIARY_LLM_MAX_TOKEN = 121072 ...` | 辅助键未设，回退到了 `121072` | 显式设置 `AUXILIARY_LLM_MAX_TOKEN` |
-| 没有回复，而是收到 WebSocket error chunk | 运行途中改环境，把某个值降到下限以下 | 修好 `.env`，然后重试该回合 |
+| 没有回复，而是收到 WebSocket error chunk | 运行途中改环境，把某个值降到下限以下 | 修好 `.models`，然后重试该回合 |
 | 环境标签保存时报 maxToken 错误 | 值不是整数或 `< 200000` | 输入 `>= 200000` 的整数 |
-| 发送时出现 "模型配置不达标" toast | `GET /model-config` 报告 `valid: false` | 修好 `.env`；保存成功后缓存会自动刷新 |
+| 发送时出现 "模型配置不达标" toast | `GET /model-config` 报告 `valid: false` | 修好 `.models`；保存成功后缓存会自动刷新 |
 
 ## 🧪 测试
 
@@ -139,7 +139,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 | :---- | :----- | :----- |
 | `tests/config/test_token_guard.py` | `unit` | 阈值为 `200_000`；`None` 与低于下限抛错；错误信息点出键名；等于或高于下限通过 |
 | `tests/agent/core/test_built_agent_guard.py` | `unit` | `built_agent()` 拒绝主值过低、主值未设、辅助值未设回退；合法环境可构建 |
-| `tests/server/service/test_env_guard.py` | `unit` | `write_env_file()` 在**不写盘**的前提下拒绝低于下限与非整数；合法值与非 token 键通过 |
+| `tests/server/test_env_service.py` + `tests/server/test_models_config_service.py` | `unit` | `write_models_config()` 在**不写盘**的前提下拒绝低于下限与非整数；合法值与非 token 键通过 |
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` 的响应形状与 `valid`：两者达最小值、主值过低、辅助未设、主值未设 |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | 拉取的破缓存、只拉一次缓存、失效后重拉、默认无效回退 |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend` 仅在不达标时告警；有效与拉取失败时静默 |
@@ -148,7 +148,7 @@ AUXILIARY_LLM_MAX_TOKEN = 200000
 ```bash
 # Python (unit + integration)
 uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent_guard.py \
-  tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
+  tests/server/test_env_service.py tests/server/test_models_config_service.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
 cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token

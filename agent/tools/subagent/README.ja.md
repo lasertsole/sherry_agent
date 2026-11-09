@@ -131,9 +131,9 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     ├── LLM：model_override → build_llm_by_name()；ORCHESTRATOR →
   │     │   build_main_llm()；LEAF → build_auxiliary_llm()
   │     ├── child_session_key ごとに独立した非同期 SQLite checkpointer
-  │     └── create_agent() で 7 層のミドルウェアを構成：
+  │     └── create_agent() で 10 層のミドルウェアを構成：
   │           ├── Summarization(model=<補助 LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",0.80×main_window)])
+  │           │                  ("tokens", _compression_threshold_for_children(main_llm_max_tokens))])
   │           ├── IterationBudget(executor 90 / 他 60) — 最大反復回数
   │           ├── ToolGuardrails()         — ツール安全ガードレール
   │           ├── OutputRepetitionGuard()  — 出力反復抑制
@@ -513,7 +513,7 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 **能力の封じ込め。** 特化ロール（`researcher` / `executor` / `reviewer` / `librarian`）は許可リスト（`SPAWN_ALLOWED_CHILD_ROLES`、`types/functional_role.py`）のロールだけを spawn できます：**自分のロール**、加えて executor は**読み取り専用**の `researcher` / `librarian`（書く前の調査）、さらに researcher と librarian は互いを spawn できます。エントリが無いロールは従来どおり「同じロールのみ」で、reviewer はそのままです。これがないと、read-only の researcher が ORCHESTRATOR 深度で書き込み可能な executor を spawn し、代わりに書かせられてしまいます——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来るのであって、父のロールで絞られることはありません。`MAIN`（run レコード無し）と `general`（inherit = 全ツール）は無制限です——特化ロールの allow-list はその部分集合だからです。許可されないロールは拒否され（決して黙って付け替えられません）、エラー文が許可集合と出口の両方を示します：`Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` 安全性は 2 つの不変条件（テストで固定）で保たれます：各エントリは親ロール自身を含むこと、許可される**親以外の子は必ず読み取り専用**であること。この単一ホップの規則により、祖先チェーン走査なしで多段も安全です——書き込みロールは書き込みロールにしか到達せず、読み取り専用ロールは同種にしか派生できません。
 
-**`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）；`goal_max_turns` は goal loop 予算を上書きします。モデルが呼ぶランタイムツールが持つのは `functional_role`・`run_timeout_seconds`・`isolation` で、ここに挙げた残りは build-time クラスのものです。
+**`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）；`goal_max_turns` は goal loop 予算を上書きします。モデルが呼ぶランタイムツールが持つのは `functional_role`・`run_timeout_seconds`・`isolation`・`output_schema` で、ここに挙げた残りは build-time クラスのものです。
 
 **設定**（`SubagentConfig`）：`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。ロール解決はすべての spawn で常時実行されます；`functional_role` を渡さない spawn 挙動は**バイト単位で不変**——GENERAL は恒等ロールです。
 
@@ -776,7 +776,7 @@ Progress フック（hooks/progress.py）：spawned（子が登録）、progress
 ### 12. ホスト統合
 
 - **起動**：`server/trigger/subagent/core.py` がチャネルイベントループ上で 1 回 `init_registry()` をスケジュール（テーブル作成、ラン復元、settle-wake 状態ロード、EventBus bridge 開始）
-- **ツール配線**：`build_subagent_runtime_tools` は `agent/tools/__init__.py::_MAIN_TOOLS_BUILDERS` に登録済み。`build_main_tools()` が 7 つの sessions_* / list ツールをメインエージェントへ公開します
+- **ツール配線**：`build_subagent_runtime_tools` は `agent/tools/__init__.py::_MAIN_TOOLS_BUILDERS` に登録済み。`build_main_tools()` が 8 つの sessions_* / list ツールをメインエージェントへ公開します
 - **イベント配信**（events/bridge.py）：単一のコンシューマが専用 EventBus（events/core.py）を排出。内部注入は消費後に破棄され、それ以外のメッセージは `relation_register` 経由でセッションのチャネルチャットへ、websocket セッションは `{"event": "notification", "content": ...}` として送信。宛先不明はドロップ
 - **セッションキールーティング**：announce のオリジン解決（announce/origin.py）は requester より controller を優先し、リクエスタ自身が subagent の場合は requester の controller へルーティングして、通告が最上位のオーケストレータへ届くようにします
 

@@ -8,7 +8,7 @@
 
 ## 개요
 
-channels 모듈은 새로운 채팅 플랫폼 통합을 쉽게 추가할 수 있는 플러그인 기반 아키텍처를 구현합니다. 각 채널은 `BaseChannel`을 확장하는 클래스로 구현되며, `MessageBus`(`bus/core.py`)를 통해 시스템과 통신합니다. `MessageBus`는 두 개의 무제한 `asyncio.Queue`(인바운드와 아웃바운드)를 제공합니다. 채널 구현은 이 패키지 내부가 아니라 `plugins/channels/` 아래의 별도 디렉터리로 존재하며(`core.py`가 포함된 폴더를 검색하여 런타임 시 발견), 이 패키지 내부에는 없습니다.
+channels 모듈은 새로운 채팅 플랫폼 통합을 쉽게 추가할 수 있는 플러그인 기반 아키텍처를 구현합니다. 각 채널은 `BaseChannel`을 확장하는 클래스로 구현되며, `MessageBus`(`bus/core.py`)를 통해 시스템과 통신합니다. `MessageBus`는 두 개의 유계 `asyncio.Queue`(`BUS_QUEUE_MAXSIZE`, 인바운드와 아웃바운드)를 제공하며, 가득 차면 메시지를 버리지 않고 빈 공간을 기다립니다. 채널 구현은 이 패키지 내부가 아니라 `plugins/channels/` 아래의 별도 디렉터리로 존재하며(`core.py`가 포함된 폴더를 검색하여 런타임 시 발견), 이 패키지 내부에는 없습니다.
 
 ## 주요 기능
 

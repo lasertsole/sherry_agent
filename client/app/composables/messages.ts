@@ -71,22 +71,6 @@ export interface ChatController extends AbortController {
  */
 export const SESSION_ABORT_STREAM_EVENT = 'session:abort-stream';
 
-/**
- * Request the conversation history (local Dexie cache first).
- *
- * On each request it:
- * 1. First reads the messages this session already has from the local cache, and takes the maximum
- *    `turn_num` in the cache as `min_turn_num` (only requesting new turns missing from the cache
- *    from the server);
- * 2. Merges the incremental messages returned by the server into the cache (deduplicated by message `id`);
- * 3. Returns the merged full list of "cache + increment".
- *
- * @param session_id Session ID
- * @param min_turn_num Minimum turn (>= 1; overridden by the cached max turn when a cache exists)
- * @param turn_page_size Turn page size (clamped to 1-200, mirroring the server cap)
- * @param turn_page_num Page number
- * @returns {Promise<CachedMessage[]>} Array of conversation history records (the raw local cache row structure)
- */
 const MAX_TURN_PAGE_SIZE = 200;
 
 /** The running turn's snapshot returned alongside a history page. */
@@ -377,7 +361,7 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
  * (corresponds to server/trigger/ws/messages.py `/sessions/agent/ws`)
  *
  * In browser mode, streaming chunks are received over the WebSocket; in Tauri mode, via IPC +
- * Tauri Events. Decoupled from the old (now defunct) `/sessions/agent/sse` HTTP endpoint.
+ * Tauri Events.
  *
  * @param session_id Session ID
  * @param multi_modal_message User input { text, image_base64_list?, audio_bytes_list?, video_bytes_list? }

@@ -339,7 +339,6 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
 
         # ── Main SKILL.md content ──────────────────────────────────────
 
-        # Get linked files
         reference_files = []
         template_files = []
         asset_files = []
@@ -372,7 +371,6 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
                         [str(f.relative_to(skill_dir)) for f in scripts_dir.glob(ext)]
                     )
 
-        # Read tags / related_skills
         meta = frontmatter.get("metadata")
         if not isinstance(meta, dict):
             meta = {}

@@ -349,6 +349,60 @@ def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
         "flow_id": "TEXT",
         "step_id": "TEXT",
         "plan_ref": "TEXT",
+        "metadata": "TEXT",
+        "notes": "TEXT",
         "created_at": "TIMESTAMP",
         "todo_id": "INTEGER",
     }
+
+
+def test_an_old_database_gains_the_additive_columns(isolated_db: Path, monkeypatch):
+    """A todos.db created before the verify feature keeps its rows and gains columns."""
+    conn = sqlite3.connect(isolated_db)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE todos (
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                priority TEXT NOT NULL DEFAULT 'medium',
+                position INTEGER NOT NULL,
+                category TEXT NOT NULL DEFAULT 'quick',
+                delegation TEXT NOT NULL DEFAULT 'self',
+                subagent_id TEXT,
+                flow_id TEXT,
+                step_id TEXT,
+                plan_ref TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                todo_id INTEGER NOT NULL,
+                PRIMARY KEY (session_id, position)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO todos (session_id, content, position, todo_id) VALUES (?, ?, ?, ?)",
+            ("old-session", "legacy row", 0, 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(store_sqlite, "_columns_ready", False)
+    monkeypatch.setattr(store_sqlite, "_columns_ready_sync", False)
+
+    async def _read() -> list[dict]:
+        await store_sqlite.ensure_db()
+        return await store_sqlite.get_todos("old-session")
+
+    rows = asyncio.run(_read())
+
+    assert [t["content"] for t in rows] == ["legacy row"]
+    assert rows[0]["metadata"] == {}
+    assert rows[0]["notes"] is None
+    conn = sqlite3.connect(isolated_db)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
+    finally:
+        conn.close()
+    assert {"metadata", "notes"} <= columns

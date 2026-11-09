@@ -15,7 +15,6 @@ from server.trigger.cors import cors_origin_echo
 from server.trigger.csrf import csrf_guard_middleware
 from server.trigger.security_headers import security_headers
 
-# Create the app
 app = Robyn(__file__)
 
 # CORS: the Origin allowlist replaces the previous wildcard. Requests from an

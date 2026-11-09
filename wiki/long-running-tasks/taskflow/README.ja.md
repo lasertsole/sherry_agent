@@ -311,7 +311,7 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
-永続的フローを `INITIAL_REVISION = 1`、状態 `running` で作成。フロー id、状態、リビジョンを返します。id が既に使用中の場合 `FlowExistsError`（現在のリビジョンを含むエラー文字列を返し、再読み取り可能）。
+永続的フローを `INITIAL_REVISION = 1`、状態 `running` で作成。フロー id、状態、リビジョンを返します。同じ id の非終端フローは冪等な成功（`TaskFlow already exists ...`）を返します。終端フローは新しい id か `resumed_from` を求めるエラーを返します。
 
 
 
@@ -597,10 +597,7 @@ async def taskflow_inspect(action="list", status_filter: str = "active") -> str
 
 ```python
 
-async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None,
-                          todo: dict | None = None, plan_path: str | None = None,
-
-                          checkbox_label: str | None = None) -> str
+async def taskflow_flow(action="finish", flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
 
 async def taskflow_flow(action="fail", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
@@ -608,7 +605,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。ディスパッチ済みの子セッションは動き続け、フローがキャンセルされるまで `taskflow_step(action="resume")` で結果を届けられます。
+終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。ディスパッチ済みの子セッションは動き続けることがありますが、フローが終端に達すると `taskflow_step(action="resume")` は結果を拒否します。finish/fail/cancel の前に注入してください。
 
 
 
@@ -664,7 +661,7 @@ async def taskflow_flow(action="cancel", flow_id: str, reason: str = "", expecte
 
 
 
-DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）。`StepStatus` 列挙型が 4 状態を定義し、`_shared.py` の 3 つの純粋関数が遷移を管理：
+DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）。`StepStatus` 列挙型が `blocked` / `ready` / `dispatched` / `done` / `failed` / `skipped` / `cancelled` の 7 状態を定義し、`_shared.py` の 3 つの純粋関数が遷移を管理：
 
 
 

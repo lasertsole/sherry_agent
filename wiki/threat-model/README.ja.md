@@ -10,7 +10,7 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 | 2 | LLM → ツール | ツール呼び出し | HITL 承認ゲート、`agent/middlewares/humanInTheLoop/detection.py` の危険コマンド一覧 |
 | 3 | ツール出力 → モデル文脈 | ツール結果 | **信頼できない出力のフェンス**、Prompt インジェクションスキャナ、ツール結果の退避 |
 | 4 | 子エージェント → 親エージェント | announce パイプライン | 完了ゲート、`SubagentCompletionDrain` |
-| 5 | MCP サーバー → エージェントプロセス | ツール結果 | 信頼できない出力のフェンス（`mcp_` 前置きルール。MCP ツールは未同梱） |
+| 5 | MCP サーバー → エージェントプロセス | ツール結果 | 信頼できない出力のフェンス（`mcp_` 前置きルール。同梱済みの全 MCP ツールに適用） |
 | 6 | HTTP クライアント → ゲートウェイ | HTTP ルート | ゲートウェイ認証ミドルウェア、クエリパラメータの型変換。ログイン保護が有効なときはセッションゲート（`server/trigger/auth_user.py`、fail-closed、loopback は免除）も加わります |
 | 7 | ファイルシステム → エージェント | ファイルツール | `PathGuard`、`O_NOFOLLOW`、仮想パス解決 |
 | 8 | サンドボックスの子プロセス → ホストプロセス | 子プロセス起動 | `scrub_env`、`bwrap`/`seatbelt` による隔離 |
@@ -37,7 +37,7 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 | ログ / ツール出力への鍵漏洩 | **マスキングエンジン**：ログ経路（常時有効、例外テキストを含む）と漏洩しやすいツール出力、子プロセスは `scrub_env` | 規則が認識できる形しか消せません。それ以上ではありません |
 | URL 資格情報の漏洩 | **URL マスキング**：対応スキームの拡大、ネストしたパーセントデコード（深さ 8）、クエリと署名パラメータ | — |
 | パス横断 | `PathGuard` + `O_NOFOLLOW` | — |
-| Shell インジェクション | `agent/middlewares/humanInTheLoop/detection.py` の一覧（hardline 12 件 + dangerous 59 件） | — |
+| Shell インジェクション | `agent/middlewares/humanInTheLoop/detection.py` の一覧（hardline 12 件 + dangerous 61 件） | — |
 | サンドボックス脱出 | `bwrap` / `seatbelt` | — |
 | 推論ブロックのストリーム漏洩 | **インライン CoT の転送**：思考内容は破棄せず推論チャネルへ移します | そもそもタグを出さないモデルは定義上影響を受けません |
 | 端末出力中の制御シーケンス | **制御シーケンスの除去**：`terminal` の両方の spawn 箇所に適用 | — |

@@ -214,7 +214,7 @@ def derive_evidence_state(records, index):
 
 ### 레벨 3: 플로별(taskflow_flow(action="finish") Gate C)
 
-TaskFlow가 DONE으로 전환되기 전, Gate C는 `flow_id`만으로 그 플로의 행을 읽습니다. 스텝 자식은 spawn 시 스탬프되고, finish 호출 중에는 creator가 스탬프되었다가 종료 시 복원되며, stale / broken / unmark 이벤트는 대상 세션의 flow 컨텍스트에서 자동 스탬프됩니다. 이 경로에는 세션 키 폴백이 없습니다. 스탬프 행이 없는 플로는 에비던스가 없으므로 통과합니다:
+TaskFlow가 DONE으로 전환되기 전, Gate C는 `flow_id`만으로 그 플로의 행을 읽습니다. 스텝 자식은 spawn 시 스탬프되고, finish 호출 중에는 creator가 스탬프되었다가 종료 시 복원되며, stale / broken / unmark 이벤트는 대상 세션의 flow 컨텍스트에서 자동 스탬프됩니다. flow 범위 읽기가 비어 있으면(재시작으로 인메모리 flow 스탬프가 지워진 경우 등) Gate C는 해당 플로 자신의 세션(스텝 자식 + creator)으로 폴백하며 세션 전체로 넓히지 않습니다. 그 행들도 비어 있을 때만 통과합니다:
 
 | 조건 | 결과 |
 |------|------|

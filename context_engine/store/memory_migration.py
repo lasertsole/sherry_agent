@@ -47,9 +47,9 @@ _ENTRY_TYPE_BY_TARGET: dict[str, str] = {
 def split_legacy_memory_content(raw: str) -> list[str]:
     if not raw.strip():
         return []
-    # ``file_sync`` seeds each memory file from the language template, whose
-    # body is an HTML comment. That comment is documentation, not an entry —
-    # without this strip the first boot would import it as a real memory row.
+    # Older installs may carry the template's purpose comment in a legacy file
+    # (older releases seeded it). That comment is documentation, not an entry —
+    # without this strip the import would create a junk memory row.
     raw = _HTML_COMMENT_RE.sub("", raw).strip()
     if not raw:
         return []

@@ -103,3 +103,50 @@ async def test_repair_extraction_persists_and_recompiles(monkeypatch) -> None:
     assert merged["success_steps"] == [{"step": "new"}]
     assert written[0][0:2] == ("k1", "success")
     assert recompiled[0][0] == "k1"
+
+
+@pytest.mark.asyncio
+async def test_repair_extraction_fails_open_on_recompile(monkeypatch) -> None:
+    from agent.tools.ldw import repair as repair_mod
+
+    async def _write(_identity, *, layer, data):
+        return "ok"
+
+    async def _recompile(_plan_key, _knowledge):
+        raise RuntimeError("compiler unavailable")
+
+    monkeypatch.setattr(
+        "agent.tools.todolist.knowledge.knowledge_store.KnowledgeStore.write",
+        _write,
+    )
+    monkeypatch.setattr(repair_mod, "recompile_ldw_workflow", _recompile)
+
+    merged = await repair_mod.repair_extraction(
+        "k1", {"failed_branches": []}, {"success_steps": [{"step": "new"}]}
+    )
+
+    assert merged["success_steps"] == [{"step": "new"}]
+    assert "compiler unavailable" in merged["recompile_error"]
+
+
+@pytest.mark.asyncio
+async def test_repair_extraction_fails_open_on_persist(monkeypatch) -> None:
+    from agent.tools.ldw import repair as repair_mod
+
+    async def _write(_identity, *, layer, data):
+        raise OSError("disk full")
+
+    async def _recompile(_plan_key, _knowledge):
+        return "script"
+
+    monkeypatch.setattr(
+        "agent.tools.todolist.knowledge.knowledge_store.KnowledgeStore.write",
+        _write,
+    )
+    monkeypatch.setattr(repair_mod, "recompile_ldw_workflow", _recompile)
+
+    merged = await repair_mod.repair_extraction(
+        "k1", {"failed_branches": []}, {"success_steps": [{"step": "new"}]}
+    )
+
+    assert "disk full" in merged["persist_error"]

@@ -217,7 +217,6 @@ SKILLS_SNAPSHOT_FILE = USER_SKILLS_DIR / "skills_snapshot.json"
 SKILL_DISCOVERY_ROOTS: tuple[str, ...] = ("builtin", "auto", "plugins")
 
 # Additional directories
-MEMORY_INDEX_DIR = MEMORY_DIR / "index"
 KNOWLEDGE_INDEX_DIR = KNOWLEDGE_DIR / "index"
 
 # Code intelligence symbol index (subagent-only tree-sitter tooling). The

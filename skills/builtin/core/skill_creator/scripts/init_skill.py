@@ -302,12 +302,10 @@ def init_skill(skill_name: str, path: str, resources: list[str], include_example
     resolved_path = _resolve_path(path)
     skill_dir = resolved_path / skill_name
 
-    # Check if directory already exists
     if skill_dir.exists():
         print(f"[ERROR] Skill directory already exists: {skill_dir}")
         return None
 
-    # Create skill directory
     try:
         skill_dir.mkdir(parents=True, exist_ok=False)
         print(f"[OK] Created skill directory: {skill_dir}")
@@ -315,7 +313,6 @@ def init_skill(skill_name: str, path: str, resources: list[str], include_example
         print(f"[ERROR] Error creating directory: {e}")
         return None
 
-    # Create SKILL.md from template
     skill_title = title_case_skill_name(skill_name)
     skill_content = SKILL_TEMPLATE.format(skill_name=skill_name, skill_title=skill_title)
 
@@ -327,7 +324,6 @@ def init_skill(skill_name: str, path: str, resources: list[str], include_example
         print(f"[ERROR] Error creating SKILL.md: {e}")
         return None
 
-    # Create resource directories if requested
     if resources:
         try:
             create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_examples)

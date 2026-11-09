@@ -189,7 +189,6 @@ class ChannelManager:
             self._event_loop.create_task(self._inbound_consume_loop()),
         ]
 
-        # Start channels
         for name, channel in self._channels.items():
             logger.info(f"Starting {name} channel...")
             self._consumer_tasks.append(
@@ -200,7 +199,6 @@ class ChannelManager:
         """Stop all channels and the dispatcher."""
         logger.info("Stopping all channels...")
 
-        # Stop dispatcher
         if self._dispatch_task:
             self._dispatch_task.cancel()
             logger.debug("Dispatcher task cancelled")
@@ -212,7 +210,6 @@ class ChannelManager:
             logger.debug("Consumer tasks cancelled: count={}", len(self._consumer_tasks))
         self._consumer_tasks = []
 
-        # Stop all channels
         tasks = []
         for name, channel in self._channels.items():
             try:
@@ -223,7 +220,6 @@ class ChannelManager:
         await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"All channels stopped: channel_count={len(self._channels)}")
 
-        # Stop event loop
         if self._event_loop is not None:
             self._event_loop.stop()
             self._event_loop = None

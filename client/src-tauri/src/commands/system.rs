@@ -24,7 +24,7 @@ pub struct AppInfo {
     pub name: String,
     /// Semantic version.
     pub version: String,
-    /// Rust toolchain / Tauri runtime info.
+    /// Tauri runtime version.
     pub tauri_version: String,
     /// Whether the application is running in debug mode.
     pub debug: bool,
@@ -60,15 +60,6 @@ pub struct HealthStatus {
 ///
 /// [`AppInfo`] — Application metadata. This command never fails.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// const info = await invoke<AppInfo>('system_info');
-/// console.log(`App: ${info.name} v${info.version}`);
-/// console.log(`Debug: ${info.debug}`);
-/// ```
 #[tauri::command]
 pub fn system_info() -> AppInfo {
     AppInfo {
@@ -79,10 +70,9 @@ pub fn system_info() -> AppInfo {
     }
 }
 
-/// Quick health check — verifies core subsystems are reachable.
+/// Quick health check — pings the Python backend and reports reachability.
 ///
-/// Checks the availability of critical subsystems such as the
-/// database connection, LLM model endpoint, and file system access.
+/// Calls `GET /system_prompt`; a transport failure is reported as unhealthy.
 ///
 /// # Arguments
 ///
@@ -94,16 +84,6 @@ pub fn system_info() -> AppInfo {
 /// - `healthy: true` when all subsystems are operational.
 /// - `healthy: false` with a descriptive `message` when something is wrong.
 ///
-/// # Frontend Example
-///
-/// ```typescript
-/// import { invoke } from '@tauri-apps/api/core';
-///
-/// const health = await invoke<HealthStatus>('system_health');
-/// if (!health.healthy) {
-///   showError(`System degraded: ${health.message}`);
-/// }
-/// ```
 #[tauri::command]
 pub async fn system_health(
     bridge: tauri::State<'_, PythonBridge>,

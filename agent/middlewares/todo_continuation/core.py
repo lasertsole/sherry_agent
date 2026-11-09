@@ -155,6 +155,41 @@ If something is wrong, fix it and continue (do not mark the plan complete).
 Only when you can point at the proof may you finish and summarize.
 """
 
+#: Verify-todo guidance appended to a continuation when the system [VERIFY]
+#: todo is the only remaining item. The report schema is part of the spawn
+#: brief the main agent writes; the tool layer never parses the report.
+_VERIFY_DIRECTIVE = """
+[VERIFY TODO]
+The only remaining item is the system [VERIFY] todo. Acceptance is independent:
+- If no reviewer is linked yet: read every work todo's acceptance criteria, then
+  spawn sessions_spawn(functional_role="reviewer") with a brief that lists each
+  todo_id + its criteria + the exact command(s). Require this JSON report:
+  {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  Patch the returned child_session_key into this todo's subagent_id.
+- If a reviewer finished: read its report (the completion notice / sessions_messages).
+  For every passed=false todo_id, patch that todo back to pending and put the
+  evidence in its notes. Do not rewrite the whole list; passed todos stay completed.
+  If the report is unreadable, spawn a new reviewer (the gate allows a bounded number
+  of re-spawns before the exhausted escape).
+- Only a {"verified": true} report may complete this todo; the transition barrier
+  requires a linked, finished reviewer.
+"""
+
+#: Injected once when the reviewer link was re-spawned past its budget. The main
+#: agent may cancel the verify todo and run the acceptance checks itself — a
+#: degraded close instead of a permanently stuck plan.
+_VERIFY_EXHAUSTED_PROMPT = """[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]
+
+The verify todo's reviewer was re-spawned past its budget without a readable
+report. Do not spawn another reviewer.
+
+- Run the acceptance checks yourself now (terminal/python_repl) and fix what fails.
+- Then patch the verify todo to cancelled (you may also cancel it first and run the
+  checks — the transition barrier allows this escape while the flag is set).
+- The plan will be recorded as NOT verified; do not claim acceptance passed.
+
+{todo_status}"""
+
 #: Process-local reminder throttle: session_id -> fingerprint of the completed
 #: plan that already received the reminder. A changed plan gets a new reminder.
 _reminded_plans: dict[str, str] = {}
@@ -262,7 +297,7 @@ _ERROR_STATE_KEYS = ("error", "turn_error", "exception")
 
 
 def _build_status_block(todos: list[dict]) -> str:
-    """Render the design-doc status block: counts + per-todo icons."""
+    """Render the design-doc status block: counts + per-todo icons + notes."""
     done = sum(1 for t in todos if t["status"] in ("completed", "cancelled"))
     total = len(todos)
     remaining = [t for t in todos if t["status"] in _INCOMPLETE_STATUSES]
@@ -274,6 +309,21 @@ def _build_status_block(todos: list[dict]) -> str:
         if todo.get("flow_id") and todo.get("step_id"):
             step_ref = f" (flow {todo['flow_id']} / {todo['step_id']})"
         lines.append(f"- [{icon}] {todo['content']} ({todo['priority']}){step_ref}")
+        notes = str(todo.get("notes") or "").strip()
+        if notes:
+            lines.append(f"  notes: {notes[:400]}")
+    return "\n".join(lines)
+
+
+def _build_verify_block(verify: dict, state: str) -> str:
+    """The verify-specific continuation text (or "" when not the only item)."""
+    if state == "running":
+        return ""
+    lines = [_VERIFY_DIRECTIVE.rstrip()]
+    if state == "none":
+        lines.append("No reviewer is linked yet: spawn one and patch its child_session_key.")
+    elif state == "finished":
+        lines.append("A reviewer finished: read its report and act on it.")
     return "\n".join(lines)
 
 
@@ -419,6 +469,60 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 st.reset(session_id)
                 return None
 
+            # Verify-todo state machine (P2): the system [VERIFY] todo is the
+            # only remaining item. A running reviewer is a WAIT, not work — the
+            # turn must end so the completion notice can resume the session.
+            from agent.tools.todolist import service as todo_service
+
+            verify_todo = next(
+                (
+                    t
+                    for t in todos
+                    if todo_service.is_verify_todo(t)
+                    and t.get("status") in ("pending", "in_progress")
+                ),
+                None,
+            )
+            verify_only = False
+            verify_state = "none"
+            if verify_todo is not None:
+                flow_rows = _flow_rows(flows)
+                work_incomplete = any(
+                    row["status"] in _INCOMPLETE_STATUSES
+                    for row in [
+                        {"status": t["status"]} for t in todos if not todo_service.is_verify_todo(t)
+                    ]
+                    + flow_rows
+                )
+                if not work_incomplete:
+                    verify_only = True
+                    if todo_service.verify_budget_exhausted(session_id):
+                        # The exhausted directive was already delivered; stay
+                        # silent so the model can close the plan (or cancel it).
+                        return None
+                    verify_state = todo_service.verify_subagent_state(verify_todo)
+                    if verify_state == "running":
+                        # A reviewer is live: nothing to drive. Its completion
+                        # notice resumes the session; the liveness read treats a
+                        # terminal/missing run as finished on a later turn.
+                        return None
+                    respawns = todo_service.verify_respawns(verify_todo)
+                    if verify_state == "finished" and respawns >= int(
+                        TODOLIST_INFRA["max_verify_respawns"]
+                    ):
+                        logger.info(
+                            "plan continuation: verify reviewer re-spawned {}x for session {}; "
+                            "offering the exhausted escape",
+                            respawns,
+                            session_id,
+                        )
+                        if await self._inject(
+                            session_id,
+                            _VERIFY_EXHAUSTED_PROMPT.format(todo_status=_build_status_block(todos)),
+                        ):
+                            await todo_service.set_verify_budget_exhausted(session_id, True)
+                        return None
+
             # The plan = todos + the board's open flows; one snapshot drives the
             # progress check, the stagnation streak and the directive.
             plan_rows = [
@@ -520,6 +624,8 @@ class PlanContinuationEnforcer(AgentMiddleware):
             prompt = _CONTINUATION_PROMPT.format(
                 todo_status=_build_status_block(todos), flow_status=flow_status
             )
+            if verify_only:
+                prompt += "\n\n" + _build_verify_block(verify_todo, verify_state)
             turns_without = st.turns_since_todowrite(session_id)
             if turns_without >= _TODO_WRITE_REMINDER_TURNS:
                 # Appended, never a directive of its own: the model receives

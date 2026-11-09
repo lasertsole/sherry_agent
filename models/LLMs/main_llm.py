@@ -6,7 +6,7 @@ from config.path import load_env
 from langchain.chat_models import init_chat_model
 from loguru import logger
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
-from models.LLMs.reasoning_openai import ReasoningChatOpenAI
+from models.LLMs.reasoning_openai import ReasoningChatOpenAI, ReasoningDeepSeekChat
 from models.LLMs.reasoning_payload import (
     build_reasoning_kwargs,
     build_thinking_kwargs,
@@ -20,7 +20,7 @@ from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kw
 #: The level a plain ON maps to (the shared declarative config).
 _DEFAULT_ON_LEVEL = THINKING_LEVEL_CONFIG["default_level"]
 
-# Load environment variables (.env, then the network.jsonc overlay — which wins)
+# Load environment variables (.env, then the .network overlay — which wins)
 load_env()
 # ``model_provider``/``api_name`` are read verbatim (no strip) because the
 # reasoning-payload dispatch consumes them directly; the builder below reads its
@@ -268,6 +268,11 @@ def _build_inner_chat_model_from(
     ):
         kwargs = {k: v for k, v in config.items() if k != "model_provider"}
         return ReasoningChatOpenAI(**kwargs)
+    if effective_provider == "deepseek":
+        # DeepSeek returns reasoning_content on assistant turns and requires it
+        # back on a replay; ChatDeepSeek's payload builder omits it.
+        kwargs = {k: v for k, v in config.items() if k != "model_provider"}
+        return ReasoningDeepSeekChat(**kwargs)
     inner = init_chat_model(**config)
     # Anthropic's prompt cache is opt-in: without explicit ``cache_control``
     # breakpoints the frozen system prompt earns nothing there. The wrapper is

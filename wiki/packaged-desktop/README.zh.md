@@ -8,6 +8,9 @@
 
 Shell 传入 `--sherry-home <app-data>`；`config/_home.resolve_code_root()` 对**随包模板**优先使用 `sys._MEIPASS`（onedir 的 `_internal` 目录），`ROOT_DIR` 继续承担项目/技能根目录的角色。`sherry.jsonc`、`.models`、`.network`、`.env` 在首次导入时从该模板根播种。模板缺失现在会写 warning 而不是静默跳过，打包布局异常可以直接从日志定位。
 
+单文件模板还有一条打包规则：PyInstaller `--add-data` 的 DEST 是**目录**。把 `.models.example` 当作 DEST 会生成同名目录，播种器看到目录就跳过——模型/应用配置页因此是空的。构建脚本把所有文件条目投递到 bundle 根（`.`），`check_seed_files` 拒绝播种模板不是普通文件的冻结树，`tests/packaging/test_build_backend.py` 钉住这两点。
+
+
 ## 冻结环境与 QQ
 
 冻结后端没有虚拟环境，无法向自身解释器安装包。`channels/deps.install_requirements()` 与 `channels/registry._ensure_deps()` 在 `sys.frozen` 为真时直接短路。QQ SDK（`botpy`，包名 `qq-botpy`）已加入项目依赖，并由 `packaging/build_backend.py` 收集，插件可正常导入。若某个构建漏带它，频道只写一条 INFO 并禁用自身，不会在每次启动时反复尝试 `uv pip install`。

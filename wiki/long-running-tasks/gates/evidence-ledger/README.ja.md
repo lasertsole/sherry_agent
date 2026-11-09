@@ -214,7 +214,7 @@ def derive_evidence_state(records, index):
 
 ### レベル 3: フローごと（taskflow_flow(action="finish") Gate C）
 
-TaskFlow が DONE に遷移する前、Gate C は `flow_id` だけでそのフローの行を読みます。ステップの子は spawn 時にスタンプされ、finish 呼び出し中は creator がスタンプされ（終了時に復元）、stale / broken / unmark イベントは対象セッションの flow コンテキストから自動スタンプされます。この経路にセッションキーのフォールバックはありません。スタンプ行の無いフローはエビデンスが無いので通過します:
+TaskFlow が DONE に遷移する前、Gate C は `flow_id` だけでそのフローの行を読みます。ステップの子は spawn 時にスタンプされ、finish 呼び出し中は creator がスタンプされ（終了時に復元）、stale / broken / unmark イベントは対象セッションの flow コンテキストから自動スタンプされます。flow スコープの読み取りが空のとき（再起動でインメモリの flow スタンプが消えた場合など）、Gate C はフロー自身のセッション（ステップ子 + creator）にフォールバックし、セッション全体には広げません。それらの行も空のときだけ通過します:
 
 | 条件 | 結果 |
 |------|------|

@@ -142,16 +142,19 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     ├── LLM: model_override → build_llm_by_name(); ORCHESTRATOR →
   │     │   build_main_llm(); LEAF → build_auxiliary_llm()
   │     ├── Independent async SQLite checkpointer keyed by child_session_key
-  │     └── create_agent() with seven middlewares:
+  │     └── create_agent() with ten middlewares:
   │           ├── Summarization(model=<aux LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",0.80×main_window)])
+  │           │                  ("tokens", _compression_threshold_for_children(main_llm_max_tokens))])
   │           ├── IterationBudget(executor 90 / others 60) — max iteration count
+  │           ├── ChildTokenBudget()       — child token budget
   │           ├── ToolGuardrails()         — tool safety guardrails
+  │           ├── ToolResourceLockMiddleware() — per-session tool resource locks
   │           ├── OutputRepetitionGuard()  — output repetition suppression
   │           ├── MaxTokensBoostMiddleware() — re-calls with boosted max_tokens on
   │           │                  tool-call truncation (non-stream path for children)
   │           ├── ToolCallNormalize()      — tool call normalization
-  │           └── HeartbeatStaleness()     — heartbeat monitoring
+  │           ├── HeartbeatStaleness()     — heartbeat monitoring
+  │           └── InvalidToolCallRepairMiddleware() — innermost JSON-call repair
   │           ... then wrapped in RepetitionGuardWrapper(phantom_stream_guard=True)
   │
   ├── 2. Execution
@@ -525,7 +528,7 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 
 **Capability containment.** A specialized role (`researcher` / `executor` / `reviewer` / `librarian`) may only spawn roles on its allow-list (`SPAWN_ALLOWED_CHILD_ROLES`, `types/functional_role.py`): its **own** role, plus — for an executor — the read-only `researcher` / `librarian` (research before writing), and the two research roles for each other. An absent entry means same-role only, which reviewer keeps. Without containment a read-only researcher at ORCHESTRATOR depth could spawn a write-capable executor and have the writing done on its behalf — a child's tools are the child's own role's, never a subset of the parent's. `MAIN` (no run record) and `general` (inherit = every tool) are unrestricted, since every specialized allow-list is a subset of theirs. A disallowed role is refused (never silently re-roled) with the allowed set and the way out named in the message: `Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` Two invariants keep the map safe, both pinned by tests: every entry keeps the parent role, and every permitted non-parent child is READ-ONLY — that single-hop rule makes multi-hop safe without ancestor-chain traversal, because a write role reaches only write roles and a read-only role only read-only roles.
 
-**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget. The runtime tool the model calls carries `functional_role`, `run_timeout_seconds` and `isolation`; the remaining fields here are the build-time class's.
+**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget. The runtime tool the model calls carries `functional_role`, `run_timeout_seconds`, `isolation` and `output_schema`; the remaining fields here are the build-time class's.
 
 **Configuration** (`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. Role resolution always runs on spawn; with no `functional_role` passed, spawn behavior is **byte-for-byte unchanged** — GENERAL is the identity role.
 
@@ -795,7 +798,7 @@ Progress hooks (`hooks/progress.py`): spawned (child registered), progress (duri
 ### 12. Host Integration
 
 - **Startup**: `server/trigger/subagent/core.py` schedules `init_registry()` once on the channel event loop (creates tables, restores runs, loads settle-wake state, starts the EventBus bridge)
-- **Tool wiring**: `build_subagent_runtime_tools` is registered in `agent/tools/__init__.py::_MAIN_TOOLS_BUILDERS`, so `build_main_tools()` exposes the seven sessions_* / list tools to the main agent
+- **Tool wiring**: `build_subagent_runtime_tools` is registered in `agent/tools/__init__.py::_MAIN_TOOLS_BUILDERS`, so `build_main_tools()` exposes the eight sessions_* / list tools to the main agent
 - **Event delivery** (`events/bridge.py`): a single consumer drains the dedicated EventBus (`events/core.py`); internal injections are consumed and discarded, other messages are routed to the session's channel chat (via `relation_register`) or, for websocket sessions, sent as `{"event": "notification", "content": ...}`; unmatched targets are dropped
 - **Session key routing**: announce origin resolution (`announce/origin.py`) prefers the controller over the requester, and routes to the requester's controller when the requester is itself a subagent, so announcements reach the top-level orchestrator
 

@@ -29,7 +29,7 @@ import asyncio
 from loguru import logger
 
 from config.features import TODOLIST_INFRA
-from runtime import StateKey, state_register_mem
+from runtime import StateKey, state_register_db, state_register_mem
 from runtime.session.ws_push import broadcast_to_session
 
 from .config import (
@@ -56,6 +56,40 @@ _TASKFLOW_TERMINAL = frozenset({"done", "failed", "cancelled"})
 # locate the plan's knowledge summary.
 _PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 
+#: The auto-inserted acceptance todo. Its content is a system-owned template:
+#: a `replace` carrying the exact string is stripped so the list can only ever
+#: hold the one real verify row (which carries ``metadata.kind="verify"``).
+_VERIFY_TODO_CONTENT = (
+    "[VERIFY] Run the plan's acceptance checks with a reviewer subagent: spawn "
+    'sessions_spawn(functional_role="reviewer"), patch this todo\'s subagent_id '
+    "with the returned child_session_key, then re-open only the todos it reports "
+    "as failed."
+)
+_VERIFY_CONTENT_BY_LANG: dict[str, str] = {
+    "en": _VERIFY_TODO_CONTENT,
+    "zh": (
+        "[VERIFY] 用 reviewer 子代理对整套计划跑验收：spawn "
+        'sessions_spawn(functional_role="reviewer")，把返回的 child_session_key '
+        "写进本 todo 的 subagent_id，然后只把报告为失败的 todo 回退重开。"
+    ),
+    "ja": (
+        "[VERIFY] reviewer サブエージェントで計画全体の受け入れ検証を行う："
+        'sessions_spawn(functional_role="reviewer") を実行し、返された '
+        "child_session_key をこの todo の subagent_id に書き、失敗と報告された "
+        "todo だけを再オープンする。"
+    ),
+    "ko": (
+        "[VERIFY] reviewer 서브에이전트로 계획 전체의 인수 검증을 실행한다: "
+        'sessions_spawn(functional_role="reviewer")를 호출하고 반환된 '
+        "child_session_key를 이 todo의 subagent_id에 기록한 뒤, 실패로 보고된 "
+        "todo만 다시 연다."
+    ),
+}
+_VERIFY_CONTENT_VARIANTS = frozenset(_VERIFY_CONTENT_BY_LANG.values())
+_VERIFY_METADATA: dict = {"kind": "verify", "auto_inserted": True}
+_ACTIVE_STATUSES = frozenset({"pending", "in_progress"})
+_TERMINAL_STATUSES = frozenset({"completed", "cancelled"})
+
 
 class TodoStoreError(Exception):
     """Raised when a todo mutation is rejected (transition barrier)."""
@@ -77,6 +111,196 @@ class TodoIdNotFoundError(Exception):
         self.valid_todos = valid_todos
         self.field = field
         super().__init__(f"{field} {todo_id} not found")
+
+
+def _verify_content() -> str:
+    """The verify todo's text in the workspace's language (English fallback)."""
+    try:
+        from config.path import resolve_workspace_template_lang
+
+        return _VERIFY_CONTENT_BY_LANG.get(resolve_workspace_template_lang(), _VERIFY_TODO_CONTENT)
+    except Exception:  # noqa: BLE001 - the content must never block a mutation
+        return _VERIFY_TODO_CONTENT
+
+
+def is_verify_todo(todo: dict) -> bool:
+    """True only for the SYSTEM verify todo (metadata.kind), never by content."""
+    metadata = todo.get("metadata")
+    return isinstance(metadata, dict) and str(metadata.get("kind") or "") == "verify"
+
+
+def verify_subagent_state(todo: dict) -> str:
+    """``none`` | ``running`` | ``finished`` for a verify todo's reviewer link."""
+    subagent_id = str(todo.get("subagent_id") or "").strip()
+    if not subagent_id:
+        return "none"
+    return "running" if _is_subagent_running(subagent_id) else "finished"
+
+
+def verify_budget_exhausted(session_id: str) -> bool:
+    """Public read of the exhausted-verify escape flag (used by the gate)."""
+    return _read_verify_budget_flag(session_id)
+
+
+async def set_verify_budget_exhausted(session_id: str, value: bool) -> None:
+    """Public write of the exhausted-verify escape flag (used by the gate)."""
+    await _set_verify_budget_flag(session_id, value)
+
+
+def verify_respawns(todo: dict) -> int:
+    """How many times this verify todo's reviewer link was replaced."""
+    metadata = todo.get("metadata")
+    if not isinstance(metadata, dict):
+        return 0
+    try:
+        return max(0, int(metadata.get("verify_respawns") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _verify_enabled(session_id: str) -> bool:
+    """Normalization is a MAIN-agent contract: children never grow a verify todo."""
+    if not bool(TODOLIST_INFRA.get("verify_todo_enabled", True)):
+        return False
+    return ":subagent:" not in session_id and ":swarm:" not in session_id
+
+
+def _active_verify_todos(todos: list[dict]) -> list[dict]:
+    return [t for t in todos if is_verify_todo(t) and t.get("status") in _ACTIVE_STATUSES]
+
+
+def _work_todos(todos: list[dict]) -> list[dict]:
+    """Todos a verification would cover: non-verify and not cancelled."""
+    return [t for t in todos if not is_verify_todo(t) and t.get("status") != "cancelled"]
+
+
+def _read_verify_budget_flag(session_id: str) -> bool:
+    """The exhausted-verify escape hatch (mem first, durable mirror second)."""
+    try:
+        if state_register_mem.get_state(session_id, StateKey.VERIFY_BUDGET_EXHAUSTED, False):
+            return True
+        return bool(
+            state_register_db.get_state(session_id, StateKey.VERIFY_BUDGET_EXHAUSTED, False)
+        )
+    except Exception:  # noqa: BLE001 - a broken register must not block a transition
+        return False
+
+
+async def _set_verify_budget_flag(session_id: str, value: bool) -> None:
+    """Dual-write the exhausted flag; a failed durable mirror is logged only."""
+    try:
+        state_register_mem.set_state(session_id, StateKey.VERIFY_BUDGET_EXHAUSTED, value)
+    except Exception:  # noqa: BLE001
+        logger.debug("verify flag: mem write failed", exc_info=True)
+    try:
+        await asyncio.to_thread(
+            state_register_db.set_state, session_id, StateKey.VERIFY_BUDGET_EXHAUSTED, value
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("verify flag: db write failed", exc_info=True)
+
+
+async def _kill_verify_subagent(todo: dict, session_id: str) -> None:
+    """Kill the reviewer linked to a verify todo that is being removed/cancelled.
+
+    Injectable seam: tests substitute this module-level reference. Fail-open —
+    an orphaned reviewer must not block the todo mutation.
+    """
+    subagent_id = str(todo.get("subagent_id") or "").strip()
+    if not subagent_id:
+        return
+    try:
+        run = _get_run_by_child_session_key(subagent_id)
+        if run is None or not _is_live_unended_run(run):
+            return
+        from agent.tools.subagent.control.kill import kill_subagent_run_with_cascade
+        from agent.tools.subagent.spawn.privilege import resolve_caller_session_key
+
+        await kill_subagent_run_with_cascade(
+            run.run_id,
+            reason="verify_todo_removed",
+            cascade=True,
+            requester_session_key=resolve_caller_session_key(session_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("verify todo: failed to kill reviewer {}: {}", subagent_id, exc)
+
+
+async def _normalize_verify(
+    session_id: str, todos: list[dict], *, inherited: dict | None = None
+) -> list[dict]:
+    """Keep exactly one verify todo, last, while a plan with >=2 work todos runs.
+
+    Idempotent and MAIN-agent-only. ``inherited`` is the active verify captured
+    before a full replacement: its reviewer link survives the rewrite (the row
+    itself cannot, because replace deletes every row).
+    """
+    if not _verify_enabled(session_id):
+        return todos
+    minimum = int(TODOLIST_INFRA.get("verify_min_work_todos", 2))
+    work = _work_todos(todos)
+    active = _active_verify_todos(todos)
+    has_active_work = any(t.get("status") in _ACTIVE_STATUSES for t in work)
+    has_any_verify = any(is_verify_todo(t) for t in todos)
+    skipped = any(
+        is_verify_todo(t)
+        and t.get("status") == "cancelled"
+        and (t.get("metadata") or {}).get("cancelled_reason") == "budget_exhausted"
+        for t in todos
+    )
+    if len(work) < minimum:
+        # Nothing worth verifying (or the plan was abandoned): drop the active
+        # verify and any reviewer still attached to it.
+        if inherited is not None:
+            await _kill_verify_subagent(inherited, session_id)
+        for todo in active:
+            await _kill_verify_subagent(todo, session_id)
+            await store.remove_todo_by_id(session_id, int(todo["todo_id"]))
+        return await store.get_todos(session_id) if active else todos
+
+    if not active:
+        # All work terminal + a terminal verify already exists => the plan is
+        # finished (or acceptance was deliberately skipped): do not re-arm it.
+        # A new plan has active work, and a first-time replace has no verify at
+        # all, so both still get one.
+        if skipped or not (has_active_work or not has_any_verify):
+            return todos
+        payload = {
+            "content": _verify_content(),
+            "status": "pending",
+            "priority": "high",
+            "category": "deep",
+            "delegation": "subagent",
+        }
+        metadata = dict(_VERIFY_METADATA)
+        if inherited is not None:
+            if inherited.get("subagent_id"):
+                payload["subagent_id"] = inherited["subagent_id"]
+            if inherited.get("notes"):
+                payload["notes"] = inherited["notes"]
+            metadata.update(inherited.get("metadata") or {})
+            metadata.update(_VERIFY_METADATA)
+        # A fresh verify starts with no inherited exhausted escape.
+        await _set_verify_budget_flag(session_id, False)
+        await store.add_todo(session_id, payload, system_metadata=metadata)
+        return await store.get_todos(session_id)
+
+    if len(active) > 1:
+        keep = max(active, key=lambda t: int(t.get("position") or 0))
+        for todo in active:
+            if todo.get("todo_id") == keep.get("todo_id"):
+                continue
+            await _kill_verify_subagent(todo, session_id)
+            await store.remove_todo_by_id(session_id, int(todo["todo_id"]))
+        active = [keep]
+
+    verify = active[0]
+    latest = await store.get_todos(session_id)
+    max_position = max(int(t.get("position") or 0) for t in latest)
+    if int(verify.get("position") or 0) != max_position:
+        await store.move_todo_to_tail(session_id, int(verify["todo_id"]))
+        latest = await store.get_todos(session_id)
+    return latest
 
 
 def _get_run_by_child_session_key(child_session_key: str):
@@ -159,18 +383,63 @@ async def _read_taskflow_step_status(
     return None, f"TaskFlow step '{step_id}' not found in flow '{flow_id}'"
 
 
-async def _assert_transition_allowed(todo: dict, session_id: str) -> None:
-    """Raise :class:`TodoStoreError` unless a ``completed`` todo may complete.
+async def _assert_transition_allowed(
+    todo: dict,
+    session_id: str,
+    *,
+    target_status: str = "completed",
+    todos: list[dict] | None = None,
+) -> None:
+    """Raise :class:`TodoStoreError` unless a transition may proceed.
 
-    Two independent sources gate the transition:
+    Work todos keep the historical ``completed`` gate: a linked subagent run
+    must no longer be live, and a linked TaskFlow step must be ``done``. The
+    SYSTEM verify todo adds its own contract:
 
-    1. a linked subagent run that is still live;
-    2. a linked TaskFlow step whose status is not ``done`` (or that cannot be
-       resolved at all: missing flow / missing step). The flow read is scoped
-       to ``session_id``, so another session's flow never satisfies the gate.
+    - ``completed`` requires a linked reviewer (``subagent_id``), a finished
+      reviewer run, and every work todo already terminal;
+    - ``cancelled`` is allowed only by the exhausted-verify escape flag or when
+      the whole plan was cancelled; otherwise the model could skip acceptance.
 
     Plain todos carry neither link and are therefore never blocked.
     """
+    if is_verify_todo(todo):
+        current = todos if todos is not None else await store.get_todos(session_id)
+        work = [t for t in current if not is_verify_todo(t)]
+        if target_status == "completed":
+            subagent_id = str(todo.get("subagent_id") or "").strip()
+            if not subagent_id:
+                raise TodoStoreError(
+                    "Cannot complete the verify todo: no reviewer subagent is linked. "
+                    "Spawn sessions_spawn(functional_role='reviewer'), then patch this todo's "
+                    "subagent_id with the returned child_session_key."
+                )
+            if _is_subagent_running(subagent_id):
+                raise TodoStoreError(
+                    f"Cannot complete the verify todo: reviewer {subagent_id} is still "
+                    "running. Wait for it to finish first."
+                )
+            open_work = [t for t in work if t.get("status") not in _TERMINAL_STATUSES]
+            if open_work:
+                ids = ", ".join(f"#{t.get('todo_id')} ({t.get('status')})" for t in open_work[:8])
+                raise TodoStoreError(
+                    f"Cannot complete the verify todo: work todos are still open: {ids}. "
+                    "Re-open/fix the failed ones first; verify is the last step."
+                )
+            return
+        if target_status == "cancelled":
+            if _read_verify_budget_flag(session_id):
+                # The caller records the exhausted-escape marker and clears the
+                # flag after the row is written; clearing here would lose it.
+                return
+            if all(t.get("status") == "cancelled" for t in work):
+                return
+            raise TodoStoreError(
+                "The verify todo cannot be cancelled directly; complete it via the "
+                "reviewer, or cancel the whole plan (every work todo cancelled)."
+            )
+        return
+
     subagent_id = todo.get("subagent_id")
     if subagent_id and _is_subagent_running(str(subagent_id)):
         raise TodoStoreError(
@@ -295,11 +564,16 @@ class TodoService:
         freshly read-back list.
         """
         validated = _validate_todos(todos)
+        # The model may copy the verify row it saw in the reminder. That copy
+        # cannot carry metadata.kind (the tool never exposes it), so stripping
+        # by the exact system template leaves exactly one real verify row.
+        validated = [t for t in validated if t.get("content") not in _VERIFY_CONTENT_VARIANTS]
         for todo in validated:
             if todo.get("status") == "completed":
-                await _assert_transition_allowed(todo, session_id)
+                await _assert_transition_allowed(todo, session_id, todos=validated)
 
         old_todos = await store.get_todos(session_id)
+        old_verify = next(iter(_active_verify_todos(old_todos)), None)
         old_flow_ids = {str(t.get("flow_id")) for t in old_todos if t.get("flow_id")}
         new_flow_ids = {str(t.get("flow_id")) for t in validated if t.get("flow_id")}
         orphaned = sorted(old_flow_ids - new_flow_ids)
@@ -328,6 +602,9 @@ class TodoService:
                 _set_reference_warning(session_id, cancelled_ids)
 
         await store.replace_all(session_id, validated)
+        latest = await _normalize_verify(
+            session_id, await store.get_todos(session_id), inherited=old_verify
+        )
         if plan_ref:
             from runtime import state_register_db
 
@@ -336,7 +613,6 @@ class TodoService:
             await asyncio.to_thread(
                 state_register_db.set_state, session_id, _PLAN_REF_STATE_KEY, plan_ref
             )
-        latest = await store.get_todos(session_id)
         await _push_todo_update(session_id, latest)
         if TODOLIST_INFRA.get("trigger_sweep_after_replace", True):
             await _trigger_session_sweep(session_id)
@@ -385,6 +661,13 @@ class TodoService:
                 }
             ]
         )[0]
+        if after_todo_id is not None:
+            anchor = await store.get_todo_by_id(session_id, int(after_todo_id))
+            if anchor is not None and is_verify_todo(anchor):
+                raise TodoReferenceError(
+                    "Cannot insert after the verify todo; it must remain last. "
+                    "Pass after_todo_id=None (the new todo is placed before it)."
+                )
         inserted = await store.add_todo(session_id, item, after_todo_id=after_todo_id)
         if inserted is None:
             raise TodoIdNotFoundError(
@@ -401,7 +684,7 @@ class TodoService:
                 _PLAN_REF_STATE_KEY,
                 plan_ref,
             )
-        latest = await store.get_todos(session_id)
+        latest = await _normalize_verify(session_id, await store.get_todos(session_id))
         await _push_todo_update(session_id, latest)
         return latest
 
@@ -414,18 +697,44 @@ class TodoService:
         status: str | None = None,
         priority: str | None = None,
         category: str | None = None,
+        notes: str | None = None,
+        subagent_id: str | None = None,
     ) -> dict:
-        """Patch one todo by its stable id; reference fields stay untouched."""
+        """Patch one todo by its stable id; reference fields stay untouched.
+
+        ``notes`` is model-writable evidence; ``subagent_id`` links a reviewer to
+        the verify todo (a changed link counts as a re-spawn).
+        """
         if content is not None and not str(content).strip():
             raise TodoStoreError("Cannot patch todo: content must be a non-empty string")
         normalized_category = category
         if category is not None and category not in VALID_CATEGORIES:
             normalized_category = DEFAULT_CATEGORY
-        if status == "completed":
-            todo = await store.get_todo_by_id(session_id, todo_id)
-            if todo is None:
-                raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
-            await _assert_transition_allowed(todo, session_id)
+
+        todo = await store.get_todo_by_id(session_id, todo_id)
+        if todo is None:
+            raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
+
+        verify = is_verify_todo(todo)
+        metadata: dict | None = None
+        if verify and status in {"completed", "cancelled"}:
+            await _assert_transition_allowed(todo, session_id, target_status=str(status))
+            if status == "cancelled" and _read_verify_budget_flag(session_id):
+                # Remember WHY acceptance was skipped so normalization does not
+                # immediately append a fresh verify for an abandoned plan.
+                metadata = dict(todo.get("metadata") or {})
+                metadata["cancelled_reason"] = "budget_exhausted"
+        elif status == "completed":
+            await _assert_transition_allowed(
+                todo, session_id, todos=await store.get_todos(session_id)
+            )
+
+        if verify and subagent_id is not None:
+            previous = str(todo.get("subagent_id") or "").strip()
+            if previous and previous != subagent_id:
+                metadata = dict(metadata or todo.get("metadata") or {})
+                metadata["verify_respawns"] = verify_respawns(todo) + 1
+
         updated = await store.patch_todo_by_id(
             session_id,
             todo_id,
@@ -433,21 +742,43 @@ class TodoService:
             status=status,
             priority=priority,
             category=normalized_category,
+            subagent_id=subagent_id,
+            notes=notes,
+            metadata=metadata,
         )
         if updated is None:
             raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
-        await _push_todo_update(session_id, await store.get_todos(session_id))
+        if verify and status in {"completed", "cancelled"}:
+            await _set_verify_budget_flag(session_id, False)
+        if verify and status == "cancelled":
+            await _kill_verify_subagent(updated, session_id)
+        latest = await _normalize_verify(session_id, await store.get_todos(session_id))
+        await _push_todo_update(session_id, latest)
         return updated
 
     @staticmethod
     async def remove_todo(session_id: str, todo_id: int) -> dict:
-        """Remove one todo by id; a removed flow root is compensated immediately."""
+        """Remove one todo by id; a removed flow root is compensated immediately.
+
+        The system verify todo is never removable: it is completed or cancelled
+        through its own guarded transitions, so the model cannot delete its way
+        out of acceptance.
+        """
+        existing = await store.get_todo_by_id(session_id, todo_id)
+        if existing is None:
+            raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
+        if is_verify_todo(existing):
+            raise TodoStoreError(
+                "The system verify todo cannot be removed. Complete it via its reviewer, "
+                "or cancel the whole plan and cancel it instead."
+            )
         removed = await store.remove_todo_by_id(session_id, todo_id)
         if removed is None:
             raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
         if removed.get("flow_id"):
             await _compensate_removed_flow(session_id, str(removed["flow_id"]))
-        await _push_todo_update(session_id, await store.get_todos(session_id))
+        latest = await _normalize_verify(session_id, await store.get_todos(session_id))
+        await _push_todo_update(session_id, latest)
         return removed
 
     @staticmethod
@@ -496,7 +827,7 @@ class TodoService:
         """Mark active todos completed when their flow finishes successfully."""
         completed = await store.complete_todos_for_flows(session_id, flow_ids)
         if completed:
-            latest = await store.get_todos(session_id)
+            latest = await _normalize_verify(session_id, await store.get_todos(session_id))
             await _push_todo_update(session_id, latest)
         return completed
 
@@ -515,7 +846,7 @@ class TodoService:
         """Cancel active todos whose referenced flows are already terminal-failed."""
         cancelled = await store.cancel_todos_for_flows(session_id, flow_ids)
         if cancelled:
-            latest = await store.get_todos(session_id)
+            latest = await _normalize_verify(session_id, await store.get_todos(session_id))
             await _push_todo_update(session_id, latest)
         return cancelled
 
@@ -526,6 +857,13 @@ __all__ = [
     "TodoService",
     "TodoStoreError",
     "_TASKFLOW_TERMINAL",
+    "_VERIFY_TODO_CONTENT",
+    "_normalize_verify",
+    "is_verify_todo",
+    "set_verify_budget_exhausted",
+    "verify_budget_exhausted",
+    "verify_respawns",
+    "verify_subagent_state",
     "_assert_transition_allowed",
     "_compensate_removed_flow",
     "_push_todo_update",

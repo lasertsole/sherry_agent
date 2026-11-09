@@ -17,7 +17,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 ## Harness와 슬라이스
 
 - 데이터셋: `princeton-nlp/SWE-bench_Lite`, test split.
-- HARD 슬라이스: `django__django-17051`, `sympy__sympy-20639`.
+- HARD 슬라이스: `django__django-17051` 및 `django__django-16820`. `sympy__sympy-20639`는 2026-11-08에 실행 슬라이스에서 제거했습니다. test patch가 NumberSymbol과 Symbol 분모의 오래된 의미론을 바꾸는데, 그 선택은 issue와 수정 전 테스트에서 유도할 수 없기 때문입니다. Sympy 과거 실행은 `evals/swebench/RESULTS.md`에 남아 있습니다.
 - 인스턴스 캐시: `--instance-cache-dir /tmp/swebench-instance-cache`.
 - Arm: 중립 프롬프트, `--persona coding`, delegation pressure
   (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). delegate-only arm과 그 미들웨어는
@@ -26,11 +26,15 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
   디렉터리에 있습니다.
 
 - 2026-11-04부터 작업 prompt에는 인스턴스의 test patch와 FAIL_TO_PASS 이름이
-  (읽기 전용으로) 포함됩니다. checkout은 미리 패치되지 않으며, 공식 test patch는
-  기존처럼 판정 시 적용되고 인스턴스 리포트는 `target_tests_exposed`를
-  기록합니다.
+  (읽기 전용으로) 포함됩니다. checkout은 실행 전에 test patch로 미리 패치되어 agent가 대상 테스트를 실행할 수 있습니다. prompt는 두 세트의 정확한 명령도 제공합니다(Django는 `python tests/runtests.py <labels>`, 그 외는 `python -m pytest <node ids>`). 채점 시 파일을 초기화한 뒤 다시 적용하며, 리포트는 `target_tests_exposed`와 `tests_preapplied`를 기록합니다.
+- 결정론적 디코딩: 모든 eval 턴은 temperature 0으로 고정된 `built_agent`로 빌드됩니다.
+  `SHERRY_EVAL_MAX_ITERATIONS`는 메인 모델 호출 상한을 선택적으로 올립니다
+  (미설정/0이면 출하 기본 180). 리포트는 `model.temperature`와
+  `budget.main_max_iterations`를 기록합니다.
 
 ## 실패 이력(2026-11-01)
+
+> **2026-11-09:** 아래 표는 전체 이력입니다. 현재 코드 tally(test patch 사전 적용 + temperature 0 + 기본 180 + 현재 prompt)는 `evals/swebench/RESULTS.md`에 있습니다: 17051 4/4, 16820 3/4, HARD 7/8(2개 인스턴스) — 리더보드 위치가 아닙니다. 제거된 arm의 실행도 같은 파일에 아카이브했습니다.
 
 | 실행 | Arm | 결과 | 무슨 일이 있었나 |
 | :--- | :--- | :--- | :--- |
@@ -46,6 +50,14 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 | 2026-11-04 003521 | + 대상 테스트를 prompt에 제시(HARD 2) | 0/2 | 테스트는 보이지만 실행할 수 없어 두 인스턴스 모두 90회를 소진 |
 | 2026-11-04 004714 | + 대상 테스트를 checkout에 사전 적용(HARD 2) | 1/2 | Django 통과. Sympy는 `e.is_Symbol`(`1/x_17`에는 오류)을 사용해 repro 스크립트에서 루프 |
 | 2026-11-04 005721 | 실패 후 지시 강화(Sympy만) | 0/1 | 같은 잘못된 조건. F2P는 0 |
+| 2026-11-08 111407 | HARD Django만, prompt에 F2P+P2P | 1/1 | Django 통과. 첫 실행은 P2P `NoneType` 회귀로 0/1, 두 번째 통과 |
+| 2026-11-08 133112 | temperature=0 + prompt에 F2P/P2P | 격리 실패 | temperature pin이 workspace 재정의 전에 `config.path`를 import해 live workspace에서 실행됨. 1/1은 집계하지 않음 |
+| 2026-11-08 133743 | pin 순서 수정 후 temperature=0 | 1/1 | Django 통과. 17회 호출 / 60.6초. F2P/P2P 모두 통과, 임시 파일 없음 |
+| 2026-11-08 135604 | temperature=0, 유효 반복 총 4회 | 4/4 | 모두 통과. 호출 수는 16～82회(60.6～286.3초). 가장 긴 실행은 90회 예산 중 82회 사용 |
+| 2026-11-08 145011 | 새 HARD 인스턴스 `django__django-16820`, temperature=0 | 0/1 | gold check 통과(F2P 5 + P2P 91). 에이전트는 92회에서 90회 예산을 소진했고 F2P는 통과, P2P는 미통과 |
+| 2026-11-08 184144 | 동일 인스턴스, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24회 호출 / 96.5초로 통과. 상한 확대는 잘림 위험을 없앴지만 수정의 원인은 아님(같은 온도에서도 궤적이 크게 다름) |
+| 2026-11-08 222819 | 최종 코드: 정확한 명령 + 기본 180 예산(16820) | 0/1 | F2P 5/5, 실제 P2P 단언 실패 5건. guardrail이 테스트 파일 추가 읽기를 막은 뒤 에이전트가 중단 |
+| 2026-11-09 204854 | verify-todo 템플릿의 최종 코드(16820) | 1/1 | 31회 호출 / 117.3초. 에이전트가 todo 계획을 쓰지 않아 verify 분기는 결정론적 테스트로 커버 |
 
 ## 드러난 문제
 
@@ -58,13 +70,25 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
    상류 PR을 찾으러 갔다. 편집과 검증으로 넘어가게 강제하는 장치가 없었다.
 4. **평가 harness가 테스트 파일 편집을 거부하지 않았다.** 깨끗한 diff는 제품 계약의
    일부지만 `changed_paths`는 기록만 했다. 테스트 파일은 대상 테스트를 통과해도
-   오염된 성공이 된다. 이 구멍은 아직 열려 있으며, 이번 성공은 우연히 테스트를
-   편집하지 않았을 뿐이다.
+   오염된 성공이 된다. 이 구멍은 닫혔다. `dirty_test_edits`가 harness 패치 밖에서
+   에이전트가 수정한 테스트 파일을 표시하고 테스트 결과와 무관하게
+   `resolved=False`로 만든다.
 5. **쓰기는 검증이 아니다.** 첫 no-edit arm은 patch를 만들었지만 기존 테스트를
    실행하지 않았고, P2P 회귀는 판정 때 처음 드러났다.
 6. **자식 결과와 token을 관찰하기 어렵다.** 타임아웃된 자식의 checkpoint가 사라질 수
    있고, 메인은 상태 확인을 위해 다시 spawn했으며, 리포트는 메인 session token만
    셌다.
+8. **Django의 병렬 runner는 크래시 시 보고 중이던 실패를 잃을 수 있다.**
+   예외를 pickle할 수 없으면 풀이 `TypeError: cannot pickle 'traceback'
+   object`로 중단되고, 리포트에는 실패 테스트 이름이 남지 않는다. Django
+   judge는 이제 `--parallel 1`로 실행하며, 같은 diff에서 91개 결과와 5개
+   이름 있는 실패를 얻는다.
+
+7. **측정용 pin이 샌드박스를 무력화할 수 있다.** `SHERRY_WORKSPACE_DIR` 재정의 전에
+   eval 접합점을 import하면 `WORKSPACE_DIR`가 live persona 디렉터리에 고정된다.
+   실행은 1/1로 보고했지만 `eval_workspace_has_sessions=false`와
+   `live_sessions_unchanged=false`가 이를 드러냈다. 리포트의 isolation 블록이
+   그런 실행을 능력 집계에서 제외하는 게이트다.
 
 ### 현재 해결
 
@@ -100,22 +124,22 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 넣지 않았습니다. 메인은 researcher를 spawn했고 게이트가 리셋된 뒤 `compiler.py`에
 약 70회 `patch_file`을 시도했습니다. 이는 **patch 재시도 병리**이지 라이선스 없는
 `write_file` 덮어쓰기가 아니므로 라이선스는 발동하지 않았습니다. 이전 8/16 게이트는
-`patch_file`도 차단했고 2026-11-01 실행은 그렇게 끝났습니다. 현재 7/14 조언형 설계는
+`patch_file`도 차단했고 2026-11-01 실행은 그렇게 끝났습니다. 현재 7/12 조언형 설계는
 차단을 의도적으로 제거했습니다.
 
-## 현재 설계: DelegationPressureGate(7/14 조언형)
+## 현재 설계: DelegationPressureGate(7/12 조언형)
 
-2026-11-01 실행은 이전 8/16 하드 차단 버전을 측정한 것이며, 아래의 7/14
+2026-11-01 실행은 이전 8/16 하드 차단 버전을 측정한 것이며, 아래의 7/12
 조언형 동작은 2026-11-02에 충돌을 해소해 확정한 설계입니다. 2026-11-03의 0/2 재실행이 첫 측정이며 HARD 슬라이스를 해결하지 못했습니다 — `evals/swebench/RESULTS.md` 참조.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
 - 한 턴 안의 **읽기/탐색** 호출을 누적합니다.
 - **7**회에서 게이트 자체의 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입합니다.
-- **14**회에서 더 강한 escalated 시스템 리마인더를 주입합니다. 도구는 계속 사용 가능하며 게이트는 조언만 하고 차단하지 않습니다.
+- **12**회에서 더 강한 escalated 시스템 리마인더를 주입합니다. 도구는 계속 사용 가능하며 게이트는 조언만 하고 차단하지 않습니다.
 - 브라우저 디버깅 도구는 집계에서 제외됩니다.
 - accepted/pending spawn이 성공하면 카운트를 리셋해 메인
-  에이전트가 검사/검증할 수 있으며, 이후 7/14에서 다시 작동합니다. 실패한 spawn과
+  에이전트가 검사/검증할 수 있으며, 이후 7/12에서 다시 작동합니다. 실패한 spawn과
   쓰기만으로는 리셋되지 않고, `after_agent`도 턴 경계에서 리셋합니다.
 
 메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도
