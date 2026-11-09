@@ -56,6 +56,17 @@ def test_coding_persona_copies_the_shipped_template(tmp_path) -> None:
         assert (tmp_path / name).read_text(encoding="utf-8") == ""
 
 
+def test_seed_persona_creates_a_missing_workspace_root(tmp_path) -> None:
+    """The persona files are the FIRST thing an eval workspace gets."""
+    target = tmp_path / "missing" / "workspace"
+
+    harness._seed_persona(target, persona="neutral")
+
+    assert (target / "AGENTS.md").is_file()
+    for name in harness._EMPTY_PERSONA_FILES:
+        assert (target / name).is_file()
+
+
 def test_an_unknown_persona_is_refused(tmp_path) -> None:
     with pytest.raises(ValueError, match="unknown persona"):
         harness._seed_persona(tmp_path, persona="roleplay")

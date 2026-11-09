@@ -287,6 +287,30 @@ blocks the turn. Injected rows carry ``metadata.origin`` (``quality_gate`` here,
 which is persisted and makes the chat render them as neutral cards rather than
 as messages the user wrote.
 
+### Plan level: the SYSTEM verify todo
+
+A plan with 2+ work todos ends with one SYSTEM `[VERIFY]` todo
+(`metadata.kind="verify"`, last position, priority high). The todolist service
+inserts it after every mutation (`replace`/`add`/`patch`/`remove`), keeps it
+last, removes it (and kills its reviewer) when the plan shrinks below two work
+todos, and never inserts one for a `:subagent:`/`:swarm:` session. The model
+cannot forge it — the tool schema has no `metadata` field, the store only writes
+that column through a system-only argument, and a copied template line is
+stripped from `replace`. Evidence travels in the model-writable `notes` field.
+
+The main agent spawns a read-only `reviewer`, patches its `child_session_key`
+into `subagent_id`, and waits. The transition barrier refuses completion until
+that reviewer has finished and every work todo is terminal; a direct cancel is
+refused unless the reviewer budget is exhausted or the whole plan was cancelled.
+`PlanContinuationEnforcer` treats "verify pending + reviewer running" as a wait
+(no directive; the completion notice resumes the session), drives the report
+read when the reviewer is finished or its registry run is terminal, and after
+`TODOLIST_INFRA["max_verify_respawns"]` (2) re-spawns injects
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]` with the degraded escape (run the
+checks yourself, cancel verify, record NOT verified). A failed report re-opens
+only the named todo_ids with their evidence; passed todos stay completed. A
+cancelled verify blocks skill extraction (`_detect_todo_all_complete`).
+
 ## 📊 Precedence Matrix
 
 | Guard | Altitude | State home | Reset when |

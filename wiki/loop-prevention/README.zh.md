@@ -246,6 +246,25 @@
 
 `SubagentCompletionDrainMiddleware` 会把每个被 drain 的完成批次对照会话的验证证据检查：载体原样注入，当会话没有通过证据时，在它们之后追加一条强制验证消息。该门是 fail-open：证据查询不可用永远不会阻塞该回合。注入的行带 `metadata.origin`（这里是 `quality_gate`，别处还有 `subagent_completion` / `task_intent` / `todo_continuation`），该来源会被持久化，聊天据此把它们渲染成中立卡片，而不是"用户说过的话"。
 
+### 计划级：SYSTEM verify todo
+
+含 2 个以上 work todo 的计划末尾会有一个 SYSTEM `[VERIFY]` todo
+（`metadata.kind="verify"`、始终最后、priority high）。todolist service 在每次
+变更（`replace`/`add`/`patch`/`remove`）后维护它：保持末尾；work todo 少于两个时
+移除它并 kill 其 reviewer；`:subagent:`/`:swarm:` 会话永不插入。模型无法伪造——
+工具 schema 没有 `metadata` 字段，store 只通过系统专用参数写该列，`replace` 抄入的
+模板行会被精确剥离。证据写在模型可写的 `notes` 字段。
+
+主代理 spawn 只读 `reviewer`，把 `child_session_key` patch 进 verify 的
+`subagent_id`，然后等待。转换屏障要求 reviewer 已结束且所有 work todo 都终态；
+直接 cancel 只允许在 reviewer 预算耗尽或整个计划被取消时。`PlanContinuationEnforcer`
+把“verify pending + reviewer running”判为等待（不注入，completion notice 恢复会话）；
+reviewer 结束或 registry 已终态时驱动读取报告；重派达到
+`TODOLIST_INFRA["max_verify_respawns"]`（2）次后注入
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]`，允许降级为“自己跑检查并 cancel
+verify（记录为未验收）”。失败报告只回退被点名的 todo_id 并带证据，通过的保持
+completed；cancelled verify 会阻止 skill 抽取（`_detect_todo_all_complete`）。
+
 ## 📊 优先级矩阵
 
 | 护栏 | 高度 | 状态所在 | 重置时机 |

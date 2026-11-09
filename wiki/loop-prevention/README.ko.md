@@ -249,6 +249,27 @@
 
 `SubagentCompletionDrainMiddleware`는 drain된 각 완료 배치를 세션의 검증 evidence와 대조합니다: 캐리어는 그대로 주입되고, 세션에 통과 evidence가 없으면 그 뒤에 필수 검증 메시지가 덧붙습니다. 게이트는 fail-open이라 evidence 조회가 불가능해도 턴을 막지 않습니다. 주입되는 행은 `metadata.origin`(여기서는 `quality_gate`, 그 밖에 `subagent_completion` / `task_intent` / `todo_continuation`)을 가지며, 그 출처가 영속화되므로 채팅은 이를 "사용자가 쓴 메시지"가 아니라 중립 카드로 표시합니다.
 
+### 계획 수준: SYSTEM verify todo
+
+work todo가 2개 이상인 계획은 끝에 SYSTEM `[VERIFY]` todo
+(`metadata.kind="verify"`, 항상 마지막, priority high)를 가진다. todolist service가
+각 변경(`replace`/`add`/`patch`/`remove`) 후 유지한다: 마지막을 보장하고, work
+todo가 2개 미만이면 제거하며 reviewer를 kill하고, `:subagent:`/`:swarm:` 세션에는
+삽입하지 않는다. 모델은 위조할 수 없다——도구 schema에 `metadata`가 없고, store는
+시스템 전용 인자로만 그 컬럼을 쓰며, `replace`에 복사된 템플릿 줄은 정확히
+제거한다. 증거는 모델이 쓸 수 있는 `notes` 필드에 들어간다.
+
+메인은 읽기 전용 `reviewer`를 spawn하고 `child_session_key`를 `subagent_id`에
+patch한 뒤 기다린다. 전환 배리어는 reviewer 종료와 모든 work todo의 종국을
+요구하며, 직접 cancel은 reviewer 예산 소진이나 계획 전체 cancel일 때만 허용한다.
+`PlanContinuationEnforcer`는 "verify pending + reviewer running"을 대기로 보고
+(주입하지 않고 완료 통지로 재개), reviewer가 끝났거나 registry가 종국이면 보고서
+읽기를 구동하며, `TODOLIST_INFRA["max_verify_respawns"]`(2)회 재spawn 후
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]`를 주입해 "직접 검증하고 verify를
+cancel(미검증으로 기록)"하는 저하 경로를 제공한다. 실패 보고는 지목된 todo_id만
+증거와 함께 다시 열고, 통과한 todo는 completed로 유지한다. cancelled verify는
+skill 추출을 막는다(`_detect_todo_all_complete`).
+
 ## 📊 우선순위 매트릭스
 
 | 가드 | 고도 | 상태의 집 | 리셋 시점 |

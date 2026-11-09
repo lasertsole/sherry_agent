@@ -104,6 +104,9 @@ def _build_todo_block(session_id: str) -> str:
             content = todo.get("content", "")
             priority = todo.get("priority") or "medium"
             lines.append(f"- [{icon}] {id_prefix}{tag} {content} ({priority})")
+            notes = str(todo.get("notes") or "").strip()
+            if notes:
+                lines.append(f"  notes: {notes[:300]}")
         # Deterrence notices: the continuation and transition barriers are enforced in code
         # (agent/core.py + service.update_todos); completion verification is recorded via the EvidenceLedger.
         lines.append(

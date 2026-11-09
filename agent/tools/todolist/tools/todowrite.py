@@ -95,6 +95,20 @@ class TodoWriteInput(BaseModel):
     category: str | None = Field(
         default=None, description="add/patch field: quick|deep|ultrabrain|visual|git|writing."
     )
+    notes: str | None = Field(
+        default=None,
+        description=(
+            "patch field: free-text evidence attached to this todo (e.g. a reviewer's "
+            "failure output). Never overwrites content."
+        ),
+    )
+    subagent_id: str | None = Field(
+        default=None,
+        description=(
+            "patch field: link a subagent child_session_key to this todo. Required on "
+            "the system verify todo before it can complete."
+        ),
+    )
     plan_ref: str | None = Field(default=None, description="add field: session plan file path.")
     flow_id: str | None = Field(
         default=None, description="reattach field: TaskFlow flow id to bind as the GC root."
@@ -126,6 +140,8 @@ async def _run_todo_action(
     status: str | None = None,
     priority: str | None = None,
     category: str | None = None,
+    notes: str | None = None,
+    subagent_id: str | None = None,
     plan_ref: str | None = None,
     flow_id: str | None = None,
     session_id: str = "",
@@ -172,9 +188,12 @@ async def _run_todo_action(
             raise ValueError(f"action='{action}' requires todo_id (the #N marker)")
 
         if action == "patch":
-            if all(value is None for value in (content, status, priority, category)):
+            if all(
+                value is None for value in (content, status, priority, category, notes, subagent_id)
+            ):
                 raise ValueError(
-                    "action='patch' requires at least one of content/status/priority/category"
+                    "action='patch' requires at least one of "
+                    "content/status/priority/category/notes/subagent_id"
                 )
             return await service.TodoService.patch_todo(
                 session_id,
@@ -183,6 +202,8 @@ async def _run_todo_action(
                 status=status,
                 priority=priority,
                 category=category,
+                notes=notes,
+                subagent_id=subagent_id,
             )
 
         if action == "remove":
@@ -217,6 +238,8 @@ async def todowrite(
     status: str | None = None,
     priority: str | None = None,
     category: str | None = None,
+    notes: str | None = None,
+    subagent_id: str | None = None,
     plan_ref: str | None = None,
     flow_id: str | None = None,
     session_id: SessionId = "",
@@ -229,7 +252,7 @@ async def todowrite(
 
     Actions:
       - replace (default): pass the COMPLETE todos list.
-      - patch: todo_id + any of content/status/priority/category.
+      - patch: todo_id + any of content/status/priority/category/notes/subagent_id.
       - add: content; after_todo_id=None appends, #N inserts after that todo.
       - remove: todo_id.
       - reattach: todo_id + flow_id (bind an existing todo as a flow's GC root).
@@ -244,6 +267,12 @@ async def todowrite(
     workspace/sessions/<session_id>/plans/*.md.
     Flow_id (optional): TaskFlow flow id this todo tracks.
     Step_id (optional): TaskFlow step id (e.g. step-2) for DAG status.
+    Notes (optional): patch field carrying evidence for this todo.
+    Subagent_id (optional): patch field linking a subagent child_session_key.
+
+    A plan with 2+ work todos ends with a SYSTEM [VERIFY] todo. Do not create or
+    copy one yourself: reach it, spawn a reviewer, patch the reviewer's child key
+    into its subagent_id, then re-open only the todos the reviewer marks failed.
 
     DAG scheduling is NOT done here. Declare dependencies with
     taskflow_step(action='run_task', flow_id=..., task=..., depends_on=[...]); the blocked/ready/
@@ -258,6 +287,8 @@ async def todowrite(
         status=status,
         priority=priority,
         category=category,
+        notes=notes,
+        subagent_id=subagent_id,
         plan_ref=plan_ref,
         flow_id=flow_id,
         session_id=session_id,

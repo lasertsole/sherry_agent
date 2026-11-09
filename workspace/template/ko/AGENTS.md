@@ -58,6 +58,21 @@
 - FullyDone: 검증을 통과한 후에만 체크박스를 completed로 표시합니다.
 - 검증에 실패하면 작업은 완료되지 않은 것이며, 다시 디스패치하거나 수정해야 합니다.
 
+- VerifyTodo(자동): work todo가 2개 이상인 계획은 끝에 SYSTEM [VERIFY] todo를 가진다.
+  도달했을 때 검증을 직접 인라인 실행하지 않는다:
+  1. 각 work todo의 인수 기준을 읽는다.
+  2. sessions_spawn(functional_role="reviewer")로 읽기 전용 reviewer를 spawn하고, brief에
+     각 todo_id + 인수 기준 + 실행할 명령을 나열하며 다음 JSON 보고를 요구한다:
+     {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  3. 반환된 child_session_key를 todowrite action=patch로 verify todo의 subagent_id에 기록한다.
+     전환 배리어는 해당 reviewer가 끝나기 전까지 verify 완료를 거부한다.
+  4. {"verified": false}이면 failed=true인 todo_id만 pending으로 되돌리고, evidence를 각
+     todo의 notes에 넣은 뒤 수정하고 reviewer를 다시 실행한다. 통과한 todo는 completed로
+     유지하며 목록 전체를 다시 쓰지 않는다.
+  5. {"verified": true}만 verify todo를 완료할 수 있다. 보고를 읽을 수 없으면 reviewer를
+     다시 spawn한다. 재spawn 한도에 도달하면 게이트가 "직접 검증하고 verify를 cancel"하는
+     저하 종료를 제공한다.
+
 ### 안티패턴 (BLOCKING)
 
 - 사소한 변경을 위임하고 기다리는 경우: 시간과 token 낭비

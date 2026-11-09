@@ -59,6 +59,21 @@ Complete the work directly by default; decompose and delegate only when the task
 - AdversarialVerify: Run the acceptance criteria. Probe for stale state, dirty worktree, leftover resources.
 - FullyDone: Only after verification passes, mark the checkbox completed.
 - If verification fails, the task is NOT done, re-dispatch or fix.
+- VerifyTodo (auto): a plan with 2+ work todos ends with a SYSTEM [VERIFY] todo.
+  When you reach it, do NOT run the acceptance tests inline:
+  1. Read every work todo's acceptance criteria.
+  2. spawn sessions_spawn(functional_role="reviewer") with a brief listing each todo_id +
+     its acceptance criteria + the exact command(s), and require this JSON report:
+     {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  3. Patch the returned child_session_key into the verify todo's subagent_id
+     (todowrite action=patch). The transition barrier refuses to complete it until
+     that reviewer has finished.
+  4. On {"verified": false}: patch ONLY the failed todo_ids back to pending, put the
+     evidence in each todo's notes, fix those, then re-run the reviewer. Passed todos
+     stay completed — never rewrite the whole list.
+  5. Only {"verified": true} may complete the verify todo. If the report is unreadable,
+     spawn a new reviewer; after the bounded re-spawns the gate offers a degraded
+     "run the checks yourself and cancel verify" close.
 
 ### Anti-Patterns (BLOCKING)
 

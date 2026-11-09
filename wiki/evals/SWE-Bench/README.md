@@ -61,6 +61,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-08 145011 | new HARD instance `django__django-16820`, temperature=0 | 0/1 | Gold check passes (5 F2P + 91 P2P); agent hit the 90-call cap at 92 calls, F2P passed, P2P did not |
 | 2026-11-08 184144 | same instance, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | Resolved in 24 calls / 96.5 s; the larger cap removed the truncation ceiling but did not cause the fix (same temperature, very different trajectory) |
 | 2026-11-08 222819 | final code: exact command + default 180 budget (16820) | 0/1 | F2P 5/5, five real P2P assertion failures; the agent stopped after a guardrail blocked more test-file reads |
+| 2026-11-09 204854 | final code with the verify-todo template (16820) | 1/1 | 31 calls / 117.3 s; the agent used no todo plan, so the verify branch was covered by the deterministic tests |
 
 ## Problems exposed
 

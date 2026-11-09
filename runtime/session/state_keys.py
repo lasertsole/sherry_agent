@@ -217,6 +217,11 @@ class StateKey(StrEnum):
     #: dropped a flow root and auto-cancelled the orphaned flow(s).
     TODO_REFERENCE_WARNING = "todo_reference_warning"
 
+    #: Set by the continuation gate when the verify todo's reviewer was
+    #: re-spawned past its budget: the main agent may then cancel the verify
+    #: todo and run the acceptance checks itself (a degraded but closable plan).
+    VERIFY_BUDGET_EXHAUSTED = "verify_budget_exhausted"
+
 
 def hitl_tool_approved_key(tool_name: str) -> str:
     """Return the HITL per-tool approval key for *tool_name*."""

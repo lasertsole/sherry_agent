@@ -316,6 +316,7 @@ def _seed_persona(workspace: Path, *, persona: str = "neutral", template_lang: s
     global _PERSONA_MODE, _PERSONA_TEMPLATE_LANG
     if persona not in ("neutral", "coding"):
         raise ValueError(f"unknown persona {persona!r} (expected 'neutral' or 'coding')")
+    workspace.mkdir(parents=True, exist_ok=True)
     if persona == "coding":
         template = REPO_ROOT / "workspace" / "template" / template_lang / "AGENTS.md"
         if not template.is_file():

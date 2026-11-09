@@ -250,6 +250,27 @@
 
 `SubagentCompletionDrainMiddleware` は drain された各完了バッチをセッションの検証証跡と照合します：キャリアはそのまま注入され、セッションに合格した証跡がない場合はその後ろに必須検証メッセージが追記されます。ゲートは fail-open で、証跡照会が利用できなくてもターンを止めません。注入される行は `metadata.origin`（ここでは `quality_gate`、他は `subagent_completion` / `task_intent` / `todo_continuation`）を持ち、その出所が永続化されるため、チャットはそれを「ユーザーが書いたメッセージ」ではなく中立なカードとして表示します。
 
+### 計画レベル：SYSTEM verify todo
+
+work todo が 2 件以上の計画は末尾に 1 つの SYSTEM `[VERIFY]` todo
+（`metadata.kind="verify"`、常に最後、priority high）を持つ。todolist service が
+各変更（`replace`/`add`/`patch`/`remove`）後に維持する：末尾を保ち、work todo が
+2 件未満になると削除して reviewer を kill し、`:subagent:`/`:swarm:` セッションには
+挿入しない。モデルは偽造できない——ツール schema に `metadata` はなく、store は
+システム専用引数でのみその列を書き、`replace` にコピーされたテンプレート行は
+正確に剥がす。証拠はモデルが書ける `notes` フィールドに入る。
+
+メインは読み取り専用 `reviewer` を spawn し、`child_session_key` を
+`subagent_id` に patch して待つ。遷移バリアは reviewer の終了と全 work todo の
+終局を要求し、直接 cancel は reviewer 予算切れか計画全体の cancel のときだけ許す。
+`PlanContinuationEnforcer` は「verify pending + reviewer running」を待機として
+扱い（注入せず、完了通知で再開）、reviewer 終了または registry が終局なら報告読取を
+駆動し、`TODOLIST_INFRA["max_verify_respawns"]`（2）回の再 spawn 後に
+`[SYSTEM DIRECTIVE: VERIFY BUDGET EXHAUSTED]` を注入して「自分で検証して verify を
+cancel（未検証として記録）」の降級を許す。失敗報告は指名された todo_id だけを
+証拠付きで再オープンし、通過済みは completed のまま。cancelled verify は skill 抽出を
+阻止する（`_detect_todo_all_complete`）。
+
 ## 📊 優先順位マトリクス
 
 | ガード | 高さ | 状態の住処 | リセットのタイミング |

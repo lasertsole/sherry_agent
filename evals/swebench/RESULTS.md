@@ -349,3 +349,23 @@
   outcomes、5 条 fail，与 agent 自己的诊断一致。
 - 结论：精确命令和更大预算都生效了，但这次失败是**补丁语义不完整**，不是截断；
   额外回合只有在 agent 还能继续读取/运行时才有意义。
+
+---
+
+## 20261109_204854 — verify-todo 模板回归（Django 16820，1/1）
+
+- 目的：验收闭环（SYSTEM verify todo + reviewer + 定向回退）落地后，用最终代码回归
+  HARD 实例，确认新模板与转换屏障没有破坏基本修复流程。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard django__django-16820 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+  （checkout 复用本地缓存；产品默认预算 180）。
+- 结果：**1/1 resolved**；117.3s；31 tool calls；tokens 1,026,359 / 4,347；
+  F2P 5/5、P2P 91/91；无 dirty test edits。
+- 隔离：`eval_workspace_has_sessions=true`、`live_sessions_unchanged=true`；
+  `budget.main_max_iterations=180`。
+- 观察：该 agent 没有创建 todo 计划（本 run 无 todowrite），因此 verify todo
+  分支没有被真实模型触发；verify 循环由确定性测试覆盖——15 个 todolist verify
+  测试、5 个 PlanContinuationEnforcer verify 测试、5 个 skill-review guard 测试，
+  以及完整的 todolist e2e。
+- 备注：本轮还修复了 eval persona 的 `workspace.mkdir` 回归（删掉旧 memory
+  目录创建后，`_seed_persona` 在 workspace 根不存在时无法写 AGENTS.md），并新增
+  回归测试。

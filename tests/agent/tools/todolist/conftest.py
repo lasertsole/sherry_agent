@@ -149,3 +149,16 @@ def _no_taskflow_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr(service, "_trigger_session_sweep", _noop)
+
+
+@pytest.fixture(autouse=True)
+def _verify_todo_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the legacy todolist tests focused on their original contract.
+
+    The auto-inserted verify todo is covered by ``test_verify_todo.py``, which
+    turns it back on per test. Leaving it on here would change every exact-list
+    assertion in the suite without adding coverage of the new feature.
+    """
+    from config.features import TODOLIST_INFRA
+
+    monkeypatch.setitem(TODOLIST_INFRA, "verify_todo_enabled", False)

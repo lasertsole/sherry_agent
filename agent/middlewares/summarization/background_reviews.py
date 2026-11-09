@@ -390,6 +390,15 @@ def _detect_todo_all_complete(session_id: str) -> bool:
         state_register_db.set_state(session_id, _SKILL_REVIEW_FIRED_KEY, False)
         return False
 
+    # A cancelled verify means acceptance was deliberately skipped (the
+    # reviewer budget was exhausted, or the whole plan was abandoned). Never
+    # extract/upgrade a skill from a plan that did not pass acceptance. Only the
+    # LATEST verify counts: an old cancelled plan must not poison a later,
+    # properly verified one in the same session.
+    verifies = [t for t in todos if (t.get("metadata") or {}).get("kind") == "verify"]
+    if verifies and verifies[-1].get("status") == "cancelled":
+        return False
+
     already_fired = state_register_db.get_state(session_id, _SKILL_REVIEW_FIRED_KEY, False)
     if not already_fired:
         state_register_db.set_state(session_id, _SKILL_REVIEW_FIRED_KEY, True)

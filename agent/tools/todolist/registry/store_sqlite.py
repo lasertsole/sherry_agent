@@ -5,8 +5,11 @@ Table schema: todos(session_id TEXT NOT NULL, content TEXT NOT NULL,
 status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'medium',
 position INTEGER NOT NULL, category TEXT NOT NULL DEFAULT 'quick',
 delegation TEXT NOT NULL DEFAULT 'self', subagent_id TEXT, flow_id TEXT,
-step_id TEXT, plan_ref TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-todo_id INTEGER NOT NULL, PRIMARY KEY (session_id, position)).
+step_id TEXT, plan_ref TEXT, metadata TEXT, notes TEXT,
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, todo_id INTEGER NOT NULL,
+PRIMARY KEY (session_id, position)). ``metadata`` is system-owned (the verify
+todo marker); ``notes`` is model-writable evidence. Both were added after the
+first release, so init converges an older file with a guarded additive ALTER.
 
 ``position`` is only the display order; ``todo_id`` is the stable per-session
 identity used by the local patch/remove/reattach API. Inserting between rows
@@ -29,6 +32,7 @@ through ``flow_id``/``step_id``.
 """
 
 import asyncio
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -61,11 +65,11 @@ _INIT_WAIT_TIMEOUT_S = TODOLIST_INFRA["store_init_wait_timeout_s"]
 # Column order is the contract for _row_to_todo; keep both in lockstep.
 _TODO_COLUMNS = (
     "session_id, content, status, priority, position, category, delegation, "
-    "subagent_id, flow_id, step_id, plan_ref, created_at, todo_id"
+    "subagent_id, flow_id, step_id, plan_ref, metadata, notes, created_at, todo_id"
 )
 _INSERT_COLUMNS = (
     "session_id, content, status, priority, position, category, delegation, "
-    "subagent_id, flow_id, step_id, plan_ref, todo_id"
+    "subagent_id, flow_id, step_id, plan_ref, metadata, notes, todo_id"
 )
 
 _CREATE_TABLE_SQL = f"""
@@ -81,6 +85,8 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     flow_id TEXT,
     step_id TEXT,
     plan_ref TEXT,
+    metadata TEXT,
+    notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     todo_id INTEGER NOT NULL,
     PRIMARY KEY (session_id, position)
@@ -88,9 +94,7 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
 """
 
 _SELECT_COLUMNS_SQL = f"SELECT {_TODO_COLUMNS} FROM {TABLE_NAME}"
-_INSERT_SQL = (
-    f"INSERT INTO {TABLE_NAME} ({_INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-)
+_INSERT_SQL = f"INSERT INTO {TABLE_NAME} ({_INSERT_COLUMNS}) VALUES ({', '.join('?' * 14)})"
 
 # Once-per-process async schema-init state. asyncio primitives are single-loop
 # by design, so the lock is only ever touched by the owning loop (see
@@ -103,6 +107,17 @@ _initialized = False
 # called from arbitrary threads; threading.Lock is cross-thread safe).
 _sync_tables_ready = False
 _sync_init_lock = threading.Lock()
+
+
+def _parse_metadata(raw: object) -> dict:
+    """Decode the system-owned metadata JSON; malformed/absent reads as empty."""
+    if not raw:
+        return {}
+    try:
+        value = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _row_to_todo(row: tuple) -> dict:
@@ -118,6 +133,8 @@ def _row_to_todo(row: tuple) -> dict:
         flow_id,
         step_id,
         plan_ref,
+        metadata_raw,
+        notes,
         created_at,
         todo_id,
     ) = row
@@ -133,16 +150,23 @@ def _row_to_todo(row: tuple) -> dict:
         "flow_id": flow_id,
         "step_id": step_id,
         "plan_ref": plan_ref,
+        "metadata": _parse_metadata(metadata_raw),
+        "notes": notes,
         "created_at": created_at,
         "todo_id": int(todo_id),
     }
 
 
-def _normalize_rows(session_id: str, todos: list[dict]) -> list[tuple]:
+def _normalize_rows(
+    session_id: str, todos: list[dict], *, system_metadata: str | None = None
+) -> list[tuple]:
     """Map caller dicts to INSERT tuples, applying config defaults.
 
     ``position`` falls back to the list index so callers may omit it; a missing
     or empty ``content`` is rejected because the column is NOT NULL.
+    ``system_metadata`` is the ONLY channel into the metadata column: the model
+    path never reads a ``metadata`` key from its input dict (so a model cannot
+    forge ``kind="verify"``), while ``notes`` is a model-writable field.
     """
     rows: list[tuple] = []
     for index, todo in enumerate(todos):
@@ -163,6 +187,8 @@ def _normalize_rows(session_id: str, todos: list[dict]) -> list[tuple]:
                 todo.get("flow_id"),
                 todo.get("step_id"),
                 todo.get("plan_ref"),
+                system_metadata,
+                todo.get("notes"),
             )
         )
     return rows
@@ -212,8 +238,62 @@ _repository = _TodolistRepository(globals())
 
 _connect = _repository.connect
 _switch_to_wal_if_needed = _repository.switch_to_wal_if_needed
-ensure_db = _repository.ensure_db
-_ensure_tables_sync = _repository.ensure_tables_sync
+
+# Additive columns introduced with the verify todo. New databases get them from
+# _CREATE_TABLE_SQL; a database created before the feature is converged once per
+# process (guarded, additive only — the checklist rows survive an upgrade).
+_columns_ready = False
+_columns_ready_sync = False
+_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (("metadata", "TEXT"), ("notes", "TEXT"))
+
+
+async def _ensure_columns_async() -> None:
+    global _columns_ready
+    if _columns_ready:
+        return
+    async with _connect() as db:
+        async with db.execute(f"PRAGMA table_info({TABLE_NAME})") as cursor:
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+        for name, decl in _ADDITIVE_COLUMNS:
+            if name in columns:
+                continue
+            try:
+                await db.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError:
+                # A concurrent initializer added it between the probe and write.
+                pass
+        await db.commit()
+    _columns_ready = True
+
+
+def _ensure_columns_sync() -> None:
+    global _columns_ready_sync
+    if _columns_ready_sync:
+        return
+    conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
+    try:
+        columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({TABLE_NAME})")}
+        for name, decl in _ADDITIVE_COLUMNS:
+            if name in columns:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+    finally:
+        conn.close()
+    _columns_ready_sync = True
+
+
+async def ensure_db() -> None:
+    await _repository.ensure_db()
+    await _ensure_columns_async()
+
+
+def _ensure_tables_sync() -> None:
+    _repository.ensure_tables_sync()
+    _ensure_columns_sync()
 
 
 async def replace_all(session_id: str, todos: list[dict]) -> None:
@@ -295,7 +375,13 @@ async def append_todo(session_id: str, todo: dict) -> None:
     await add_todo(session_id, todo)
 
 
-async def add_todo(session_id: str, todo: dict, *, after_todo_id: int | None = None) -> dict | None:
+async def add_todo(
+    session_id: str,
+    todo: dict,
+    *,
+    after_todo_id: int | None = None,
+    system_metadata: dict | None = None,
+) -> dict | None:
     """Insert one todo, optionally directly after ``after_todo_id``.
 
     ``after_todo_id=None`` appends at the tail. An existing anchor shifts every
@@ -306,7 +392,8 @@ async def add_todo(session_id: str, todo: dict, *, after_todo_id: int | None = N
     session_id = (session_id or "").strip()
     if not session_id:
         raise ValueError("session_id must be a non-empty string")
-    row = list(_normalize_rows(session_id, [todo])[0])
+    metadata_json = json.dumps(system_metadata, ensure_ascii=False) if system_metadata else None
+    row = list(_normalize_rows(session_id, [todo], system_metadata=metadata_json)[0])
     await ensure_db()
     async with _connect() as db:
         async with db.execute(
@@ -367,8 +454,15 @@ async def patch_todo_by_id(
     status: str | None = None,
     priority: str | None = None,
     category: str | None = None,
+    subagent_id: str | None = None,
+    notes: str | None = None,
+    metadata: dict | None = None,
 ) -> dict | None:
-    """Update selected fields of one todo; flow_id/step_id/plan_ref stay put."""
+    """Update selected fields of one todo; flow_id/step_id/plan_ref stay put.
+
+    ``subagent_id`` / ``notes`` are model-visible fields (the tool exposes them
+    for the verify flow). ``metadata`` is system-only — the tool never passes it.
+    """
     sets: list[str] = []
     params: list[object] = []
     if content is not None:
@@ -383,6 +477,15 @@ async def patch_todo_by_id(
     if category is not None:
         sets.append("category = ?")
         params.append(category)
+    if subagent_id is not None:
+        sets.append("subagent_id = ?")
+        params.append(subagent_id)
+    if notes is not None:
+        sets.append("notes = ?")
+        params.append(notes)
+    if metadata is not None:
+        sets.append("metadata = ?")
+        params.append(json.dumps(metadata, ensure_ascii=False))
     if not sets:
         return await get_todo_by_id(session_id, todo_id)
     params.extend([session_id, int(todo_id)])
@@ -502,6 +605,55 @@ def get_todos_sync(session_id: str) -> list[dict]:
         return []
 
 
+async def move_todo_to_tail(session_id: str, todo_id: int) -> dict | None:
+    """Move one todo to the end of the display order without changing its id.
+
+    Used by the verify invariant: the verify todo must stay last while keeping
+    its stable todo_id (and therefore its reviewer link).
+    """
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT position FROM {TABLE_NAME} WHERE session_id = ? AND todo_id = ?",
+            (session_id, int(todo_id)),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        async with db.execute(
+            f"SELECT COALESCE(MAX(position), -1) FROM {TABLE_NAME} WHERE session_id = ?",
+            (session_id,),
+        ) as cursor:
+            max_row = await cursor.fetchone()
+        max_position = int(max_row[0]) if max_row else -1
+        position = int(row[0])
+        if position < max_position:
+            offset = int(TODOLIST_INFRA["position_shift_offset"])
+            # Park the moving row on a negative position first: SQLite checks
+            # the composite primary key per row, so compaction would collide
+            # with this row's old slot mid-statement.
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET position = -1 - ? WHERE session_id = ? AND todo_id = ?",
+                (offset, session_id, int(todo_id)),
+            )
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET position = position + ? "
+                "WHERE session_id = ? AND position > ?",
+                (offset, session_id, position),
+            )
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET position = position - ? - 1 "
+                "WHERE session_id = ? AND position > ?",
+                (offset, session_id, offset),
+            )
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET position = ? WHERE session_id = ? AND todo_id = ?",
+                (max_position, session_id, int(todo_id)),
+            )
+        await db.commit()
+    return await get_todo_by_id(session_id, todo_id)
+
+
 __all__ = [
     "add_todo",
     "append_todo",
@@ -513,6 +665,7 @@ __all__ = [
     "get_todos",
     "get_todos_by_flow",
     "get_todos_sync",
+    "move_todo_to_tail",
     "patch_todo_by_id",
     "remove_todo_by_id",
     "replace_all",
