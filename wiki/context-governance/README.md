@@ -193,8 +193,21 @@ The compression line is an ABSOLUTE token count owned by `agent/middlewares/summ
 
 | Key | Default | Meaning |
 |---|---|---|
+### Declarative capability catalog
+
+The auto-mode decision does not start from "auto". `get_capability` resolves
+each media family in this order: the tracked `config/model_capabilities.json`
+catalog, overlaid by `sherry.jsonc`'s `model_capabilities` object → the learned
+labels in `src/data/model_capabilities_runtime.json` → `"auto"`. A declared
+model is answered without probing, and a runtime probe cannot override the
+declaration (the user override is the correction path). An undeclared model is
+probed once; a native success writes `supported` for the still-`auto` families
+and silent blindness writes `unsupported`, and both survive a restart. `pdf` is
+a first-class family (`document` / `file` blocks) with no skill fallback: an
+unsupported PDF is scrubbed to a placeholder asking for images or text.
+
 | `main_llm_native_multimodal` | `"auto"` | Tri-state native switch: `"true"` keeps media blocks for the model, `"false"` always takes the skill path, `"auto"` decides per family through the capability cache; any other value fails safe to the skill path |
-| `main_llm_silent_degradation_detection` | `True` | Cache the media families present as `"unsupported"` when a native reply self-reports media blindness |
+| `main_llm_silent_degradation_detection` | `True` | Cache present families as `"unsupported"` when a native reply self-reports media blindness; a normal non-empty success learns `"supported"` for still-`auto` families |
 | `max_media_bytes` | `20 * 1024 * 1024` | Hard per-payload ceiling; an oversize payload is skipped before any disk write |
 
 There are no environment variables for these knobs: they are code defaults in the feature TypedDicts above, by design.

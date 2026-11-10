@@ -53,6 +53,7 @@ DATA = (
     (".models.example", ".models.example"),
     (".network.example", ".network.example"),
     ("context_engine", "context_engine"),  # read by path, not imported
+    ("config/model_capabilities.json", "config/model_capabilities.json"),  # media catalog
 )
 
 #: Packages whose data files PyInstaller's built-in hooks miss. ``botpy`` is the

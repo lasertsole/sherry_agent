@@ -241,6 +241,10 @@ class MediaPaths:
     audios: list[str] = field(default_factory=list)
     # Persisted video paths for the hint text and additional_kwargs["videos"].
     videos: list[str] = field(default_factory=list)
+    # Whether a native PDF content block is present. PDFs are passed through to
+    # the model unchanged (no decode/re-save); the capability gate only needs to
+    # know the family is present.
+    pdf_present: bool = False
     # Model-visible notices for attachments skipped by the size limit. They are
     # not paths: oversized media is never written down nor persisted.
     skipped: list[str] = field(default_factory=list)
@@ -396,15 +400,26 @@ class VideoUrlHandler(MediaItemHandler):
                 paths.videos.append(local_path)
 
 
+class PdfHandler(MediaItemHandler):
+    """Native PDF blocks pass through unchanged (the provider renders them)."""
+
+    def process(
+        self, item: dict[str, Any], session_id: str, paths: MediaPaths, src_dir: Path
+    ) -> None:
+        paths.pdf_present = True
+
+
 _MEDIA_HANDLERS: dict[str, MediaItemHandler] = {
     "image_url": ImageUrlHandler(),
     "audio_url": AudioUrlHandler(),
     "audio_bytes": AudioBytesHandler(),
     "video_url": VideoUrlHandler(),
     "video_bytes": VideoBytesHandler(),
+    "document": PdfHandler(),
+    "file": PdfHandler(),
 }
 
-MediaType = Literal["vision", "audio", "video"]
+MediaType = Literal["vision", "audio", "video", "pdf"]
 
 # Media family each content-item type belongs to — the per-type key of the
 # process-level multimodal capability cache.
@@ -414,4 +429,7 @@ MEDIA_TYPE_BY_ITEM: dict[str, MediaType] = {
     "audio_bytes": "audio",
     "video_url": "video",
     "video_bytes": "video",
+    # Anthropic's native PDF block and the OpenAI-compatible file block.
+    "document": "pdf",
+    "file": "pdf",
 }

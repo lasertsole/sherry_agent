@@ -16,11 +16,19 @@ from ..llm_capability_cache import get_capability
 from .fallback import _paths_from_additional_kwargs
 from .media_handlers import MEDIA_TYPE_BY_ITEM, MediaPaths, MediaType
 
-_FAMILY_LABEL: dict[MediaType, str] = {"vision": "image", "audio": "audio", "video": "video"}
-_FAMILY_SKILL: dict[MediaType, str] = {
+_FAMILY_LABEL: dict[MediaType, str] = {
+    "vision": "image",
+    "audio": "audio",
+    "video": "video",
+    "pdf": "PDF",
+}
+_FAMILY_SKILL: dict[MediaType, str | None] = {
     "vision": "image_to_text",
     "audio": "speech_to_text",
     "video": "video_text_to_text",
+    # No PDF skill fallback: the PDF plan renders pages to images when the
+    # model lacks native PDF support, and otherwise refuses.
+    "pdf": None,
 }
 
 
@@ -66,7 +74,7 @@ def _scrub_content(
     model_key: str,
 ) -> tuple[list[Any], bool]:
     recorded = _paths_from_additional_kwargs(message) or MediaPaths()
-    counters: dict[MediaType, int] = {"vision": 0, "audio": 0, "video": 0}
+    counters: dict[MediaType, int] = {"vision": 0, "audio": 0, "video": 0, "pdf": 0}
     new_content: list[Any] = []
     changed = False
     for item in content:
@@ -95,6 +103,8 @@ def _media_path_for_block(
     every other block maps to the persisted path at its position within the
     family. Returns a placeholder when no path was recorded.
     """
+    if family == "pdf":
+        return "(embedded PDF)"
     if item.get("type") == "image_url":
         url = item.get("image_url", {}).get("url", "")
         if isinstance(url, str) and is_url(url) and not url.startswith("data:"):
@@ -106,6 +116,7 @@ def _media_path_for_block(
         "vision": recorded.persisted_images,
         "audio": recorded.audios,
         "video": recorded.videos,
+        "pdf": [],
     }[family]
     if index < len(recorded_paths):
         return recorded_paths[index]
@@ -116,6 +127,12 @@ def _placeholder(item: dict[str, Any], family: MediaType, path: str, model_key: 
     label = _FAMILY_LABEL[family]
     skill = _FAMILY_SKILL[family]
     model_label = model_key if model_key.strip("/") else "the current model"
+    if skill is None:
+        return (
+            f"[Uploaded media] The attached {label} ({item.get('type', '')}) was stripped from "
+            f"this request because {model_label} does not support {label} content. "
+            "Provide the document as images or text instead."
+        )
     return (
         f"[Uploaded media] The attached {label} ({item.get('type', '')}) was stripped from "
         f"this request because {model_label} does not support {label} content. "

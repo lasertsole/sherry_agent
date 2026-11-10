@@ -189,8 +189,18 @@ sherry 支持的 provider 里，只有 Anthropic 的 prompt cache 是**要显式
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
+### 声明式能力目录
+
+自动模式的判断不再从“auto”起步。`get_capability` 按以下顺序解析每个媒体族：受版本管理的
+`config/model_capabilities.json` 目录（由 `sherry.jsonc` 的 `model_capabilities`
+覆盖）→ `src/data/model_capabilities_runtime.json` 中学习到的标签 → `"auto"`。已声明的模型
+无需探测；运行时探测不能覆盖声明（用户覆盖是纠正入口）。未声明的模型只探测一次：原生调用
+成功会把仍为 `"auto"` 的族写成 `supported`，静默失明写成 `unsupported`，两者跨重启保留。
+`pdf` 是一等媒体族（`document` / `file` 块），没有技能回退：不支持的 PDF 会被替换为
+提示用户改用图片或文本的占位文本。
+
 | `main_llm_native_multimodal` | `"auto"` | 三态原生开关：`"true"` 为模型保留媒体块、`"false"` 始终走技能路径、`"auto"` 经能力缓存逐媒体族决定；其他值一律 fail-safe 走技能路径 |
-| `main_llm_silent_degradation_detection` | `True` | 原生回复自述媒体盲时，把请求中实际出现的媒体族缓存为 `"unsupported"` |
+| `main_llm_silent_degradation_detection` | `True` | 原生回复自述媒体盲时，把请求中实际出现的媒体族缓存为 `"unsupported"`；正常非空成功会把仍为 `"auto"` 的族学习为 `"supported"` |
 | `max_media_bytes` | `20 * 1024 * 1024` | 单个载荷硬上限；超限载荷在任何写盘之前即被跳过 |
 
 这些旋钮没有环境变量：按设计它们就是上述 feature TypedDict 中的代码默认值。

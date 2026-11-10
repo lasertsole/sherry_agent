@@ -12,6 +12,18 @@ from typing import Any
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_capability_labels(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
+    """Keep learned multimodal labels out of the repo-wide runtime file."""
+    from agent.middlewares import llm_capability_cache as cache
+
+    path = tmp_path / "model_capabilities_runtime.json"
+    monkeypatch.setattr(cache, "model_capabilities_runtime_path", lambda: path)
+    cache.reset_cache()
+    yield
+    cache.reset_cache()
+
+
 @pytest.fixture
 def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, Any]]:
     """Yield ``(agent_core, fake_compiled_graph)`` with built_agent's deps faked.

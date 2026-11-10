@@ -78,7 +78,7 @@ def _read_image(file_path: str, session_id: str, ...) -> str | list[dict]:
 ### 2.3 能力门控
 
 在返回图片块前，检查主模型是否支持图片：
-- 查询 vision 能力系统（见计划 #8 `Vision 能力门控`）
+- 查询 vision 能力系统（已实现：`config/model_capabilities.json` + `llm_capability_cache`）
 - 若 `supportsImages == False`：回退至现有 `image_to_text` skill 路径（不改变非 vision 模型的当前行为）
 - 若 `supportsImages == True` 或 `"auto"`：返回图片块
 

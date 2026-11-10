@@ -190,8 +190,19 @@ sherry가 지원하는 provider 중 Anthropic만 프롬프트 캐시가 **명시
 
 | 키 | 기본값 | 의미 |
 |---|---|---|
+### 선언적 능력 카탈로그
+
+자동 모드는 "auto"에서 시작하지 않습니다. `get_capability`는 각 미디어 패밀리를 다음 순서로
+해석합니다: 버전 관리되는 `config/model_capabilities.json` 카탈로그(`sherry.jsonc`의
+`model_capabilities`로 덮어씀) → `src/data/model_capabilities_runtime.json`에 학습된 라벨 →
+`"auto"`. 선언된 모델은 프로브하지 않으며 런타임 프로브가 선언을 덮어쓸 수 없습니다(수정은
+사용자 오버라이드). 선언되지 않은 모델은 한 번만 프로브하고, 네이티브 성공은 아직 `"auto"`인
+패밀리를 `supported`로, 조용한 실명은 `unsupported`로 저장하며 재시작 후에도 유지합니다.
+`pdf`는 일급 패밀리(`document` / `file` 블록)이며 스킬 폴백이 없습니다. 지원되지 않는 PDF는
+이미지나 텍스트를 요청하는 플레이스홀더로 대체됩니다.
+
 | `main_llm_native_multimodal` | `"auto"` | 3-상태 네이티브 스위치: `"true"`는 모델에 미디어 블록을 남기고, `"false"`는 항상 스킬 경로, `"auto"`는 능력 캐시로 패밀리별 결정; 그 밖의 값은 페일세이프로 스킬 경로 |
-| `main_llm_silent_degradation_detection` | `True` | 네이티브 응답이 미디어 실명을 자술하면 요청에 나타난 미디어 패밀리를 `"unsupported"`로 캐시 |
+| `main_llm_silent_degradation_detection` | `True` | 네이티브 응답이 미디어 실명을 자술하면 요청에 나타난 미디어 패밀리를 `"unsupported"`로 캐시; 정상적인 비어 있지 않은 성공은 아직 `"auto"`인 패밀리를 `"supported"`로 학습 |
 | `max_media_bytes` | `20 * 1024 * 1024` | 페이로드당 하드 상한; 초과 페이로드는 쓰기 전에 건너뜀 |
 
 이 노브들에는 환경 변수가 없다: 설계상 위 feature TypedDict들의 코드 기본값이다.

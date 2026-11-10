@@ -116,7 +116,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             existing_text = str(text_dict.get("text") or "")
             text_dict["text"] = f"{existing_text}\n{notices}" if existing_text else notices
 
-        if not (paths.image_hints or paths.audios or paths.videos):
+        if not (paths.image_hints or paths.audios or paths.videos or paths.pdf_present):
             # Pure-text list: normalize to a single text block and keep
             # stripping stale image_url blocks from history (existing behavior).
             last_mes.content = [text_dict]
@@ -152,6 +152,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             (bool(paths.image_hints), "vision"),
             (bool(paths.audios), "audio"),
             (bool(paths.videos), "video"),
+            (bool(paths.pdf_present), "pdf"),
         )
         present: list[MediaType] = [media for is_present, media in families if is_present]
         capabilities = {media: get_capability(provider, model, media) for media in present}
@@ -185,6 +186,13 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         return request.override(messages=scrubbed)
 
     def _apply_skill_path(self, turn: _TurnMedia) -> None:
+        if turn.paths.pdf_present:
+            notice = (
+                "[Uploaded media] The attached PDF was not sent: this model does not "
+                "support native PDF input and there is no PDF skill fallback."
+            )
+            existing = str(turn.text_dict.get("text") or "")
+            turn.text_dict["text"] = f"{existing}\n{notice}" if existing else notice
         attach_media_hints(turn.text_dict, turn.paths)
         turn.last_mes.content = [turn.text_dict]
         self._persist_media_kwargs(turn.last_mes, turn.paths)

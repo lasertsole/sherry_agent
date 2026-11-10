@@ -119,6 +119,7 @@ def _rebuild_paths(mes: BaseMessage, content: list[Any], session_id: str) -> Med
         "vision": bool(paths.image_hints or paths.persisted_images),
         "audio": bool(paths.audios),
         "video": bool(paths.videos),
+        "pdf": bool(paths.pdf_present),
     }
 
     for item in content:

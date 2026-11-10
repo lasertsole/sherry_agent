@@ -190,8 +190,19 @@ sherry が対応する provider のうち、Anthropic だけはプロンプト�
 
 | キー | デフォルト | 意味 |
 |---|---|---|
+### 宣言的ケイパビリティ・カタログ
+
+自動モードは「auto」から始まりません。`get_capability` は各メディアファミリーを次の順で
+解決します: バージョン管理された `config/model_capabilities.json` カタログ
+(`sherry.jsonc` の `model_capabilities` で上書き) → `src/data/model_capabilities_runtime.json`
+に学習されたラベル → `"auto"`。宣言済みモデルはプローブせず、実行時プローブが宣言を上書き
+することもありません(修正はユーザー上書き)。未宣言モデルは一度だけプローブし、ネイティブ
+成功時はまだ `"auto"` のファミリーを `supported`、静かな失明は `unsupported` として保存し、
+再起動後も保持します。`pdf` は第一級のファミリー(`document` / `file` ブロック)で、スキル
+フォールバックはありません。未対応 PDF は画像かテキストを求めるプレースホルダーに置換されます。
+
 | `main_llm_native_multimodal` | `"auto"` | 三態ネイティブ・スイッチ：`"true"` はモデルにメディアブロックを残し、`"false"` は常にスキルパス、`"auto"` はケイパビリティ・キャッシュでファミリーごとに決定。それ以外の値はフェイルセーフでスキルパス |
-| `main_llm_silent_degradation_detection` | `True` | ネイティブ返答がメディア盲目を自述したとき、リクエストに現れたメディアファミリーを `"unsupported"` としてキャッシュ |
+| `main_llm_silent_degradation_detection` | `True` | ネイティブ返答がメディア盲目を自述したとき、リクエストに現れたメディアファミリーを `"unsupported"` としてキャッシュ。通常の非空成功はまだ `"auto"` のファミリーを `"supported"` として学習 |
 | `max_media_bytes` | `20 * 1024 * 1024` | ペイロード単位のハード上限。超過ペイロードは書き込み前にスキップ |
 
 これらのノブに環境変数はない：設計上、上記 feature TypedDict のコードデフォルトである。

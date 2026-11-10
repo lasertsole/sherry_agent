@@ -38,11 +38,17 @@ from .media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 
 __all__ = ["effective_model_key", "native_image_content", "scrub_tool_media"]
 
-_FAMILY_LABEL: dict[MediaType, str] = {"vision": "image", "audio": "audio", "video": "video"}
-_FAMILY_SKILL: dict[MediaType, str] = {
+_FAMILY_LABEL: dict[MediaType, str] = {
+    "vision": "image",
+    "audio": "audio",
+    "video": "video",
+    "pdf": "PDF",
+}
+_FAMILY_SKILL: dict[MediaType, str | None] = {
     "vision": "image_to_text",
     "audio": "speech_to_text",
     "video": "video_text_to_text",
+    "pdf": None,
 }
 
 
@@ -127,6 +133,11 @@ def _tool_placeholder(family: MediaType, item_type: str, model_key: str) -> str:
     label = _FAMILY_LABEL[family]
     skill = _FAMILY_SKILL[family]
     model_label = model_key if model_key.strip("/") else "the current model"
+    if skill is None:
+        return (
+            f"[Tool media] The attached {label} ({item_type}) was stripped from this request "
+            f"because {model_label} does not support {label} content."
+        )
     return (
         f"[Tool media] The attached {label} ({item_type}) was stripped from this request "
         f"because {model_label} does not support {label} content. The file path is named "

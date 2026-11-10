@@ -2098,6 +2098,23 @@ question unanswerable by traversal. `path_search.py` adds the explicit layer
   regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
   total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
 
+## Multimodal Capability Catalog (`config/model_capabilities.py`)
+
+The media pipeline's auto mode resolves each media family through one cache
+(`agent/middlewares/llm_capability_cache.py`) in this order: the tracked
+`config/model_capabilities.json` catalog (overlaid by the `model_capabilities`
+object in `sherry.jsonc`) → the learned labels in
+`src/data/model_capabilities_runtime.json` → `"auto"`. A DECLARED model is
+answered without probing (and `set_capability` refuses to override a
+declaration; the user override is the correction path); an undeclared model is
+probed once and its `supported`/`unsupported` result is persisted. The
+success path of a native call writes `supported` for still-`auto` families
+(silent blindness still writes `unsupported`). `pdf` is a first-class family
+(`document` / `file` blocks, no skill fallback): an unsupported PDF is scrubbed
+to a text placeholder telling the user to supply images or text. The catalog is
+shipped via `packaging/build_backend.py`'s DATA list; editing the JSON changes
+the routing without a code change.
+
 ## URL Fetching (`agent/tools/web/web_fetch.py`)
 
 `web_fetch(url)` reads ONE http(s) URL and hands it back as markdown — the
