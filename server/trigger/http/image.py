@@ -3,7 +3,8 @@ from loguru import logger
 from robyn import Response
 from server.trigger.core import app
 from config import SRC_DIR, API_HOST, API_PORT
-from config.features import HTTP_UPLOAD, SERVER_HTTP
+from config.features import HTTP_UPLOAD, MEDIA_PIPELINE, SERVER_HTTP
+from pub.func.media.image_compress import ImageTooLargeError, prepare_for_model
 
 MAX_IMAGE_UPLOAD_BYTES = HTTP_UPLOAD["max_image_bytes"]
 
@@ -54,6 +55,27 @@ async def upload_image(request):
 
     content_type = request.headers.get("Content-Type")
     ext = _get_extension(content_type)
+    if MEDIA_PIPELINE.get("image_compress_enabled", True):
+        try:
+            prepared = prepare_for_model(
+                data,
+                max_dimension=int(MEDIA_PIPELINE["image_compress_max_dimension"]),
+                max_tokens=int(MEDIA_PIPELINE["image_compress_max_tokens"]),
+                token_ratio=float(MEDIA_PIPELINE["image_compress_token_ratio"]),
+            )
+        except ImageTooLargeError as exc:
+            logger.warning("Image upload rejected: cannot fit the image budget: {}", exc)
+            return Response(
+                status_code=413,
+                headers={"Content-Type": "application/json"},
+                description='{"success": false, "message": "Image too large"}',
+            )
+        except Exception:  # noqa: BLE001 — not a decodable image; keep the upload
+            logger.debug("Image upload is not a decodable image; storing it unchanged")
+        else:
+            data = prepared.data
+            content_type = prepared.media_type
+            ext = prepared.extension
 
     filename = f"{uuid.uuid4().hex}{ext}"
 

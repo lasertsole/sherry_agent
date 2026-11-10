@@ -72,7 +72,8 @@ message store: frames go to the panel over `/browser/ws`, snapshots are bounded
 by the manager (element / text caps) before they become tool results, and a
 screenshot travels to a vision-capable model as the image itself (the
 `image_to_text` skill is the fallback for a model without native vision, and the
-per-turn history strip keeps an old screenshot out of later contexts).
+request-time history media budget drops an old screenshot only once the
+session's retained images exceed `history_media_budget_bytes`).
 Nothing a page displays can steer the agent except through a tool result the
 model itself asked for — and those results pass the untrusted-output fence and
 secret redaction like any other remote content (see the threat model).
@@ -91,7 +92,7 @@ Everything that reaches graph state or MesMemory enters from one of the sources 
 | Cron-triggered turn | `origin='cron'` | `True` | a scheduled job's session turn (`origin_for_source`) | `messages` row | not a user request |
 | Compression summary pair | `lc_source='summarization'` (in `additional_kwargs`, not the origin column) | — | a compaction artifact (`_build_new_messages`) | **never persisted to MesMemory**; a state summary pair | `<summary>` resident in the model view; carried forward as `<prior-summary>` |
 | Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers in the structured summary doc |
-| Media file | non-message — disk file | — | upload processing (`MultimodalProcessor`), native history stripping, or compression-time offload (`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/` (durable copies; compression-time offload names by `sha256[:16]` and dedups); a payload over `max_media_bytes` is never written | media blocks when native; skill-path hints and per-request scrub placeholders carry the path; the summary chain keeps offloaded paths in `evicted_refs[]` |
+| Media file | non-message — disk file | — | upload processing (`MultimodalProcessor`), request-time history media budgeting (`MultimodalProcessor._project_history_media_budget`), or compression-time offload (`offload_inline_media`) | `SRC_DIR/<session_id>/artifacts/` (content-addressed upload copies named `<family>-<sha256[:16]><ext>`; identical bytes dedupe) plus `SESSIONS_DIR/<session_id>/media/` (compression-time offload and non-pipeline media); a payload over `max_media_bytes` is never written | media blocks when native; skill-path hints (artifact URIs resolved back to files) and per-request scrub placeholders carry the path; the summary chain keeps offloaded paths in `evicted_refs[]` |
 | Legacy plan knowledge | non-message — disk directory | — | retired from model-facing reads | `workspace/knowledge/plans/<plan_key>/` | not injected; only the raw `handoff-tree.json` audit file remains |
 | `facts` target | MesMemory `memory_entries` rows (one global target) | — | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions: compression-time memory review + completed-plan skill review | memory target (1 375-char limit; overflow archives the LEAST-ACTIVE entries) | injected into every system prompt as a resident FACTS memory block |
 
@@ -228,7 +229,7 @@ There are no environment variables for these knobs: they are code defaults in th
 | `tests/agent/middlewares/test_summary_message_filtering.py` | Chain-summary filtering and `<prior-summary>` injection |
 | `tests/agent/middlewares/test_compression_media_offload.py` | Compression-time inline-media offload: write + pointer, hash dedup, failure placeholder, preserved window untouched, sync/async, `evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | Block-wise multimodal estimation: fixed media costs, 5 MB-base64 regression, unknown-block media, `str` / `None` / empty-list edges |
-| `tests/agent/middlewares/test_multimodal_processor.py` | Tri-state native switch and per-request scrub: mixed families strip only unsupported blocks, supported blocks kept verbatim, state/kwargs/disk untouched, `"true"` never scrubbed, history image stripping |
+| `tests/agent/middlewares/test_multimodal_processor.py` | Tri-state native switch and per-request scrub: mixed families strip only unsupported blocks, supported blocks kept verbatim, state/kwargs/disk untouched, `"true"` never scrubbed; history media budget projection lives in `media_pipeline/test_history_budget.py` (fit / newest-first / protected latest user / remote URL / all dropped) |
 | `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` cap: oversize payloads skipped before any write, model-visible notice, exactly-at-limit allowed, declared `Content-Length` fast path, capped read |
 | `tests/agent/middlewares/test_media_degradation.py` | Silent-degradation detection: en / zh / ja / ko blindness regex + describe-request patterns, capable or unrelated replies stay clean, every present family cached, flag cleared either way, fallback-candidate attribution |
 | `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | Rejection → cache + skill-path rewrite: next-session native skip, per-model-key isolation, explicit `"true"` never falls back |

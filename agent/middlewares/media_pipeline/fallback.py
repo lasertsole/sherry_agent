@@ -7,10 +7,12 @@ auto-mode native attempt is rejected by the model, ``LLMRetryMiddleware`` calls
 :func:`apply_skill_fallback` to rewrite the request onto the skill path.
 """
 
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from agent.tools.pub_base.artifact_store import ARTIFACT_URI_PREFIX, resolve_artifact
 from config import SRC_DIR
 from pub.func import is_url
 
@@ -151,12 +153,22 @@ def _paths_from_additional_kwargs(mes: BaseMessage) -> MediaPaths | None:
     paths = MediaPaths()
     if images:
         paths.persisted_images = list(images)
-        paths.image_hints = list(images)
+        # The skill path needs a filesystem path, while the message row carries
+        # the artifact URI. Resolve it back for the hint; an unresolvable URI
+        # stays as-is so the model at least sees the reference.
+        paths.image_hints = [_hint_path(item, SRC_DIR) for item in images]
     if audios:
         paths.audios = list(audios)
     if videos:
         paths.videos = list(videos)
     return paths
+
+
+def _hint_path(entry: str, root: Path) -> str:
+    if not entry.startswith(ARTIFACT_URI_PREFIX):
+        return entry
+    resolved = resolve_artifact(entry, root=root)
+    return resolved.as_posix() if resolved is not None else entry
 
 
 def _as_path_list(value: Any) -> list[str]:

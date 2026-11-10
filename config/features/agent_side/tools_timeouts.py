@@ -68,6 +68,14 @@ class ToolsTimeoutsConfig(TypedDict):
     read_file_fast_path_threshold_bytes: int
     #: Bytes per ``os.read`` in the streaming scan.
     read_file_stream_chunk_bytes: int
+    #: Hard ceiling for one read_file image branch (raw bytes, before
+    #: compression). Aligns with ZCode's 20 MB ``read_image_input_too_large``.
+    read_image_max_bytes: int
+    #: PDF native/image branch: raw file cap, page cap and renderer budget.
+    pdf_max_file_bytes: int
+    pdf_max_pages_per_request: int
+    pdf_render_timeout_s: float
+    pdf_render_dpi: int
     file_tools_search_default_limit: int
     file_tools_search_max_limit: int
     file_tools_search_max_context: int
@@ -130,6 +138,11 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "read_file_max_whole_read_bytes": 262_144,
     "read_file_fast_path_threshold_bytes": 10_485_760,
     "read_file_stream_chunk_bytes": 65_536,
+    "read_image_max_bytes": 20 * 1024 * 1024,
+    "pdf_max_file_bytes": 20 * 1024 * 1024,
+    "pdf_max_pages_per_request": 20,
+    "pdf_render_timeout_s": 120.0,
+    "pdf_render_dpi": 100,
     "file_tools_search_default_limit": 50,
     "file_tools_search_max_limit": 200,
     "file_tools_search_max_context": 5,

@@ -52,6 +52,17 @@ from .tool_utils import SessionId, resolve_tool_session_id, tool_error
 from .text_matcher import fuzzy_find_and_replace, format_no_match_hint
 from .skill_usage import bump_patch, forget, mark_agent_created
 from .skill_provenance import is_background_review
+from .artifact_store import (
+    ARTIFACT_DIR_NAME,
+    ARTIFACT_URI_PREFIX,
+    artifact_path,
+    artifact_uri,
+    find_artifact,
+    is_valid_artifact_name,
+    parse_artifact_uri,
+    resolve_artifact,
+    write_artifact,
+)
 from .skill_utils import (
     find_auto_skills,
     sort_skills,
@@ -119,6 +130,15 @@ __all__ = [
     "forget",
     "mark_agent_created",
     "is_background_review",
+    "ARTIFACT_DIR_NAME",
+    "ARTIFACT_URI_PREFIX",
+    "artifact_path",
+    "artifact_uri",
+    "find_artifact",
+    "is_valid_artifact_name",
+    "parse_artifact_uri",
+    "resolve_artifact",
+    "write_artifact",
     "find_auto_skills",
     "sort_skills",
     "get_all_auto_skills_dirs",

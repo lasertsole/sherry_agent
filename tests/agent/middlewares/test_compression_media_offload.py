@@ -25,6 +25,7 @@ from agent.middlewares.summarization.media_offload import (
     offload_inline_media,
 )
 from agent.middlewares.summarization.summary_doc import SummaryDoc
+from agent.tools.pub_base import artifact_store
 from runtime import state_register_mem
 
 pytestmark = [pytest.mark.module]
@@ -161,6 +162,26 @@ class TestOffloadInlineMedia:
         message = HumanMessage(content=[_image_block(_data_url(_PNG))])
         block = offload_inline_media([message], "../escape")[0].content[0]
         assert block == {"type": "text", "text": MEDIA_FAILED_PLACEHOLDER}
+
+    def test_pipeline_artifact_is_reused_without_a_second_copy(
+        self, sessions_root, sid, tmp_path, monkeypatch
+    ):
+        # An upload was already persisted by the artifact store at ingestion
+        # time; offload must point at that file instead of decoding + writing
+        # a second copy under SESSIONS_DIR.
+        monkeypatch.setattr(artifact_store, "SRC_DIR", tmp_path)
+        uri = artifact_store.write_artifact(sid, _PNG, media_type="image", ext=".png")
+        assert uri is not None
+        artifact_path = artifact_store.resolve_artifact(uri)
+        assert artifact_path is not None
+
+        message = HumanMessage(content=[_image_block(_data_url(_PNG))])
+
+        rewritten = offload_inline_media([message], sid)
+
+        pointer = rewritten[0].content[0]
+        assert pointer["text"] == f"[evicted to: {artifact_path}]"
+        assert _media_files(sessions_root, sid) == []
 
 
 def _disable_nudges(monkeypatch):

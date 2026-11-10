@@ -36,7 +36,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/taskflow/`              | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector)                                                       | `agent/tools/taskflow/config.py`                     |
 | `agent/tools/todolist/`              | Session-scoped todo planning layer                                                                                                            | `agent/tools/todolist/service.py`                    |
 | `agent/tools/subagent/`              | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles)                                                                                    | `agent/tools/subagent/spawn/core.py`                 |
-| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the SQLite evidence ledger/recorder)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
+| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the SQLite evidence ledger/recorder, the content-addressed artifact store, the optional PDF page renderer)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
 | `agent/wrapper/`                     | Graph-level wrappers (repetition guard, context limit) + pluggable registry                                                                                                          | `agent/wrapper/registry.py`                          |
 | `agent/state_port.py`                | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API)                                     | `agent/state_port.py`                                |
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
@@ -2098,6 +2098,87 @@ question unanswerable by traversal. `path_search.py` adds the explicit layer
   regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
   total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
 
+## Media Pipeline: Compression, Native Reads, History Budget & Artifacts
+
+Every image the agent sends passes one compression cascade
+(`pub/func/media/image_compress.py::prepare_for_model`, aligned with ZCode's
+`prepareForModel`/`SQ`). The gate is per image: the longest edge must fit
+`image_compress_max_dimension` (2000 px), the raw payload must fit
+`max_base64_bytes * 3 / 4` (5 MiB base64 → 3.75 MiB raw), and the estimated
+tokens — `ceil(ceil(raw_len/3)*4 * 0.125)` — must fit
+`image_compress_max_tokens` (25 000). This is a SENDING gate, NOT the
+context-window estimator: `pub/func/estimate_tokens.py` keeps its fixed 85-token
+placeholder per image and `ContextLimitGuard` keeps using the provider-reported
+`usage_metadata.input_tokens`. The cascade tries WebP passthrough when it
+already fits, then a format-preserving re-encode (PNG optimize; JPEG quality
+80 → 60 → 40 → 20), a resize to the max edge, 75/50/25% downscale steps, and a
+hard JPEG-q20 ladder at 1000 → 200 px; when nothing fits it raises
+`ImageTooLargeError` and the caller falls back to its text/skill path. Four
+sites use it: `server/service/messages.py::_get_content_list` (WS/Tauri sends),
+`agent/middlewares/media_pipeline/tool_media.py::_image_block` (tool
+screenshots), `server/trigger/http/image.py::upload_image` (browser-mode HTTP
+upload), and `pub/func/media/image.py::download_and_convert_to_base64` (the
+image-to-text skill's download). `image_compress_enabled` turns the cascade off
+for byte-exact passthrough.
+
+`read_file` reads media natively instead of handing the model mojibake or a
+skill detour:
+
+- **Images** (`.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif`) go through the
+  cascade, are written to `TEMP_DIR/read_images/<sha256[:16]><ext>` (the skill path's
+  input), and are returned as `[text, image_url]` through
+  `native_image_content`. The text names the original path and the compressed
+  dimensions; a model without vision gets the text plus an `image_to_text`
+  instruction. `read_image_max_bytes` (20 MiB) bounds the file before decoding.
+- **PDFs** take one of two paths. A model whose declared capability carries
+  `pdf` and a request WITHOUT a page range gets the raw document as a native
+  block (`document` for Anthropic, `file` for OpenAI-compatible providers). A
+  page range (or a PDF-less model with vision) renders pages through
+  `agent/tools/pub_base/pdf_render.py` — PyMuPDF when installed, else poppler's
+  `pdftoppm`, 100 DPI, `pdf_render_timeout_s` (120 s), at most
+  `pdf_max_pages_per_request` (20) pages, each compressed and attached as an
+  `image_url` block. Neither renderer installed reports
+  `pdf_render_unavailable`; a supported-PDF model without vision that asks for
+  a page range gets `pdf_pages_images_unsupported`; a model with neither family
+  gets `pdf_not_supported`; `pdf_max_file_bytes` is 20 MiB.
+- `ContextEviction`'s `read_file` slicer leaves a BLOCK-LIST result untouched:
+  its text is already budgeted by the tool, and slicing `str(content)` would
+  embed the whole base64 payload and cut the media block away.
+
+History media is projected against a byte budget at REQUEST time — there is no
+checkpoint rewrite and no unconditional strip. In `wrap_model_call` the
+capability scrub runs first (`scrub_messages`: unsupported families become text
+placeholders), then `_project_history_media_budget` keeps every `image_url`
+block that fits `history_media_budget_bytes` (75 MiB, ZCode's `Mui`) choosing
+newest-first by message index. The latest real user message's media is
+PROTECTED (`preserve_latest_user_media`, resolved through
+`is_user_message`; a transcript without `metadata.origin == "user"` falls back
+to the newest media-bearing HumanMessage) and is kept even over budget. Only
+inline data-URL payloads are measured (decoded size; a remote URL is fetched by
+the provider and costs zero), and a dropped block becomes
+`[Attached image]\n[Media omitted from provider request … media budget.]` in a
+`model_copy` request copy. A session under budget therefore keeps all its
+images; the old `_strip_history_images` (which dropped history media after every
+text turn) is gone.
+
+Uploaded images are persisted in a content-addressed artifact store
+(`agent/tools/pub_base/artifact_store.py`): SHA-256 prefix (16 hex) + media
+family + extension, under `SRC_DIR/<session_id>/artifacts/`, written once
+(existence dedupe under one process lock) and referenced as
+`sherry-artifact://<session_id>/<name>`. `ImageUrlHandler` stores the original
+compressed bytes there and puts the URI in `additional_kwargs["images"]` (the
+temp copy stays timestamped because the skill path and the temp sweeper expect
+it); `GET /artifacts/:session_id/:name` serves it (`server/trigger/http/artifacts.py`,
+session-scoped — another session's name is a 404), and the client resolves the
+URI through `/artifacts` in `use-chat-media.ts` and in markdown answers
+(`ChatBox.vue` runs the answer through `resolveArtifactRefsInMarkdown` before
+markdown rendering).
+`media_offload` reuses an existing artifact (`find_artifact` by content hash)
+instead of decoding and writing a second copy at compression time.
+`artifact_store_enabled` (default true) off restores the legacy timestamped
+`media/<ts><ext>` copy and the `/media` URL; artifact URIs written earlier stay
+readable.
+
 ## Multimodal Capability Catalog (`config/model_capabilities.py`)
 
 The media pipeline's auto mode resolves each media family through one cache
@@ -2230,8 +2311,8 @@ returns **the image itself** when the serving model reads images natively
 skill is the fallback for a model without vision, never the route a
 vision-capable one takes; the per-request capability scrub and the retry
 fallback strip the block again for a model that turns out blind, and the
-per-turn history strip removes it from later turns so a screenshot does not
-ride every context); `browser_evaluate` stays a separate tool and registers only
+request-time history media budget drops it only once the session's retained
+images exceed the byte budget); `browser_evaluate` stays a separate tool and registers only
 with `SHERRY_BROWSER_ALLOW_EVALUATE=1`.
 
 **Panel** — `BrowserPanel.vue` picks CDP mode from `/browser/status` and falls

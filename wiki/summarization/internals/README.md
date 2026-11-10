@@ -60,6 +60,7 @@ Every failure mode is fail-open: if `_apply_compression` raises, the exception i
 Compression must never hand a base64 payload to the auxiliary summarizer. Before the summarized prefix (`current_messages[:cutoff]`) is serialized, `offload_inline_media` (`agent/middlewares/summarization/media_offload.py`) rewrites every inline media block in **that range only**:
 
 - a `data:` URL / base64 payload (`image_url` / `audio_url` / `video_url`, a bare `base64` field, `audio_bytes` / `video_bytes`, or an Anthropic-style `source.data`) is decoded and written to `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`; the extension is derived from the magic bytes via `media_handlers._infer_extension`;
+- a payload the artifact store already holds (an upload persisted at ingestion time) is NOT rewritten: `find_artifact` resolves it by content hash and the pointer names that artifact file, so compression writes no second copy;
 - identical bytes are written once — the content-hash filename deduplicates repeats within and across compactions;
 - the block is replaced by a text pointer `[evicted to: <path>]`, the same marker `pub/func/message/eviction.py` emits, so `_collect_evicted_refs` picks it up and `_finalize_summary_doc` carries it into `SummaryDoc.evicted_refs` (rendered as *Evicted References*);
 - a block that cannot be decoded or written becomes `<media error="failed_to_offload" />` — a media failure never crashes compression.

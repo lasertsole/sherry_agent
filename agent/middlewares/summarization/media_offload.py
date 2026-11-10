@@ -27,6 +27,7 @@ from langchain_core.messages import AnyMessage
 from loguru import logger
 
 from agent.middlewares.media_pipeline.media_handlers import _infer_extension
+from agent.tools.pub_base.artifact_store import find_artifact
 from config import SESSIONS_DIR
 from config.path import is_safe_session_segment
 from pub.func.estimate_tokens import classify_media_family
@@ -88,6 +89,13 @@ def _offload_content(content: list[Any], session_id: str) -> tuple[list[Any], bo
             new_content.append(block)
             continue
         family = classify_media_family(block) or "unknown"
+        # A payload the artifact store already holds needs no second copy: the
+        # upload path persisted it by content address at ingestion time.
+        existing = find_artifact(session_id, raw, media_type=family)
+        if existing is not None:
+            new_content.append({"type": "text", "text": f"{EVICTION_PREFIX}{existing}]"})
+            changed = True
+            continue
         path = _store_media(raw, family, session_id)
         if path is None:
             new_content.append(_failed_block())

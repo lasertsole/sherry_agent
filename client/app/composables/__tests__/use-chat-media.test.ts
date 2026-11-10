@@ -8,6 +8,7 @@ import {
   messageImages,
   messageAudios,
   messageVideos,
+  resolveArtifactRefsInMarkdown,
   useChatMedia
 } from '../use-chat-media';
 import { CHAT_ROLE } from '@/types/chat-role';
@@ -47,6 +48,14 @@ describe('resolveImageSrc', () => {
     );
   });
 
+  it('resolves content-addressed artifact references through /artifacts', () => {
+    const name = `image-${'a'.repeat(16)}.png`;
+    expect(resolveImageSrc(msg({}), `sherry-artifact://s1/${name}`)).toBe(`http://localhost:8080/artifacts/s1/${name}`);
+    expect(resolveAudioSrc(msg({}), `sherry-artifact://s1/audio-${'b'.repeat(16)}.ogg`)).toBe(
+      `http://localhost:8080/artifacts/s1/audio-${'b'.repeat(16)}.ogg`
+    );
+  });
+
   it('treats raw base64 (incl. / + and =) as a local data URL, never a file path', () => {
     const b64 = 'ab/c+d==';
     expect(resolveImageSrc(msg({}), b64)).toBe(`data:image/*;base64,${b64}`);
@@ -68,6 +77,16 @@ describe('resolveMediaSrc / audio / video', () => {
     );
     expect(resolveMediaSrc(msg({}), 'https://x/y.mp4', 'video/*')).toBe('https://x/y.mp4');
     expect(resolveMediaSrc(msg({}), '', 'audio/*')).toBe('');
+  });
+});
+
+describe('resolveArtifactRefsInMarkdown', () => {
+  it('rewrites artifact references (including markdown image syntax)', () => {
+    const name = `image-${'a'.repeat(16)}.png`;
+    expect(resolveArtifactRefsInMarkdown(`![shot](sherry-artifact://s1/${name})`)).toBe(
+      `![shot](http://localhost:8080/artifacts/s1/${name})`
+    );
+    expect(resolveArtifactRefsInMarkdown('plain text with no refs')).toBe('plain text with no refs');
   });
 });
 

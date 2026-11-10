@@ -60,6 +60,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 压缩绝不能把 base64 载荷交给辅助摘要模型。在序列化被摘要的前缀（`current_messages[:cutoff]`）之前，`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）只重写**该范围**内的每个内联媒体块：
 
 - `data:` URL / base64 载荷（`image_url` / `audio_url` / `video_url`、裸 `base64` 字段、`audio_bytes` / `video_bytes`，或 Anthropic 风格的 `source.data`）被解码并写入 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`；扩展名由魔数经 `media_handlers._infer_extension` 推导；
+- artifact 存储已持有的载荷（摄入时持久化的上传）不会被重写：`find_artifact` 按内容哈希找到它，指针直接指向该 artifact 文件，因此压缩不再写第二份副本；
 - 相同字节只写一份 —— 以内容 hash 命名的文件名在单次及多次压缩之间去重；
 - 该块被替换为文本指针 `[evicted to: <path>]`，与 `pub/func/message/eviction.py` 发出的标记一致，因此 `_collect_evicted_refs` 能收集到它，`_finalize_summary_doc` 会把路径带进 `SummaryDoc.evicted_refs`（渲染为 *Evicted References*）；
 - 无法解码或写入的块变成 `<media error="failed_to_offload" />` —— 媒体失败绝不会弄坏压缩。

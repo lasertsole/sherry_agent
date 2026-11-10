@@ -382,6 +382,19 @@ class TestReadFileSlice:
 
         assert slice_read_file_result(message) is message
 
+    def test_a_multimodal_result_is_never_sliced(self):
+        block = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64," + "A" * 20_000},
+        }
+        message = ToolMessage(
+            content=[{"type": "text", "text": "[Image read: shot.png]"}, block],
+            name="read_file",
+            tool_call_id="r1",
+        )
+
+        assert slice_read_file_result(message) is message
+
     def test_over_slice_limit_keeps_head_and_notice(self):
         content = "x" * 4_001
         message = ToolMessage(content=content, name="read_file", tool_call_id="r1", id="t2")

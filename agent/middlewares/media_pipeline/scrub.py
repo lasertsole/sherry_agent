@@ -113,7 +113,10 @@ def _media_path_for_block(
     index = counters[family]
     counters[family] = index + 1
     recorded_paths: list[str] = {
-        "vision": recorded.persisted_images,
+        # image_hints is the resolved filesystem view (artifact URIs are mapped
+        # back to their file by _paths_from_additional_kwargs), which is what a
+        # skill-path placeholder must hand the model.
+        "vision": recorded.image_hints or recorded.persisted_images,
         "audio": recorded.audios,
         "video": recorded.videos,
         "pdf": [],

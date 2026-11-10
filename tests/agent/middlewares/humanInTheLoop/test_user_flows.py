@@ -397,16 +397,16 @@ class TestUC09MultimodalFlow:
 
         mw._before_agent_impl(state)
 
-        # Persisted to disk (both temp + media copies)
-        saved = list((src / "uc09" / "media").glob("*.png"))
+        # Persisted to the content-addressed store (the temp copy feeds skills)
+        saved = list((src / "uc09" / "artifacts").glob("*.png"))
         assert len(saved) == 1
         # Prompt injection
         text_block = msg.content[0]["text"]
         assert "image_to_text" in text_block and "1 image(s)" in text_block
-        # Persisted path in kwargs
-        assert msg.additional_kwargs["images"] == [saved[0].as_posix()]
+        # Persisted reference in kwargs (resolved by the client through /artifacts)
+        assert msg.additional_kwargs["images"] == [f"sherry-artifact://uc09/{saved[0].name}"]
 
-    def test_old_image_blocks_stripped_from_history(self, mm):
+    def test_history_image_blocks_survive_for_request_time_projection(self, mm):
         mw, src = mm
         old = HumanMessage(
             content=[
@@ -419,7 +419,9 @@ class TestUC09MultimodalFlow:
 
         mw._before_agent_impl(state)
 
-        assert old.content == "旧的", "历史消息的 base64 必须剥离"
+        # The checkpoint keeps its media; wrap_model_call projects the request
+        # against the byte budget (see media_pipeline/test_history_budget.py).
+        assert [item["type"] for item in old.content] == ["text", "image_url"]
         assert current.content[0]["type"] == "text"
 
     def test_expired_temp_files_cleaned(self, mm):

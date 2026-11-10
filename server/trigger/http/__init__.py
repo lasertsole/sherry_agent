@@ -2,6 +2,7 @@
 import server.trigger.http.auth  # noqa: F401  (side-effect route registration)
 import server.trigger.http.messages
 import server.trigger.http.media
+import server.trigger.http.artifacts  # noqa: F401  (side-effect route registration)
 import server.trigger.http.workplace
 import server.trigger.http.image
 import server.trigger.http.audio

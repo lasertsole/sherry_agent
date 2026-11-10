@@ -1,9 +1,8 @@
-"""P1-a: history image stripping runs only when an image_url block exists.
+"""Multimodal processor: turn media handling, capability scrub, skill fallback.
 
-``MultimodalProcessor.before_agent`` walks history on every turn. The strip is
-now preceded by a cheap ``image_url`` presence check, and the content is only
-reassigned when stripping actually produces text — a text-only block list (the
-common shape left behind by an earlier turn) is no longer rewritten.
+History media is no longer stripped in ``before_agent``: ``wrap_model_call``
+projects it against a per-request byte budget (see
+``tests/agent/middlewares/media_pipeline/test_history_budget.py``).
 """
 
 import asyncio
@@ -94,52 +93,16 @@ def _audio_item() -> dict:
     return {"type": "audio_bytes", "audio_bytes": b"\x49\x44\x33\x03"}
 
 
-class TestHistoryImageStrip:
-    def test_history_image_block_is_stripped(self, processor):
+class TestHistoryMediaKept:
+    def test_before_agent_no_longer_strips_history_images(self, processor):
+        # Budget projection is a per-request override; the checkpoint copy is
+        # never rewritten, so later turns can still re-derive their own view.
         old = HumanMessage(content=_image_content("旧的"))
         current = HumanMessage(content=[{"type": "text", "text": "新的"}])
 
         processor._before_agent_impl(_state([old, current]))
 
-        assert old.content == "旧的"
-
-    def test_second_run_leaves_stripped_message_untouched(self, processor):
-        old = HumanMessage(content=_image_content("旧的"))
-        processor._before_agent_impl(
-            _state([old, HumanMessage(content=[{"type": "text", "text": "新的"}])])
-        )
-        stripped = old.content
-
-        processor._before_agent_impl(
-            _state([old, HumanMessage(content=[{"type": "text", "text": "第三轮"}])])
-        )
-
-        assert old.content is stripped
-
-    def test_text_only_list_history_is_not_rewritten(self, processor):
-        old = HumanMessage(content=[{"type": "text", "text": "只有文本"}])
-        original_content = old.content
-
-        processor._before_agent_impl(
-            _state([old, HumanMessage(content=[{"type": "text", "text": "新的"}])])
-        )
-
-        assert old.content is original_content
-        assert isinstance(old.content, list)
-
-    def test_image_only_history_keeps_its_content(self, processor):
-        # Pre-existing semantics: without any text block the strip yields "",
-        # so the content is left as-is (image included).
-        old = HumanMessage(
-            content=[{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]
-        )
-        original_content = old.content
-
-        processor._before_agent_impl(
-            _state([old, HumanMessage(content=[{"type": "text", "text": "新的"}])])
-        )
-
-        assert old.content is original_content
+        assert [item["type"] for item in old.content] == ["text", "image_url"]
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +151,7 @@ class TestTriStateConfig:
 
         assert [item["type"] for item in mes.content] == ["text", "image_url"]
         assert len(mes.additional_kwargs["images"]) == 1
-        assert (src_dir / "tri-true" / "media").exists()
+        assert (src_dir / "tri-true" / "artifacts").exists()
 
     def test_true_keeps_history_media_blocks(self, processor, monkeypatch):
         monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_native_multimodal", "true")
@@ -208,7 +171,9 @@ class TestTriStateConfig:
 
         assert [item["type"] for item in current.content] == ["text"]
         assert "image_to_text" in current.content[0]["text"]
-        assert old.content == "旧图"
+        # History media is no longer stripped per turn: the request-time budget
+        # projection owns it, so the checkpoint keeps the original block.
+        assert [item["type"] for item in old.content] == ["text", "image_url"]
         assert len(current.additional_kwargs["images"]) == 1
 
     def test_auto_unprobed_keeps_blocks_and_marks_attempt(self, processor):
@@ -395,7 +360,7 @@ class TestPerRequestScrub:
         processor._before_agent_impl(_state([mes], "scrub-state"))
         original_content = mes.content
         original_kwargs = dict(mes.additional_kwargs)
-        media_dir = src_dir / "scrub-state" / "media"
+        media_dir = src_dir / "scrub-state" / "artifacts"
         files_before = sorted(path.name for path in media_dir.iterdir())
         states_before = dict(state_register_mem.get_all_states("scrub-state"))
 
@@ -500,7 +465,7 @@ class TestApplySkillFallback:
 
         out = mm_fallback.apply_skill_fallback([mes], "fb-fresh")
 
-        assert (src_dir / "fb-fresh" / "media").exists()
+        assert (src_dir / "fb-fresh" / "artifacts").exists()
         assert "image_to_text" in out[0].content[0]["text"]
 
     def test_non_human_last_message_returns_input(self, processor):
@@ -639,19 +604,3 @@ class TestToolProducedMedia:
 
         assert [item["type"] for item in out[1].content] == ["text", "text"]
         assert "image_to_text" in out[1].content[1]["text"]
-
-    def test_history_strip_also_clears_tool_images(self, processor):
-        from langchain_core.messages import ToolMessage
-
-        old_tool = ToolMessage(
-            content=[
-                {"type": "text", "text": "screenshot saved: /tmp/old.png"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
-            ],
-            tool_call_id="c1",
-        )
-        tail = AIMessage(content="done")
-
-        processor._strip_history_images([old_tool, tail])
-
-        assert old_tool.content == "screenshot saved: /tmp/old.png"

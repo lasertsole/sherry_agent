@@ -70,7 +70,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 `browser` ツールが返すテキスト（旧 `browser_*` 結果も同様）（とスクリーンショットのパス）だけです。ページそのもの——
 DOM、ピクセル、screencast フレーム——はメッセージストアに入りません：フレームは
 `/browser/ws` で直接パネルへ、スナップショットはツール結果になる前にマネージャが上限
-（要素 / テキスト）で切り詰め、スクリーンショットは視覚対応モデルには画像そのものとして届きます（`image_to_text` スキルはネイティブ視覚を持たないモデルのフォールバックであり、ターンごとの履歴整理が古いスクリーンショットを以降の文脈から外します）。ページが表示する何かがエージェントに影響できるのは、
+（要素 / テキスト）で切り詰め、スクリーンショットは視覚対応モデルには画像そのものとして届きます（`image_to_text` スキルはネイティブ視覚を持たないモデルのフォールバックであり、リクエスト時の履歴メディア予算が、保持画像が `history_media_budget_bytes` を超えたときにだけ古いスクリーンショットを以降の文脈から外します）。ページが表示する何かがエージェントに影響できるのは、
 モデル自身が要求したツール結果を通じてだけです——そしてその結果も他のリモートコンテンツと
 同様に、信頼できない出力のフェンスとシークレットの秘匿化を通ります（脅威モデルを参照）。
 
@@ -88,7 +88,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | cron 起動のターン | `origin='cron'` | `True` | 定期ジョブのセッションターン（`origin_for_source`） | `messages` 行 | ユーザーリクエストではない |
 | 圧縮要約ペア | `lc_source='summarization'`（`additional_kwargs` 内、origin 列ではない） | — | 圧縮成果物（`_build_new_messages`） | **MesMemory には永続化されない**；state の要約ペア | `<summary>` がモデルビューに常駐；`<prior-summary>` として連鎖継続 |
 | 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンは構造化要約ドキュメント内で `evicted_refs[]` ポインタを運ぶ |
-| メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、履歴メッセージのネイティブブロック除去、または圧縮時オフロード（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（永続コピー；圧縮時オフロードは `sha256[:16]` 命名で重複排除）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒントとリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
+| メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、リクエスト時の履歴メディア予算（`MultimodalProcessor._project_history_media_budget`）、または圧縮時オフロード（`offload_inline_media`） | `SRC_DIR/<session_id>/artifacts/`（内容アドレス型のアップロードコピー、名前は `<family>-<sha256[:16]><ext>`；同一バイトは重複排除）と `SESSIONS_DIR/<session_id>/media/`（圧縮時オフロードとパイプライン外メディア）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒント（artifact URI はファイルに解決される）とリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
 | レガシー計画知識 | 非メッセージ —— ディレクトリ | — | モデル読み取りから退役 | `workspace/knowledge/plans/<plan_key>/` | 注入しない；生の `handoff-tree.json` 監査ファイルのみ残る |
 | `facts` target | MesMemory `memory_entries` 行（唯一のグローバルターゲット） | — | システムレベル / プロジェクト横断の落とし穴・規約：圧縮時の記憶レビュー + 計画完了時のスキルレビュー | memory ターゲット（1 375 文字上限；超過時は最も使われていないエントリをアーカイブ） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
 
@@ -223,7 +223,7 @@ sherry が対応する provider のうち、Anthropic だけはプロンプト�
 | `tests/agent/middlewares/test_summary_message_filtering.py` | チェーン要約フィルタリングと `<prior-summary>` 注入 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 圧縮時インライン・メディア・オフロード：書き込み + ポインタ、ハッシュ重複排除、失敗プレースホルダ、保持ウィンドウ不変、同期／非同期、`evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | ブロック単位マルチモーダル推定：固定メディアコスト、5 MB base64 回帰、メディアを隠す未知ブロック、`str` / `None` / 空リスト境界 |
-| `tests/agent/middlewares/test_multimodal_processor.py` | 三態ネイティブ・スイッチとリクエストごとのスクラブ：混合ファミリーは非対応ブロックだけを剥がし、対応ブロックはそのまま、state/kwargs/ディスク不変、`"true"` は決してスクラブしない、履歴画像の除去 |
+| `tests/agent/middlewares/test_multimodal_processor.py` | 三態ネイティブ・スイッチとリクエストごとのスクラブ：混合ファミリーは非対応ブロックだけを剥がし、対応ブロックはそのまま、state/kwargs/ディスク不変、`"true"` は決してスクラブしない；履歴メディア予算の投影は `media_pipeline/test_history_budget.py`（全収容 / 新しい順 / 最新ユーザー保護 / リモート URL / 全破棄） |
 | `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` 上限：超過ペイロードは書き込み前にスキップ、モデル可視の通知、上限ちょうどは許可、申告 `Content-Length` の高速パス、制限付き読み取り |
 | `tests/agent/middlewares/test_media_degradation.py` | サイレント劣化の検出：en / zh / ja / ko の盲目正規表現 + 説明要求パターン、有能・無関係な返答は誤検出しない、実際の全ファミリーをキャッシュ、どちらでもフラグ解除、フォールバック候補への帰属 |
 | `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | 拒否 → キャッシュ + スキルパス書き換え：次セッションのネイティブ・スキップ、モデルキー分離、明示 `"true"` はフォールバックしない |

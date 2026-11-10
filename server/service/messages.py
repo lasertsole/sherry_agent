@@ -1,8 +1,9 @@
 import asyncio
 import base64
 from dataclasses import dataclass
-from config.features import WS_STREAM
+from config.features import MEDIA_PIPELINE, WS_STREAM
 from loguru import logger
+from pub.func.media.image_compress import ImageTooLargeError, prepare_for_model
 from agent import built_agent
 from agent import core as agent_core
 from langgraph.types import Command
@@ -38,6 +39,48 @@ from .resumable_breakpoint import (
 )
 
 
+def _compress_outgoing_image(raw: bytes):
+    """Run the image cascade, or return ``None`` when it cannot be compressed.
+
+    Fail-open on purpose: an undecodable/oversized payload keeps the previous
+    behaviour (the model/API still applies its own limits) instead of failing
+    the user's turn.
+    """
+    if not MEDIA_PIPELINE.get("image_compress_enabled", True):
+        return None
+    try:
+        return prepare_for_model(
+            raw,
+            max_dimension=int(MEDIA_PIPELINE["image_compress_max_dimension"]),
+            max_tokens=int(MEDIA_PIPELINE["image_compress_max_tokens"]),
+            token_ratio=float(MEDIA_PIPELINE["image_compress_token_ratio"]),
+        )
+    except ImageTooLargeError as exc:
+        logger.warning("Outgoing image left uncompressed: {}", exc)
+        return None
+    except Exception as exc:  # noqa: BLE001 — not an image / PIL cannot decode it
+        logger.debug("Outgoing image compression skipped: {}", exc)
+        return None
+
+
+def _prepare_base64_image(value: str) -> str:
+    """Compress a base64/data-URI image and rebuild its data URI."""
+    payload = value
+    if value.startswith("data:"):
+        _header, separator, payload = value.partition(",")
+        if not separator:
+            return value
+    try:
+        raw = base64.b64decode(payload, validate=False)
+    except (ValueError, TypeError):
+        return value
+    prepared = _compress_outgoing_image(raw)
+    if prepared is None:
+        return value
+    encoded = base64.b64encode(prepared.data).decode("utf-8")
+    return f"data:{prepared.media_type};base64,{encoded}"
+
+
 def _get_content_list(multi_modal_message: MultiModalMessage) -> list[str | dict[str, Any]]:
     user_text: str = multi_modal_message.text
     content_list: list[str | dict[str, Any]] = [{"type": "text", "text": user_text}]
@@ -54,18 +97,22 @@ def _get_content_list(multi_modal_message: MultiModalMessage) -> list[str | dict
         for image_base64 in multi_modal_message.image_base64_list:
             # Check if it already has a data URI prefix
             if image_base64.startswith("data:image/"):
-                # Already has the prefix, use as-is
-                image_url = image_base64
+                image_url = _prepare_base64_image(image_base64)
             else:
-                # No prefix, add one
-                image_url = f"data:image/png;base64,{image_base64}"
+                # No prefix, add one (compressing the decoded image first).
+                image_url = _prepare_base64_image(f"data:image/png;base64,{image_base64}")
 
             content_list.append({"type": "image_url", "image_url": {"url": image_url}})
 
     if multi_modal_message.image_bytes_list:
         for image_bytes in multi_modal_message.image_bytes_list:
-            base64_str = base64.b64encode(image_bytes).decode("utf-8")
-            image_url = f"data:image/png;base64,{base64_str}"
+            prepared = _compress_outgoing_image(image_bytes)
+            if prepared is not None:
+                base64_str = base64.b64encode(prepared.data).decode("utf-8")
+                image_url = f"data:{prepared.media_type};base64,{base64_str}"
+            else:
+                base64_str = base64.b64encode(image_bytes).decode("utf-8")
+                image_url = f"data:image/png;base64,{base64_str}"
             content_list.append({"type": "image_url", "image_url": {"url": image_url}})
     ##** End image handling logic **##
 

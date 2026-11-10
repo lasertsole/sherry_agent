@@ -44,7 +44,8 @@ export interface MessageItem {
   /** Images carried by the message.
    *  User message: raw base64 (without the data: prefix; must be rendered locally with a data:image/*;base64, prefix);
    *  AI message: persisted absolute file path (e.g. C:/.../src/<session_id>/media/<ts>.png,
-   *  which must go through the backend /media?session_id=<sid>&filename=<basename> to become a renderable URL). */
+   *  which must go through the backend /media?session_id=<sid>&filename=<basename> to become a renderable URL)
+   *  or a content-addressed `sherry-artifact://<sid>/<name>` reference, served through /artifacts. */
   images?: string[];
   /** Audios carried by the message.
    *  User message: raw base64 (without the data: prefix; must be rendered locally with a data:audio/*;base64, prefix);

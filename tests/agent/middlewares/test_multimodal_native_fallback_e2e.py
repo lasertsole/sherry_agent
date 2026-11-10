@@ -161,7 +161,7 @@ def test_rejection_records_cache_and_next_session_skips_native(src_root):
     assert _MediaRejectingStubModel.text_attempts == 1
     assert llm_capability_cache.get_capability(PROVIDER, MODEL, "vision") == "unsupported"
     assert state_register_mem.get_state("e2e-native-1", TRYING_KEY, False) is False
-    assert len(list((src_root / "e2e-native-1" / "media").glob("*.png"))) == 1
+    assert len(list((src_root / "e2e-native-1" / "artifacts").glob("*.png"))) == 1
 
     assert _invoke(graph, "e2e-native-2") == "skill path reply"
     assert _MediaRejectingStubModel.media_attempts == 1

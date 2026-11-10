@@ -17,6 +17,7 @@ from typing import Any, Literal
 from PIL import Image
 from loguru import logger
 
+from agent.tools.pub_base.artifact_store import write_artifact
 from config.features import MEDIA_PIPELINE
 from pub.func import is_url
 from pub.func.validator import is_public_url
@@ -82,17 +83,23 @@ def _max_media_bytes() -> int:
     return MEDIA_PIPELINE["max_media_bytes"]
 
 
+def _video_max_bytes() -> int:
+    return MEDIA_PIPELINE["video_max_bytes"]
+
+
 def _mb_label(max_bytes: int) -> str:
     return f"{max_bytes / (1024 * 1024):g} MB"
 
 
-def _record_oversize(paths: "MediaPaths", kind: str, size: int) -> None:
+def _record_oversize(
+    paths: "MediaPaths", kind: str, size: int, *, limit: int | None = None
+) -> None:
     """Skip an oversized payload: record a model-visible notice and a warning.
 
     The payload is never written to disk and never recorded as a path, so it
     cannot reach the model as a media block.
     """
-    limit = _max_media_bytes()
+    limit = limit if limit is not None else _max_media_bytes()
     paths.skipped.append(
         f"[Uploaded media] An attached {kind} was skipped: it exceeds the "
         f"{_mb_label(limit)} input limit ({size} bytes). It was not saved and "
@@ -106,10 +113,13 @@ def _record_oversize(paths: "MediaPaths", kind: str, size: int) -> None:
     )
 
 
-def _exceeds_media_limit(data: bytes, paths: "MediaPaths", kind: str) -> bool:
-    if len(data) <= _max_media_bytes():
+def _exceeds_media_limit(
+    data: bytes, paths: "MediaPaths", kind: str, *, limit: int | None = None
+) -> bool:
+    ceiling = limit if limit is not None else _max_media_bytes()
+    if len(data) <= ceiling:
         return False
-    _record_oversize(paths, kind, len(data))
+    _record_oversize(paths, kind, len(data), limit=ceiling)
     return True
 
 
@@ -124,7 +134,13 @@ def _declared_content_length(resp: Any) -> int | None:
 
 
 def _download_url_to_temp(
-    url: str, session_id: str, kind: str, src_dir: Path, paths: "MediaPaths"
+    url: str,
+    session_id: str,
+    kind: str,
+    src_dir: Path,
+    paths: "MediaPaths",
+    *,
+    limit: int | None = None,
 ) -> str | None:
     """Download a media URL into the session folder, persisting a durable copy.
 
@@ -152,11 +168,13 @@ def _download_url_to_temp(
         )
         return None
 
-    limit = _max_media_bytes()
-    fetched = safe_fetch(url, timeout=30, max_bytes=limit)
+    ceiling = limit if limit is not None else _max_media_bytes()
+    fetched = safe_fetch(url, timeout=30, max_bytes=ceiling)
     if not fetched.ok:
         if fetched.reason == "oversize":
-            _record_oversize(paths, kind, fetched.declared_length or fetched.observed_bytes)
+            _record_oversize(
+                paths, kind, fetched.declared_length or fetched.observed_bytes, limit=ceiling
+            )
         else:
             # A refusal that is not about size (SSRF re-check on a redirect hop,
             # a dead host, a redirect loop) gets its own notice so the caller can
@@ -235,7 +253,8 @@ class MediaPaths:
 
     # Every image location (remote URLs + cached temp paths) for the hint text.
     image_hints: list[str] = field(default_factory=list)
-    # Persisted media/ image copies for additional_kwargs["images"].
+    # Durable image references for additional_kwargs["images"]:
+    # `sherry-artifact://` URIs (or legacy media/ paths when the store is off).
     persisted_images: list[str] = field(default_factory=list)
     # Persisted audio paths for the hint text and additional_kwargs["audios"].
     audios: list[str] = field(default_factory=list)
@@ -319,10 +338,19 @@ class ImageUrlHandler(MediaItemHandler):
         logger.debug("Image cached successfully!")
         paths.image_hints.append(temp_path.as_posix())
 
-        # Persist a copy into the session's media/ folder so the image
-        # survives even after mutil_temp is garbage-collected. The
-        # persistent path is stored in additional_kwargs["images"] and
-        # later saved to the DB so history can render it after refresh.
+        # Persist a durable copy so the image survives after mutil_temp is
+        # garbage-collected. Content addressing (SHA-256 name) deduplicates a
+        # resend of the same bytes; the artifact URI is what the message row
+        # carries and the client resolves through /artifacts.
+        artifact = write_artifact(
+            session_id, image_bytes, media_type="image", ext=ext, root=src_dir
+        )
+        if artifact is not None:
+            logger.debug("Image persisted to artifact store: {}", artifact)
+            paths.persisted_images.append(artifact)
+            return
+
+        # Legacy fallback (store disabled/unavailable): timestamped media copy.
         media_dir = src_dir / session_id / "media"
         media_dir.mkdir(parents=True, exist_ok=True)
         media_path = media_dir / f"{str(int(time.time() * 1000))}{ext}"
@@ -375,7 +403,7 @@ class VideoBytesHandler(MediaItemHandler):
         media_bytes = _unwrap_media_bytes(item)
         if media_bytes is None:
             return
-        if _exceeds_media_limit(media_bytes, paths, "video"):
+        if _exceeds_media_limit(media_bytes, paths, "video", limit=_video_max_bytes()):
             return
 
         temp_path, media_path, ext = _write_bytes_media(media_bytes, session_id, "video", src_dir)
@@ -395,7 +423,9 @@ class VideoUrlHandler(MediaItemHandler):
     ) -> None:
         url: str = item.get("video_url", {}).get("url", "")
         if is_url(url):
-            local_path = _download_url_to_temp(url, session_id, "video", src_dir, paths)
+            local_path = _download_url_to_temp(
+                url, session_id, "video", src_dir, paths, limit=_video_max_bytes()
+            )
             if local_path is not None:
                 paths.videos.append(local_path)
 

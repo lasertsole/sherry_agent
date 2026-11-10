@@ -442,8 +442,13 @@ def slice_read_file_result(msg: ToolMessage) -> ToolMessage:
     tool already budgeted itself (``truncated: true``) is returned untouched —
     the tool's own window is the intended size, and its hint is the recovery
     path. Idempotent: an already-sliced result (notice present) is untouched.
+    A multimodal result (native image / rendered PDF page) is returned as-is:
+    its text is short and already budgeted by the tool, and slicing the string
+    form would embed the whole base64 payload before cutting the block away.
     """
-    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+    content = msg.content
+    if not isinstance(content, str):
+        return msg
     if (
         len(content) <= _READ_FILE_SLICE_CHARS
         or _READ_FILE_SLICE_NOTICE in content

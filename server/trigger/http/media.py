@@ -8,7 +8,8 @@ from config.features import SERVER_HTTP
 from pub.func.validator import is_safe_session_id
 
 # Sorted by specificity; only the extension is used to pick a Content-Type.
-_CONTENT_TYPES: dict[str, str] = {
+# Shared with /artifacts (server/trigger/http/artifacts.py).
+CONTENT_TYPES: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -69,6 +70,6 @@ async def get_media(request):
         return not_found("media not found")
 
     data = file_path.read_bytes()
-    content_type = _CONTENT_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+    content_type = CONTENT_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
     logger.debug(f"Media served: session_id={session_id}, filename={filename}, bytes={len(data)}")
     return Response(status_code=200, headers={"Content-Type": content_type}, description=data)
