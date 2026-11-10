@@ -1788,12 +1788,13 @@ async def _execute_subagent_scoped(
     # A model that already degraded starts at its learned level, so a later
     # subagent never pays for the same rejected request again.
     strategy_level = model_caps.get_level(*identity) if output_schema else 0
+    strategy = model_caps.strategy_for(strategy_level)
     if output_schema and strategy_level:
         logger.info(
             "Subagent structured output: {} starts at level {} ({})",
             "/".join(identity),
             strategy_level,
-            model_caps.level_label(strategy_level),
+            strategy.label,
         )
 
     # ONE wall-clock budget for the whole run, retries included: degrading a
@@ -1866,12 +1867,13 @@ async def _execute_subagent_scoped(
                         strategy_level + 1,
                         reason=f"{type(exc).__name__}: {exc}",
                     )
+                    strategy = model_caps.strategy_for(strategy_level)
                     logger.warning(
                         "Subagent structured output rejected for {} ({}); retrying at level {} ({})",
                         run.run_id,
                         type(exc).__name__,
                         strategy_level,
-                        model_caps.level_label(strategy_level),
+                        strategy.label,
                     )
                     await _reset_child_attempt(run, child_agent)
                     child_agent = None
@@ -1907,16 +1909,17 @@ async def _execute_subagent_scoped(
             if budget_outcome is not None:
                 outcome = budget_outcome
 
-        # Validate structured output against the provided JSON Schema. At levels
-        # 1/2 nothing else enforces the shape, so a miss FAILS the run (the
-        # caller's retry flow owns the next attempt); level 0 keeps the legacy
-        # warn-only behaviour because LangChain already enforced it.
+        # Validate structured output against the provided JSON Schema. At the
+        # self-json-object rungs nothing else enforces the shape, so a miss
+        # FAILS the run (the caller's retry flow owns the next attempt); the
+        # LangChain rung keeps the legacy warn-only behaviour because the
+        # framework already enforced it.
         if output_schema and result_text:
             from ..swarm.collector import validate_structured_output
 
             valid, err = validate_structured_output(result_text, output_schema)
             if not valid:
-                if strategy_level >= 1 and outcome.status is RunOutcomeStatus.OK:
+                if strategy.local_validation_fatal and outcome.status is RunOutcomeStatus.OK:
                     outcome = RunOutcome(
                         status=RunOutcomeStatus.ERROR,
                         error=(
@@ -2297,7 +2300,9 @@ async def _build_child_agent(
     ``response_format`` (a forced structured-output tool), 1 sends
     ``response_format={"type": "json_object"}`` ourselves (the schema stays in
     the system prompt and the result is validated locally), 2 does the same with
-    thinking OFF. Ignored when no ``output_schema`` is given.
+    thinking OFF. The rung is resolved to a ``StructuredOutputStrategy`` here, so
+    the build reads flags rather than comparing the integer. Ignored when no
+    ``output_schema`` is given.
 
     The LLM selection logic is:
       - *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
@@ -2355,21 +2360,23 @@ async def _build_child_agent(
     from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import _SUBAGENT_REQUIRED, validate_required_middleware
+    from .. import model_caps
 
     _assert_child_token_floor()
     final_tools = _assemble_child_tools(
         tools, tool_allow, tool_deny, extra_tools, functional_role, session_id
     )
-    self_structured = output_schema is not None and strategy_level >= 1
+    strategy = model_caps.strategy_for(strategy_level)
+    self_structured = output_schema is not None and strategy.sends_json_mode
     child_llm = _select_child_llm(
         model_profile,
         model_override,
         functional_role,
         model_tier,
         role,
-        # Level 2 drops thinking: the provider rejected even the self-sent
-        # response_format while reasoning.
-        thinking_off=bool(output_schema) and strategy_level >= 2,
+        # The thinking-off rung exists because the provider rejected even the
+        # self-sent response_format while reasoning.
+        thinking_off=bool(output_schema) and strategy.thinking_off,
     )
     # Levels 1/2: no framework-level structured output (no forced tool_choice);
     # the provider's JSON mode + the prompt schema + our validator replace it.

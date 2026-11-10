@@ -110,3 +110,48 @@ class TestDeliveryState:
         updated = mark_delivery_delivered(updated)
         set_run(updated)
         assert is_delivery_delivered(get("r1"))
+
+
+# ---------------------------------------------------------------------------
+# H3 (2026-11-09 audit): the transition table guards terminal rows
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionGuards:
+    def test_a_delivered_row_cannot_be_reopened(self):
+        from agent.tools.subagent.registry.delivery_state import InvalidDeliveryTransitionError
+
+        run = mark_delivery_delivered(mark_delivery_pending(_make_run()))
+
+        for transition in (
+            mark_delivery_pending,
+            mark_delivery_in_progress,
+            mark_delivery_suspended,
+            lambda value: mark_delivery_failed(value, "late"),
+            mark_delivery_discarded,
+        ):
+            with pytest.raises(InvalidDeliveryTransitionError):
+                transition(run)
+
+    def test_a_discarded_row_cannot_be_delivered(self):
+        from agent.tools.subagent.registry.delivery_state import InvalidDeliveryTransitionError
+
+        run = mark_delivery_discarded(mark_delivery_pending(_make_run()), reason="expired")
+
+        with pytest.raises(InvalidDeliveryTransitionError):
+            mark_delivery_delivered(run)
+
+    def test_same_state_transitions_stay_idempotent(self):
+        run = mark_delivery_delivered(mark_delivery_pending(_make_run()))
+
+        again = mark_delivery_delivered(run)
+
+        assert again.delivery.status == DeliveryStatus.DELIVERED
+
+    def test_a_failed_row_can_be_retried(self):
+        run = mark_delivery_failed(mark_delivery_pending(_make_run()), "transient")
+
+        retried = mark_delivery_pending(run)
+
+        assert retried.delivery.status == DeliveryStatus.PENDING
+        assert retried.delivery.attempt_count == 1

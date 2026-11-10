@@ -75,6 +75,16 @@ or a sparse-capable endpoint; both are rejected for the desktop bundle. Rare
 ID/version-string recall therefore remains open, with SQLite FTS5/BM25 as the
 documented future option rather than a dual sparse index.
 
+The local/remote choice is a construction-time Strategy: `build_embed_model`
+injects `_LocalEmbeddingBackend` or `_RemoteEmbeddingBackend`, and the facade
+only delegates (2026-11-09 audit M2). The reranker uses the same shape
+(`_LocalGgufBackend` / `_CloudBackend` in `models/reranker_model`, audit H5).
+
+The local/remote choice is a construction-time Strategy: `build_embed_model`
+injects `_LocalEmbeddingBackend` or `_RemoteEmbeddingBackend`, and the facade
+only delegates (2026-11-09 audit M2). The reranker uses the same shape
+(`_LocalGgufBackend` / `_CloudBackend` in `models/reranker_model`, audit H5).
+
 ## Measured effect
 
 `evals/graph_rag/multihop_bench.py` indexes a 20-document corpus with

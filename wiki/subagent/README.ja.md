@@ -110,6 +110,21 @@
 
 **機能ロールの封じ込め（3 つ目・直交するゲート）。** 深度は子が spawn を*行えるか*を決め、封じ込めはそれ*が spawn できるロール*を決めます。`_check_role_containment`（`spawn/core.py`）は要求元自身の run レコードだけを見て（単一ホップ。祖先チェーンは辿りません）、`SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）を参照します：エントリが無いロールは「同じロールのみ」で、`reviewer` はそのままです。`MAIN`（run レコード無し）と `general`（`tools: inherit` = 全ツール）は無制限として短絡します——特化ロールの許可リストはすべてその部分集合だからです。拡張エントリは 2 種類あります：`executor` は書く前の調査のため**読み取り専用**の `researcher` / `librarian` を追加で spawn でき、2 つの研究ロールは自分のロールに加えて互いを spawn できます。多段の安全性はチェーン走査ではなく単一ホップの不変条件に依ります：許可される**親以外の子は必ず読み取り専用**なので、書き込みロールは書き込みロールにしか、読み取り専用ロールは読み取り専用ロールにしか到達せず、書き込み能力へ戻る経路は存在しません。将来サイクルを成すエントリ（例：`researcher → executor`）を足すと、穴を開けるのではなく不変条件テストで失敗します。
 
+## 🧩 ストラテジ表とガード付き状態遷移
+
+2 つの状態判断を明示的なオブジェクトにしました(2026-11-09 設計監査):
+
+- **構造化出力の降格**は `agent/tools/subagent/model_caps.py` の
+  `StructuredOutputStrategy`(`level`、`label`、`sends_json_mode`、
+  `thinking_off`、`local_validation_fatal`)。spawn 経路は永続化された整数を
+  `strategy_for()` で一度解決し、フラグを読みます。整数はディスク上の互換形式
+  のままですが、呼び出し側は `level >= 1/2` を比較しません。
+- **完了配信**は単一の遷移表
+  (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`)を通ります。すべての
+  `mark_delivery_*` は `transition_delivery()` を呼ぶため、`DELIVERED` と
+  `DISCARDED` は終端であり、不正な辺は `InvalidDeliveryTransitionError` を送出します。
+  同状態への遷移はクラッシュ復旧のため冪等です。
+
 ## 🧪 完了判定器と goal loop
 
 完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め。これは未設定時の旧基準で、serving model の出力予算に応じて拡大縮小します）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。

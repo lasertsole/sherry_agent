@@ -64,15 +64,15 @@ The unset-env fallback inside `read_policy()` is still `auto` (a running install
 - `probe() -> bool`: must never raise; backends catch their own probe exceptions and return `False`.
 - `wrap(cmd, env, writable_roots) -> (argv, env)`: returns the wrapped argv plus env, to be exec'd directly in list form (no shell). `writable_roots` is the ONLY write surface the command gets (the calling session's project directory; `TEMP_DIR` is appended by the shared normalizer because the sandbox needs a writable temp). The parameter is required and an empty list raises `ValueError` — a default would silently restore the old "the whole `ROOT_DIR` is writable" behaviour at any call site that forgot it, which is the write bypass this contract closes.
 
-`get_backend(policy)` dispatches:
+`get_backend(policy)` resolves through a platform registry:
 
 1. `OFF` returns `None` immediately: no probe, no import, no subprocess.
-2. Linux imports `BwrapBackend`, macOS imports `SeatbeltBackend` (lazy imports; `ImportError` means "unavailable", never a crash). Anything else, including Windows, has no backend.
+2. The registered factory for `platform.system()` builds the backend — Linux → `BwrapBackend`, macOS → `SeatbeltBackend`, both registered as LAZY import factories (`ImportError` means "unavailable", never a crash). A platform with no registered factory (Windows) has no backend. `register_sandbox_backend(system, factory)` adds or replaces one; a duplicate registration is refused unless `replace=True`.
 3. If the backend exists but `probe()` fails: `REQUIRED` raises `RuntimeError("Required sandbox unavailable on {system}")`; `AUTO` / `OFF` return `None`.
 
 ### Tool integration
 
-`SafeShellTool` (name `terminal`) and `TimedPythonREPLTool` (name `python_repl`) both expose a `sandbox: bool = True` parameter in their LLM-visible tool-call schema, so the model chooses per call. PTC's `ExecuteCodeTool` (name `execute_code`) has no `sandbox` parameter at all — it is executor-only and always requests the sandbox.
+`SafeShellTool` (name `terminal`) and `TimedPythonREPLTool` (name `python_repl`) keep an internal `sandbox: bool = True` parameter for server-side callers, but it is NOT in their LLM-visible tool-call schemas (2026-11-09 audit H2: a forged `sandbox=false` is dropped by validation). PTC's `ExecuteCodeTool` (name `execute_code`) has no `sandbox` parameter at all — it is executor-only and always requests the sandbox.
 
 - **Sandboxed path**: `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)` for terminal (semantically identical to POSIX `shell=True`), the same for python_repl's interpreter argv, and for the PTC child. The wrapped argv is exec'd as a list, with no shell kwarg at all. `roots` is the session's project directory (`current_project_dir(session_id)` / the PTC child's cwd) — the same value the command's cwd comes from, so the write surface and the working directory can never disagree, and a project bound OUTSIDE the checkout is writable (it used to be EROFS) while the checkout itself is not (it used to be, which made terminal a way around the external-path gate).
 - **Fallback path (Windows / no backend)**: terminal joins commands with `" && "` and spawns with `shell=True`; python_repl spawns `[sys.executable, "-c", script]` as a list. Windows has **no** OS-sandbox backend.

@@ -67,7 +67,7 @@
 `get_backend(policy)` 的分发逻辑：
 
 1. `OFF` 立即返回 `None`：不探测、不导入、不碰子进程。
-2. Linux 导入 `BwrapBackend`，macOS 导入 `SeatbeltBackend`（惰性导入；`ImportError` 视为"不可用"，绝不是崩溃）。其余平台（包括 Windows）没有后端。
+2. 按 `platform.system()` 查平台注册表并由已注册工厂构造后端——Linux → `BwrapBackend`，macOS → `SeatbeltBackend`，两者都注册为**惰性导入**工厂（`ImportError` 视为"不可用"，绝不是崩溃）。没有注册工厂的平台（Windows）没有后端。`register_sandbox_backend(system, factory)` 可新增/替换；重复注册默认拒绝（`replace=True` 才覆盖）。
 3. 后端存在但 `probe()` 失败：`REQUIRED` 抛出 `RuntimeError("Required sandbox unavailable on {system}")`；`AUTO` / `OFF` 返回 `None`。
 
 ### 工具集成

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,14 +34,58 @@ from loguru import logger
 __all__ = [
     "DEFAULT_LEVEL",
     "MAX_LEVEL",
+    "StructuredOutputStrategy",
     "clear_cache",
     "escalate",
     "get_level",
     "level_label",
+    "strategy_for",
 ]
 
 DEFAULT_LEVEL = 0
 MAX_LEVEL = 2
+
+
+@dataclass(frozen=True)
+class StructuredOutputStrategy:
+    """How a schema-bound child enforces its JSON shape at one degradation rung.
+
+    The persisted label stays an integer (compatibility with
+    ``subagent_model_caps.json``); this object is the single place the rung's
+    BEHAVIOUR lives (2026-11-09 audit H2). Callers read flags, never compare
+    ``level >= N``.
+    """
+
+    level: int
+    label: str
+    sends_json_mode: bool = False
+    thinking_off: bool = False
+    local_validation_fatal: bool = False
+
+
+_STRATEGIES: dict[int, StructuredOutputStrategy] = {
+    0: StructuredOutputStrategy(level=0, label="langchain-structured"),
+    1: StructuredOutputStrategy(
+        level=1,
+        label="self-json-object",
+        sends_json_mode=True,
+        local_validation_fatal=True,
+    ),
+    2: StructuredOutputStrategy(
+        level=2,
+        label="self-json-object+thinking-off",
+        sends_json_mode=True,
+        thinking_off=True,
+        local_validation_fatal=True,
+    ),
+}
+
+
+def strategy_for(level: int) -> StructuredOutputStrategy:
+    """The strategy for a persisted level, clamped to the supported range."""
+    clamped = max(DEFAULT_LEVEL, min(MAX_LEVEL, int(level)))
+    return _STRATEGIES[clamped]
+
 
 _lock = threading.Lock()
 #: Parsed ``{key: {"level": int, "reason": str, "updated_at": str}}``; ``None``
@@ -132,11 +177,8 @@ def escalate(provider: str | None, model: str | None, level: int, reason: str = 
 
 def level_label(level: int) -> str:
     """A short human label for logs/records."""
-    return {
-        0: "langchain-structured",
-        1: "self-json-object",
-        2: "self-json-object+thinking-off",
-    }.get(int(level), f"level-{level}")
+    strategy = _STRATEGIES.get(int(level))
+    return strategy.label if strategy is not None else f"level-{level}"
 
 
 def clear_cache() -> None:

@@ -46,10 +46,11 @@ Notes:
   so runtime changes and test monkeypatching take effect immediately.
 """
 
+import importlib
 import os
 import platform
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
 
@@ -60,6 +61,7 @@ __all__ = [
     "SandboxBackend",
     "parse_policy",
     "read_policy",
+    "register_sandbox_backend",
     "get_backend",
 ]
 
@@ -219,13 +221,59 @@ def normalize_writable_roots(writable_roots: Sequence[Path]) -> list[Path]:
     return resolved
 
 
+#: Factory for one platform's backend. Registered through
+#: :func:`register_sandbox_backend`; the built-ins are lazy import wrappers so
+#: this module still imports (and answers ``OFF``) on a checkout where the
+#: backend modules are missing.
+SandboxBackendFactory = Callable[[], SandboxBackend]
+
+_BACKEND_FACTORIES: dict[str, SandboxBackendFactory] = {}
+
+
+def _lazy_backend(module: str, class_name: str) -> SandboxBackendFactory:
+    """Build a factory that imports the backend only when the platform needs it."""
+
+    def factory() -> SandboxBackend:
+        backend_module = importlib.import_module(module)
+        return getattr(backend_module, class_name)()
+
+    return factory
+
+
+def register_sandbox_backend(
+    system: str, factory: SandboxBackendFactory, *, replace: bool = False
+) -> None:
+    """Register (or replace) the backend factory for ``platform.system()``.
+
+    A duplicate registration is refused unless ``replace=True``: two modules
+    claiming the same platform is a real conflict, not something to resolve by
+    import order. Tests replace a platform to inject a fake backend.
+    """
+    name = str(system).strip()
+    if not name:
+        raise ValueError("system must be a non-empty platform name")
+    if name in _BACKEND_FACTORIES and not replace:
+        raise ValueError(
+            f"a sandbox backend is already registered for {name!r}; pass replace=True to override"
+        )
+    _BACKEND_FACTORIES[name] = factory
+
+
+register_sandbox_backend(
+    "Linux", _lazy_backend("agent.tools.pub_base.sandbox_bwrap", "BwrapBackend")
+)
+register_sandbox_backend(
+    "Darwin", _lazy_backend("agent.tools.pub_base.sandbox_seatbelt", "SeatbeltBackend")
+)
+
+
 def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     """Platform dispatch + probe. Return a usable backend, or ``None``.
 
     Semantics:
     - ``OFF``: skip probe entirely (no import, no subprocess) -> ``None``.
-    - Linux -> ``BwrapBackend``, Darwin -> ``SeatbeltBackend``, anything else
-      (e.g. Windows) -> no native backend -> ``None``.
+    - The registered factory for ``platform.system()`` builds the backend
+      (Linux -> bwrap, Darwin -> seatbelt, anything else -> no factory).
     - Backend imports are lazy and failures degrade: a missing/broken backend
       module is treated as "sandbox unavailable".
     - If the backend exists but ``probe()`` fails, or there is no backend for
@@ -242,20 +290,13 @@ def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
         return None
 
     backend: SandboxBackend | None = None
-    try:
-        if system == "Linux":
-            # Lazy import: a missing backend module degrades to unavailable
-            # via the ImportError below.
-            from agent.tools.pub_base.sandbox_bwrap import BwrapBackend
-
-            backend = BwrapBackend()
-        elif system == "Darwin":
-            # Lazy import: a missing backend module degrades to unavailable.
-            from agent.tools.pub_base.sandbox_seatbelt import SeatbeltBackend
-
-            backend = SeatbeltBackend()
-    except ImportError:
-        backend = None
+    factory = _BACKEND_FACTORIES.get(system)
+    if factory is not None:
+        try:
+            backend = factory()
+        except ImportError:
+            # Lazy import failure degrades to "sandbox unavailable".
+            backend = None
 
     if backend is not None and backend.probe():
         return backend

@@ -67,7 +67,7 @@
 `get_backend(policy)`의 디스패치:
 
 1. `OFF`는 즉시 `None`을 반환: 프로브 없음, 가져오기 없음, 서브프로세스 없음.
-2. Linux는 `BwrapBackend`를, macOS는 `SeatbeltBackend`를 지연 가져옵니다(`ImportError`는 "사용 불가"이지 크래시가 아님). 그 외 플랫폼, Windows 포함,에는 백엔드가 없습니다.
+2. `platform.system()`의 플랫폼 레지스트리에서 등록된 팩토리로 백엔드를 구성합니다——Linux → `BwrapBackend`, macOS → `SeatbeltBackend`. 둘 다 **지연 가져오기** 팩토리로 등록됩니다(`ImportError`는 "사용 불가"이지 크래시가 아님). 팩토리가 등록되지 않은 플랫폼(Windows)에는 백엔드가 없습니다. `register_sandbox_backend(system, factory)`로 추가/교체할 수 있으며, 중복 등록은 `replace=True` 없이는 거부됩니다.
 3. 백엔드가 존재하지만 `probe()`가 실패하면: `REQUIRED`는 `RuntimeError("Required sandbox unavailable on {system}")`를 던지고, `AUTO` / `OFF`는 `None`을 반환합니다.
 
 ### 도구 통합

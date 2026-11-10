@@ -757,3 +757,34 @@ class TestFrozenSnapshotRefresh:
         refreshed = store.format_for_system_prompt("facts") or ""
         assert "old fact" in refreshed and "new fact" in refreshed
         assert _cached_prompt(sid) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# M6 (2026-11-09 audit): the thinking choice is a Strategy table, not an if-chain
+# ---------------------------------------------------------------------------
+
+
+class TestThinkingStrategyTable:
+    def test_switch_positions_map_to_build_kwargs(self):
+        from agent.middlewares.thinking_control.core import ThinkingControlMiddleware
+
+        assert ThinkingControlMiddleware._thinking_kwargs("on") == {"thinking": True}
+        assert ThinkingControlMiddleware._thinking_kwargs("off") == {"thinking": False}
+        assert ThinkingControlMiddleware._thinking_kwargs("off_floor") == {
+            "thinking": False,
+            "thinking_floor": True,
+        }
+
+    def test_level_keys_carry_the_level_token(self):
+        from agent.middlewares.thinking_control.core import ThinkingControlMiddleware
+
+        assert ThinkingControlMiddleware._thinking_kwargs("level:high") == {
+            "thinking_level": "high"
+        }
+
+    def test_absent_or_unknown_choice_keeps_the_env_default(self):
+        from agent.middlewares.thinking_control.core import ThinkingControlMiddleware
+
+        assert ThinkingControlMiddleware._thinking_kwargs(None) == {}
+        assert ThinkingControlMiddleware._thinking_kwargs("") == {}
+        assert ThinkingControlMiddleware._thinking_kwargs("legacy-token") == {}

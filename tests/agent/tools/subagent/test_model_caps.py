@@ -81,3 +81,33 @@ def test_level_labels_are_stable_strings():
     assert model_caps.level_label(0) == "langchain-structured"
     assert model_caps.level_label(1) == "self-json-object"
     assert model_caps.level_label(2) == "self-json-object+thinking-off"
+
+
+# ---------------------------------------------------------------------------
+# H2 (2026-11-09 audit): the rung's behaviour is one strategy object
+# ---------------------------------------------------------------------------
+
+
+def test_strategies_are_the_single_source_of_rung_behaviour():
+    level0 = model_caps.strategy_for(0)
+    level1 = model_caps.strategy_for(1)
+    level2 = model_caps.strategy_for(2)
+
+    assert level0.sends_json_mode is False
+    assert level0.thinking_off is False
+    assert level0.local_validation_fatal is False
+
+    assert level1.sends_json_mode is True
+    assert level1.thinking_off is False
+    assert level1.local_validation_fatal is True
+
+    assert level2.sends_json_mode is True
+    assert level2.thinking_off is True
+    assert level2.local_validation_fatal is True
+
+
+def test_strategy_levels_are_clamped_and_labels_stay_consistent():
+    assert model_caps.strategy_for(-5).level == 0
+    assert model_caps.strategy_for(99).level == model_caps.MAX_LEVEL
+    for level in range(model_caps.MAX_LEVEL + 1):
+        assert model_caps.strategy_for(level).label == model_caps.level_label(level)

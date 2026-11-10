@@ -312,3 +312,60 @@ def test_env_contains_sandbox_policy_line():
     lowered = content.lower()
     assert "required" in lowered and "auto" in lowered and "off" in lowered
     assert "unsandboxed" in lowered
+
+
+# --------------------------------------------------------------------------
+# Backend registry (2026-11-09 audit M5)
+# --------------------------------------------------------------------------
+
+
+class _RegistryFakeBackend(SandboxBackend):
+    def __init__(self, *, usable: bool = True) -> None:
+        self.usable = usable
+
+    def probe(self) -> bool:
+        return self.usable
+
+    def wrap(self, cmd, env, writable_roots, *, allow_network=False):
+        return cmd, env
+
+
+def test_get_backend_uses_a_registered_platform_factory(monkeypatch):
+    import agent.tools.pub_base.sandbox as sandbox_module
+
+    monkeypatch.setattr(sandbox_module.platform, "system", lambda: "TestOS")
+    monkeypatch.setitem(sandbox_module._BACKEND_FACTORIES, "TestOS", lambda: _RegistryFakeBackend())
+
+    backend = get_backend(SandboxPolicy.AUTO)
+
+    assert isinstance(backend, _RegistryFakeBackend)
+
+
+def test_a_registered_factory_that_cannot_import_degrades(monkeypatch):
+    import agent.tools.pub_base.sandbox as sandbox_module
+
+    def broken_factory():
+        raise ImportError("backend module missing")
+
+    monkeypatch.setattr(sandbox_module.platform, "system", lambda: "TestOS")
+    monkeypatch.setitem(sandbox_module._BACKEND_FACTORIES, "TestOS", broken_factory)
+
+    assert get_backend(SandboxPolicy.AUTO) is None
+    with pytest.raises(RuntimeError, match="Required sandbox unavailable on TestOS"):
+        get_backend(SandboxPolicy.REQUIRED)
+
+
+def test_duplicate_registration_is_refused_unless_replaced():
+    import agent.tools.pub_base.sandbox as sandbox_module
+
+    name = "TestDuplicateOS"
+    sandbox_module.register_sandbox_backend(name, lambda: _RegistryFakeBackend())
+    try:
+        with pytest.raises(ValueError, match="already registered"):
+            sandbox_module.register_sandbox_backend(name, lambda: _RegistryFakeBackend())
+        sandbox_module.register_sandbox_backend(
+            name, lambda: _RegistryFakeBackend(usable=False), replace=True
+        )
+        assert sandbox_module._BACKEND_FACTORIES[name]().usable is False
+    finally:
+        sandbox_module._BACKEND_FACTORIES.pop(name, None)

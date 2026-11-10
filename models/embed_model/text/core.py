@@ -136,31 +136,19 @@ def _ensure_setup() -> None:
 
 
 # ─────────────────────────────────────────────
-# 2. CustomEmbedding class
+# 2. Backend strategies + the stable facade
 # ─────────────────────────────────────────────
-class CustomEmbedding(Embeddings):
-    """Embedding model wrapper (auto-selects local llama.cpp / remote MaaS API)."""
+def _l2_normalize(vec: list[float]) -> list[float]:
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm == 0.0:
+        return vec
+    return [x / norm for x in vec]
 
-    def _call_remote_api(self, texts: list[str]) -> dict:
-        """Call the remote MaaS embedding API."""
-        cfg = _remote_config
-        client = OpenAICompatibleClient(cfg["api_base"], cfg["api_key"])
-        payload = {
-            "model": cfg["api_name"],
-            "input": texts,
-            "encoding_format": "float",
-        }
-        return client.post_json("/embeddings", payload)
 
-    @staticmethod
-    def _l2_normalize(vec: list[float]) -> list[float]:
-        norm = math.sqrt(sum(x * x for x in vec))
-        if norm == 0.0:
-            return vec
-        return [x / norm for x in vec]
+class _LocalEmbeddingBackend:
+    """Local llama.cpp strategy: load on demand, release after use, L2-normalise."""
 
-    def _embed_local(self, texts: list[str]) -> list[list[float]]:
-        """Local llama.cpp encoding (load on demand, release after use, L2-normalise output)."""
+    def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         model = _load_model()
@@ -168,37 +156,74 @@ class CustomEmbedding(Embeddings):
             embeddings = model.create_embedding(input=texts)
             data = embeddings.get("data", [])
             data.sort(key=lambda x: x["index"])
-            return [self._l2_normalize(item["embedding"]) for item in data]
+            return [_l2_normalize(item["embedding"]) for item in data]
         finally:
             model.close()
 
-    def _embed_remote(self, texts: list[str]) -> list[list[float]]:
-        """Remote API encoding."""
-        result = self._call_remote_api(texts)
-        # Return embeddings in input order
+
+class _RemoteEmbeddingBackend:
+    """Remote MaaS API strategy: one HTTP client call per batch."""
+
+    def __init__(self, config: dict) -> None:
+        self._config = config
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        client = OpenAICompatibleClient(self._config["api_base"], self._config["api_key"])
+        result = client.post_json(
+            "/embeddings",
+            {
+                "model": self._config["api_name"],
+                "input": texts,
+                "encoding_format": "float",
+            },
+        )
         data = result.get("data", [])
-        # Each item in data has index and embedding
         data.sort(key=lambda x: x["index"])
         return [item["embedding"] for item in data]
+
+
+def _build_embedding_backend() -> _LocalEmbeddingBackend | _RemoteEmbeddingBackend:
+    """Choose the strategy once (the only backend branch left in this module)."""
+    _ensure_setup()
+    if _backend == "local":
+        return _LocalEmbeddingBackend()
+    if _remote_config is None:  # defensive: setup validates remote config
+        _abort("remote embedding selected but no remote configuration was detected")
+    return _RemoteEmbeddingBackend(_remote_config)
+
+
+class CustomEmbedding(Embeddings):
+    """Embedding model facade — delegates to ONE strategy chosen at construction.
+
+    The audit (2026-11-09, M2) removed the per-method ``if _backend == "local"``
+    branch; a direct constructor resolves the strategy lazily (so importing or
+    constructing without setup stays side-effect free), while ``build_embed_model``
+    injects it explicitly.
+    """
+
+    def __init__(
+        self, backend: _LocalEmbeddingBackend | _RemoteEmbeddingBackend | None = None
+    ) -> None:
+        self._backend = backend
+
+    def _get_backend(self):
+        if self._backend is None:
+            self._backend = _build_embedding_backend()
+        return self._backend
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Generate embedding vectors for multiple documents."""
         if not texts:
             return []
-
-        _ensure_setup()
-        if _backend == "local":
-            return self._embed_local(texts)
-        return self._embed_remote(texts)
+        return self._get_backend().embed(texts)
 
     def embed_query(self, text: str) -> list[float]:
         """Generate an embedding vector for a single query."""
-        _ensure_setup()
-        if _backend == "local":
-            return self._embed_local([text])[0]
-        return self._embed_remote([text])[0]
+        return self._get_backend().embed([text])[0]
 
 
 def build_embed_model() -> CustomEmbedding:
     setup_embed_model()
-    return CustomEmbedding()
+    return CustomEmbedding(backend=_build_embedding_backend())

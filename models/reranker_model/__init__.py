@@ -28,29 +28,90 @@ _MODEL_DIR = Path(__file__).parent.resolve() / "model_weight"
 _DEFAULT_MODEL_PATH = str(_MODEL_DIR / "bge-reranker-v2-m3-Q8_0.gguf")
 
 
+class _LocalGgufBackend:
+    """Local GGUF strategy: loads the model per call, caches its metadata."""
+
+    label = "gguf"
+
+    def __init__(self) -> None:
+        self._meta = None
+
+    def _call(self, method: str, *args, **kwargs):
+        if self._meta is None:
+            self._meta = _get_meta(_DEFAULT_MODEL_PATH)
+        model = CrossEncoderGGUF(
+            model_path=_DEFAULT_MODEL_PATH,
+            use_gpu=False,
+            _meta=self._meta,
+        )
+        try:
+            return getattr(model, method)(*args, **kwargs)
+        finally:
+            model.close()
+
+    def rank(self, query: str, documents: list[str], **kwargs):
+        return self._call("rank", query, documents, **kwargs)
+
+    def filter(self, query: str, documents: list[str], **kwargs):
+        return self._call("filter", query, documents, **kwargs)
+
+    def predict(self, query: str, passage: str) -> float:
+        return self._call("predict", query, passage)
+
+    def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return [self.predict(query, passage) for query, passage in pairs]
+
+    def close(self) -> None:
+        self._meta = None
+
+
+class _CloudBackend:
+    """Remote API strategy: one lazily-built CloudReranker per process."""
+
+    label = "cloud"
+
+    def __init__(self) -> None:
+        self._client: CloudReranker | None = None
+
+    def _get(self) -> CloudReranker:
+        if self._client is None:
+            self._client = CloudReranker()
+        return self._client
+
+    def rank(self, query: str, documents: list[str], **kwargs):
+        return self._get().rank(query, documents, **kwargs)
+
+    def filter(self, query: str, documents: list[str], **kwargs):
+        return self._get().filter(query, documents, **kwargs)
+
+    def predict(self, query: str, passage: str) -> float:
+        return self._get().predict(query, passage)
+
+    def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return self._get().predict_scores(pairs)
+
+    def close(self) -> None:
+        self._client = None
+
+
 class _LazyReranker:
-    """Unified reranker that delegates to the correct backend.
+    """Unified reranker that delegates to ONE strategy chosen at construction.
 
-    When ``RERANKER_MODEL_LOCAL=true`` (default):
-      - Uses local GGUF model (``CrossEncoderGGUF``)
-      - Model loaded per-call and freed after; classifier weights cached.
-
-    When ``RERANKER_MODEL_LOCAL=false``:
-      - Uses cloud API (``CloudReranker``)
-      - Reads ``RERANKER_API_BASE``, ``RERANKER_API_KEY``, ``RERANKER_API_NAME``
-        from ``.env``.
+    When ``RERANKER_MODEL_LOCAL=true`` (default) the strategy is
+    :class:`_LocalGgufBackend` (model loaded per-call and freed; weights cached).
+    When false it is :class:`_CloudBackend` (remote API, lazily built). Callers
+    keep one stable surface and never branch on the backend again.
     """
 
     def __init__(self) -> None:
-        self._local = _is_local()
-        self._cloud: CloudReranker | None = None
-        self._gguf_meta = None
+        self._backend: _LocalGgufBackend | _CloudBackend = (
+            _LocalGgufBackend() if _is_local() else _CloudBackend()
+        )
 
-    # ── Meta ──────────────────────────────────────────────────────────
     @property
     def backend(self) -> str:
         """``"gguf"`` when local, ``"cloud"`` when using remote API."""
-        return "gguf" if self._local else "cloud"
+        return self._backend.label
 
     # ------------------------------------------------------------------
     # Public API
@@ -60,62 +121,26 @@ class _LazyReranker:
         """Score and rank documents by relevance to *query*."""
         if not documents:
             return []
-        if self._local:
-            if self._gguf_meta is None:
-                self._gguf_meta = _get_meta(_DEFAULT_MODEL_PATH)
-            return self._with_gguf("rank", query, documents, **kwargs)
-        return self._get_cloud().rank(query, documents, **kwargs)
+        return self._backend.rank(query, documents, **kwargs)
 
     def filter(self, query: str, documents: list[str], **kwargs):
         """Filter documents, keeping only those with relevance >= gap_score."""
         if not documents:
             return []
-        if self._local:
-            if self._gguf_meta is None:
-                self._gguf_meta = _get_meta(_DEFAULT_MODEL_PATH)
-            return self._with_gguf("filter", query, documents, **kwargs)
-        return self._get_cloud().filter(query, documents, **kwargs)
+        return self._backend.filter(query, documents, **kwargs)
 
     def predict(self, query: str, passage: str) -> float:
         """Score a single query–passage pair. Returns float in [0, 1]."""
-        if self._local:
-            if self._gguf_meta is None:
-                self._gguf_meta = _get_meta(_DEFAULT_MODEL_PATH)
-            return self._with_gguf("predict", query, passage)
-        return self._get_cloud().predict(query, passage)
+        return self._backend.predict(query, passage)
 
     def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Score a list of (query, passage) pairs."""
-        if self._local:
-            return [self.predict(q, p) for q, p in pairs]
-        return self._get_cloud().predict_scores(pairs)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _get_cloud(self) -> CloudReranker:
-        if self._cloud is None:
-            self._cloud = CloudReranker()
-        return self._cloud
-
-    def _with_gguf(self, method: str, *args, **kwargs):
-        """Create CrossEncoderGGUF, call *method*, close it, return result."""
-        model = CrossEncoderGGUF(
-            model_path=_DEFAULT_MODEL_PATH,
-            use_gpu=False,
-            _meta=self._gguf_meta,
-        )
-        try:
-            fn = getattr(model, method)
-            return fn(*args, **kwargs)
-        finally:
-            model.close()
+        return self._backend.predict_scores(pairs)
 
     def close(self) -> None:
         """Clear the metadata cache (releases ~16 MB of numpy arrays)."""
         _META_CACHE.clear()
-        self._gguf_meta = None
+        self._backend.close()
 
 
 def build_reranker_model() -> _LazyReranker:

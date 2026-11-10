@@ -67,7 +67,7 @@
 `get_backend(policy)` のディスパッチ:
 
 1. `OFF` は即座に `None` を返す: プローブなし、インポートなし、サブプロセスなし。
-2. Linux は `BwrapBackend` を、macOS は `SeatbeltBackend` を遅延インポートします(`ImportError` は「利用不可」であってクラッシュではありません)。それ以外のプラットフォーム、Windows を含む、にはバックエンドがありません。
+2. `platform.system()` のプラットフォームレジストリから登録済みファクトリでバックエンドを構築します——Linux → `BwrapBackend`、macOS → `SeatbeltBackend`。どちらも**遅延インポート**ファクトリとして登録されます(`ImportError` は「利用不可」であってクラッシュではありません)。ファクトリ未登録のプラットフォーム(Windows)にはバックエンドがありません。`register_sandbox_backend(system, factory)` で追加/置換でき、重複登録は `replace=True` がない限り拒否されます。
 3. バックエンドが存在しても `probe()` が失敗した場合: `REQUIRED` は `RuntimeError("Required sandbox unavailable on {system}")` を送出し、`AUTO` / `OFF` は `None` を返します。
 
 ### ツール統合

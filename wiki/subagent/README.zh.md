@@ -110,6 +110,21 @@
 
 **功能角色遏制（第三道、正交的门）。** 深度决定子代理*能否* spawn；遏制决定它*能 spawn 哪个角色*。`_check_role_containment`（`spawn/core.py`）只读调用方自己的运行记录——单跳，绝不回溯祖先链——再查 `SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）：缺席条目意为「只同角色」，即 `reviewer` 保持的行为；`MAIN`（无运行记录）与 `general`（`tools: inherit` = 全部工具）直接短路为不受限，因为任何专用角色的白名单都已是它们的子集。放宽条目有两类：`executor` 可额外派生**只读**的 `researcher` / `librarian`，以便先调研后写入；两个研究角色除自身角色外还可互相派生。多层安全靠单跳不变量而非链遍历：允许的**非父角色子项必须只读**，于是写角色只能到达写角色、只读角色只能到达只读角色——没有任何路径回到写能力；未来若加入会成环的条目（例如 `researcher → executor`），会在不变量测试上失败，而不是开出一个洞。
 
+## 🧩 策略表与受守卫的状态转换
+
+两个有状态决策已成为显式对象（2026-11-09 设计审计）：
+
+- **结构化输出降级**是 `agent/tools/subagent/model_caps.py` 中的
+  `StructuredOutputStrategy`（`level`、`label`、`sends_json_mode`、
+  `thinking_off`、`local_validation_fatal`）。spawn 路径用 `strategy_for()`
+  解析一次持久化整数，然后读标志位；整数仍是磁盘上的兼容格式，但调用点不再
+  比较 `level >= 1/2`。
+- **完成投递**走单一转换表
+  （`registry/delivery_state.py::_ALLOWED_TRANSITIONS`）。所有
+  `mark_delivery_*` 都经过 `transition_delivery()`，因此 `DELIVERED` 与
+  `DISCARDED` 是终态，非法边抛 `InvalidDeliveryTransitionError`；同态转换保持
+  幂等以支持崩溃恢复。
+
 ## 🧪 完成判别器与 goal loop
 
 完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符；这是未设置时的旧基线，会随 serving model 的输出预算缩放）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
