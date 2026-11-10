@@ -1,538 +1,92 @@
 # 🍊 EMA AI Agent - Sherry
 
-![Python](https://img.shields.io/badge/Python-3.13-blue)
-![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
-![License](https://img.shields.io/badge/License-MIT-orange)
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md) · [**Wiki**](https://github.com/lasertsole/sherry_agent/wiki) · [**Releases**](https://github.com/lasertsole/sherry_agent/releases/latest)
 
-[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md) · [**Wiki**](https://github.com/lasertsole/sherry_agent/wiki)
+> 고정된 페르소나와 장기 기억을 가진 AI 롤플레이 파트너. 대화를 나누는 것은 물론, 데스크톱 앱에서 파일과 작업을 직접 다룰 수 있습니다.
 
-> **LangChain/LangGraph와 멀티모달 기술로 구축된 딥 롤플레잉 AI 에이전트.**
+## ✨ Sherry 소개
 
-## ✨ 소개
+Sherry는 일회성 챗봇이 아닙니다. 대화가 바뀌어도 일관된 캐릭터를 유지하고, 당신에게 중요한 것을 기억하며, 답변만으로 부족한 작업에서는 실제로 컴퓨터를 조작합니다.
 
-EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의인화된 AI 에이전트 시스템입니다. 단순한 챗봇이 아니라, 독립적인 **페르소나**, 동적인 **스킬 시스템**, 그리고 예약 작업과 백그라운드 서브에이전트를 통한 능동적 행동을 갖춘 가상 컴패니언입니다.
+기본 캐릭터 **Sherry(타치바나 셰리)** 는 스스로를 소녀 탐정이라고 부릅니다. 겉으로는 밝고 활발하지만, 속으로는 차분하고 날카롭습니다. 그대로 유지해도 되고, **프리셋과 역할** 패널에서 페르소나를 다시 쓰거나 나만의 캐릭터를 만들 수도 있습니다.
 
-에이전트의 캐릭터 **Sherry(치바나 셰리)** 는 자칭 소녀 탐정입니다. 겉으로는 언제나 밝고 활기차지만, 속은 침착하고 날카롭습니다. 시스템 전체는 세션을 넘어 기억이 축적되는 몰입형 지속 롤플레이를 지원하도록 설계되었습니다.
+앱은 당신의 컴퓨터에서 실행됩니다. 대화, 기억, 설정은 로컬 앱 데이터 디렉터리에 저장되며, 네트워크로 나가는 것은 당신이 설정한 모델과 웹 서비스 통신뿐입니다.
 
----
+## 🚀 할 수 있는 일
 
-## 🚀 주요 기능
+- **캐릭터와의 대화.** 말투, 습관, 경계, 배경 설정을 유지한 채 길고 이어지는 이야기와 일상 대화를 즐길 수 있습니다.
+- **기억해 주는 파트너.** 당신과 프로젝트에 대한 정보를 장기 기억으로 보관하고, 필요할 때 떠올리며, 재시작과 세션 전환 후에도 이어갑니다.
+- **스킬로 확장.** 내장 스킬은 코딩, 리서치, 문서, 이미지, 오디오, 비디오, 일정 등을 다룹니다. 완료한 작업에서 재사용 가능한 스킬을 배우거나, 요청에 따라 새 스킬을 만들 수도 있습니다.
+- **실제 작업 위임.** 큰 작업은 할 일 목록을 만들고 단계로 나누며, 필요할 때 하위 에이전트를 병렬로 실행합니다.
+- **데스크톱 조작.** 같은 창에서 프로젝트 파일을 읽고 쓰고, 웹을 탐색하고, 터미널 명령을 실행하고, Git 기록을 보거나, 화이트보드에 그릴 수 있습니다.
+- **보고, 듣고, 말하기.** 이미지, 오디오, 비디오, 문서를 보낼 수 있고 내용을 이해하며, 음성을 받아쓰고, 이미지를 생성합니다.
+- **먼저 챙겨 주기.** 예약 작업과 하트비트 점검으로 장기 작업이나 일상 루틴을 재촉하지 않아도 이어갑니다.
+- **익숙한 곳에서 사용.** 데스크톱 앱이 중심이며, QQ 채널 어댑터도 제공합니다.
 
-### 1. 🧠 계층형 메모리 시스템 (Context Engine)
-- **단기 세션 메모리**([MesMemory](context_engine/README.md)): 대화 이력을 SQLite(WAL 모드)에 영구 저장하고 FTS5 인덱스를 자동 생성 — 중국어 전문 검색용 trigram 토크나이저 테이블 포함; 영속화는 두 시점으로 나뉩니다(`MessagePersistenceMiddleware`): 도구 결과는 반환되는 즉시 플러시되고, 나머지 새 human/ai/tool 메시지는 각 모델 호출 경계에서 증분 플러시됩니다(`persisted_message_ids` 워터마크로 write-once). 원본 저장소는 압축 발생에 의존하지 않습니다
-- **히스토리 조회**: 최근 N턴, 페이지네이션 히스토리, 턴 범위 지정 쿼리를 프롬프트 컨텍스트로 포맷
-- **세션 체크포인팅**: 스레드 세이프 비동기 SQLite 체크포인터(`langgraph-checkpoint-sqlite`)가 재시작 후에도 에이전트 상태를 유지하며, 오래된 체크포인트는 자동 정리
-- **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
-- **컨텍스트 거버넌스**: 과대한 도구 결과와 인간 메시지는 복구 가능한 디스크 사본을 남기고 프롬프트에서 축출되며, `read_file` 결과는 슬라이스되고, 어떤 압축보다도 먼저 LLM 없는 테일 클립이 돌며, 체인 요약은 대화 페이로드에서 제외됩니다
-- **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
-- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(압축마다), 계획이 턴 경계에서 완료될 때의 스킬 리뷰(압축 시점 아님), 압축 후 todo fork, MAIN 세션 삭제 전 기억 구조 작업입니다. 이들은 메모리 저장소(SQLite `memory_entries` 테이블의 `memory` / `user` / `facts` 대상), `skills/auto/`, `todos.db`, 그리고 원본 `handoff-tree.json` 감사 파일에 기록합니다. 모델 대상 `knowledge` 도구와 프롬프트 블록은 폐기되었습니다
-- ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
-- ▶️ _세 개 추출 경로와 스킬 큐레이션은 [Experience README](wiki/experience/README.ko.md) 참조_
+## 🖥️ 설치
 
-### 2. 🛠️ 동적 스킬 시스템
-- **SKILL.md 표준**: 스킬은 YAML 프론트매터(`name`, `description`, 선택적 `scope: all | main_only | subagent_only`)를 가진 Markdown 파일이며, 로더는 `skills/` 하위의 `builtin/`, `auto/`, `plugins/` 세 루트만 스캔합니다
-- **내장 스킬**([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub`(GitHub 스킬 설치기), `skill_creator`(새 스킬 생성), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `bugfix-contract`, `code_wiki`, `llm_wiki`, 그리고 기능 게이트가 있는 `browser` 스킬
-- **스킬 관리 도구**: 에이전트가 런타임에 스킬을 나열, 조회, 관리할 수 있습니다. 서드파티 업로드 스킬(`skills/plugins/`)은 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다
-- **SkillSpector 보안 스캔**([server/service/skill_scanner.py](server/service/skill_scanner.py)): 서드파티 스킬은 활성화 전에 NVIDIA SkillSpector로 스캔됩니다(정적 YARA/룰 분석 + auxiliary LLM을 통한 선택적 LLM 시맨틱 분석). 플래그가 지정된 스킬은 설치가 차단됩니다
-- **스킬 큐레이터**: context engine의 curator 스레드가 `skills/auto/` 하위의 자동 학습 스킬을 관리 — 자세한 내용은 [Experience README](wiki/experience/README.ko.md)
-- **도구 타임아웃**: 실제 도구별 제한은 `TOOLS_TIMEOUTS` 레지스트리(`WEB_SEARCH_TIMEOUT=15`, `TERMINAL_TIMEOUT=30`, `PYTHON_REPL_TIMEOUT=30`)에서 오며, `TOOL_CALL_TIMEOUT_MINUTES`는 저장 설정일 뿐 **어떤 실행 경로도 소비하지 않습니다**
-- ▶️ _미들웨어 파이프라인(가드레일, 반복 예산, HITL, 정규화, 요약, 멀티모달 처리)은 [Middlewares README](agent/middlewares/README.md) 참조_
+### 데스크톱 앱(권장)
 
-### 3. 🤖 멀티레벨 서브에이전트 시스템
-- **8개 런타임 도구**: `sessions_spawn`, `sessions_messages`, `sessions_yield`, `sessions_send`, `sessions_kill`, `sessions_steer`, `agents_list`, `subagents_list`
-- **계층적 역할**: 깊이 제한 중첩(기본 최대 2단계, 하드 상한 2), MAIN → ORCHESTRATOR → LEAF 역할과 최소 권한 도구 스코프
-- **독립 컨텍스트**: 모든 서브에이전트는 새롭고 독립된 컨텍스트에서 실행 — 부모 트랜스크립트는 결코 상속하지 않음. 파일 첨부 지원
-- **신뢰성 있는 전달**: 결과는 멱등성 검사와 지수 백오프 재시도를 갖춘 EventBus announce 파이프라인을 통해 반환
-- **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 기본 600초 런 타임아웃을 강제 (`run_timeout_seconds=0`이면 비활성)
-- **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
-- **검증된 완료**: 모든 spawn이 자식 턴 사이에 보조 LLM 완료 판정기를 실행합니다; `continue` 판정은 판정기의 후속 프롬프트를 다음 턴으로 주입하며, 설정된 `COMPLETION_JUDGE["goal_max_turns"]` 예산(기본 5)으로 상한이 정해집니다
-- **기능 역할(옵트인)**: `sessions_spawn(functional_role=...)`로 워커를 전문화(general / researcher / executor / reviewer / librarian)합니다. 역할이 LLM 계층, 도구 allow-list, 자식 시스템 프롬프트 섹션을 결정합니다
-- **격리 워크트리(옵트인)**: `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 자체 git 워크트리(`agent/tools/subagent/isolation/`)를 제공합니다. 이 워크트리는 **더티** 기준선(`git stash create`, 따라서 커밋되지 않은 수정도 자식에게 보임)에서 잘라내고, announce 시점에 루트별 잠금 아래에서 다시 병합합니다. 자세한 내용은 [File Safety README](wiki/file-safety/README.md) 참조
-- ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
+[Releases](https://github.com/lasertsole/sherry_agent/releases/latest)에서 Windows, macOS, Linux용 최신 설치 파일을 내려받아 설치하고 Sherry를 실행하세요.
 
-### 4. 🌐 멀티채널 접근
-- **Robyn 백엔드**([server/](server/)): 비동기 HTTP API + WebSocket(`/sessions/ws`), `127.0.0.1:8080`에서 리슨하며 업로드된 미디어를 `/static`, `/images`, `/audio`, `/video`로 제공
-- **데스크톱 클라이언트**([client/](client/)): Tauri 2 + Nuxt 4(Vue 3 + TypeScript) SPA로, 시스템 트레이, 전역 단축키, 오프라인 히스토리 캐시(Dexie/IndexedDB), 다크/라이트 모드, i18n 지원
-- **QQ 봇**: 플러그인 시스템을 통한 QQ 채널 어댑터([plugins/channels/qq/](plugins/channels/qq/))
-- **메시지 버스**([bus/core.py](bus/core.py)): 내부 비동기 큐가 채널과 에이전트 코어를 분리
+첫 실행 시:
 
-### 5. 👁️ 멀티모달 인터랙션
-- **이미지 이해(ITTT)**: Image-to-Text 비전 모델로 사용자가 업로드한 이미지 분석
-- **비디오 이해(VTTT)**: Video-Text-to-Text 모델로 비디오 콘텐츠 분석
-- **음성 인식(STT)**: FunASR 기반 로컬 음성 인식
-- **Text-to-Image(TTI)**: `text_to_image` 스킬로 텍스트 설명에서 이미지 생성
-- **문서 파싱**: 지식 그래프 RAG 파이프라인을 위한 MinerU 기반 멀티모달 문서 수집
+1. 프리셋 캐릭터를 선택합니다(기본 Sherry를 그대로 써도 됩니다).
+2. **설정 → 모델 설정**을 열고 모델 제공자, 모델 이름, API 키, 최소 **200,000 토큰**의 컨텍스트 창을 입력한 뒤 저장합니다.
+3. 채팅을 시작합니다.
 
-### 6. ⏰ 예약 및 능동적 행동
-- **Cron 서비스**([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): 1회성(`at`), 간격(`every`), cron 표현식(`cron`, croniter + 타임존 기반) 에이전트 작업을 JSON 작업 스토어(마지막 실행 상태만)에 영구 저장하고, 실행 로그를 `logs/output/cron/<job_id>.log`에 쓰며 채널 전달 지원
-- **Heartbeat 서비스**([skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)): 주기적 웨이크업(기본 30분)으로 `HEARTBEAT.md`의 미완료 작업을 확인하고, LLM이 skip/run을 판단하며, 결과는 알림 게이트를 통과
+**모델 설정** 패널에서는 로컬 모델(임베딩, 리랭커, 비전, 보조 모델)을 진행 표시와 함께 내려받을 수 있습니다. 웹 검색은 선택 사항이며, 필요하면 **설정 → 웹 검색**에서 Tavily 또는 SearXNG를 설정하세요.
 
-### 7. ⚙️ 런타임, 동시성 및 세션 제어
-- **프로젝트 디렉터리 바인딩** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): 모든 세션에는 프로젝트 디렉터리가 있으며, 도구는 이를 기준으로 상대 경로를 해석한다 — 세션 바인딩 → `SHERRY_PROJECT_DIR` → `sherry.jsonc`의 `project_dir` → `ROOT_DIR`. `PUT /sessions/project`로 바인딩하거나(`null`로) 해제하며, 턴 도중에 내린 선택은 보류되었다가 턴 경계에서 승격된다. 루트는 **호출마다** 해석되고 캐시되지 않으므로, 프로세스 레벨 도구 싱글턴이 어떤 세션을 첫 호출자의 디렉터리에 고정시키는 일이 없다. 서브에이전트는 생성 시 부모의 바인딩을 상속하고 시작 시점의 루트에 고정된다. 프롬프트에는 유효한 루트를 밝히는 `## Current Working Directory` 블록이 추가된다. 루트의 `AGENTS.md`(폴백 `CLAUDE.md`)는 내용이 바뀔 때마다 `project_instructions` 리마인더로 주입되며, 명시적으로 바인딩된 프로젝트는 첫 메시지에서 프로젝트별 코드 인덱스용 통합 `.sherry/` 디렉터리를 얻는다. 쓰기 스냅샷 shadow git은 전역 `APP_HOME/checkpoints/store`에 있다(바인딩 시점에는 만들지 않음)
-- **읽기 전용 파일 탐색**: `GET /project/tree`와 `GET /project/file`는 지연 로드 트리와 뷰어를 제공하며, 세션 루트 밖은 강하게 거부한다(에이전트의 외부 파일 승인 흐름을 의도적으로 우회한다). `FILE_BROWSER`가 읽기 크기, 인코딩, 깊이, 레벨당 항목 수를 제한한다. 인앱 디렉터리 선택기(`GET /system/dirs`, 단일 절대 경로의 **직접 하위 디렉터리만** 나열하는 의도적 예외)는 브라우저 빌드를 지원하고, 데스크톱 빌드는 OS 폴더 대화상자를 연다. 행 우클릭 메뉴는 열기 / 연결 프로그램 / 내장 브라우저로 열기(HTML) / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가를 제공하고, 행(또는 파일 뷰어 탭)은 컴포저로 드래그할 수 있다 — 어느 경로든 메시지에 실리는 것은 `@./path` 멘션 chip뿐이며 파일 내용은 절대 실리지 않는다(파일은 에이전트가 직접 읽는다)
-- **선택 텍스트 인용과 보조 세션**: 하나의 채팅 메시지 안에서 텍스트를 선택해 우클릭하면 작은 메뉴가 열린다 — 「현재 세션에 추가」는 원자적 인용 chip을 컴포저에 삽입하고(markdown 인용 블록으로 전송), 「보조 세션에서 질문」은 부모 세션의 **완전한 fork**인 일반 자식 세션을 만든다. 첫 턴에는 부모의 checkpoint 전체 이력이 모델 전용으로 주입되며(보조 세션의 표시 이력은 비어 있음), 부모의 프리셋·agent 설정·세션별 모델 설정·프로젝트 디렉터리를 상속한다. fork는 부모의 마지막으로 완료된 답변에서 잘리므로 미완료 도구 호출이 재생되지 않는다. 세션 범위 오른쪽 사이드바 탭에서 열고 인용을 미리 채우며, 그 탭을 닫는 것은 패널만 닫을 뿐이다 — 자식 세션과 모든 상태는 유지되고 세션 목록에 남아 다시 열 수 있으며, 부모 세션을 삭제할 때만 제거된다. 탭 줄 가장 왼쪽의 아래 화살표 메뉴는 최근 닫은 탭을 「현재 세션 / 전역」별로 최신 10개까지 나열하며(현재 세션 기록은 해당 세션에만 속하고 세션 삭제 시 사라짐), 닫은 보조 세션을 이력과 함께 복원한다. 「현재 세션」 탭 그룹은 세션별로 격리되어 세션을 전환하면 해당 세션 자신의 탭(없으면 빈 상태)만 보이고 이전 세션의 페이지는 표시되지 않으며, 「전역」 탭은 모든 세션에서 공유된다. 행을 넘는 선택, 컨트롤/승인 카드에서 시작하는 선택, 8,000자를 넘는 선택은 네이티브 컨텍스트 메뉴를 그대로 둔다
-- **에이전트 제어 브라우저(CDP)** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 명시적으로 켜기 전에는 꺼져 있음(`SHERRY_BROWSER_AGENT_ENABLED=1` 과 재시작) — 꺼져 있으면 browser 도구가 등록되지 않고, 모든 `/browser/*` 경로가 404를 답하며, Chromium도 실행되지 않는다. 켜면 메인 에이전트가 병합된 메인 전용 `browser` 도구(navigate / snapshot / click / type / press / scroll / screenshot)와 `browser_evaluate`(`SHERRY_BROWSER_ALLOW_EVALUATE=1`도 필요)로 루프백 실 Chromium을 조작하고, 툴박스의 브라우저 패널이 두 번째 CDP 클라이언트로 같은 페이지를 시청한다(`/browser/ws` 스크린캐스트 + 입력). 디버그 포트는 백엔드 프로세스를 벗어나지 않는다
-- **사용자 수명 주기 훅** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc`의 `hooks` 섹션으로 운영자가 제공한 명령을 턴에 연결합니다 — `PostToolUse` / `PostToolUseFailure`(`toolName`, `toolCallId`, 유계 결과/오류 프리뷰, `durationMs`)와 `Stop`(`responsePreview`, `toolCallCount`). 설계상 읽기 전용이라 훅은 감사·알림·계측만 하고 도구를 차단하거나 인자를 바꾸거나 컨텍스트를 주입할 수 없습니다. 기본 비활성(추적되는 설정 파일이 스스로 명령을 실행하게 두지 않음). 명령은 `shlex`로 분리(셸 없음), 환경은 scrub, 훅별 타임아웃이 프로세스를 kill하며, stdout은 상한을 두고 선택적 JSON으로 파싱합니다(비 JSON 출력 = 성공). 도구 가드레일 뒤에 등록되며 전역 `hooks.enabled`로만 켤 수 있습니다(체인 멤버십은 빌드 시점 계약이며 세션별 스위치가 아님)
-- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `BACKGROUND_REVIEW`(백그라운드 리뷰 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + background_review`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
-- **대기 중인 사용자 입력**: 턴이 실행되는 동안 보낸 메시지는 `QUEUED` 행으로 영속화되고(`client_msg_id`로 중복 제거, `INPUT_QUEUE["max_active_per_session"]`이 상한), FIFO 위치와 함께 응답된다. 턴 러너는 **턴마다 한 행만** 꺼내므로, 대기 중인 N개의 메시지는 N개의 턴과 N개의 응답을 만든다 — 하나로 합쳐지지 않는다 — 그리고 HITL 대기 중인 세션은 재개가 완료될 때까지 아무것도 꺼내지 않는다. 클라이언트는 대기 행에 `cancel_queued`, `edit_queued`, `send_now`를 적용할 수 있다
-- **병렬 단계 디스패치와 플로우 계보** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): 디스패치 웨이브는 동시에 spawn하며, `TASKFLOW_INFRA["max_parallel_dispatch"]`(2; 1이면 순차 동작 복원)로 제한된다 — 웨이브 일부가 실패해도 spawn된 자식은 모두 영속화되고 실패한 단계 id는 개별적으로 명시된다. 두 자식이 동시에 완료해도 두 결과 모두 착지한다(resume의 쓰기가 `update_flow_with_conflict_retry`를 통해 확정된 판정을 재적용하므로 결과가 충돌로 유실되거나 같은 단계가 두 번 spawn되는 일이 없다). `taskflow_flow(action="create", resumed_from=…)`는 플로우 계보(`resumed_from` / `superseded_by` 현재 스키마 컬럼)를 기록하며, 대체된 플로우는 active 읽기에서 빠지되 보드에는 남는다
-- **TaskFlow 진행** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 각 흐름의 플랫 단계 목록(id, 작업, 상태)과 상태별 집계가 플로팅 진행 패널에 표시된다. 스케줄러는 여전히 각 단계의 `depends_on`에 따라 단계별로 해제한다. 흐름이 변경될 때마다 `taskflow_updated` 프레임을 최선 effort로 푸시하며, 재접속한 클라이언트는 `taskflow_refresh`로 완전히 동일한 페이로드를 다시 요청할 수 있다
-- **스트림 복구** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): 턴 도중 연결이 끊긴 뷰어는 재접속 시 한 번의 히스토리 요청(`include_active_turn=1`)을 보내, 자리를 비운 동안 완료된 턴과 실행 중 턴의 스냅샷(`turn_id`, `seq`, 텍스트)을 함께 받는다. 요청 중 socket은 수신 프레임을 보관하고, 클라이언트는 히스토리를 병합한 뒤 스냅샷을 적용하며 같은 턴의 `seq` 이하 프레임만 버린다——재생도 중복도 없다. 커밋된 도구 호출은 trajectory ledger(`GET /sessions/:session_id/trajectory`)에서 계속 조회할 수 있다.
-- **도구 소요 시간**: 모든 도구 호출은 도구 반환 시점에 한 번만 측정된다(`time.monotonic()` 사용, 0으로 클램프), 메시지 영속화 래퍼가 이를 처리해 `ToolMessage.additional_kwargs["tool_duration_ms"]`에 기록하고 `messages.tool_duration_ms`에 영속화한다. 실시간 카드는 실행 중 티커를, 종료 후에는 측정값을 보여준다. 설계상 승인 대기 시간과 대기열 시간은 이 측정 구간에 포함되지 않는다
-- **세션별 모델 및 사고**: `PUT /sessions/thinking`과 `PUT /sessions/model`이 단일 세션의 사고 토글과 메인 모델을 재정의한다(로그인이 활성화된 경우 클라이언트는 단회용 `GET /auth/ws-ticket`을 미리 가져온다). 사고 제어 미들웨어는 이에 맞춰 요청 모델을 `build_main_llm(thinking=...)` 변수로 교체하며, 세션에 명시적 선택이 없으면 환경 변수 기본값으로 폴백한다
+### 소스에서 실행
 
----
-
-## 🏗️ 기술 스택
-
-**Python 3.13**(의존성 관리는 [uv](https://docs.astral.sh/uv/) 사용) 기반이며, 다음 핵심 기술을 사용합니다:
-
-| 모듈 | 기술 |
-| :----- | :--------- |
-| **에이전트 프레임워크** | LangChain 1.3+(`create_agent` + 미들웨어), LangGraph 컴파일 그래프 |
-| **체크포인팅** | langgraph-checkpoint-sqlite(스레드 세이프 비동기 SQLite 세이버) |
-| **웹 서버** | Robyn(HTTP + WebSocket + 정적 호스팅) |
-| **데이터베이스** | aiosqlite 기반 SQLite(FTS5 전문 검색, WAL 모드) |
-| **그래프 RAG** | 벤더드 LightRAG + RAG-Anything(multimodal_rag 스킬), `snkv[vector]` 스토리지 |
-| **로컬 추론** | llama-cpp-python(GGUF: bge-m3 embedding, bge-reranker-v2-m3 reranker, auxiliary/ITTT/VTTT 모델), FunASR(STT) |
-| **문서 파싱** | mineru-vl-utils |
-| **웹 검색** | langchain-tavily(Tavily API) + 자체 호스팅 SearXNG를 대체 백엔드로 사용, Tavily 실패 시 자동 폴백 |
-| **웹 fetch** | `web_fetch`는 http(s) URL 하나를 markdown으로 읽습니다: 공개 페이지는 SSRF 가드·DNS 피닝·홉별 리다이렉트 검사를 거치고, 로컬/개발 서버 주소는 명시 스위치(`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`)가 필요합니다 |
-| **코드 검색** | ripgrep(`ripgrep-bin` 으로 의존성과 함께 설치), 순수 Python 스캔이 항상 대비하는 폴백 |
-| **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-classic + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
-| **구조화 출력** | instructor, json_repair |
-| **평가(Evaluation)** | RAGAS(그래프 RAG 품질 지표) + 자체 샌드박스 평가 프레임워크(`evals/`) |
-| **MCP** | langchain-mcp-adapters(`plugins/mcp_server/`에서 서버 구성) |
-| **작업 스케줄링** | croniter, asyncio |
-| **비동기 메시징** | asyncio 큐(MessageBus, EventBus) |
-| **미디어 처리** | OpenCV(headless), Pillow, websockets / websocket-client |
-| **데스크톱 클라이언트** | Tauri 2 + Nuxt 4(Vue 3, TypeScript, pnpm) |
-| **로깅** | loguru(선택적 LangSmith 트레이싱) |
-
----
-
-## 📂 프로젝트 구조
-
-```text
-sherry_agent/
-├── agent/                  # 에이전트 코어 로직
-│   ├── core.py             # 메인 에이전트 루프(LangChain create_agent → LangGraph 그래프)
-│   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
-│   ├── wrapper/            # 그래프 레벨 래퍼(반복 가드, 컨텍스트 한도)
-│   ├── checkpointer/       # 스레드 세이프 비동기 SQLite 체크포인터
-│   ├── middlewares/        # 미들웨어 파이프라인(요약, 가드레일, HITL 등)
-│   ├── prompt_data_provider.py # Runtime PromptDataProvider implementation (owner side)
-│   ├── skill_write_provider.py  # Runtime SkillWriteProvider implementation (owner side)
-│   └── tools/              # 에이전트가 사용하는 도구
-│       ├── taskflow/       # Task orchestration engine (DAG, budget, deadline, step judge)
-│       ├── subagent/       # 멀티레벨 서브에이전트 시스템(spawn/registry/swarm 등)
-│       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
-│       ├── todolist/       # 세션 범위 todo 계획 레이어
-│       │   └── knowledge/  # KnowledgeStore + handoff-tree 감사(모델 도구 폐기)
-│       ├── file_tools/     # 파일 I/O 도구(읽기, 쓰기, 패치, 검색)
-│       ├── skill_tools/    # 스킬 관리 도구(나열, 조회, 관리)
-│       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
-│       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
-│       ├── pub_base/       # 공유 도구 유틸리티 및 기반 (BaseSQLiteRepository, 경로 유틸)
-│       ├── mcp_plugin.py   # MCP 도구 통합
-│       ├── web/            # 웹 검색 + 가져오기 도구
-│       ├── python_repl.py  # Python 코드 실행
-│       ├── terminal/       # 터미널 + 백그라운드 도구
-│       ├── memory.py       # 메모리 확인 도구
-│       ├── question.py     # HITL 구조화 질문 도구(1~4개 질문, 미리보기 + 메모)
-│       └── message_search.py # 대화 FTS5 검색 도구
-│
-├── bus/                    # 메시지 버스(비동기 큐)
-│   └── core.py             # MessageBus — 인바운드/아웃바운드 큐
-│
-├── channels/               # 채널 인터페이스 정의
-│   ├── base.py             # 추상 채널 기반 클래스
-│   ├── deps.py             # Dependency-injection seams for channel wiring
-│   ├── manager.py          # 채널 라이프사이클 매니저
-│   └── registry.py         # 채널 등록
-│
-├── client/                 # 데스크톱 클라이언트(Tauri 2 + Nuxt 4, pnpm)
-│   ├── app/                # Nuxt 4 SPA 소스(Vue 3)
-│   ├── src-tauri/          # Tauri 2 네이티브 셸(Rust)
-│   └── README.md           # 클라이언트 문서
-│
-├── config/                 # 중앙화된 설정(paths, feature TypedDicts, schema, settings)
-│   ├── __init__.py         # API 호스트/포트(127.0.0.1:8080)
-│   ├── path.py             # 파일 경로 설정
-│   ├── schema.py           # 설정 스키마 모델
-│   ├── sherry_settings.py  # sherry.jsonc 로더
-│   └── features/           # 객체별 feature TypedDict와 기본 인스턴스
-│
-├── context_engine/         # 메모리 엔진(MesMemory)
-│   ├── core.py             # 히스토리 조회 및 FTS5 검색 API
-│   ├── store/              # 세션 메시지 스토어(SQLite + FTS5, WAL)
-│   ├── events/             # append-only 이벤트 로그 + projector
-│   ├── embeddings/         # 벡터 시맨틱 검색(indexer / search)
-│   └── curator/            # 자동 스킬 큐레이션
-│
-├── wiki/                   # 서브시스템 설계 문서(언어별 README)
-│   ├── experience/         # 경험 추출 경로 + 스킬 큐레이션
-│   ├── session_memory/     # 세션 메모리 역량
-│   ├── summarization/      # 압축 트리거 및 쿨다운
-│   ├── loop-prevention/    # 폭주 루프 방지 하네스
-│   ├── llm-retry/         # 재시도 예산, fallback 상한, 차단 범위
-│   ├── sandbox/            # 평가 샌드박스 및 도구 격리
-│   ├── token-guard/        # 200K 컨텍스트 윈도우 하한
-│   ├── context-governance/ # 영속화, 축출, 테일 클립, 요약 필터링
-│   ├── long-running-tasks/ # TaskFlow 오케스트레이션
-│   ├── subagent/           # Subagent design invariants & completion gates
-│   ├── code-intel/         # Code retrieval layers
-│   ├── graph-rag/          # 멀티홉 검색과 검색 튜닝
-│   ├── llm-wiki/          # markdown KB + 파생 그래프 쿼리
-│   ├── ptc/                # Programmatic tool calling
-│   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
-│   ├── safety-filter/      # 라이브 안전: 키워드 규칙 + LLM 심사 + 스트림 절단
-│   ├── threat-model/       # Trust boundaries & prompt-injection scanner
-│   └── auth/               # 선택형 로그인 보호(계정과 세션)
-│
-├── evals/                  # 평가 프레임워크(dispatcher + 11개 스위트)
-│   ├── evals.py            # 스위트 러너: uv run --group evals python evals/evals.py [suite]
-│   ├── sandbox.py          # 실행 중 저장소 쓰기를 리디렉션하는 샌드박스
-│   ├── graph_rag/          # 그래프 RAG 파이프라인의 RAGAS 지표
-│   ├── subagent/           # 서브에이전트 스폰 파이프라인 벤치마크
-│   ├── long_running_task/  # TaskFlow DAG 평가
-│   ├── session_memory/     # 세션 메모리 스택 점검
-│   ├── skill_review/   # AI 판정 스킬 리뷰
-│   └── results/            # 실행별 리포트(gitignore됨)
-│
-├── logs/                   # 로깅 시스템
-│   ├── logger.py           # 로그 설정(loguru)
-│   ├── curator/            # Curator run logs
-│   └── output/             # 로그 출력 디렉터리
-│
-├── models/                 # 모델 래퍼 및 가중치
-│   ├── LLMs/               # LLM 설정(main_llm.py, auxiliary_llm/, reasoning_* 프로바이더)
-│   ├── ITTT_model/         # Image-to-Text 모델(클라우드 API 또는 로컬 GGUF)
-│   ├── VTTT_model/         # Video-Text-to-Text 모델(클라우드 API 또는 로컬 GGUF)
-│   ├── STT_model/          # Speech-to-Text 모델(FunASR)
-│   ├── embed_model/        # 임베딩 모델(로컬 bge-m3 GGUF 또는 클라우드 API)
-│   ├── reranker_model/     # 크로스 인코더 리랭커(로컬 GGUF 또는 클라우드 API)
-│   ├── extract_model/      # 엔티티 추출 모델(서드파티 가중치)
-│   └── providers/          # LLM 프로바이더 사양 및 레지스트리
-│       └── registry.py    # 20개 이상 프로바이더의 ProviderSpec
-│
-├── plugins/                # 플러그인 시스템
-│   ├── channels/           # 채널 플러그인(QQ 봇 어댑터)
-│   └── mcp_server/         # MCP 서버 설정
-│
-├── pub/                    # 공용 유틸리티 및 데이터 모델
-│   ├── func/               # 공용 유틸리티 함수
-│   │   ├── format/         # 텍스트 포맷 유틸리티
-│   │   ├── media/          # 미디어 처리 유틸리티
-│   │   ├── message/        # 메시지 처리 유틸리티
-│   │   └── validator/      # 입력 검증 유틸리티
-│   └── types/              # 공유 데이터 모델
-│       ├── message.py      # MultiModalMessage, Chat 등
-│       ├── bus.py          # 메시지 버스 데이터 모델
-│       └── client.py       # 클라이언트 데이터 모델
-│
-├── runtime/                # Runtime state, lanes & cross-boundary seams
-│   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
-│   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
-│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / BACKGROUND_REVIEW / NESTED)
-│   ├── session/            # 세션 단위 레지스트리
-│   │   ├── core.py         # 싱글톤 SessionRegister 기반 + 세션별 정리
-│   │   ├── relation_register.py # 세션/socket 관계 레지스트리
-│   │   ├── state_register.py   # 상태 레지스트리
-│   │   ├── state_keys.py       # 타입 지정 StateKey 레지스트리 + TypedState 파사드
-│   │   ├── project_dir.py  # Per-session project-directory binding resolution
-│   │   ├── count_call_register.py # 사용량/통계 카운터
-│   │   ├── timer_call_register.py # 타이머 레지스트리
-│   │   └── _callback_executor.py # 비동기 콜백 실행기
-│   └── process/            # 프로세스 단위 서비스
-│       ├── crash_loop_breaker.py # 부팅 크래시 루프 감지
-│       └── periodic_backoff.py   # 주기적 백오프 상태
-│
-├── server/                 # Robyn 백엔드 서비스
-│   ├── __main__.py         # 서버 엔트리포인트(python -m server)
-│   ├── DAO/                # 데이터 접근 객체
-│   ├── queue/              # Persisted user-input queue store
-│   ├── utils/              # Shared backend helpers (JWT, password hashing, atomic I/O, WS)
-│   ├── service/            # 비즈니스 로직 서비스(skill_scanner.py 포함)
-│   └── trigger/            # 라우트 및 핸들러 등록
-│       ├── http/           # HTTP 엔드포인트 트리거
-│       ├── ws/             # WebSocket 트리거
-│       ├── channels/       # 채널 수신 트리거
-│       └── subagent/       # 서브에이전트 결과 트리거
-│
-├── skills/                 # 스킬 라이브러리(SKILL.md 정의 파일)
-│   ├── loader.py           # 스킬 자동 발견 및 등록
-│   ├── skills_snapshot.py  # 스킬 프롬프트 스냅샷 구축
-│   ├── auto/               # 자동 학습 스킬(curator 관리)
-│   ├── plugins/            # 서드파티 업로드 스킬(기본 비활성)
-│   └── builtin/            # 내장 스킬
-│       ├── core/           # cron, heartbeat, clawhub, skill_creator, image_to_text,
-│       │                   # speech_to_text, video_text_to_text, multimodal_rag,
-│       │                   # taskflow, todolist, ulw-execute, bugfix-contract, browser
-│       ├── text_to_image/  # Text-to-image 스킬
-│       ├── code_wiki/      # 코드베이스 wiki 생성 스킬
-│       └── llm_wiki/       # Markdown 지식베이스 스킬
-│
-├── src/                    # 런타임 데이터 디렉터리
-│   ├── checkpoints/        # 세션 체크포인트
-│   ├── data/               # 데이터 저장소
-│   ├── store/              # 데이터 스토어
-│   ├── rag/                # RAG 인덱스 출력
-│   └── images/ audio/ video/ # 업로드 미디어(정적 서빙)
-│
-├── temp/                   # 임시 파일
-│
-├── tests/                  # 테스트 스위트(pytest)
-│
-├── workspace/              # 캐릭터 프로파일 및 행동 정의
-│   ├── SOUL.md             # 성격 대비, 말투
-│   ├── IDENTITY.md         # Core identity card
-│   ├── AGENTS.md           # 도구 사용 우선순위, 안전 경계
-│   ├── USER.md             # 사용자별 상호작용 선호
-│   ├── ROLE.md             # 역할 선언: AI와 사용자가 각각 연기하는 상대
-│   ├── HEARTBEAT.md        # heartbeat 서비스의 미완료 작업
-│   ├── prompt_builder.py   # 프로파일 → 프롬프트 빌더
-│   ├── file_sync.py        # 워크스페이스 템플릿 지연 동기화(언어별)
-│   ├── template/           # 페르소나 템플릿(en / zh / ja / ko)
-│   ├── sessions/           # Per-session runtime workspace data
-│
-├── .env                    # 앱 설정, 추적됨 (샌드박스 / 게이트웨이 / 로그인 — 키는 넣지 마세요)
-├── .models.example         # 모델 설정 템플릿 (첫 실행 시 .models 생성)
-├── .network.example        # 네트워크 설정 템플릿 (첫 실행 시 .network 생성)
-├── pyproject.toml          # Python 의존성(uv 관리)
-├── uv.lock                 # uv 락파일
-├── start.sh                # 백엔드 시작 스크립트
-└── cron_jobs.json          # Cron 작업 스케줄 데이터
-```
-
----
-
-## 📚 서브모듈 문서
-
-각 주요 서브시스템에는 상세 README가 있습니다:
-
-| 서브모듈 | 설명 | 문서 |
-|-----------|-------------|---------------|
-| **Context Engine** | 단기 세션 메시지 메모리(MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **경험 체계** | 대화 이력을 재사용 가능한 경험으로 축적하는 세 개 추출 경로와 `skills/auto/`를 관리하는 Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
-| **세션 메모리** | SESSION 계획 역량: memory review, 압축 쿨다운, compaction lock, 이벤트 로그, 시맨틱 검색 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
-| **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **서브에이전트 설계** | 설계 불변식: 두 역할 축 모델, spawn 권한 가드, 4계층 완료 게이트 | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
-| **Code Intel** | 코드 검색: 모든 에이전트가 쓰는 ripgrep 키워드 검색에 더해, 역할 게이트가 걸린 네 계층——tree-sitter 심볼 인덱스, ast-grep 구조 검색, LSP 정밀 검색, 시맨틱 검색——그리고 imports/상속/mixin 간선과 양방향 `path` 도구 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
-| **LLM Wiki 그래프** | markdown 우선 지식 베이스 + 명시적 파생 그래프: EXTRACTED/INFERRED confidence가 붙은 wikilink/mention 간선, 멀티모달 ingest, path/god-node/community 쿼리 | [EN](wiki/llm-wiki/README.md) · [ZH](wiki/llm-wiki/README.zh.md) · [JA](wiki/llm-wiki/README.ja.md) · [KO](wiki/llm-wiki/README.ko.md) |
-| **GraphRAG 경로 쿼리** | 명시적 멀티홉 검색: 2-3홉 BFS, embedding 유도 beam 폴백, 순수 밀집 LightRAG 엔진에 맞춘 검색 임계값 | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
-| **프로그래매틱 도구 호출** | EXECUTOR 전용 `execute_code`: Python 스크립트 하나를 별도 자식 프로세스에서 실행하고 loopback TCP RPC 브리지로 실제 도구를 호출하며, 제한된 builtins와 스크립트별 예산을 적용 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
-| **미들웨어** | 에이전트 라이프사이클 미들웨어 파이프라인 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
-| **채널** | 채널 인터페이스 및 어댑터 시스템 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
-| **데스크톱 클라이언트** | Tauri 2 + Nuxt 4 데스크톱/모바일 SPA 클라이언트 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
-| **Cron 서비스** | 예약/주기적 에이전트 작업 실행 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
-| **Heartbeat 서비스** | 주기적 웨이크업 작업 확인 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **요약 압축** | 컨텍스트 압축 미들웨어: 5개 트리거 지점, 4경로 오버플로 라우터, 스래싱 방지 가드 | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
-| **루프 방지** | 폭주 루프 가드, 지수 백오프 브레이커, 프로세스 크래시 게이팅 | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
-| **LLM 재시도 예산** | 제공자 재시도 예산과 카운트: 물리/예산 시도, `Retry-After` 백오프, 턴당 fallback 상한, 타임아웃 차단 범위 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
-| **샌드박스** | 터미널 및 Python REPL 격리: 환경 변수 스크러빙, OS 네이티브 격리, 승인 게이트 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
-| **위협 모델** | 신뢰 경계, 데이터 분류, 위협별 방어 현황, 그리고 prompt 주입 스캐너 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
-| **사용자 로그인** | 선택형 계정 보호: loopback 클라이언트는 면제되며, 원격 접근은 scrypt 비밀번호와 HttpOnly JWT 세션 쿠키로 제어됩니다 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
-| **장기 실행 작업** | TaskFlow DAG 엔진, 단계 판정기, 토큰 예산, 데드라인, 검증된 완료 게이트, 미참조 플로 고아 GC, 턴 간 메모리 연속성 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | 두 LLM의 200K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute: 읽기 전용 설계, 계획 승인 게이트, 리비전 결속 재제출 루프와 수정 예산 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
-| **Context Governance** | 경계별 영속화, 도구 결과·인간 메시지 축출, `read_file` 슬라이스, 오버플로 테일 클립, 요약 필터링, message 행의 턴 식별자 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
-| **스트림 복구** | 턴 도중 WebSocket 복구: 스냅샷 + 턴별 `seq` 워터마크, 재생 없음, 중복 없음, 도구 호출은 trajectory ledger에 유지 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
-| **File Safety** | 원자적 쓰기, 이중 CAS, 경로별·프로세스 간 잠금, `write_file`의 읽기 우선 라이선스(라이선스를 준 읽기를 압축이 버리는 순간 함께 사라집니다), 그리고 병합이 인터페이스 단위 변경을 보고하는 격리 서브에이전트 워크스페이스 | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
-| **도구 병렬 안전** | 배치 인식 ToolNode: 같은 파일 읽기/쓰기는 순서 보장, 다른 경로는 병렬, 프로세스/세션 리소스 잠금 | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
-
-## ⚡ 빠른 시작
-
-### 1. 사전 요구 사항
-- **Python 3.13+**
-- **[uv](https://docs.astral.sh/uv/)** — 의존성 매니저. `.venv`를 자동으로 생성하고 관리하므로 가상환경을 직접 만들 필요가 없습니다.
+개발 또는 사용자 지정 빌드에는 **Python 3.13+**, **[uv](https://docs.astral.sh/uv/)** 가 필요하고, 데스크톱 클라이언트에는 **Node.js 20+**, **pnpm**, **Rust** 가 필요합니다.
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/lasertsole/sherry_agent.git
 cd sherry_agent
-uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 설치
+uv sync
+./start.sh          # 백엔드는 http://127.0.0.1:8080 에서 실행
 ```
 
-### 2. 모델 및 네트워크 설정 파일
-설정은 민감도에 따라 세 파일로 나뉩니다:
-
-| 파일 | 추적 | 내용 |
-| :--- | :--- | :---------- |
-| `.env` | ✅ 커밋됨 | 비민감 앱 설정(샌드박스 정책, 게이트웨이, 로그인). 키를 절대 넣지 마세요. |
-| `.models` | 무시됨 | 각 모델 패밀리의 provider / 엔드포인트 / 키 (첫 실행 시 `.models.example`에서 생성) |
-| `.network` | 무시됨 | 웹 검색(Tavily / SearXNG), 브라우저 에이전트 스위치, LangSmith 트레이싱 (첫 실행 시 `.network.example`에서 생성) |
-
-최소한 `.models`에 메인 채팅 모델을, 웹 검색을 쓴다면 `.network`에 Tavily 키나 SearXNG 인스턴스를 채우세요 — 「모델 설정 / 모델 검색」 패널에서 편집할 수 있습니다:
-
-| 변수 | 필수 | 설명 |
-| :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 메인 채팅 모델(JSON 출력 및 도구 호출 지원 필요); `MAIN_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
-| `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 범용 추론 스위치. 프로바이더별로 매핑됨(DeepSeek / OpenAI / GLM / Anthropic) |
-| `TAVILY_API_KEY` | 웹 검색 사용 시 ✅ | 웹 검색 도구 활성화 |
-| `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 자체 호스팅 SearXNG를 웹 검색의 백엔드(또는 Tavily의 대안)로 사용. `TAVILY_API_KEY`가 없으면 유일한 백엔드입니다. 「모델 검색」 패널에서 설정하며, Tavily 실패 시 자동으로 이쪽으로 폴백합니다 |
-| `AUXILIARY_LLM_*` | — | 요약/단순 작업용 경량 모델(기본값은 클라우드 API. `AUXILIARY_LLM_MODEL_LOCAL=true`로 로컬 GGUF 모델 사용); `AUXILIARY_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
-| `TASKFLOW_LLM_*` | — | TaskFlow 결정 모델(plan / replan / 단계 판정 / 목표 달성 판정). Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따르고, 로컬 모드는 보조 모델의 GGUF를 재사용합니다. `TASKFLOW_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
-| `COMPRESSION_LLM_*` | — | 압축 모델(LLM 요약). 메모리 리뷰는 `MAIN_LLM`, 스킬 리뷰는 `AUXILIARY_LLM_*`을 사용. Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따릅니다 |
-| `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
-| `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
-| `MODEL_PRICING_TABLE` | — | 세션 예산 비용 추정용 USD/1M token 가격표(사용자 편집 가능한 JSON 객체를 JSON 문자열로 저장; provider 직접 반환 cost와 로컬 litellm 캐시가 폴백) |
-| `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 보안 스캐너 스위치(기본값 켜짐) |
-| `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | 선택적 브라우저 에이전트(기본 꺼짐). 변경 후 재시작해야 도구가 등록됩니다 |
-| `TOOL_CALL_TIMEOUT_MINUTES`(sherry.jsonc) / `LOG_LEVEL` | — | 저장 설정일 뿐(기본값 5) — 도구 실행 경로가 소비하지 않음; 로그 레벨(INFO) |
-| `WORKSPACE_TEMPLATE_LANG` | — | 페르소나 템플릿 언어: `en` / `zh` / `ja` / `ko`(첫 사용 시 지연 복사) |
-| `LANGSMITH_TRACING_V2` / `LANGSMITH_API_KEY` (`.network`) | — | 선택적 LangSmith 트레이싱 |
-
-### 3. 모델 참고 사항 (HuggingFace 자동 다운로드)
-**로컬 GGUF** 모드로 구성된 모델은 첫 사용 시 Hugging Face에서 `models/<model>/model_weight/`로 자동 다운로드됩니다 — 수동 다운로드가 필요 없습니다:
-
-- **임베딩**: `EMBEDDING_MODEL_LOCAL=true`(기본값)이면 로컬 `bge-m3` Q8_0 GGUF를 첫 실행 시 자동 다운로드합니다.
-- **리랭커**: `.models` 템플릿의 기본값은 **클라우드 API**(`RERANKER_MODEL_LOCAL=false`, OpenAI 호환 `bge-reranker-v2-m3`)입니다. `true`로 설정하면 로컬 GGUF 리랭커(자동 다운로드, 약 636 MB)로 전환됩니다.
-- **ITTT / VTTT / Auxiliary LLM**: 템플릿 기본값은 클라우드 API이며, `*_MODEL_LOCAL=true`로 설정하면 로컬 GGUF 모델로 전환됩니다(역시 자동 다운로드).
-- **진행률이 있는 사전 다운로드**: 「모델 설정」 패널의 내장 로컬 항목(임베딩, 리랭커, ITTT / VTTT, 보조 모델)은 다운로드 버튼과 실시간 진행률 표시줄을 제공하며, 스로틀된 `model_download_updated` WebSocket 프레임을 받고 패널을 열거나 재연결할 때 `GET /model-downloads/status` 스냅샷을 한 번 읽은 뒤 미완료 `.part` 파일에서 중단된 전송을 재개합니다.
-
-> 첫 다운로드 시 huggingface.co 접근이 필요합니다(중국 본토 사용자는 프록시나 미러가 필요할 수 있습니다). 중단된 다운로드는 다음 시작 시 재개되며, `models/<model>/model_weight/`를 삭제하면 강제로 다시 다운로드합니다.
-
-### 4. 백엔드 시작
-`start.sh`는 `pnpm`이 있으면 Nuxt 개발 서버를 백그라운드로 먼저 시작한 뒤 Robyn 백엔드를 실행합니다(Ollama는 시작하지 않습니다):
-
-```bash
-chmod +x start.sh
-./start.sh          # .venv 인터프리터로 python -m server --fast --disable-openapi 실행
-```
-
-수동 시작(동일):
-
-```bash
-uv run python -m server
-```
-
-백엔드는 **http://127.0.0.1:8080** 에서 리슨하며 WebSocket 엔드포인트는 `/sessions/ws`입니다.
-
-### 5. (선택) 데스크톱 클라이언트
-Tauri 2 + Nuxt 4 클라이언트는 [client/](client/)에 있으며 Node.js 20+, pnpm, Rust가 필요합니다(CI는 Node 22를 고정합니다):
+개발 모드에서 데스크톱 클라이언트 실행:
 
 ```bash
 cd client
 pnpm install
-pnpm dev          # 브라우저 모드, 개발 서버 http://localhost:3000
-pnpm tauri dev    # 네이티브 데스크톱 모드
+pnpm tauri dev
 ```
 
-클라이언트는 기본적으로 `http://127.0.0.1:8080`의 Python 백엔드에 연결됩니다(`client/.env`의 `VITE_API_BACK_URL`로 설정 가능). 자세한 내용은 [클라이언트 README](client/README.md)를 참조하세요.
+빌드와 패키징 방법은 [개발자 가이드](AGENTS.md)와 [Wiki](https://github.com/lasertsole/sherry_agent/wiki)에 있습니다.
 
-**데스크톱 앱 패키징**은 **하나의 통합 설치 파일**을 만듭니다. 프런트엔드, Rust 셸, CPU Python 백엔드를 같은 deb/rpm/AppImage/msi/dmg에 담습니다. 최초 실행 시 백엔드를 내려받지 않습니다:
+## 🧭 빠른 둘러보기
 
-```bash
-uv sync && uv pip install pyinstaller
-uv run --no-sync python packaging/build_backend.py   # 백엔드 → client/src-tauri/sherry-backend/
-cd client && pnpm tauri build                         # 백엔드 + SPA + 셸을 함께 패키징
-```
+- **채팅**: 메인 대화 창입니다. 왼쪽 사이드바에서 세션을 전환하며, 세션마다 모델과 사고 수준을 따로 설정할 수 있습니다.
+- **기억**: **메뉴 → 기억**에서 Sherry가 기억하는 내용을 보고, 검색하고, 편집하거나 보관할 수 있으며, 기억 한도와 의미 검색을 조정할 수 있습니다.
+- **프리셋과 역할**: 캐릭터의 정체성, 성격, 말투, 그리고 당신이 맡는 역할을 편집합니다.
+- **할 일 목록**: 여러 단계 작업은 계획과 진행 상황이 표시되어 무엇이 끝났고 다음이 무엇인지 알 수 있습니다.
+- **오른쪽 사이드바**: 파일, Shadow Git Graph(그림자 Git 그래프), 브라우저, 터미널, 화이트보드, 작업 궤적 등이 채팅 옆 탭으로 열립니다.
+- **사이드 채팅 / 브랜치**: 사이드 대화에서 메시지를 인용하거나, 이전 답변에서 새 세션을 분기해 원래 대화를 건드리지 않고 다른 방향을 탐색할 수 있습니다.
+- **예약 작업**: 일회성, 간격, cron 형식 작업을 만들 수 있고, 하트비트 점검으로 예정된 일을 이어갈 수 있습니다.
+- **설정**: 모델과 네트워크, 단축키, 안전 필터, 데스크톱 동작, 언어와 모양.
 
-`.github/workflows/desktop-build.yml`이 세 플랫폼에서 통합 설치 파일을 빌드합니다. 백엔드 빌드와 설치 파일 생성 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env` / `.models` / `.network`——는 OS 앱 데이터 디렉터리(셸이 `--sherry-home`으로 전달; `SHERRY_HOME`은 폴백)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
+## 🔐 당신의 데이터
 
----
+Sherry는 로컬에서 실행됩니다. 세션, 기억, 학습한 스킬, 로그, 설정은 설치 폴더가 아니라 운영체제의 앱 데이터 디렉터리에 저장됩니다. API 키는 당신이 설정한 제공자에게만 전송됩니다. Sherry 계정이나 클라우드 서비스에 가입할 필요가 없습니다.
 
-## 🧪 테스트
+## 📚 문서
 
-테스트는 `tests/` 아래에 **소스 트리를 미러링**하며(`tests/agent/...`, `tests/server/...`, `tests/context_engine/...`), uv를 통해 **pytest**로 실행합니다(단일 테스트 파일이나 소규모 선택은 `uv run pytest`). 대부분의 테스트 파일은 모듈 수준 `pytestmark`(`unit` / `integration` / `module` / `system` / `regression`)를 가지며, 이것이 어느 runner 그룹에서 실행될지 결정합니다.
+이 README는 사용자 안내서입니다. [Wiki](https://github.com/lasertsole/sherry_agent/wiki)에는 아키텍처, 기억 엔진, 작업 오케스트레이션, 샌드박스, 보안 모델 등 기술 문서가 있습니다. 개발자와 기여자는 [AGENTS.md](AGENTS.md)와 [클라이언트 README](client/README.md)부터 시작하세요.
 
-### 권장: 프로세스 격리 runner
+## 🤝 기여
 
-전체 스위트(및 CI)에는 split runner를 사용하세요. 이 runner는 **세 개의 순차 pytest 프로세스**(결코 병렬 아님)로 MARKER(디렉터리가 아님) 기준으로 테스트를 선택하고, 종료 코드를 집계하며, 그룹별 요약과 최종 판정(모든 그룹 통과 시에만 종료 코드 0)을 출력합니다:
+Issue와 Pull Request를 환영합니다. 스킬을 추가하려면 `skills/builtin/`, `skills/auto/`, `skills/plugins/` 아래에 `SKILL.md`가 있는 폴더를 만드세요. 실행 중인 에이전트에게 내장 `skill_creator` 스킬로 생성을 요청할 수도 있습니다. 서드파티 스킬은 직접 활성화하기 전까지 비활성 상태로 유지됩니다.
 
-```bash
-uv run python tests/run_tests_split.py                  # 허메틱 스위트(기본, llm_e2e 제외)
-uv run python tests/run_tests_split.py --with-llm-e2e   # 실제 LLM e2e 테스트만(전용 job 모드)
-uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pytest로 전달
-```
+## 📄 라이선스
 
-| 그룹 | Marker | 내용 |
-| :---- | :----- | :------- |
-| **A** | `unit` | 순수 로직, 완전 mock 테스트 |
-| **B** | `integration or module or system` | 허메틱 통합 / 모듈 / 시스템 테스트 |
-| **C** | `regression` | 크로스 모듈 회귀 테스트 |
-
-**왜 프로세스를 분리할까?** `tests/agent/tools/subagent/conftest.py`는 conftest *임포트* 시점에 stub callable을 프로세스 전역 `sys.modules`에 설치합니다. 단일 프로세스 전체 스위트 실행에서 pytest는 수집 단계(테스트 실행 전)에 모든 conftest와 테스트 모듈을 임포트하므로, 그 stub이 프로세스 전체에서 살아남아 스위트를 넘어 누출됩니다. 지연(호출 시점) 임포트는 stub을 해석하지만, 더 일찍 실제 객체를 바인딩한 모듈은 오래된 바인딩을 유지합니다. 그 결과 subagent 테스트에서 멀리 떨어진 스위트에서 혼란스럽고 순서에 의존하는 실패가 나타납니다(예: 스킬 스코프 단언이 stub의 고정 스킬 목록을 보거나 `TypeError` 트레이스백이 conftest lambda를 지목). 그룹을 별도 프로세스로 실행하면 이런 크로스 스위트 오염이 구조적으로 불가능해집니다. (stub 자체는 `c730a46`부터 복원 안전합니다. runner는 심층 방어의 운영 계층입니다.)
-
-**Windows 참고:** 자식 pytest 프로세스의 환경에 `PYTHONIOENCODING=utf-8`이 주입되고 runner가 `errors="replace"`로 출력을 캡처하므로, GBK 콘솔 코드페이지가 출력을 손상시키거나 실행을 크래시시키지 않습니다.
-
-### 실제 LLM e2e 테스트(`llm_e2e` marker)
-
-다섯 개 파일에 걸친 여덟 개의 테스트가 **실제 LLM API**를 호출합니다: `tests/agent/tools/subagent/`의 일곱 개(`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`)와 `tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py`의 multimodal-RAG 파이프라인 테스트입니다. 이들은:
-
-- **기본적으로 선택 해제**되며(`-m "not llm_e2e"`, `pyproject.toml` addopts와 runner 양쪽에 설정),
-- `@pytest.mark.timeout` 예산(pytest-timeout)으로 제한됩니다: 단순 테스트 300초, 동시 테스트 600초,
-- 명시적으로, **전용 job**에서 실행합니다: `uv run python tests/run_tests_split.py --with-llm-e2e`(`-m llm_e2e` 선택) 또는 `uv run pytest -m llm_e2e`.
-
-**예상 런타임**(단독, 실제 백엔드): 단순 작업 약 30–60초, 복잡한 최악의 경우 약 10분, 동시 작업 약 2–9분. 이 예산을 초과하면 정상적인 지연이 아니라 실제 hang이며, 테스트별 timeout이 이를 제한합니다(단순 300초 / 동시 600초).
-
-**CI:** `.github/workflows/ci.yml`는 `main` 또는 `dev`에 대한 모든 push/PR에서 `uv run python tests/run_tests_split.py`를 실행하며, 스위트를 **세 개의 순차 pytest 프로세스**(결코 병렬 아님)로 수행합니다: A = `unit`, B = `integration` + `module` + `system`, C = `regression`. `--with-llm-e2e`는 별도의 더 느린 job으로 유지하세요(API 토큰을 소모하며, 다른 스위트와 병렬로 절대 실행하지 마세요).
-
-> **참고:** `tests/full/`은 위 표준 그룹 밖의 보조/실험 디렉터리입니다. 실제 LLM을 구동하는 모든 파일에는 `llm_e2e` 태그가 붙어 있으므로 기본 addopts에서 선택 해제되고 split runner도 수집하지 않습니다(또한 `tests/full/`을 `--ignore`합니다). 수동 실행: `uv run --no-sync pytest -m llm_e2e tests/full/<file>`. hermetic 테스트는 여기에 두지 않습니다 — real-graph HITL 테스트는 `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py`로 이동해 표준 그룹에서 실행됩니다.
-
-### Evals
-
-`evals/`는 pytest와 나란히 있는 자체 제작 샌드박스 평가 프레임워크입니다. 등록된 모든 스위트를 실행하거나 이름으로 하나만 실행할 수 있습니다:
-
-```bash
-uv run --group evals python evals/evals.py                # 등록된 모든 스위트
-uv run --group evals python evals/evals.py graph_rag      # 이름으로 단일 스위트 실행
-```
-
-| 스위트 | 평가 내용 |
-| :---- | :---------------- |
-| `graph_rag` | multimodal_rag 파이프라인을 RAGAS로 채점(faithfulness, answer relevancy, context recall, context precision) |
-| `subagent` | 실제 `spawn_subagent_direct` 파이프라인의 결정적 작업 벤치(작업 성공률 + 지연) |
-| `long_running_task` | 의존성 DAG에 대한 TaskFlow 오케스트레이션 루프(스텝 성공률, 흐름 완료, wall time) |
-| `session_memory` | 세션 메모리 스택 6개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 시맨틱 검색 랭킹 |
-| `skill_review` | 계획 완료 시 스킬 리뷰를 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
-| `coding_capability` | 실제 메인 agent를 소규모 자체 설계 코딩 작업 세트로 평가하고, 각 작업은 해당 저장소 자체의 pytest 실행으로 판정——베이스라인이며 외부 벤치마크가 아님 |
-| `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. 평가 테스트 패치는 프롬프트에 노출되고 실행 전 checkout에 미리 적용되며, 채점 시 초기화 후 다시 적용됨) |
-| `deepswe` | 외부 DeepSWE 작업을 벤치마크 자체 Docker 이미지에서 실행: agent는 bind mount된 checkout을 편집하고 `terminal`은 컨테이너 안에서 실행되며, 작업 전용 verifier 이미지가 diff를 채점(먼저 gold patch 자체 점검) |
-| `terminal_bench` | 외부 Terminal-Bench 작업: 작업 이미지를 빌드하고 agent가 컨테이너 안에서 작업하며, 작업 자체의 `run-tests.sh` pytest 판정으로 평가(먼저 oracle 자체 점검, 다중 서비스 작업은 미지원으로 명시) |
-| `agentbench` | 외부 [AgentBench](https://github.com/THUDM/AgentBench) DBBench 테스트 세트: 고정 commit의 공식 질문과 테이블을 SQLite로 materialize하고 AgentBench 자체 비교 규칙으로 판정(INSERT/DELETE/UPDATE 행은 미지원으로 명시, MySQL→SQLite 방언 차이는 기록) |
-| `toolbench` | 외부 [ToolBench](https://github.com/OpenBMB/ToolBench) 테스트 지시문: 공식 `test_query_ids`, 도구 호출은 공식 RapidAPI 프록시 경유, 공식 answer 형식으로 변환하고 고정 commit 저장소의 공식 ToolEval로 판정(데이터 미러: [Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)) |
-
-각 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기는 임시 샌드박스로 리디렉션), 보고서는 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 보고서는 커밋하지 않습니다.
-
-`terminal_bench`는 Docker가 필요합니다. `deepswe`는 기본적으로 Docker를 쓰지만 `deepswe --local`은 Docker 없이 호스트에서 실행됩니다. `toolbench`는 `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY`, OpenAI 호환 ToolEval judge key가 필요합니다. `agentbench`는 `MAIN_LLM_API_KEY`가 필요합니다. 전제 조건이 없으면 **명시적으로 SKIP하고 0이 아닌 코드로 종료**합니다(건너뛴 스위트는 통과가 아님). 작업 트리와 벤치마크 데이터는 `~/.cache/sherry_evals`에 clone/다운로드하며(`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`로 재정의 가능) 저장소 안에는 두지 않습니다. `--dry-run`은 Docker, 모델, ToolBench 대용량 다운로드 없이 선택을 검증합니다.
-
-`coding_capability`, `swebench`, `deepswe`, `terminal_bench`, `agentbench`, `toolbench`는 각각 버전 관리되는 베이스라인(각 스위트 디렉터리 내)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
-
----
-
-## 📝 캐릭터 프로파일 예시
-
-에이전트의 행동은 `workspace/` 아래의 파일들에 의해 결정됩니다:
-
-- **SOUL.md**: 성격 대비, 말투, 행동 논리를 정의합니다.
-- **AGENTS.md**: 도구 사용 우선순위, 안전 경계, 윤리 지침을 정의합니다.
-- **USER.md**: 사용자별 상호작용 선호도와 알려진 정보를 저장합니다.
-- **ROLE.md**: AI와 사용자가 각각 누구를 연기하는지 선언합니다("사용자는 … 역할을 연기합니다" 형식). 프리셋과 역할 패널이 현재 UI 언어로 생성하며 프리셋에 함께 저장됩니다.
-- **HEARTBEAT.md**: heartbeat 예약 서비스의 미완료 작업을 나열합니다.
-- **prompt_builder.py**: 프로파일 파일로부터 시스템 프롬프트를 만듭니다.
-- **file_sync.py**: 누락된 페르소나 파일을 `workspace/template/<lang>/`(`WORKSPACE_TEMPLATE_LANG`으로 선택)에서 지연 복사하며, 사용자의 수정을 절대 덮어쓰지 않습니다.
-
----
-
-## 🤝 기여하기
-
-Issue와 Pull Request를 환영합니다! 새 스킬을 추가하는 방법:
-
-1. `skills/builtin/` 아래에 폴더를 생성합니다(또는 `skills/auto/` / `skills/plugins/`, 서드파티는 후자).
-2. YAML 프론트매터(`name`, `description`, 선택적 `scope`)가 있는 `SKILL.md`에 스킬의 사용법과 절차를 작성합니다.
-3. 에이전트를 재시작하세요 — 로더는 이 세 루트의 `SKILL.md`만 스캔하여 모델에 노출합니다.(실행 중인 에이전트에게 내장 `skill_creator` 스킬로 생성해 달라고 요청할 수도 있습니다.)
-
-`skills/plugins/` 아래의 서드파티 스킬은 SkillSpector로 스캔되며, 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다.
+MIT License.
 
 ---
 
 연락처: QQ 3132225629
 
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스에 따라 배포됩니다.
-
----
-
-> **💡 팁**: 이 프로젝트는 고도의 AI 에이전트와 딥 롤플레잉에 대한 탐구에서 영감을 받았습니다.
+> **💡 팁**: 이 프로젝트는 고급 AI 에이전트와 깊이 있는 롤플레이에 대한 탐구에서 시작되었습니다.
