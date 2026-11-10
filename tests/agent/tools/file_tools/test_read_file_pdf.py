@@ -84,6 +84,7 @@ def test_pdf_unsupported_but_vision_supported_renders_pages(pdf_root, monkeypatc
     import agent.middlewares.llm_capability_cache as cache
     import agent.tools.pub_base.pdf_render as render
 
+    _set_model(monkeypatch, "test-provider", "test-model")
     monkeypatch.setattr(
         cache,
         "get_capability",
@@ -106,6 +107,7 @@ def test_missing_renderer_is_reported(pdf_root, monkeypatch):
     import agent.middlewares.llm_capability_cache as cache
     import agent.tools.pub_base.pdf_render as render
 
+    _set_model(monkeypatch, "test-provider", "test-model")
     monkeypatch.setattr(
         cache,
         "get_capability",
