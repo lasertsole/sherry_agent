@@ -23,6 +23,7 @@ from ..config import StepOutcome, StepStatus, TaskFlowStatus
 from ..evidence_collector import collect_evidence_summary
 from ..registry import store_sqlite
 from ..step_judge import StepVerdict, judge_step_result
+from ..step_state import set_step_status
 from ._retry import (
     apply_redispatch,
     normalize_policy,
@@ -264,17 +265,22 @@ async def taskflow_resume(
         if schema_validated is False:
             # Tier 1 failed with no retry left: the expectation was not met.
             # No judge call — the structure is already known to be wrong.
-            step["status"] = str(StepStatus.FAILED)
-            step["fail_reason"] = f"response_schema not satisfied: {schema_error}"
+            set_step_status(
+                step,
+                StepStatus.FAILED,
+                fail_reason=f"response_schema not satisfied: {schema_error}",
+            )
             outcome_text = f"\n  outcome: failed (schema, no retry left: {schema_error})"
         elif declared_outcome == StepOutcome.FAILURE.value:
             # The caller reported a definitive failure: it outranks the gates.
-            step["status"] = str(StepStatus.FAILED)
-            step["fail_reason"] = f"step_outcome=failure: {(result or '')[:200]}"
+            set_step_status(
+                step,
+                StepStatus.FAILED,
+                fail_reason=f"step_outcome=failure: {(result or '')[:200]}",
+            )
             outcome_text = "\n  outcome: failed (declared by the caller)"
         elif declared_outcome == StepOutcome.SKIPPED.value:
-            step["status"] = str(StepStatus.SKIPPED)
-            step["skip_reason"] = "step_outcome=skipped"
+            set_step_status(step, StepStatus.SKIPPED, skip_reason="step_outcome=skipped")
             outcome_text = "\n  outcome: skipped (declared by the caller)"
         elif judge_criteria_text or stored_criteria:
             judge_result = await judge_step_result(
@@ -304,8 +310,11 @@ async def taskflow_resume(
                             **step_spawn_kwargs(step, flow_id=flow_id),
                         )
                     except Exception as exc:  # tool boundary: block instead of raising
-                        step["status"] = str(StepStatus.BLOCKED)
-                        step["block_reason"] = f"StepJudge RETRY re-dispatch failed: {exc}"
+                        set_step_status(
+                            step,
+                            StepStatus.BLOCKED,
+                            block_reason=f"StepJudge RETRY re-dispatch failed: {exc}",
+                        )
                         judge_text = (
                             f"\n  judge: RETRY re-dispatch failed ({type(exc).__name__}: {exc})"
                         )
@@ -319,22 +328,28 @@ async def taskflow_resume(
                             f"child_session_key={redispatched_key}: {judge_result.reason}"
                         )
                 else:
-                    step["status"] = str(StepStatus.BLOCKED)
-                    step["block_reason"] = (
-                        f"StepJudge RETRY budget exhausted (retry_count="
-                        f"{step_retry_count(step)}, max_retries={STEP_JUDGE['max_retries']}): "
-                        f"{judge_result.reason}"
+                    set_step_status(
+                        step,
+                        StepStatus.BLOCKED,
+                        block_reason=(
+                            f"StepJudge RETRY budget exhausted (retry_count="
+                            f"{step_retry_count(step)}, max_retries={STEP_JUDGE['max_retries']}): "
+                            f"{judge_result.reason}"
+                        ),
                     )
                     judge_text = f"\n  judge: BLOCKED retry budget exhausted: {judge_result.reason}"
             elif judge_result.verdict == StepVerdict.BLOCK:
-                step["status"] = str(StepStatus.BLOCKED)
-                step["block_reason"] = f"StepJudge blocked: {judge_result.reason}"
+                set_step_status(
+                    step,
+                    StepStatus.BLOCKED,
+                    block_reason=f"StepJudge blocked: {judge_result.reason}",
+                )
                 judge_text = f"\n  judge: BLOCKED {judge_result.reason}"
             else:
-                step["status"] = str(StepStatus.DONE)
+                set_step_status(step, StepStatus.DONE)
                 judge_text = f"\n  judge: PASS {judge_result.reason}"
         else:
-            step["status"] = str(StepStatus.DONE)
+            set_step_status(step, StepStatus.DONE)
     newly_ready: list[str] = []
 
     # Resuming a waiting flow returns it to running; a running flow stays running.

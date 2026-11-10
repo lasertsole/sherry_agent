@@ -453,7 +453,6 @@ async def test_knowledge_multi_session_boulder_collaboration(knowledge_env: dict
 @pytest.mark.asyncio
 async def test_subagent_toolset_excludes_planning_families(clean_subagent_registry, monkeypatch):
     from agent.tools import build_main_tools
-    from agent.tools.subagent.spawn import core as spawn_core
     from agent.tools.subagent.spawn.core import spawn_subagent_direct
     from agent.tools.subagent.types.registry import RunOutcomeStatus
 
@@ -473,14 +472,18 @@ async def test_subagent_toolset_excludes_planning_families(clean_subagent_regist
     } <= planners
 
     captured: list[list[str]] = []
-    real_policy = spawn_core.apply_tool_policy
+    # H7 moved _assemble_child_tools into the factory module; the spy must patch
+    # where the function is CALLED, not the facade re-export.
+    from agent.tools.subagent.spawn import child_agent_factory
+
+    real_policy = child_agent_factory.apply_tool_policy
 
     def _spy_policy(tools, tool_allow, tool_deny, blocked_tools=None):
         filtered = real_policy(tools, tool_allow, tool_deny, blocked_tools)
         captured.append([getattr(t, "name", str(t)) for t in filtered])
         return filtered
 
-    monkeypatch.setattr(spawn_core, "apply_tool_policy", _spy_policy)
+    monkeypatch.setattr(child_agent_factory, "apply_tool_policy", _spy_policy)
 
     sid = _new_sid("spawn")
     requester = f"agent:main:session:{sid}"

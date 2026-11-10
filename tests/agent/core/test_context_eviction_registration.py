@@ -85,9 +85,13 @@ async def test_context_eviction_registration_position(
     from agent.wrapper import registry as wrapper_registry
 
     monkeypatch.setattr(wrapper_registry, "main_llm_max_tokens", 65_536)
+    # The chain is assembled from agent.middlewares.specs, so the placeholder
+    # seam lives there (agent.core only forwards the build context).
+    from agent.middlewares import specs as middleware_specs
+
     for middleware_name in _OTHER_MIDDLEWARE:
         monkeypatch.setattr(
-            agent_core,
+            middleware_specs,
             middleware_name,
             lambda *_, _name=middleware_name, **__: _NamedMiddleware(_name),
         )

@@ -254,3 +254,30 @@ class TestRoleAgnosticDesign:
 
     def test_subagent_required_matches_derived_classes(self):
         assert SUBAGENT_REQUIRED_CLASSES == frozenset(e.cls for e in _SUBAGENT_REQUIRED)
+
+
+class TestSingleSpecTable:
+    """Both required sets are projections of agent/middlewares/specs.py."""
+
+    def test_required_sets_are_the_spec_table_projection(self):
+        from agent.middlewares.specs import (
+            CHILD,
+            MAIN,
+            MIDDLEWARE_SPECS,
+            required_entries,
+        )
+
+        assert _MAIN_REQUIRED == required_entries(MAIN)
+        assert _SUBAGENT_REQUIRED == required_entries(CHILD)
+        for profile, entries in ((MAIN, _MAIN_REQUIRED), (CHILD, _SUBAGENT_REQUIRED)):
+            for entry in entries:
+                assert any(
+                    spec.class_for(profile) is entry.cls and profile in spec.required_in
+                    for spec in MIDDLEWARE_SPECS
+                ), entry.cls.__name__
+
+    def test_catalog_order_is_derived_from_the_table(self):
+        from agent.middlewares.catalog import MIDDLEWARE_ORDER
+        from agent.middlewares.specs import main_middleware_order
+
+        assert MIDDLEWARE_ORDER == main_middleware_order()

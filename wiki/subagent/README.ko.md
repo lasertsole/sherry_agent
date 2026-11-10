@@ -125,6 +125,22 @@
   `DISCARDED`는 종단 상태이며, 잘못된 간선은 `InvalidDeliveryTransitionError`을
   발생시킵니다. 동일 상태 전환은 크래시 복구를 위해 멱등입니다.
 
+## 🧱 spawn 요청, 모듈 분리, 완료 이벤트
+
+2026-11-10 설계 감사는 동작을 바꾸지 않고 spawn을 재구성했습니다:
+
+- `spawn/request.py::SpawnRequest`는 오케스트레이션이 받는 불변 요청입니다.
+  `spawn_subagent_direct(request=None, **legacy)`는 `from_legacy`로 기존
+  키워드 인자 호출을 유지합니다.
+- `spawn/core.py`는 732줄 파사드가 되었고, 각 단계는 `handoff.py`,
+  `validation.py`, `isolation.py`, `child_agent_factory.py`, `lifecycle.py`,
+  `ptc_prefill.py`로 이동했습니다. 파사드는 기존 import의 모든 이름을
+  re-export합니다.
+- 자식 완료는 이벤트 기반입니다. 종단 전이가
+  `registry/completion_events.py`(기반 `runtime/event_wait.py`)로 publish되고
+  `taskflow_wait_all`이 깨어납니다. 기존 poll 간격은 누락 알림용 폴백으로
+  남습니다.
+
 ## 🧪 완료 판정기와 goal loop
 
 완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단. 미설정 시 기존 기준이며 serving model 출력 예산에 따라 조정됩니다), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.

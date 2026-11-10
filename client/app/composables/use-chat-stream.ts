@@ -29,7 +29,7 @@ interface SendEntry {
 }
 
 /** One queued badge (a queued send awaiting its turn). */
-interface QueueBadge {
+export interface QueueBadge {
   msgId: string;
   position: number;
   queueSize: number;

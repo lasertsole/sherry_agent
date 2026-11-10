@@ -121,6 +121,42 @@ class InputSafetyFilter(AgentMiddleware):
         return await handler(request)
 
 
+class _ModerationGate:
+    """Whether a turn's text should be sent to the review model."""
+
+    def should_review(self, text: str) -> bool:
+        raise NotImplementedError
+
+
+class _AlwaysGate(_ModerationGate):
+    def should_review(self, text: str) -> bool:
+        return True
+
+
+class _KeywordHitGate(_ModerationGate):
+    def should_review(self, text: str) -> bool:
+        return bool(scan(text, scope="input"))
+
+
+class _NeverGate(_ModerationGate):
+    def should_review(self, text: str) -> bool:
+        return False
+
+
+#: moderation mode -> gate strategy (2026-11-09 audit L5). An unknown mode keeps
+#: the historical fail-safe: review (the active-model checks still gate it).
+_MODERATION_GATES: dict[str, _ModerationGate] = {
+    "off": _NeverGate(),
+    "on_keyword_hit": _KeywordHitGate(),
+    "always": _AlwaysGate(),
+}
+_DEFAULT_MODERATION_GATE = _AlwaysGate()
+
+
+def _moderation_gate(mode: str) -> _ModerationGate:
+    return _MODERATION_GATES.get(mode, _DEFAULT_MODERATION_GATE)
+
+
 class LLMModerationMiddleware(AgentMiddleware):
     """Optional model review of the user's message (off unless fully configured)."""
 
@@ -137,7 +173,7 @@ class LLMModerationMiddleware(AgentMiddleware):
             return await handler(request)
         text = str(message.content)
         settings = safety_filter_config()
-        if settings["llm_moderation_mode"] == "on_keyword_hit" and not scan(text, scope="input"):
+        if not _moderation_gate(settings["llm_moderation_mode"]).should_review(text):
             return await handler(request)
         safe, reason = await _review(text, settings["llm_moderation_model"])
         if safe is None:

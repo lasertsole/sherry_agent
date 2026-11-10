@@ -18,6 +18,7 @@ Usage:
     fresh = build_auxiliary_llm()
 """
 
+import atexit
 import os
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,78 @@ load_env()
 
 
 # ---------------------------------------------------------------------------
-# 2.  Factory function (avoids event-loop binding at import time)
+# 2.  Local model product (declared once, not inside a factory branch)
+# ---------------------------------------------------------------------------
+
+_AUX_MODEL_WEIGHT_DIR = Path(__file__).parent.resolve() / "model_weight"
+_AUX_MODEL_PATH = _AUX_MODEL_WEIGHT_DIR / "Qwen3.5-9B-Q4_K_M.gguf"
+_AUX_HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"
+_AUX_HF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
+
+
+def _resolve_aux_model_path() -> str:
+    """Shared resolver; ``hf_hub_download(local_files_only=True)`` does not work
+    with ``local_dir``, so a missing file goes straight to a remote download."""
+    from models.utils import resolve_gguf_path
+
+    return resolve_gguf_path(
+        _AUX_MODEL_PATH, _AUX_HF_REPO_ID, _AUX_HF_FILENAME, _AUX_MODEL_WEIGHT_DIR
+    )
+
+
+class _LocalAuxiliaryChatModel(LocalLlamaChatBase):
+    """Auxiliary variant: plain Llama client + reasoning extraction.
+
+    Common lifecycle/fields live on LocalLlamaChatBase; tool binding and
+    structured output are delegated to the prompt-injection adapters. Declared
+    at module level (audit L1) so it is testable/reusable, not a closure class.
+    """
+
+    extract_reasoning: bool = True
+
+    def _resolve_model_path(self) -> str:
+        return _resolve_aux_model_path()
+
+    def _ensure_client(self) -> Any:
+        if self._client is None:
+            from llama_cpp import Llama
+
+            self._client = Llama(
+                model_path=self._resolved_path,
+                n_ctx=self.n_ctx,
+                n_gpu_layers=self.n_gpu_layers,
+                verbose=self.verbose,
+            )
+            atexit.register(self._release_client)
+        return self._client
+
+    @property
+    def _llm_type(self) -> str:
+        return "local-llama-cpp"
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Any],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable:
+        return LocalToolBinder(self).bind_tools(tools, tool_choice=tool_choice, **kwargs)
+
+    def with_structured_output(
+        self,
+        schema: type | dict[str, Any],
+        *,
+        include_raw: bool = False,
+        **kwargs: Any,
+    ) -> Runnable:
+        return LocalStructuredOutput(self).with_structured_output(
+            schema, include_raw=include_raw, **kwargs
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3.  Factory function (avoids event-loop binding at import time)
 # ---------------------------------------------------------------------------
 
 
@@ -145,72 +217,10 @@ def build_auxiliary_llm(
 
     else:
         # ---------- Local (GGUF) branch ----------
-        import atexit
-        from llama_cpp import Llama
-
-        model_weight_dir = Path(__file__).parent.resolve() / "model_weight"
-        _model_path = model_weight_dir / "Qwen3.5-9B-Q4_K_M.gguf"
-        _HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"  # noqa: N806
-        _HF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"  # noqa: N806
-
-        def _resolve_model_path() -> str:
-            # Shared resolver; hf_hub_download(local_files_only=True)
-            # does NOT work with local_dir — go straight to remote download.
-            from models.utils import resolve_gguf_path
-
-            return resolve_gguf_path(_model_path, _HF_REPO_ID, _HF_FILENAME, model_weight_dir)
-
         _local_temperature = temperature if temperature is not None else 0.0
-
-        class LocalLlamaChatModel(LocalLlamaChatBase):
-            """Auxiliary variant: plain Llama client + reasoning extraction.
-
-            Common lifecycle/fields live on LocalLlamaChatBase;
-            tool binding and structured output are delegated to the
-            prompt-injection adapters in local_adapters.py.
-            """
-
-            extract_reasoning: bool = True
-
-            def _resolve_model_path(self) -> str:
-                return _resolve_model_path()
-
-            def _ensure_client(self) -> Llama:
-                if self._client is None:
-                    self._client = Llama(
-                        model_path=self._resolved_path,
-                        n_ctx=self.n_ctx,
-                        n_gpu_layers=self.n_gpu_layers,
-                        verbose=self.verbose,
-                    )
-                    atexit.register(self._release_client)
-                return self._client
-
-            @property
-            def _llm_type(self) -> str:
-                return "local-llama-cpp"
-
-            def bind_tools(
-                self,
-                tools: Sequence[dict[str, Any] | type | Any],
-                *,
-                tool_choice: str | None = None,
-                **kwargs: Any,
-            ) -> Runnable:
-                return LocalToolBinder(self).bind_tools(tools, tool_choice=tool_choice, **kwargs)
-
-            def with_structured_output(
-                self,
-                schema: type | dict[str, Any],
-                *,
-                include_raw: bool = False,
-                **kwargs: Any,
-            ) -> Runnable:
-                return LocalStructuredOutput(self).with_structured_output(
-                    schema, include_raw=include_raw, **kwargs
-                )
-
-        model = LocalLlamaChatModel(n_ctx=40960, temperature=_local_temperature, max_tokens=32768)
+        model = _LocalAuxiliaryChatModel(
+            n_ctx=40960, temperature=_local_temperature, max_tokens=32768
+        )
         model = NormalizingChatModel(inner=model)
 
     return model

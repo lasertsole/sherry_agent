@@ -125,6 +125,20 @@
   `DISCARDED` 是终态，非法边抛 `InvalidDeliveryTransitionError`；同态转换保持
   幂等以支持崩溃恢复。
 
+## 🧱 Spawn 请求、模块拆分与完成事件
+
+2026-11-10 设计审计在不改变行为的前提下重构了 spawn：
+
+- `spawn/request.py::SpawnRequest` 是编排层接收的不可变请求对象；
+  `spawn_subagent_direct(request=None, **legacy)` 通过 `from_legacy` 保留旧的
+  关键字调用形态。
+- `spawn/core.py` 现在是 732 行 facade；各阶段位于 `handoff.py`、
+  `validation.py`、`isolation.py`、`child_agent_factory.py`、`lifecycle.py`、
+  `ptc_prefill.py`，facade re-export 了旧导入使用的全部符号。
+- 子代理完成改为事件驱动：终态转换经 `registry/completion_events.py`
+  （底层 `runtime/event_wait.py`）发布，`taskflow_wait_all` 被唤醒；原 poll
+  间隔保留为漏通知兜底。
+
 ## 🧪 完成判别器与 goal loop
 
 完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符；这是未设置时的旧基线，会随 serving model 的输出预算缩放）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。

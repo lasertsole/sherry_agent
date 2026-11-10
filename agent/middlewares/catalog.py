@@ -1,9 +1,11 @@
-"""The main chain's middleware names, in registration order.
+"""The main chain's middleware names, derived from the specification table.
 
-:data:`MIDDLEWARE_ORDER` documents the chain the way ``_build_middlewares``
-registers it. Kept beside the chain rather than derived from it (constructing
-``_build_middlewares`` would build real LLMs). ``DelegationPressureGate`` is
-appended only when its feature flag is enabled.
+:data:`MIDDLEWARE_ORDER` is :func:`agent.middlewares.specs.main_middleware_order`
+— one projection of the same table that assembles the chain, feeds the
+scaffolding baseline, and drives the child chain. It therefore cannot drift
+from the registered order. Conditionally registered entries are included in
+the declaration order: ``DelegationPressureGate`` is appended only when its
+feature flag (or the eval override) is enabled.
 
 Chain membership is a BUILD-TIME contract — a user cannot switch an entry off.
 The per-session middleware selection was removed together with the preset
@@ -13,38 +15,9 @@ per-middleware options, and every registered entry runs.
 
 from __future__ import annotations
 
+from .specs import main_middleware_order
+
 __all__ = ["MIDDLEWARE_ORDER"]
 
 #: Registration order of the main-agent chain (``agent/core.py::_build_middlewares``).
-MIDDLEWARE_ORDER: tuple[str, ...] = (
-    "PlanContinuationEnforcer",
-    "system_prompt_injection",
-    "WorkspaceNoticeMiddleware",
-    "PlanModeToolGate",
-    "MultimodalProcessor",
-    "IterationBudget",
-    "TokenBudget",
-    "ToolResultEnrichmentMiddleware",
-    "ToolGuardrails",
-    "ToolResourceLockMiddleware",
-    "UserHooksMiddleware",
-    "ContextEvictionMiddleware",
-    "ToolCallNormalize",
-    "PathGuard",
-    "SubagentCompletionDrainMiddleware",
-    "TaskIntentMiddleware",
-    "DynamicReminderMiddleware",
-    "InputSafetyFilter",
-    "LLMModerationMiddleware",
-    "OutputRepetitionGuard",
-    "MaxTokensBoostMiddleware",
-    "ThinkingControlMiddleware",
-    "HeartbeatStaleness",
-    "HumanInTheLoop",
-    "MessagePersistenceMiddleware",
-    "LLMRetryMiddleware",
-    "OutputSafetyFilter",
-    "Summarization",
-    "InvalidToolCallRepairMiddleware",
-    "DelegationPressureGate",
-)
+MIDDLEWARE_ORDER: tuple[str, ...] = main_middleware_order()

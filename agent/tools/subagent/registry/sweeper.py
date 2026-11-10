@@ -8,10 +8,23 @@ import asyncio
 import time
 from loguru import logger
 from runtime.process.periodic_backoff import PeriodicBackoff
+from runtime.event_wait import WakeSubscription
 from ..config import get_config
 from ..types.registry import ExecutionStatus
+from .completion_events import subscribe_run_terminal, unsubscribe_run_terminal
 
 _backoff: PeriodicBackoff | None = None
+
+#: Minimum spacing between two EVENT-driven sweeps. A burst of terminal
+#: transitions (a dispatch wave finishing) must coalesce into one sweep: the
+#: sweep is intentionally heavy (registry scan, TaskFlow GC, disk + git), so an
+#: unbounded wake-per-completion would multiply that work by the child count.
+#: The fallback interval (``sweeper_interval_seconds``) is unchanged and is the
+#: real cadence; this floor only bounds the event fast path.
+_EVENT_SWEEP_MIN_SPACING_SECONDS = 5.0
+
+#: The loop's live subscription to terminal transitions (one per sweep loop).
+_sweep_subscription: WakeSubscription | None = None
 
 
 def _get_backoff() -> PeriodicBackoff:
@@ -22,37 +35,129 @@ def _get_backoff() -> PeriodicBackoff:
     return _backoff
 
 
+def _subscribe_terminal_events() -> WakeSubscription | None:
+    """Subscribe the loop to run terminal transitions; None keeps pure polling."""
+    try:
+        return subscribe_run_terminal(None)
+    except Exception:  # noqa: BLE001 - the fallback interval still sweeps
+        logger.debug("Sweeper: terminal-event subscription unavailable", exc_info=True)
+        return None
+
+
+async def _wait_for_trigger(subscription: WakeSubscription | None, interval: float) -> bool:
+    """Wait for the fallback interval OR a terminal notification.
+
+    The fallback timer is an explicit ``asyncio.sleep`` task (not a wait_for
+    timeout) so the loop keeps its historical cadence — and the one primitive
+    the backoff tests patch.
+
+    :returns: True when a notification woke the loop, False when the interval
+        elapsed first.
+    """
+    if subscription is None:
+        await asyncio.sleep(interval)
+        return False
+    if subscription.is_set():
+        # A transition landed before the loop started waiting (or between the
+        # previous sweep and this call): consume it and sweep now.
+        subscription.rearm()
+        return True
+    # Re-arm BEFORE suspending. A notification from this loop is synchronous,
+    # and a cross-thread one is queued onto this loop by ``wake`` — neither can
+    # slip between the re-arm and the event task's first check.
+    subscription.rearm()
+    sleep_task = asyncio.ensure_future(asyncio.sleep(interval))
+    event_task = asyncio.ensure_future(subscription.wait(interval))
+    try:
+        done, _pending = await asyncio.wait(
+            {sleep_task, event_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        for task in (sleep_task, event_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(sleep_task, event_task, return_exceptions=True)
+    # Consume the wake that ended the wait; a transition DURING the coming
+    # sweep sets the event again and is picked up at the top of the next
+    # iteration (subject to the coalescing floor below).
+    subscription.rearm()
+    return event_task in done and not event_task.cancelled()
+
+
+async def _wait_for_event_spacing(last_sweep_finished: float | None) -> None:
+    """Coalesce a burst of terminal notifications into one sweep.
+
+    A DEGRADED loop keeps its backoff cadence: while the backoff has recorded
+    consecutive failures, a notification may not accelerate the loop past the
+    current backoff interval (the backoff exists to stop hammering a broken
+    subsystem, and an event burst is not evidence that it recovered).
+    """
+    if last_sweep_finished is None:
+        return
+    floor = _EVENT_SWEEP_MIN_SPACING_SECONDS
+    backoff = _get_backoff()
+    if backoff.consecutive_failures > 0:
+        floor = max(floor, backoff.current_interval)
+    if floor <= 0:
+        return
+    remaining = floor - (time.monotonic() - last_sweep_finished)
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+
+
 async def _sweep_loop() -> None:
-    """Main sweeper loop: runs at the configured interval until stopped."""
-    global _running
+    """Main sweeper loop: a terminal notification or the fallback interval runs a sweep.
+
+    Terminal notifications make the recovery/announce/cleanup passes react to a
+    child ending instead of waiting for the next periodic tick. The periodic
+    interval is KEPT: it is the missed-notification / orphan / expiry safety
+    net, and it is the only cadence when no notification is subscribed.
+    """
+    global _running, _sweep_subscription
     _running = True
     config = get_config()
     interval = config.sweeper_interval_seconds
 
     logger.info("Subagent sweeper started (interval={}s)", interval)
-
-    while _running:
-        await asyncio.sleep(_get_backoff().current_interval)
-        try:
-            await _do_sweep()
-        except Exception as e:
-            backoff = _get_backoff()
-            backoff.record_failure(repr(e))
-            logger.warning(
-                "Sweeper failed (consecutive={}, next_interval={}s): {}",
-                backoff.consecutive_failures,
-                backoff.current_interval,
-                e,
-            )
-            if backoff.is_exhausted():
-                logger.critical(
-                    "Sweeper backoff exhausted after {} consecutive failures; stopping loop: {}",
+    subscription = _subscribe_terminal_events()
+    _sweep_subscription = subscription
+    last_sweep_finished: float | None = None
+    try:
+        while _running:
+            if subscription is not None and subscription.is_set():
+                # A transition landed while the previous sweep was running;
+                # consume it and sweep again after the coalescing floor.
+                subscription.rearm()
+                await _wait_for_event_spacing(last_sweep_finished)
+            else:
+                woke = await _wait_for_trigger(subscription, _get_backoff().current_interval)
+                if woke:
+                    await _wait_for_event_spacing(last_sweep_finished)
+            try:
+                await _do_sweep()
+            except Exception as e:
+                backoff = _get_backoff()
+                backoff.record_failure(repr(e))
+                logger.warning(
+                    "Sweeper failed (consecutive={}, next_interval={}s): {}",
                     backoff.consecutive_failures,
-                    backoff.reason,
+                    backoff.current_interval,
+                    e,
                 )
-                _running = False
-        else:
-            _get_backoff().record_success()
+                if backoff.is_exhausted():
+                    logger.critical(
+                        "Sweeper backoff exhausted after {} consecutive failures; stopping loop: {}",
+                        backoff.consecutive_failures,
+                        backoff.reason,
+                    )
+                    _running = False
+            else:
+                _get_backoff().record_success()
+            last_sweep_finished = time.monotonic()
+    finally:
+        _sweep_subscription = None
+        if subscription is not None:
+            unsubscribe_run_terminal(subscription)
 
 
 async def _do_sweep() -> None:

@@ -69,6 +69,10 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
     from agent.wrapper import registry as wrapper_registry
 
     monkeypatch.setattr(wrapper_registry, "main_llm_max_tokens", context_window)
+    # The chain is assembled from agent.middlewares.specs, so the placeholder
+    # seam lives there now (agent.core only forwards the build context).
+    from agent.middlewares import specs as middleware_specs
+
     for middleware_name in (
         "Summarization",
         "ToolCallNormalize",
@@ -88,6 +92,6 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
         "DynamicReminderMiddleware",
         "PlanContinuationEnforcer",
     ):
-        monkeypatch.setattr(agent_core, middleware_name, lambda *_, **__: object())
+        monkeypatch.setattr(middleware_specs, middleware_name, lambda *_, **__: object())
 
     yield agent_core, fake_compiled_graph

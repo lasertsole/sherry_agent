@@ -42,22 +42,21 @@ the inline comment at the heal decision).
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
 
 from agent.state_port import InterruptMarkerWrite, heal_interrupted_turn
+from server.service.interrupt_reason import InterruptReason
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the import light
     from langgraph.graph.state import CompiledStateGraph
 
     from server.queue.user_input_queue import UserInputQueue
 
-__all__ = ["write_interrupted_marker"]
-
-InterruptReason = Literal["cancelled", "heartbeat_timeout"]
+__all__ = ["write_interrupted_marker", "InterruptReason"]
 
 # MesMemory row prefix carrying the interrupted flag (no schema change; the
 # reason rides inside the content text).

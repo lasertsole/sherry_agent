@@ -11,52 +11,60 @@ Pipeline overview:
     8. System prompt & context assembly
     9. Background task launch via ``_execute_subagent_with_lane`` (SUBAGENT lane queue)
    10. Hook dispatch (spawned / progress / ended)
+
+This module is the STABLE FACADE: it keeps :func:`spawn_subagent_direct` /
+:func:`_spawn_subagent` and re-exports the pieces the split moved out (see
+:mod:`.validation`, :mod:`.isolation`, :mod:`.child_agent_factory`,
+:mod:`.ptc_prefill`, :mod:`.handoff`, :mod:`.lifecycle`) so existing imports keep
+working. The execution entry points here also resolve the collaborators from
+THIS module's globals, so a monkeypatched ``spawn.core._build_child_agent`` (or
+``_execute_subagent``) still redirects a run exactly as it did before the split.
 """
 
-import os
-import json
-import re
-import time
-import uuid
 import asyncio
+import uuid
 from pathlib import Path
-from loguru import logger
-from typing import Any, Literal
+from typing import Any
 
-from config.features import LANE_SYSTEM
+from loguru import logger
+
+from config.features import LANE_SYSTEM as LANE_SYSTEM
 from ..config import get_config
-from ..types.capability import SubagentSessionRole
-from ..types.functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
-from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
-from ..roles import RoleDefinition, load_role_definition
-from ..registry import register_run, get_run, mark_run_running
-from ..registry.read import count_active_runs_readonly
-from ..registry.reconciliation import resolve_run_orphan_reason
-from ..registry.session_keys import normalize_session_key
-from ..registry.spawn_budget import total_spawns
-from ..session.cleanup import delete_subagent_session_for_cleanup
-from ..capabilities import can_spawn_children, resolve_subagent_capabilities
-from .depth import (
-    get_subagent_depth,
-    validate_spawn_depth,
-    validate_concurrent_children,
-    validate_total_spawns,
+from ..types.capability import SubagentSessionRole as SubagentSessionRole
+from ..types.functional_role import FunctionalRole as FunctionalRole
+from ..types.registry import (
+    ExecutionStatus as ExecutionStatus,
+    RunOutcome as RunOutcome,
+    RunOutcomeStatus as RunOutcomeStatus,
+    SubagentRunRecord as SubagentRunRecord,
 )
-from .target_policy import validate_target_policy
+from ..roles import RoleDefinition as RoleDefinition
+from ..roles import load_role_definition
+from ..registry import register_run as register_run
+from ..registry import get_run as get_run
+from ..registry import mark_run_running as mark_run_running
+from ..registry.reconciliation import resolve_run_orphan_reason
+from ..capabilities import resolve_subagent_capabilities
+from ..output_caps import resolve_child_max_output_tokens, resolve_subagent_output_caps
+from ..hooks.progress import fire_ended_hook as fire_ended_hook
+from ..hooks.progress import fire_progress_hook as fire_progress_hook
+from .depth import (
+    get_subagent_depth as get_subagent_depth,
+    validate_spawn_depth as validate_spawn_depth,
+    validate_concurrent_children as validate_concurrent_children,
+    validate_total_spawns as validate_total_spawns,
+)
+from .target_policy import validate_target_policy as validate_target_policy
 from .plan import (
     resolve_model_and_thinking_plan,
     resolve_role_model_profile,
     resolve_run_timeout_seconds,
 )
-from ..output_caps import (
-    resolve_child_max_output_tokens,
-    resolve_profile_max_output_tokens,
-    resolve_subagent_output_caps,
-)
 from .task_name import normalize_subagent_task_name
-from .system_prompt import build_subagent_system_prompt
+from .request import SpawnRequest
+from .system_prompt import SubagentPromptContext, build_subagent_system_prompt_from_context
 from .initial_message import build_subagent_initial_user_message
-from .inherited_tool_policy import apply_tool_policy, DEFAULT_SUBAGENT_BLOCKED_TOOLS
+from .inherited_tool_policy import apply_tool_policy as apply_tool_policy
 from .attachments import materialize_subagent_attachments
 from .ownership import resolve_spawn_ownership
 from .accepted_note import resolve_spawn_accepted_note
@@ -68,350 +76,192 @@ from .runtime_isolation import (
 from .origin_routing import resolve_requester_origin_for_child
 from .gateway_dispatch import resolve_least_privilege_scopes
 from ..swarm.collector import reserve_swarm_run, build_structured_output_prompt
-from ..hooks.progress import fire_spawned_hook, fire_progress_hook, fire_ended_hook
-
-# Only alphanumeric, underscore and hyphen allowed — prevents path/injection attacks via agent_id
-_VALID_AGENT_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-# Tools that only a spawning node (MAIN / ORCHESTRATOR) may hold. A functional
-# role whitelist or a per-spawn extra_tools entry can name them, but the spawn
-# pipeline intersects the final allow-list with can_spawn_children(role) so a
-# LEAF can never be granted recursive spawning or control over children.
-# The prompt's spawn section names exactly this set as usable and calls the
-# main-only management tools (sessions_kill / sessions_steer) out as unavailable,
-# so a child is never told to call a tool it does not have.
-_SPAWN_CONTROL_TOOLS = (
-    "sessions_spawn",
-    "sessions_yield",
-    "subagents_list",
-    "sessions_send",
+from ..hooks.progress import fire_spawned_hook
+from .handoff import (
+    _HANDOFF_FIELDS as _HANDOFF_FIELDS,
+    _HANDOFF_JSON_BLOCK as _HANDOFF_JSON_BLOCK,
+    _normalise_handoff as _normalise_handoff,
+    _extract_handoff_json as _extract_handoff_json,
+    _extract_result_text as _extract_result_text,
+)
+from .validation import (
+    _VALID_AGENT_ID as _VALID_AGENT_ID,
+    _SPAWN_CONTROL_TOOLS as _SPAWN_CONTROL_TOOLS,
+    SpawnResult,
+    _validate_spawn_request,
+    _resolve_functional_role,
+    _check_role_containment,
+    _resolve_child_tool_policy,
+)
+from .isolation import (
+    _ISOLATION_PROMPT_NOTE,
+    _is_inside_isolated_worktree as _is_inside_isolated_worktree,
+    _create_isolated_child_workspace,
+)
+from .child_agent_factory import (
+    _STRUCTURED_OUTPUT_REJECTION_MARKERS as _STRUCTURED_OUTPUT_REJECTION_MARKERS,
+    _is_structured_output_rejection as _is_structured_output_rejection,
+    _effective_child_deny as _effective_child_deny,
+    _bind_child_run_context as _bind_child_run_context,
+    _effective_child_summary_tokens as _effective_child_summary_tokens,
+    _compression_threshold_for_children as _compression_threshold_for_children,
+    _build_child_middlewares as _build_child_middlewares,
+    _assert_child_token_floor as _assert_child_token_floor,
+    _assemble_child_tools as _assemble_child_tools,
+    _select_child_llm as _select_child_llm,
+    _child_model_identity as _child_model_identity,
+    _build_child_agent as _build_child_agent,
+)
+from . import ptc_prefill as _ptc_prefill_mod
+from .ptc_prefill import (
+    _ptc_preview as _ptc_preview,
+    _render_ptc_progress as _render_ptc_progress,
+    _ptc_tools_map,
+)
+from . import lifecycle as _lifecycle
+from .lifecycle import (
+    ExecutionSeams,
+    default_seams as default_seams,
+    _load_warned_runs as _load_warned_runs,
+    _is_run_killed as _is_run_killed,
+    _fail_run_load_timeout as _fail_run_load_timeout,
+    _notify_load_warning as _notify_load_warning,
+    _wait_for_load_gate as _wait_for_load_gate,
+    _RunWallClock as _RunWallClock,
+    _reset_child_attempt as _reset_child_attempt,
+    release_child_session_state as release_child_session_state,
+    _release_child_resources as _release_child_resources,
+    _finalize_child_run as _finalize_child_run,
+    _run_goal_loop as _run_goal_loop,
+    _first_turn_self_evident as _first_turn_self_evident,
+    _rollback_spawn,
 )
 
-#: Appended to an isolated child's system prompt: it works on a copy, and the
-#: completion merge is what carries its changes back.
-_ISOLATION_PROMPT_NOTE = (
-    "## Isolated Workspace\n"
-    "You are working in a private COPY of the project directory. Your file changes "
-    "are merged back into the original project when your run completes — a file the "
-    "original changed in the meantime is reported as a conflict instead of being "
-    "overwritten. Work as if this directory were the project; do not try to reach "
-    "the original tree."
-)
 
+def _execution_seams() -> ExecutionSeams:
+    """The execution loop's collaborators, resolved from THIS module's globals.
 
-#: The five EXPERIENCE fields a child reports about ITS OWN layer. Metadata
-#: (depth/label/children/outcome) is code-assembled later — a model that echoes
-#: them back is stripped here so layers cannot smuggle each other's data.
-_HANDOFF_FIELDS = (
-    "task_understanding",
-    "discovered_hard_constraints",
-    "locked_decisions",
-    "failed_branches",
-    "success_steps",
-)
-_HANDOFF_JSON_BLOCK = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
-
-
-def _normalise_handoff(data: dict) -> dict:
-    """Project one parsed handoff, accepting the pre-rename ``failed_paths`` key."""
-    result = {key: data[key] for key in _HANDOFF_FIELDS if key in data}
-    if "failed_branches" not in result:
-        legacy = data.get("failed_paths")
-        if isinstance(legacy, list):
-            result["failed_branches"] = [
-                {
-                    "branch": str(item.get("branch") or item.get("path") or ""),
-                    "failure_reason": str(item.get("failure_reason") or ""),
-                }
-                for item in legacy
-                if isinstance(item, dict)
-            ]
-    elif isinstance(result.get("failed_branches"), list):
-        result["failed_branches"] = [
-            {
-                "branch": str(item.get("branch") or item.get("path") or ""),
-                "failure_reason": str(item.get("failure_reason") or ""),
-            }
-            for item in result["failed_branches"]
-            if isinstance(item, dict)
-        ]
-    return result
-
-
-def _extract_handoff_json(result_text: str | None) -> dict | None:
-    """The child's handoff JSON block, or None (fail-open).
-
-    Phase 1 is prompt-bound: the child appends a ```json block with five
-    experience fields to its Task Result. The LAST parseable block carrying at
-    least one of them wins; depth/agent_label/outcome/children are dropped here
-    (program-injected later). A missing/malformed block returns None, and the
-    plan extractor falls back to the free-text result. An older child that still
-    emitted ``failed_paths`` is normalized to ``failed_branches``.
+    The tests drive the facade (they monkeypatch ``_build_child_agent``,
+    ``_execute_subagent``, ``_finalize_child_run`` … here), so the bundle has to
+    be rebuilt per call instead of bound once at import time.
     """
-    if not result_text:
-        return None
-    for raw in reversed(_HANDOFF_JSON_BLOCK.findall(result_text)):
-        try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        if not any(key in data for key in (*_HANDOFF_FIELDS, "failed_paths")):
-            continue
-        return _normalise_handoff(data)
-    return None
-
-
-def _extract_result_text(agent_result: dict[str, object] | None) -> str | None:
-    """Extract the final assistant answer from a child agent's invocation result.
-
-    The last message in the returned state is frequently an ``AIMessage`` with
-    empty content (containing only ``tool_calls``) or a ``ToolMessage`` — both
-    carry tool output rather than the subagent's final answer. This walks the
-    message list *backwards* to the last message that contains substantive text,
-    flattening multimodal content-block lists into plain text.
-
-    Args:
-        agent_result: The raw result dict returned by ``CompiledStateGraph.ainvoke``.
-
-    Returns:
-        The extracted result text, or ``None`` if no substantive text is found.
-    """
-    if not agent_result or not isinstance(agent_result, dict):
-        return None
-
-    messages = agent_result.get("messages") or []
-    if not messages:
-        return None
-
-    for msg in reversed(messages):
-        content = getattr(msg, "content", None)
-        if not content:
-            continue
-        if isinstance(content, str):
-            if content.strip():
-                return content
-            continue
-        if isinstance(content, list):
-            # Multimodal content-block list — extract and concat text items
-            texts: list[str] = []
-            for item in content:
-                if isinstance(item, str) and item.strip():
-                    texts.append(item)
-                elif isinstance(item, dict) and item.get("type") == "text":
-                    t = item.get("text", "")
-                    if str(t).strip():
-                        texts.append(str(t))
-            if texts:
-                return "\n".join(texts)
-            continue
-        # Fallback: any other non-empty content is treated as result text
-        text = str(content).strip()
-        if text:
-            return text
-
-    return None
-
-
-def _resolve_functional_role(
-    hint: str | None,
-    agent_id: str,
-) -> FunctionalRole:
-    """Resolve the functional role from an explicit hint or an agent_id name match.
-
-    Priority: explicit hint → agent_id name match → GENERAL default.
-    Unknown hints and non-role agent_ids fall back to GENERAL, which leaves the
-    pre-migration behavior untouched.
-    """
-    if hint:
-        try:
-            return FunctionalRole(hint)
-        except ValueError:
-            logger.warning("Unknown functional_role hint '{}', falling back to GENERAL", hint)
-    try:
-        return FunctionalRole(agent_id)
-    except ValueError:
-        pass
-    try:
-        return FunctionalRole(get_config().default_functional_role)
-    except ValueError:
-        return FunctionalRole.GENERAL
-
-
-def _check_role_containment(
-    requester_session_key: str,
-    child_functional_role: FunctionalRole,
-) -> str | None:
-    """Reject escalation-capable spawning from a specialized parent.
-
-    MAIN (no run record) and general (``tools: inherit`` = every tool) impose no
-    restriction: every specialized role's whitelist is a subset of theirs, so no
-    escalation is possible. A specialized parent may spawn its OWN role plus any
-    roles listed in ``SPAWN_ALLOWED_CHILD_ROLES`` — an executor may therefore
-    spawn read-only researcher / librarian children before it writes, and the
-    two research roles may spawn each other (or their own role). The map only
-    ever permits READ-ONLY extras, so no write-capable escalation path opens,
-    and a role ABSENT from the map keeps the legacy same-role-only rule (a
-    reviewer still cannot hire a researcher).
-
-    Returns the refusal text, or ``None`` when the spawn is allowed.
-    """
-    from ..registry import get_run_by_child_session_key
-    from ..types.functional_role import SPAWN_ALLOWED_CHILD_ROLES
-
-    parent_run = get_run_by_child_session_key(requester_session_key)
-    if parent_run is None:
-        return None  # MAIN — the orchestrating root is not contained
-    parent_role = getattr(parent_run, "functional_role", FunctionalRole.GENERAL)
-    if parent_role == FunctionalRole.GENERAL:
-        return None  # inherit mode: every specialized whitelist is a subset
-    allowed = SPAWN_ALLOWED_CHILD_ROLES.get(parent_role, frozenset({parent_role}))
-    if child_functional_role in allowed:
-        return None
-    allowed_names = " / ".join(role.value for role in sorted(allowed, key=str))
-    return (
-        f"Capability containment: a {parent_role} subagent can only spawn "
-        f"these roles: {allowed_names} (requested {child_functional_role}). "
-        'Pass functional_role="<one of the allowed roles>"; use a general '
-        "subagent or the main agent to spawn a different role."
+    return ExecutionSeams(
+        execute_subagent=_execute_subagent,
+        build_child_agent=_build_child_agent,
+        try_ptc_prefill=_try_ptc_prefill,
+        bind_child_run_context=_bind_child_run_context,
+        run_goal_loop=_run_goal_loop,
+        release_child_resources=_release_child_resources,
+        finalize_child_run=_finalize_child_run,
     )
 
 
-class SpawnResult:
-    """Outcome of a spawn request — accepted, forbidden, or error.
+async def _execute_subagent_with_lane(
+    run: SubagentRunRecord,
+    system_prompt: str,
+    user_message: str,
+    tools: list | None,
+    timeout_seconds: float,
+    model_override: str | None = None,
+    model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
+    extra_tools: list[str] | None = None,
+    output_schema: dict | None = None,
+    goal_max_turns: int = 5,
+) -> None:
+    """Facade for :func:`lifecycle._execute_subagent_with_lane` (see there)."""
+    await _lifecycle._execute_subagent_with_lane(
+        run=run,
+        system_prompt=system_prompt,
+        user_message=user_message,
+        tools=tools,
+        timeout_seconds=timeout_seconds,
+        model_override=model_override,
+        model_tier=model_tier,
+        model_profile=model_profile,
+        extra_tools=extra_tools,
+        output_schema=output_schema,
+        goal_max_turns=goal_max_turns,
+        seams=_execution_seams(),
+    )
 
-    Attributes:
-        status: "accepted" | "forbidden" | "error"
-        child_session_key: Session key of the spawned child (set on accepted)
-        run_id: Registry run identifier (set on accepted)
-        error: Human-readable error message (set on forbidden/error)
-        task_name: Normalised task name
-        note: Optional human-readable note (e.g. accepted confirmation text)
+
+async def _execute_subagent(
+    run: SubagentRunRecord,
+    system_prompt: str,
+    user_message: str,
+    tools: list | None,
+    timeout_seconds: float,
+    model_override: str | None = None,
+    model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
+    extra_tools: list[str] | None = None,
+    output_schema: dict | None = None,
+    *,
+    goal_max_turns: int = 5,
+) -> None:
+    """Facade for :func:`lifecycle._execute_subagent` (see there)."""
+    await _lifecycle._execute_subagent(
+        run,
+        system_prompt=system_prompt,
+        user_message=user_message,
+        tools=tools,
+        timeout_seconds=timeout_seconds,
+        model_override=model_override,
+        model_tier=model_tier,
+        model_profile=model_profile,
+        extra_tools=extra_tools,
+        output_schema=output_schema,
+        goal_max_turns=goal_max_turns,
+        seams=_execution_seams(),
+    )
+
+
+async def _execute_subagent_scoped(
+    run: SubagentRunRecord,
+    system_prompt: str,
+    user_message: str,
+    tools: list | None,
+    timeout_seconds: float,
+    model_override: str | None = None,
+    model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
+    extra_tools: list[str] | None = None,
+    output_schema: dict | None = None,
+    *,
+    goal_max_turns: int = 5,
+) -> None:
+    """Facade for :func:`lifecycle._execute_subagent_scoped` (see there)."""
+    await _lifecycle._execute_subagent_scoped(
+        run,
+        system_prompt=system_prompt,
+        user_message=user_message,
+        tools=tools,
+        timeout_seconds=timeout_seconds,
+        model_override=model_override,
+        model_tier=model_tier,
+        model_profile=model_profile,
+        extra_tools=extra_tools,
+        output_schema=output_schema,
+        goal_max_turns=goal_max_turns,
+        seams=_execution_seams(),
+    )
+
+
+async def _try_ptc_prefill(
+    run: SubagentRunRecord,
+    tools: list | None,
+    effective_deny: list[str],
+    output_schema: dict | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Facade for :func:`ptc_prefill._try_ptc_prefill` (see there).
+
+    The tool-map builder is resolved from THIS module's globals, so a
+    monkeypatched ``spawn.core._ptc_tools_map`` still feeds the replay path.
     """
-
-    def __init__(
-        self,
-        status: Literal["accepted", "forbidden", "error"],
-        child_session_key: str | None = None,
-        run_id: str | None = None,
-        error: str | None = None,
-        task_name: str | None = None,
-        note: str | None = None,
-    ):
-        self.status = status
-        self.child_session_key = child_session_key
-        self.run_id = run_id
-        self.error = error
-        self.task_name = task_name
-        self.note = note
-
-    def to_dict(self) -> dict:
-        """Serialize the result to a plain dict for API responses."""
-        return {
-            "status": self.status,
-            "child_session_key": self.child_session_key,
-            "run_id": self.run_id,
-            "error": self.error,
-            "task_name": self.task_name,
-            "note": self.note,
-        }
-
-
-def _validate_spawn_request(
-    task: str, agent_id: str, requester_session_key: str, config: Any
-) -> tuple[int, SpawnResult | None]:
-    """Phases 1–2: input validation and the depth/concurrency admission gate.
-
-    Returns ``(child_depth, refusal)``: a non-None refusal is what the caller
-    hands back. Global concurrency is NOT rejected here — the SUBAGENT lane
-    queues over-limit runs (PENDING) instead of refusing them.
-    """
-    if not task or not task.strip():
-        return 0, SpawnResult(status="error", error="Task description is required")
-
-    # Reject agent_id values that could enable path traversal or command injection
-    if not _VALID_AGENT_ID.match(agent_id):
-        return 0, SpawnResult(
-            status="forbidden", error=f"Invalid agent_id: '{agent_id}' (only [a-zA-Z0-9_-] allowed)"
-        )
-
-    # When the platform requires explicit agent identification, reject the default "main"
-    if config.require_agent_id and agent_id == "main":
-        return 0, SpawnResult(
-            status="forbidden", error="agent_id is required (cannot use default 'main')"
-        )
-
-    allowed, reason = validate_target_policy(agent_id, "main")
-    if not allowed:
-        return 0, SpawnResult(status="forbidden", error=reason)
-
-    parent_depth = get_subagent_depth(requester_session_key)
-    child_depth = parent_depth + 1
-
-    allowed, reason = validate_spawn_depth(parent_depth)
-    if not allowed:
-        return child_depth, SpawnResult(status="forbidden", error=reason)
-
-    active_count = count_active_runs_readonly(requester_session_key)
-    allowed, reason = validate_concurrent_children(active_count)
-    if not allowed:
-        return child_depth, SpawnResult(status="forbidden", error=reason)
-
-    # Lifetime budget: the concurrent cap bounds children running AT A TIME,
-    # this bounds "finish one, start the next" repeating without end.
-    allowed, reason = validate_total_spawns(total_spawns(requester_session_key))
-    if not allowed:
-        return child_depth, SpawnResult(status="forbidden", error=reason)
-    return child_depth, None
-
-
-def _resolve_child_tool_policy(
-    role_def: RoleDefinition | None,
-    role: SubagentSessionRole,
-    extra_tools: list[str] | None,
-) -> tuple[list[str], list[str]]:
-    """Phases 8–8.6: the child's ``(allow, deny)`` tool policy.
-
-    A functional role with an explicit tool list is a WHITELIST (deny cleared);
-    the depth role still controls the spawn/management tools, per-spawn
-    ``extra_tools`` join the whitelist, and the final allow-list is intersected
-    with ``can_spawn_children(role)`` so a LEAF can never be granted recursion.
-    """
-    tool_allow: list[str] = []
-    tool_deny = list(DEFAULT_SUBAGENT_BLOCKED_TOOLS)
-
-    # Functional role drives tool policy: an explicit tool list becomes a
-    # whitelist (deny cleared, since the whitelist already restricts).
-    if role_def is not None and role_def.tools is not None:
-        tool_allow = list(role_def.tools)
-        tool_deny = []
-
-    # Depth role still controls the spawn/management tool set.
-    if role == SubagentSessionRole.ORCHESTRATOR:
-        if tool_allow:
-            # Whitelist mode: deny is already empty, so grant the control tools
-            # by adding them to the allow-list instead of removing from deny.
-            for t in _SPAWN_CONTROL_TOOLS:
-                if t not in tool_allow:
-                    tool_allow.append(t)
-        else:
-            # Inherit mode: unblock the control tools by removing them from the
-            # deny list.
-            tool_deny = [t for t in tool_deny if t not in _SPAWN_CONTROL_TOOLS]
-
-    # Per-task tool attachment (deepagents TaskTools pattern): extra_tools are
-    # attached on top of whatever the role already allows. In whitelist mode
-    # they join the allow-list; in inherit mode the base tool set already
-    # contains them and only the deny-list applies.
-    extra_tool_names: list[str] = list(dict.fromkeys(extra_tools or []))
-    for name in extra_tool_names:
-        if tool_allow and name not in tool_allow:
-            tool_allow.append(name)
-
-    if not can_spawn_children(role):
-        tool_allow = [t for t in tool_allow if t not in _SPAWN_CONTROL_TOOLS]
-    return tool_allow, tool_deny
+    return await _ptc_prefill_mod._try_ptc_prefill(
+        run, tools, effective_deny, output_schema, tools_map_builder=_ptc_tools_map
+    )
 
 
 async def _materialize_child_attachments(
@@ -457,18 +307,20 @@ def _assemble_child_prompts(
     output_schema: dict | None,
 ) -> tuple[str, str]:
     """Phase 10: the child's system prompt and initial user message."""
-    system_prompt = build_subagent_system_prompt(
-        role=role,
-        task=task,
-        functional_role=functional_role,
-        role_description=role_def.description if role_def else "",
-        role_prompt_body=role_def.prompt_body if role_def else "",
-        requester_label=requester_display_key,
-        depth=child_depth,
-        max_depth=max_depth,
-        child_session_key=child_session_key,
-        requester_session_key=controller_session_key,
-        can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
+    system_prompt = build_subagent_system_prompt_from_context(
+        SubagentPromptContext(
+            role=role,
+            task=task,
+            functional_role=functional_role,
+            role_description=role_def.description if role_def else "",
+            role_prompt_body=role_def.prompt_body if role_def else "",
+            requester_label=requester_display_key,
+            depth=child_depth,
+            max_depth=max_depth,
+            child_session_key=child_session_key,
+            requester_session_key=controller_session_key,
+            can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
+        )
     )
 
     # Append attachment-aware and schema-constraint suffixes to the system prompt
@@ -527,138 +379,64 @@ async def _reserve_swarm_group(
     return get_run(run.run_id) or run  # refresh after in-place update
 
 
-def _is_inside_isolated_worktree(path: str | None) -> bool:
-    """True when *path* is inside an isolated worktree directory.
+def _stamp_taskflow_context(
+    child_session_key: str, flow_id: str | None, step_id: str | None
+) -> None:
+    """Stamp a TaskFlow step child with the flow/step it is executing."""
+    if not flow_id:
+        return
+    from runtime import StateKey, state_register_mem
 
-    Isolated worktrees live under ``isolated_workspaces_dir()/<slug>/tree/``, so
-    a ``relative_to`` check suffices — no git probing (which would also depend
-    on git being usable). A missing path is False.
-    """
-    if not path:
-        return False
-    from config.path import isolated_workspaces_dir
-
-    try:
-        Path(path).resolve().relative_to(isolated_workspaces_dir().resolve())
-    except (OSError, ValueError):
-        return False
-    return True
-
-
-def _create_isolated_child_workspace(
-    isolation: bool, cwd: str | None, child_session_key: str
-) -> tuple[str | None, Any, SpawnResult | None]:
-    """Phase 4.1: give the child a private COPY of the project directory.
-
-    Returns ``(cwd, isolated_workspace, refusal)``; everything downstream
-    (attachments, the child's binding, its tools) sees the copy and nothing
-    needs to know isolation happened.
-    """
-    if not isolation:
-        return cwd, None, None
-
-    # NESTED isolation is downgraded, not refused: a spawn whose cwd already sits
-    # inside an isolated worktree reuses it. ``max_spawn_depth`` is 2, so that
-    # cwd belongs to the requesting ORCHESTRATOR — its worktree already merges
-    # back to the real project, and a worktree of a worktree would only add a
-    # second merge-back, a second conflict surface and a second CAS check for no
-    # additional isolation boundary. The model asked for isolation and gets it
-    # (the child is isolated from the project); it just is not double-isolated.
-    if _is_inside_isolated_worktree(cwd):
-        logger.info(
-            "spawn: isolation=True ignored for child {} — parent cwd {} is already an "
-            "isolated worktree; the child reuses it",
-            child_session_key,
-            cwd,
-        )
-        return cwd, None, None
-
-    if not cwd:
-        return (
-            cwd,
-            None,
-            SpawnResult(
-                status="forbidden",
-                error=(
-                    "isolation requires a project directory to copy: the caller has "
-                    "neither a bound project directory nor an explicit cwd"
-                ),
-            ),
-        )
-    from ..isolation import create_isolated_workspace
-
-    try:
-        isolated_workspace = create_isolated_workspace(Path(cwd), child_session_key)
-    except OSError as exc:
-        return cwd, None, SpawnResult(status="error", error=f"isolated workspace failed: {exc}")
-    return str(isolated_workspace.tree), isolated_workspace, None
+    state_register_mem.set_state(child_session_key, StateKey.FLOW_ID, flow_id)
+    if step_id:
+        state_register_mem.set_state(child_session_key, StateKey.STEP_ID, step_id)
 
 
 async def spawn_subagent_direct(
-    task: str,
-    requester_session_key: str,
-    agent_id: str = "main",
-    task_name: str | None = None,
-    label: str | None = None,
-    thinking: str | None = None,
-    cleanup: Literal["delete", "keep"] = "delete",
-    attachments: list[dict] | None = None,
-    cwd: str | None = None,
-    completion_owner_key: str | None = None,
-    expects_completion_message: bool = True,
-    run_timeout_seconds: float | None = None,
-    swarm_group_id: str | None = None,
-    output_schema: dict | None = None,
-    model: str | None = None,
-    launch_fingerprint: str | None = None,
-    goal_max_turns: int | None = None,
-    functional_role_hint: str | None = None,
-    extra_tools: list[str] | None = None,
-    isolation: bool = False,
-    flow_id: str | None = None,
-    step_id: str | None = None,
+    request: SpawnRequest | None = None,
+    **legacy: Any,
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
-    The phases live in the ``_…`` helpers above; this function is the
-    orchestration they compose. Returns immediately with an
-    accepted/forbidden/error result.
-
-    Args:
-        task: Natural-language task description for the sub-agent.
-        requester_session_key: Session key of the parent that is spawning.
-        agent_id: Logical agent identifier (must match ``^[a-zA-Z0-9_-]+$``).
-        task_name: Short display name; auto-derived from *task* if omitted.
-        label: Optional user-facing label.
-        thinking: Thinking level override (e.g. "low", "medium", "high").
-        cleanup: ``"delete"`` to remove session after completion, ``"keep"`` to retain.
-        attachments: Optional list of attachment dicts to materialise into the child workspace.
-        cwd: Working directory for the child; defaults to parent's cwd if ``None``.
-        completion_owner_key: Override the session that owns the completion callback.
-        expects_completion_message: Whether the parent expects a ``sessions_yield`` / ``sessions_send`` on completion.
-        run_timeout_seconds: Wall-clock timeout for the sub-agent execution.
-        swarm_group_id: If set, register this run into the named swarm group.
-        output_schema: JSON Schema dict — child output will be validated against it.
-        model: Override the LLM model name for this child.
-        launch_fingerprint: Deduplication fingerprint for swarm launches.
-        goal_max_turns: Goal-loop turn budget override; ``None`` uses the
-            configured ``COMPLETION_JUDGE["goal_max_turns"]``. The completion
-            judge reviews every turn and the child continues until judged
-            complete or the budget is spent.
-        functional_role_hint: Functional specialization (general / researcher /
-            executor / reviewer / librarian). ``None`` keeps the pre-migration behavior.
-        extra_tools: Additional tool names to attach for this spawn only.
-        isolation: Run the child in a private COPY of the project directory and
-            merge its file changes back on completion (``isolation/``). Requires
-            a project directory to copy.
-        flow_id: TaskFlow flow this child is executing. Stamped on the child
-            session's state so its verification evidence carries the flow id.
-        step_id: The TaskFlow step inside ``flow_id`` (optional, for diagnostics).
-
-    Returns:
-        A :class:`SpawnResult` with ``status="accepted"`` on success, or
-        ``status="forbidden"`` / ``status="error"`` on failure.
+    Accepts a :class:`SpawnRequest`; the historical keyword-argument shape is
+    still supported through ``SpawnRequest.from_legacy`` (dozens of call sites
+    and tests use it, and a hard cutover would be a compatibility break with no
+    functional gain). Passing both forms at once is a caller bug.
     """
+    if request is None:
+        request = SpawnRequest.from_legacy(**legacy)
+    elif legacy:
+        raise TypeError(
+            "spawn_subagent_direct() accepts a SpawnRequest OR keyword arguments, not both"
+        )
+    return await _spawn_subagent(request)
+
+
+async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
+    """The orchestration behind :func:`spawn_subagent_direct` (one request in)."""
+    task = request.task
+    requester_session_key = request.requester_session_key
+    agent_id = request.agent_id
+    task_name = request.task_name
+    label = request.label
+    thinking = request.thinking
+    cleanup = request.cleanup
+    attachments = request.attachments
+    cwd = request.cwd
+    completion_owner_key = request.completion_owner_key
+    expects_completion_message = request.expects_completion_message
+    run_timeout_seconds = request.run_timeout_seconds
+    swarm_group_id = request.swarm_group_id
+    output_schema = request.output_schema
+    model = request.model
+    launch_fingerprint = request.launch_fingerprint
+    goal_max_turns = request.goal_max_turns
+    functional_role_hint = request.functional_role_hint
+    extra_tools = request.extra_tools
+    isolation = request.isolation
+    flow_id = request.flow_id
+    step_id = request.step_id
+
     # --- Phases 1–2: input validation and the admission gate ---
     config = get_config()
     child_depth, refusal = _validate_spawn_request(task, agent_id, requester_session_key, config)
@@ -952,1537 +730,3 @@ async def spawn_subagent_direct(
         task_name=normalized_task_name,
         note=accepted_note,
     )
-
-
-#: Runs already notified about a deferred dispatch. Module-level on purpose: the
-#: registry record has no generic metadata slot, and the throttle only has to
-#: survive this process. Cleaned when the run leaves the lane wrapper.
-_load_warned_runs: set[str] = set()
-
-
-def _is_run_killed(run: SubagentRunRecord) -> bool:
-    """Whether a deferred dispatch should stop waiting.
-
-    A PENDING run that is killed does NOT become TERMINAL (the kill path only
-    records ``kill_reconciliation``), so checking the status alone would keep
-    waiting for a run nobody will ever execute.
-    """
-    return run.execution.status == ExecutionStatus.TERMINAL or run.kill_reconciliation is not None
-
-
-def _fail_run_load_timeout(run: SubagentRunRecord, gate: Any) -> None:
-    """Terminalize a dispatch the load gate never let through.
-
-    MUST terminalize, not merely return: an abandoned PENDING run is an orphan,
-    and the sweeper's orphan recovery would re-dispatch it → another deferral →
-    a loop. ``ended_reason`` comes from the outcome status (``timeout``), and the
-    load-specific detail rides the outcome's error text.
-    """
-    from ..registry.run_manager import complete_run
-
-    complete_run(
-        run.run_id,
-        RunOutcome(
-            status=RunOutcomeStatus.TIMEOUT,
-            error=(
-                f"load_timeout: host load stayed above the gate for more than "
-                f"{LANE_SYSTEM['load_gate_max_defer_s']:.0f}s "
-                f"(cpu {gate.cpu:.0f}%, ram {gate.ram:.0f}%)"
-            ),
-        ),
-    )
-    logger.warning(
-        "subagent run {} terminalized: deferred by the load gate past the budget", run.run_id
-    )
-
-
-async def _notify_load_warning(run: SubagentRunRecord, gate: Any) -> None:
-    """Push the ``load_warning`` frame for this run ONCE (best effort)."""
-    if run.run_id in _load_warned_runs:
-        return
-    _load_warned_runs.add(run.run_id)
-    try:
-        from runtime.session.ws_push import broadcast_to_session
-
-        frame = {
-            "event": "load_warning",
-            "session_id": run.requester_session_key,
-            "content": {
-                "cpu": round(gate.cpu, 1),
-                "ram": round(gate.ram, 1),
-                "run_id": run.run_id,
-            },
-        }
-        await broadcast_to_session(run.requester_session_key, frame)
-    except Exception as e:  # noqa: BLE001 — a notice must never block the wait
-        logger.warning("Failed to push load_warning for run {}: {}", run.run_id, e)
-
-
-async def _wait_for_load_gate(run: SubagentRunRecord) -> bool:
-    """Wait out a stop verdict BEFORE taking a lane slot. False = give up.
-
-    Placed in front of ``lane_slot`` on purpose: a deferred dispatch must not
-    consume a slot it will not use. The wait reads the process-wide snapshot
-    (no per-run sampling), backs off ``load_gate_retry_s`` at a time, and gives
-    up either when the run is killed or when the deferral budget is spent (the
-    run is then terminalized — see :func:`_fail_run_load_timeout`).
-    """
-    if not LANE_SYSTEM["load_gate_enabled"]:
-        return True  # shipped-off: byte-for-byte the old behavior, no sampling
-
-    from agent.tools.pub_base.load_gate import get_load_gate
-
-    defer_started = time.monotonic()
-    while True:
-        gate = await get_load_gate()
-        if not gate.stop:
-            return True
-        elapsed = time.monotonic() - defer_started
-        budget = float(LANE_SYSTEM["load_gate_max_defer_s"])
-        if elapsed >= budget:
-            _fail_run_load_timeout(run, gate)
-            return False
-        logger.info(
-            "subagent run {} deferred by the load gate (cpu={:.0f}% ram={:.0f}%)",
-            run.run_id,
-            gate.cpu,
-            gate.ram,
-        )
-        await _notify_load_warning(run, gate)
-        # Never sleep past the budget: a short max_defer must be observed on time.
-        await asyncio.sleep(min(float(LANE_SYSTEM["load_gate_retry_s"]), budget - elapsed))
-        current = get_run(run.run_id)
-        if current is None or _is_run_killed(current):
-            logger.info("subagent run {} killed while deferred by the load gate", run.run_id)
-            return False
-
-
-async def _execute_subagent_with_lane(
-    run: SubagentRunRecord,
-    system_prompt: str,
-    user_message: str,
-    tools: list | None,
-    timeout_seconds: float,
-    model_override: str | None = None,
-    model_tier: str | None = None,
-    model_profile: dict[str, str] | None = None,
-    extra_tools: list[str] | None = None,
-    output_schema: dict | None = None,
-    goal_max_turns: int = 5,
-) -> None:
-    """Wait for a SUBAGENT lane slot, promote PENDING → RUNNING inside it, then execute.
-
-    The lane queues over-limit runs instead of rejecting them: a spawn that
-    already passed per-parent admission always proceeds, waiting here while all
-    slots are busy. ``started_at`` is stamped only once the slot is held, so
-    queue wait time is never counted as run time.
-    """
-    from runtime.lane import LaneType, lane_slot
-
-    try:
-        # The environment gate runs FIRST: a deferred dispatch holds no slot.
-        if not await _wait_for_load_gate(run):
-            return
-        logger.debug("subagent run {} waiting for a SUBAGENT lane slot", run.run_id)
-        async with lane_slot(LaneType.SUBAGENT):
-            current = get_run(run.run_id)
-            if current is None or current.execution.status == ExecutionStatus.TERMINAL:
-                logger.info("subagent run {} killed while waiting for a lane slot", run.run_id)
-                return  # killed while waiting for a lane slot
-
-            if current.execution.status == ExecutionStatus.PENDING:
-                promoted = mark_run_running(run.run_id)
-                if promoted is None:
-                    logger.warning("subagent run {} vanished before PENDING -> RUNNING", run.run_id)
-                    return  # race: run disappeared between lookup and transition
-                current = promoted
-                logger.info("subagent run {} PENDING -> RUNNING inside its lane slot", run.run_id)
-
-            await _execute_subagent(
-                run=current,
-                system_prompt=system_prompt,
-                user_message=user_message,
-                tools=tools,
-                timeout_seconds=timeout_seconds,
-                model_override=model_override,
-                model_tier=model_tier,
-                model_profile=model_profile,
-                extra_tools=extra_tools,
-                output_schema=output_schema,
-                goal_max_turns=goal_max_turns,
-            )
-    finally:
-        # Early return / cancellation paths never reach _execute_subagent's own
-        # cleanup, so the task reference is released here exactly once.
-        _load_warned_runs.discard(run.run_id)
-        from ..registry import remove_task
-
-        remove_task(run.run_id)
-
-
-def _effective_child_deny(run: SubagentRunRecord) -> list[str]:
-    """The child's deny-list: inherited policy + every tool whose scope is absent."""
-    effective_deny = list(run.inherited_tool_deny)
-    if run.scopes:
-        scope_tool_map = {
-            "subagent:spawn": "sessions_spawn",
-            "subagent:kill": "sessions_kill",
-            "subagent:yield": "sessions_yield",
-            "subagent:send": "sessions_send",
-        }
-        for scope, tool_name in scope_tool_map.items():
-            # If the scope is missing from the run's scopes, deny the corresponding tool
-            if scope not in run.scopes and tool_name not in effective_deny:
-                effective_deny.append(tool_name)
-    return effective_deny
-
-
-def _stamp_taskflow_context(
-    child_session_key: str, flow_id: str | None, step_id: str | None
-) -> None:
-    """Stamp a TaskFlow step child with the flow/step it is executing."""
-    if not flow_id:
-        return
-    from runtime import StateKey, state_register_mem
-
-    state_register_mem.set_state(child_session_key, StateKey.FLOW_ID, flow_id)
-    if step_id:
-        state_register_mem.set_state(child_session_key, StateKey.STEP_ID, step_id)
-
-
-def _bind_child_run_context(run: SubagentRunRecord) -> dict:
-    """Build the child's LangGraph config and bind its session-level context.
-
-    Sets the thinking tag, pins the child's project directory (the register is
-    the only channel its tools can read — LangGraph's ``config`` is not
-    reachable from a tool body), and stamps the keys the external-path gate
-    reads: allowlist inheritance from the parent session plus the subagent
-    identification that keeps a child fail-closed without main approval.
-    """
-    from pub.func import build_agent_config
-
-    agent_config = build_agent_config(session_id=run.child_session_key)
-    if run.thinking:
-        agent_config["tags"] = agent_config.get("tags", [])
-        # LangGraph inspects tags for the "thinking:<level>" pattern
-        agent_config["tags"].append(f"thinking:{run.thinking}")
-    if run.spawned_cwd:
-        # The child's tools resolve against this root. It is persisted as the
-        # CHILD session's own project-dir binding (resolved at spawn time,
-        # inside the lane slot) because that register is the only channel the
-        # tools can read — LangGraph's ``config`` is not reachable from a
-        # tool body (no ToolRuntime). Freezing it here is what makes a child
-        # independent: a later switch in the parent session does not follow.
-        from runtime.session import project_dir as project_dir_mod
-
-        project_dir_mod.write_project_dir(run.child_session_key, run.spawned_cwd)
-
-    # Security: the child's file tools resolve external-path authorization
-    # against these keys — allowlist inheritance (parent session) and
-    # subagent identification (fail-closed without main-session approval).
-    from runtime import StateKey, state_register_mem
-
-    state_register_mem.set_state(
-        run.child_session_key,
-        StateKey.REQUESTER_SESSION_KEY,
-        normalize_session_key(run.spawned_by),
-    )
-    state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
-
-    # Token attribution: a child's model calls belong to the ROOT parent's
-    # session and the turn that spawned its tree. A direct child takes the root's
-    # current turn; every deeper level INHERITS its parent's attribution, so one
-    # spawn tree always lands in one turn and a grandchild never re-roots at its
-    # immediate parent.
-    parent_key = normalize_session_key(run.requester_session_key)
-    if parent_key:
-        parent_attr = state_register_mem.get_state(parent_key, StateKey.TOKEN_BUDGET_PARENT, None)
-        if isinstance(parent_attr, dict) and isinstance(parent_attr.get("session_id"), str):
-            root = parent_attr["session_id"]
-            turn_id = parent_attr.get("turn_id")
-        else:
-            root = parent_key
-            turn_id = state_register_mem.get_state(root, StateKey.TOKEN_BUDGET_TURN_ID, None)
-        if isinstance(root, str) and root:
-            # Write the attribution even without a turn id: the child still
-            # counts toward the root's SESSION usage, and ChildTokenBudget adds
-            # it to the current turn only when this id matches.
-            state_register_mem.set_state(
-                run.child_session_key,
-                StateKey.TOKEN_BUDGET_PARENT,
-                {
-                    "session_id": root,
-                    "turn_id": turn_id if isinstance(turn_id, str) else "",
-                },
-            )
-    return agent_config
-
-
-async def _run_goal_loop(
-    run: SubagentRunRecord,
-    user_message: str,
-    result_text: str | None,
-    invoke: Any,
-    goal_max_turns: int,
-) -> tuple[str | None, RunOutcome | None]:
-    """Review each turn with the completion judge until DONE or budget spent.
-
-    CONTINUE injects the judge's continuation prompt as the next human turn.
-    Fail-open (judge errors => DONE) so it cannot trap the subagent. Returns the
-    latest result text and an outcome only when the budget ran out.
-
-    The judge's FIRST call is skipped when the child's opening turn already
-    cleared the bar on its own: a non-empty result plus at least one passing,
-    non-stale evidence row in the child's ledger (``_first_turn_self_evident``).
-    The point: a simple spawn should not pay an auxiliary LLM call for a verdict
-    the ledger already carries.
-    """
-    from agent.tools.taskflow.evidence_collector import collect_evidence_summary
-
-    from .completion_judge import CompletionVerdict, judge_completion
-
-    turns_used = 1
-    while True:
-        evidence_summary = collect_evidence_summary(session_key=run.child_session_key)
-        if turns_used == 1 and _first_turn_self_evident(result_text, evidence_summary):
-            logger.debug(
-                "CompletionJudge skipped for run {}: first turn carries passing evidence",
-                run.run_id,
-            )
-            return result_text, None
-        judge_result = await judge_completion(
-            task_text=user_message,
-            last_response=result_text or "",
-            evidence_summary=evidence_summary,
-            max_chars=resolve_subagent_output_caps(run.max_output_tokens).judge_chars,
-        )
-        if judge_result.verdict == CompletionVerdict.DONE:
-            return result_text, None
-        if turns_used >= goal_max_turns:
-            return result_text, RunOutcome(
-                status=RunOutcomeStatus.OK,
-                error="goal_loop_budget_exhausted",
-            )
-        if not judge_result.continuation_prompt.strip():
-            return result_text, None
-        from langchain_core.messages import HumanMessage
-
-        agent_result = await invoke([HumanMessage(content=judge_result.continuation_prompt)])
-        result_text = _extract_result_text(agent_result)
-        turns_used += 1
-
-
-def _first_turn_self_evident(result_text: str | None, evidence_summary: str | None) -> bool:
-    """True when the opening turn needs no judge: result + passing evidence.
-
-    The summary format is the evidence collector's (``[pass]`` / ``[FAIL]`` /
-    ``?`` per row, `` [stale]`` / `` [broken]`` suffixed): a pass exists, nothing
-    failed, nothing went stale, and no command was re-verified as broken. Any
-    read failure returns False — the shortcut must never suppress a judge on
-    incomplete information (fail towards judging).
-    """
-    if not (result_text or "").strip():
-        return False
-    if not evidence_summary or "[pass]" not in evidence_summary:
-        return False
-    return (
-        "FAIL" not in evidence_summary
-        and "[stale]" not in evidence_summary
-        and "[broken]" not in evidence_summary
-    )
-
-
-def release_child_session_state(run: SubagentRunRecord) -> None:
-    """Drop the per-session state a child agent leaves in the mem register.
-
-    Split out of :func:`_release_child_resources` because a run that is killed
-    while INTERRUPTED (paused on HITL, possibly restored from disk after a
-    restart) has no live child agent to release — but its OutputRepetitionGuard
-    keys are still in the child's bucket and would leak once per run.
-    """
-    try:
-        from agent.middlewares.output_repetition_guard.repetition_state import (
-            SESSION_STATE_KEYS,
-        )
-        from runtime import state_register_mem
-
-        for _key in SESSION_STATE_KEYS:
-            state_register_mem.delete_state(run.child_session_key, _key)
-    except Exception:
-        logger.exception(
-            "Failed to release OutputRepetitionGuard state for session {}",
-            run.child_session_key,
-        )
-
-
-class _RunWallClock:
-    """One wall-clock budget shared by every turn a run makes.
-
-    ``run_timeout_seconds`` bounds the RUN, not each model call: the goal loop
-    may make ``goal_max_turns`` calls, and a per-call ``wait_for(timeout)``
-    multiplied the advertised bound by the turn budget. ``remaining()`` returns
-    the seconds left for the next call (``None`` when the budget is disabled by
-    ``timeout_seconds <= 0``) and raises ``TimeoutError`` once it is spent, so
-    the caller's normal timeout path finalizes the run as TIMEOUT.
-    """
-
-    def __init__(self, timeout_seconds: float) -> None:
-        self.deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-
-    def remaining(self) -> float | None:
-        if self.deadline is None:
-            return None
-        remaining = self.deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError
-        return remaining
-
-
-#: Error text markers of a provider rejecting the structured-output strategy
-#: (a forced ``tool_choice``, or JSON mode it cannot combine with thinking).
-#: Only schema-bound children consult this, so a generic "thinking mode" 400
-#: from some other call never degrades a model.
-_STRUCTURED_OUTPUT_REJECTION_MARKERS = (
-    "does not support this tool_choice",
-    "thinking mode",
-    "response_format",
-    "structured output",
-)
-
-
-def _is_structured_output_rejection(exc: BaseException) -> bool:
-    """True when ``exc`` looks like a provider rejecting the JSON strategy."""
-    text = f"{type(exc).__name__}: {exc}".lower()
-    return any(marker in text for marker in _STRUCTURED_OUTPUT_REJECTION_MARKERS)
-
-
-async def _reset_child_attempt(run: SubagentRunRecord, child_agent: Any) -> None:
-    """Prepare a clean retry after a rejected structured-output attempt.
-
-    Closes the failed attempt's checkpointer, wipes the child's checkpoint
-    thread (the failed turn may have saved the input state — replaying it would
-    duplicate the HumanMessage), and releases the repetition-guard keys so the
-    fresh attempt starts from zero. Best-effort: a cleanup failure must not
-    block the retry.
-    """
-    child_checkpointer = getattr(child_agent, "checkpointer", None) if child_agent else None
-    if child_checkpointer is not None:
-        try:
-            await child_checkpointer.aclose()
-        except Exception:
-            logger.debug("subagent retry: checkpointer close failed", exc_info=True)
-    try:
-        from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
-
-        await delete_thread_history(run.child_session_key)
-    except Exception:
-        logger.debug("subagent retry: thread wipe failed", exc_info=True)
-    try:
-        # Same-module helper (the registry copy does not exist).
-        release_child_session_state(run)
-    except Exception:
-        logger.debug("subagent retry: session state release failed", exc_info=True)
-
-
-async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
-    """Close the child's checkpointer and drop its per-session state.
-
-    Always runs, even on cancellation: every spawn opens an aiosqlite
-    checkpointer and writes repetition-guard keys under the child's session
-    bucket, and nothing else would release them.
-    """
-    child_checkpointer = getattr(child_agent, "checkpointer", None)
-    if child_checkpointer is not None:
-        # Keep this child thread to one readable top-level checkpoint (plus its
-        # writes). The child is no longer running here; tools/model namespaces
-        # are safe to drop, while the latest top-level row is what
-        # sessions_messages reads after a timeout/kill.
-        cleaner = getattr(child_checkpointer, "aclean_thread_checkpoints", None)
-        if callable(cleaner):
-            try:
-                from pub.func import rand_str_to_int
-
-                await cleaner(str(rand_str_to_int(run.child_session_key)))
-            except Exception:
-                logger.warning(
-                    "Failed to prune child checkpoints for {}",
-                    run.run_id,
-                    exc_info=True,
-                )
-        try:
-            await child_checkpointer.aclose()
-        except Exception:
-            logger.exception("Failed to close child checkpointer for {}", run.run_id)
-
-    # Release this child's per-session OutputRepetitionGuard state. The guard
-    # writes its top-level keys (output_repetition_history, ..._halted, etc.)
-    # into ``state_register_mem`` under the child's unique session key. If we
-    # left them behind they would accumulate in memory each time a subagent
-    # is spawned and destroyed. ``clear_session`` is deliberately NOT used
-    # here: it would wipe the entire session bucket and clobber the other
-    # middlewares' top-level state (heartbeat_killed, summarization, tool
-    # guardrails, iteration budget, ...). We delete exactly the 6 keys this
-    # middleware owns, scoped to the child's own bucket via ``delete_state``.
-    release_child_session_state(run)
-
-    from ..registry import remove_task
-
-    remove_task(run.run_id)
-
-    try:
-        await fire_progress_hook(run, "execution completed")
-    except Exception as e:
-        logger.debug("fire_progress_hook error for run {}: {}", run.run_id, e)
-
-
-async def _finalize_child_run(
-    run: SubagentRunRecord,
-    outcome: RunOutcome,
-    result_text: str | None,
-    handoff: dict | None = None,
-) -> None:
-    """Grace period (failures only), then complete the run and fire the hooks."""
-    if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
-        from ..config import get_config
-
-        grace = get_config().lifecycle_grace_period_seconds
-        if grace > 0:
-            # Give in-flight completion messages a chance to arrive before finalizing
-            logger.info(
-                "Lifecycle grace: waiting {:.1f}s before finalizing run {} ({})",
-                grace,
-                run.run_id,
-                outcome.status.value,
-            )
-            await asyncio.sleep(grace)
-            from ..registry import get_run as _get_run
-
-            latest = _get_run(run.run_id)
-            if latest and latest.execution.status == ExecutionStatus.TERMINAL:
-                # Run was already completed (e.g. by a yield/settle callback) during grace period
-                logger.info(
-                    "Lifecycle grace: run {} completed during grace period, skipping finalize",
-                    run.run_id,
-                )
-                try:
-                    await fire_ended_hook(run)
-                except Exception as e:
-                    logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
-                return
-
-    from ..registry.lifecycle import complete_subagent_run
-
-    await complete_subagent_run(
-        run.run_id,
-        outcome,
-        result_text,
-        expected_generation=run.generation,
-        handoff=handoff,
-    )
-
-    try:
-        await fire_ended_hook(run)
-    except Exception as e:
-        logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
-
-
-async def _execute_subagent(
-    run: SubagentRunRecord,
-    system_prompt: str,
-    user_message: str,
-    tools: list | None,
-    timeout_seconds: float,
-    model_override: str | None = None,
-    model_tier: str | None = None,
-    model_profile: dict[str, str] | None = None,
-    extra_tools: list[str] | None = None,
-    output_schema: dict | None = None,
-    *,
-    goal_max_turns: int = 5,
-) -> None:
-    """Run a sub-agent under its OWN log scope (see :func:`_execute_subagent_scoped`).
-
-    The child runs in an asyncio task that inherits whatever ``contextualize``
-    scope the parent turn opened, so this wrapper rebinds the child's identity:
-    its log lines carry the child session key and a fresh turn id, never the
-    parent's, and one subagent run is greppable on its own key.
-    """
-    with logger.contextualize(
-        session_id=run.child_session_key,
-        turn_id=uuid.uuid4().hex,
-        agent="subagent",
-    ):
-        await _execute_subagent_scoped(
-            run,
-            system_prompt=system_prompt,
-            user_message=user_message,
-            tools=tools,
-            timeout_seconds=timeout_seconds,
-            model_override=model_override,
-            model_tier=model_tier,
-            model_profile=model_profile,
-            extra_tools=extra_tools,
-            output_schema=output_schema,
-            goal_max_turns=goal_max_turns,
-        )
-
-
-def _ptc_preview(value: Any, limit: int = 500) -> str:
-    text = value if isinstance(value, str) else str(value)
-    text = " ".join(text.split())
-    return text[:limit]
-
-
-def _render_ptc_progress(calls_log: list[dict[str, Any]]) -> str:
-    """Render the completed prefix + first failed call for the React fallback."""
-    completed: list[dict[str, Any]] = []
-    failed: dict[str, Any] | None = None
-    for call in calls_log:
-        if not isinstance(call, dict):
-            continue
-        if call.get("ok") is True and failed is None:
-            completed.append(call)
-            continue
-        if failed is None:
-            failed = call
-
-    lines = ["[PTC Pre-run Progress]", "A PTC replay script was attempted for this task."]
-    if completed:
-        lines.append("")
-        lines.append("Completed steps (side effects already applied — DO NOT redo):")
-        for index, call in enumerate(completed, start=1):
-            lines.append(
-                f"  {index}. {call.get('tool', '?')} "
-                f"({_ptc_preview(call.get('args', {}), 240)}) → "
-                f"{_ptc_preview(call.get('result', ''), 400)}"
-            )
-    if failed is not None:
-        lines.append("")
-        lines.append(
-            f"Failed at step {len(completed) + 1}: {failed.get('tool', '?')} "
-            f"({_ptc_preview(failed.get('args', {}), 240)}) → "
-            f"{_ptc_preview(failed.get('error', ''), 500)}"
-        )
-    elif not completed:
-        lines.append("")
-        lines.append("PTC produced no tool calls; continue with normal tools.")
-    lines.append("")
-    lines.append("Continue from the first unfinished step. Do not repeat completed steps.")
-    return "\n".join(lines)
-
-
-def _ptc_tools_map(
-    run: SubagentRunRecord,
-    tools: list | None,
-    effective_deny: list[str],
-) -> dict[str, Any]:
-    """The role-filtered PTC tool map, without building a child agent."""
-    from agent.tools import build_main_tools
-    from config.features import PTC
-
-    base_tools = tools if tools is not None else build_main_tools()
-    filtered = apply_tool_policy(base_tools, run.inherited_tool_allow, effective_deny)
-    allowed = set(PTC["ptc_allowed_tools"])
-    return {
-        name: tool
-        for tool in filtered
-        if (name := str(getattr(tool, "name", "") or "")) in allowed and name != "execute_code"
-    }
-
-
-async def _try_ptc_prefill(
-    run: SubagentRunRecord,
-    tools: list | None,
-    effective_deny: list[str],
-    output_schema: dict | None,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Try the executor-only PTC replay before building the child agent.
-
-    Returns ``(result, progress)``:
-    - success: ``result`` carries the stdout + calls_log, ``progress`` is None;
-    - failure: ``result`` is None, ``progress`` is the rendered React hint;
-    - no replay candidate: both None.
-    """
-    from config.features import PTC
-
-    if not PTC["ptc_prefill_enabled"] or run.functional_role not in PTC_ROLES:
-        return None, None
-    if not run.step_id:
-        return None, None
-
-    from ..registry.session_keys import normalize_session_key
-    from agent.tools.todolist.knowledge.identity import resolve_session_plan_identity
-    from agent.tools.ptc.scripts import find_step_script, read_step_script
-
-    root_session = normalize_session_key(run.controller_session_key or run.requester_session_key)
-    # A nested spawn's immediate requester can itself be a child key. The plan
-    # identity is defined on the root main session, so an abnormal key is a
-    # fail-open miss rather than a wrong-script hit.
-    if not root_session or root_session.startswith("agent:"):
-        return None, None
-    try:
-        identity = resolve_session_plan_identity(root_session)
-        if identity is None:
-            return None, None
-        path = find_step_script(identity.key, run.step_id)
-        if path is None:
-            return None, None
-        script = read_step_script(identity.key, run.step_id)
-        if script is None:
-            return None, None
-        tools_map = _ptc_tools_map(run, tools, effective_deny)
-    except Exception as exc:  # noqa: BLE001 - a lookup failure must not fail the step
-        logger.warning("PTC prefill lookup failed for run {}: {}", run.run_id, exc)
-        return None, None
-    if not tools_map:
-        logger.debug("PTC prefill: no role-allowed PTC tools for run {}", run.run_id)
-        return None, None
-
-    from agent.tools.ptc.runner import run_ptc
-
-    try:
-        raw = await run_ptc(
-            script,
-            tools_map,
-            run.child_session_key,
-            PTC,
-            cwd=run.spawned_cwd or None,
-        )
-        result = json.loads(raw)
-        if not isinstance(result, dict):
-            raise ValueError("PTC result is not a JSON object")
-    except Exception as exc:  # noqa: BLE001 - fail-open to React
-        logger.warning("PTC prefill failed before parsing for run {}: {}", run.run_id, exc)
-        return None, _render_ptc_progress([])
-
-    calls_log = result.get("calls_log") or []
-    if not isinstance(calls_log, list):
-        calls_log = []
-    try:
-        exit_code = int(result.get("exit_code") or 0)
-    except (TypeError, ValueError):
-        exit_code = -1
-    success = (
-        result.get("status") == "ok"
-        and exit_code == 0
-        and str(result.get("output") or "").strip()
-        and bool(calls_log)
-        and all(isinstance(call, dict) and call.get("ok") is True for call in calls_log)
-    )
-    if success and output_schema:
-        from ..swarm.collector import validate_structured_output
-
-        try:
-            valid, error = validate_structured_output(
-                str(result.get("output") or ""), output_schema
-            )
-        except Exception as exc:  # noqa: BLE001 - schema parsing is fail-open
-            valid, error = False, f"{type(exc).__name__}: {exc}"
-        if not valid:
-            logger.info("PTC prefill schema miss for run {}: {}", run.run_id, error)
-            success = False
-            calls_log = [
-                *calls_log,
-                {
-                    "tool": "output_schema",
-                    "args": {},
-                    "error": f"PTC output failed the step schema: {error}",
-                    "ok": False,
-                },
-            ]
-    if not success:
-        # All tool calls may have succeeded while the script still ended in a
-        # non-ok status (empty stdout, timeout, budget, …). Give React one
-        # synthetic failed entry so the progress names the real stop point.
-        if calls_log and all(
-            isinstance(call, dict) and call.get("ok") is True for call in calls_log
-        ):
-            calls_log = [
-                *calls_log,
-                {
-                    "tool": "ptc",
-                    "args": {},
-                    "error": str(result.get("error") or f"status={result.get('status')}"),
-                    "ok": False,
-                },
-            ]
-        logger.info(
-            "PTC prefill fell back to React for run {}: status={} exit={} calls={}",
-            run.run_id,
-            result.get("status"),
-            result.get("exit_code"),
-            len(calls_log),
-        )
-        return None, _render_ptc_progress(calls_log)
-
-    logger.info(
-        "PTC prefill succeeded for run {} via {} (calls={})",
-        run.run_id,
-        path,
-        len(calls_log),
-    )
-    return {
-        "output": str(result.get("output") or ""),
-        "calls_log": calls_log,
-        "script": str(path),
-    }, None
-
-
-async def _execute_subagent_scoped(
-    run: SubagentRunRecord,
-    system_prompt: str,
-    user_message: str,
-    tools: list | None,
-    timeout_seconds: float,
-    model_override: str | None = None,
-    model_tier: str | None = None,
-    model_profile: dict[str, str] | None = None,
-    extra_tools: list[str] | None = None,
-    output_schema: dict | None = None,
-    *,
-    goal_max_turns: int = 5,
-) -> None:
-    """Run a sub-agent to completion, handling timeouts, cancellation, and lifecycle cleanup.
-
-    This is the main execution loop for a spawned sub-agent. It:
-      1. Computes the effective tool deny-list from inherited policy + scope gaps.
-      2. Builds a child LangGraph agent with filtered tools and role-appropriate LLM.
-      3. Invokes the agent with the assembled messages under a wall-clock timeout.
-      4. (goal loop) Reviews each turn with the completion judge; CONTINUE injects a
-         continuation prompt and runs another turn until DONE or the budget is spent.
-         Runs for every spawn whose budget exceeds one turn.
-      5. Validates structured output (if an output_schema was provided).
-      6. On failure (timeout / kill / error), applies a configurable grace period
-         to allow in-flight completion messages to arrive before finalizing.
-      7. Always runs lifecycle cleanup (thread unbinding, task removal, run completion).
-
-    Args:
-        run: The registry record for this spawn.
-        system_prompt: System prompt injected into the child agent.
-        user_message: The initial human-message containing the task.
-        tools: Tool list to make available; ``None`` falls back to :func:`build_main_tools`.
-        timeout_seconds: Wall-clock timeout in seconds.
-        model_override: LLM model name override for this child.
-        output_schema: Optional JSON Schema for structured output validation.
-        goal_max_turns: Goal-loop turn budget including the first turn.
-    """
-    from langchain_core.messages import HumanMessage
-
-    effective_deny = _effective_child_deny(run)
-
-    # Optimistic default — overridden by the appropriate exception handler below
-    result_text: str | None = None
-    handoff: dict | None = None
-    outcome = RunOutcome(status=RunOutcomeStatus.OK)
-    # Bound before the try so the cleanup below can always see it, even when
-    # _build_child_agent itself raised (e.g. a missing required middleware).
-    child_agent = None
-
-    from .. import model_caps
-
-    identity = (
-        _child_model_identity(model_profile, run.functional_role, model_tier, run.role)
-        if output_schema
-        else ("", "")
-    )
-    # A model that already degraded starts at its learned level, so a later
-    # subagent never pays for the same rejected request again.
-    strategy_level = model_caps.get_level(*identity) if output_schema else 0
-    strategy = model_caps.strategy_for(strategy_level)
-    if output_schema and strategy_level:
-        logger.info(
-            "Subagent structured output: {} starts at level {} ({})",
-            "/".join(identity),
-            strategy_level,
-            strategy.label,
-        )
-
-    # ONE wall-clock budget for the whole run, retries included: degrading a
-    # strategy must not multiply the advertised run timeout.
-    budget = _RunWallClock(timeout_seconds)
-
-    try:
-        # System-level PTC replay runs before any child agent is built. A hit
-        # completes the step with zero LLM tokens; a miss falls through to React
-        # with the completed prefix in its initial message.
-        ptc_result, ptc_progress = await _try_ptc_prefill(run, tools, effective_deny, output_schema)
-        if ptc_result is not None:
-            result_text = ptc_result["output"]
-            handoff = None
-            outcome = RunOutcome(status=RunOutcomeStatus.OK)
-            return
-        if ptc_progress:
-            user_message = f"{user_message}\n\n{ptc_progress}"
-
-        while True:
-            # Build the child LangGraph agent with scoped tools
-            child_agent = await _build_child_agent(
-                system_prompt=system_prompt,
-                tools=tools,
-                tool_allow=run.inherited_tool_allow,
-                tool_deny=effective_deny,
-                role=run.role,
-                functional_role=run.functional_role,
-                model_override=model_override,
-                model_tier=model_tier,
-                model_profile=model_profile,
-                extra_tools=extra_tools,
-                session_id=run.child_session_key,
-                output_schema=output_schema,
-                strategy_level=strategy_level,
-                spawn_depth=run.depth,
-            )
-
-            messages = [HumanMessage(content=user_message)]
-
-            agent_config = _bind_child_run_context(run)
-
-            # Invoke the child agent under the wall-clock timeout (0 disables it).
-            # ``_invoke`` is reused by goal-loop continuation turns: the same
-            # config keeps the same checkpoint thread, so a continuation extends
-            # the SAME child conversation instead of starting a fresh one.
-            async def _invoke(msgs: list) -> dict:
-                payload = {"session_id": run.child_session_key, "messages": msgs}
-                remaining = budget.remaining()
-                if remaining is None:
-                    return await child_agent.ainvoke(input=payload, config=agent_config)
-                return await asyncio.wait_for(
-                    child_agent.ainvoke(input=payload, config=agent_config),
-                    timeout=remaining,
-                )
-
-            try:
-                agent_result = await _invoke(messages)
-            except Exception as exc:  # noqa: BLE001 - a rejection is classified below
-                if (
-                    output_schema is not None
-                    and strategy_level < model_caps.MAX_LEVEL
-                    and _is_structured_output_rejection(exc)
-                ):
-                    # Degrade ONE rung and retry from a clean conversation. The
-                    # level is persisted, so the NEXT child on this model starts
-                    # here instead of re-hitting the same 400.
-                    strategy_level = model_caps.escalate(
-                        *identity,
-                        strategy_level + 1,
-                        reason=f"{type(exc).__name__}: {exc}",
-                    )
-                    strategy = model_caps.strategy_for(strategy_level)
-                    logger.warning(
-                        "Subagent structured output rejected for {} ({}); retrying at level {} ({})",
-                        run.run_id,
-                        type(exc).__name__,
-                        strategy_level,
-                        strategy.label,
-                    )
-                    await _reset_child_attempt(run, child_agent)
-                    child_agent = None
-                    continue
-                raise
-            break
-
-        # Extract the last substantive assistant text as the result text.
-        # The last message in the returned state is frequently an AIMessage with
-        # empty content (only tool_calls) or a ToolMessage — both carry tool output,
-        # not the final answer. Walk backwards to the last assistant message that
-        # contains real text, flattening multimodal content-block lists.
-        result_text = _extract_result_text(agent_result)
-
-        # Goal loop: the completion judge reviews every turn; CONTINUE injects its
-        # continuation prompt as the next human turn until DONE or the budget is
-        # spent. Fail-open (judge errors => DONE) so it cannot trap the subagent.
-        # The master switch is read HERE, at the funnel every execution path
-        # passes through (spawn, steer, direct calls): disabled ends the loop
-        # whatever budget the caller resolved.
-        from config.features import COMPLETION_JUDGE as _CJ
-
-        if not _CJ.get("enabled", True):
-            if goal_max_turns > 1:
-                logger.debug(
-                    "CompletionJudge disabled: run {} executes without a goal loop", run.run_id
-                )
-            goal_max_turns = 1
-        if goal_max_turns > 1:
-            result_text, budget_outcome = await _run_goal_loop(
-                run, user_message, result_text, _invoke, goal_max_turns
-            )
-            if budget_outcome is not None:
-                outcome = budget_outcome
-
-        # Validate structured output against the provided JSON Schema. At the
-        # self-json-object rungs nothing else enforces the shape, so a miss
-        # FAILS the run (the caller's retry flow owns the next attempt); the
-        # LangChain rung keeps the legacy warn-only behaviour because the
-        # framework already enforced it.
-        if output_schema and result_text:
-            from ..swarm.collector import validate_structured_output
-
-            valid, err = validate_structured_output(result_text, output_schema)
-            if not valid:
-                if strategy.local_validation_fatal and outcome.status is RunOutcomeStatus.OK:
-                    outcome = RunOutcome(
-                        status=RunOutcomeStatus.ERROR,
-                        error=(
-                            f"Structured output validation failed: {err}; got {result_text[:160]!r}"
-                        ),
-                    )
-                else:
-                    logger.warning(
-                        "Structured output validation failed for run {}: {}", run.run_id, err
-                    )
-
-        # The layer's own handoff block, extracted ONCE here and stored with the
-        # run: skill review reads the parsed dict instead of re-parsing
-        # free text 24 KB at a time.
-        handoff = _extract_handoff_json(result_text)
-
-    # --- Exception handling: map failures to RunOutcome statuses ---
-    except TimeoutError:
-        outcome = RunOutcome(
-            status=RunOutcomeStatus.TIMEOUT, error=f"Subagent timed out after {timeout_seconds}s"
-        )
-    except asyncio.CancelledError:
-        outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error="Subagent was killed")
-    except Exception as e:
-        outcome = RunOutcome(status=RunOutcomeStatus.ERROR, error=str(e))
-
-    # --- Lifecycle cleanup (always runs, even on cancellation) ---
-    finally:
-        await _release_child_resources(run, child_agent)
-        await _finalize_child_run(run, outcome, result_text, handoff)
-
-
-def _effective_child_summary_tokens(spawn_depth: int) -> int:
-    """The depth-scaled SummaryDoc budget for a subagent (main is unaffected)."""
-    from config.features.agent_side.summarization import effective_summary_max_tokens
-
-    return effective_summary_max_tokens(spawn_depth, get_config().max_spawn_depth)
-
-
-def _compression_threshold_for_children(context_window: int) -> int:
-    """The main-model compression line shared by child Summarization triggers."""
-    from config.features import SUMMARIZATION
-    from models.LLMs.main_llm import get_max_output_tokens
-
-    from agent.middlewares.summarization.thresholds import resolve_compression_threshold
-
-    return resolve_compression_threshold(
-        context_window,
-        get_max_output_tokens(),
-        fallback_ratio=SUMMARIZATION["compression_trigger_ratio"],
-    )[0]
-
-
-def _build_child_middlewares(
-    *,
-    auxiliary_llm: Any,
-    main_llm_context_window: int,
-    functional_role: FunctionalRole = FunctionalRole.GENERAL,
-    spawn_depth: int = 1,
-) -> list[Any]:
-    """Assemble the child-agent middleware pipeline.
-
-    ORDER IS A CONTRACT (the subagent side of the middleware-order tests).
-    Extracted from :func:`_build_child_agent` so the scaffolding validation and
-    its drift-guard test can inspect the exact list handed to ``create_agent``.
-    The executor is the write-capable worker and gets the larger iteration
-    budget; every other role keeps the standard worker budget.
-    """
-    from agent.middlewares import (
-        ChildTokenBudget,
-        HeartbeatStaleness,
-        InvalidToolCallRepairMiddleware,
-        IterationBudget,
-        MaxTokensBoostMiddleware,
-        Summarization,
-        ToolCallNormalize,
-        ToolGuardrails,
-        ToolResourceLockMiddleware,
-    )
-    from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
-    from config.features import ITERATION_BUDGET
-
-    iteration_limit = (
-        ITERATION_BUDGET["executor_max_iterations"]
-        if functional_role == FunctionalRole.EXECUTOR
-        else ITERATION_BUDGET["worker_max_iterations"]
-    )
-    logger.info(
-        "Subagent middleware budget: functional_role={} max_iterations={}",
-        functional_role,
-        iteration_limit,
-    )
-
-    return [
-        Summarization(
-            model=auxiliary_llm,
-            main_llm_context_window=main_llm_context_window,
-            # A subagent's summary is consumed by every ancestor: shallow
-            # layers carry more history and get a larger depth-scaled budget.
-            summary_total_max_tokens=_effective_child_summary_tokens(spawn_depth),
-            trigger=[
-                ("messages", 40),
-                (
-                    "tokens",
-                    _compression_threshold_for_children(main_llm_context_window),
-                ),
-            ],
-        ),
-        IterationBudget(iteration_limit),
-        ChildTokenBudget(),
-        ToolGuardrails(),
-        # Same process/system and per-session interaction locks as the parent.
-        ToolResourceLockMiddleware(),
-        # Non-streaming interception: children run via ``child_agent.ainvoke(...)``
-        # (this module's ``_execute_subagent``), so there are no intermediate tokens
-        # already emitted to any client. ``OutputRepetitionGuard`` intercepts the
-        # complete model result through ``wrap_model_call``/``_wrap_model_call_post``
-        # BEFORE it is returned to the caller — the replacement AIMessage fully
-        # overrides repetitive output prior to ``_extract_result_text``. State dedupe
-        # and escalation counters are isolated per ``child_session_key``
-        # ("agent:...:subagent:<uuid>"). No service-layer (Layer C) stream wiring is
-        # needed here; Layer C only guards the parent's relay loop.
-        OutputRepetitionGuard(),
-        # Tool-call truncation recovery: children run via ``ainvoke`` so the
-        # middleware takes its non-streaming path (no callback stripping —
-        # ``is_stream_turn`` is only set by the parent's StreamTurn loop and
-        # is keyed by the child's own session id, which never has it).
-        MaxTokensBoostMiddleware(),
-        ToolCallNormalize(),
-        HeartbeatStaleness(),
-        # Invalid tool-call salvage (syntax repair + bounded resend): registered
-        # LAST = innermost wrap layer, mirroring the main chain — the repaired
-        # message is what routes the child's loop. The resend path never strips
-        # callbacks here for the same reason as MaxTokensBoost above.
-        InvalidToolCallRepairMiddleware(),
-    ]
-
-
-def _assert_child_token_floor() -> None:
-    """Subagent spawn bypasses ``built_agent()``, so validate the 200K floor here.
-
-    Child LLM construction would otherwise inherit the floor implicitly — this
-    is the same guard the main agent applies.
-    """
-    from config.features import (
-        LLM_CLIENT_DEFAULTS,
-        assert_max_output_valid,
-        assert_max_token_valid,
-    )
-
-    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
-    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
-    _main_val = int(_main_raw) if _main_raw else None
-    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
-    _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
-    _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
-    assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
-    assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
-    assert_max_output_valid(
-        "MAIN_LLM_MAX_OUTPUT_TOKEN", int(_main_out_raw) if _main_out_raw else None
-    )
-    assert_max_output_valid(
-        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN", int(_aux_out_raw) if _aux_out_raw else None
-    )
-
-
-def _assemble_child_tools(
-    tools: list | None,
-    tool_allow: list[str] | None,
-    tool_deny: list[str] | None,
-    extra_tools: list[str] | None,
-    functional_role: FunctionalRole,
-    session_id: str,
-) -> list:
-    """The child's tool face: role policy, then the role-gated families.
-
-    Code intelligence (researcher + librarian) and PTC (executor) are injected
-    here and never added to ``_MAIN_TOOLS_BUILDERS``, so the main agent and
-    every other functional role cannot see them; ast-grep is available to every
-    functional role but also stays out of the main agent's face.
-    """
-    from agent.tools import build_main_tools
-
-    base_tools = tools if tools is not None else build_main_tools()
-
-    # Per-task extra tools attach on top of the role policy: they join the
-    # allow-list only when a whitelist is active (in inherit mode they are
-    # already part of the candidate set and only the deny-list applies). The
-    # main_only metadata gate and deny-list still apply to them.
-    effective_allow = list(tool_allow or [])
-    if extra_tools and effective_allow:
-        for name in extra_tools:
-            if name not in effective_allow:
-                effective_allow.append(name)
-
-    filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
-
-    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher + librarian):
-    # they are injected here, after the role policy, and never added to
-    # _MAIN_TOOLS_BUILDERS, so the main agent and every other functional role
-    # cannot see them.
-    final_tools = list(filtered_tools)
-    if functional_role in CODE_INTEL_ROLES:
-        from agent.tools.code_intel import build_code_intel_tools
-        from agent.tools.code_intel.lsp import build_lsp_tools
-
-        final_tools = [
-            *final_tools,
-            *build_code_intel_tools(session_id=session_id),
-            *build_lsp_tools(session_id=session_id),
-        ]
-
-    # ast-grep structural search/rewrite is a core component available to EVERY
-    # functional role (not RESEARCHER-only), mirroring oh-my-openagent's globally
-    # registered ast-grep MCP server. It is never added to _MAIN_TOOLS_BUILDERS,
-    # so the main agent cannot see it; the builder is fail-open (a missing
-    # binary degrades to an actionable install-hint tool result, never a crash).
-    from agent.tools.code_intel.ast_grep import build_ast_grep_tools
-
-    final_tools = [*final_tools, *build_ast_grep_tools(session_id=session_id)]
-
-    # Programmatic Tool Calling is EXECUTOR-only (PTC_ROLES) — the same single
-    # named source that spawn/system_prompt.py reads. Injected after the role
-    # policy and never added to _MAIN_TOOLS_BUILDERS, so the main agent and
-    # every other functional role cannot see it. The tool's own whitelist is
-    # intersected with filtered_tools, so it can call only real executor tools
-    # and can never recurse into execute_code.
-    if functional_role in PTC_ROLES:
-        from agent.tools.ptc import build_ptc_tool
-
-        final_tools = [
-            *final_tools,
-            build_ptc_tool(available_tools=filtered_tools, session_id=session_id),
-        ]
-    return final_tools
-
-
-def _select_child_llm(
-    model_profile: dict[str, str] | None,
-    model_override: str | None,
-    functional_role: FunctionalRole,
-    model_tier: str | None,
-    role: SubagentSessionRole,
-    *,
-    thinking_off: bool = False,
-):
-    """Pick the child's LLM, in precedence order.
-
-    *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
-    it is a full profile descriptor, so the child can run on another provider /
-    key entirely. A build failure logs and falls through to the next step. Then
-    *model_override* (resolved by name), then the functional role's *model_tier*,
-    and finally the depth role: ORCHESTRATOR gets the main LLM, LEAF the
-    auxiliary one.
-
-    ``thinking_off`` forces the main-family builders to the thinking-off variant.
-    The structured-output degradation ladder sets it only at its LAST level: a
-    child whose forced ``tool_choice`` the provider rejects gets there after
-    the self-sent ``response_format`` level also failed (see
-    :mod:`agent.tools.subagent.model_caps`).
-
-    The auxiliary family has no thinking knob by default; ``thinking`` is
-    forwarded only when ``thinking_off`` is set.
-    """
-    from models import build_auxiliary_llm, build_main_llm
-
-    if thinking_off:
-        logger.info(
-            "Subagent structured output: thinking forced off (functional_role={}, tier={})",
-            functional_role,
-            model_tier,
-        )
-
-    if model_profile and model_profile.get("model"):
-        try:
-            from models import build_main_llm_for_profile
-
-            profile_kwargs: dict[str, Any] = {
-                "provider": model_profile.get("provider"),
-                "model": model_profile["model"],
-                "api_key": model_profile.get("api_key"),
-                "base_url": model_profile.get("base_url"),
-                "max_output_tokens": resolve_profile_max_output_tokens(model_profile),
-            }
-            if thinking_off:
-                # Keep the free-form call shape untouched; only a schema-bound
-                # child pins the variant.
-                profile_kwargs["thinking"] = False
-            child_llm = build_main_llm_for_profile(**profile_kwargs)
-            logger.info(
-                "Subagent role model: functional_role={} model={} provider={}",
-                functional_role,
-                model_profile["model"],
-                model_profile.get("provider"),
-            )
-            return child_llm
-        except Exception as exc:  # noqa: BLE001 - a bad profile must not kill the spawn
-            logger.warning(
-                "Subagent role model profile failed ({}); falling back to the role tier", exc
-            )
-
-    if model_override:
-        try:
-            from models import build_llm_by_name
-
-            return build_llm_by_name(model_override)
-        except (ImportError, AttributeError):
-            pass
-
-    # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
-    # the pre-migration depth-based behavior untouched.
-    if functional_role != FunctionalRole.GENERAL and model_tier == "main":
-        return build_main_llm(thinking=False) if thinking_off else build_main_llm()
-    if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
-        return build_auxiliary_llm(thinking=False) if thinking_off else build_auxiliary_llm()
-    if role == SubagentSessionRole.ORCHESTRATOR:
-        return build_main_llm(thinking=False) if thinking_off else build_main_llm()
-    return build_auxiliary_llm(thinking=False) if thinking_off else build_auxiliary_llm()
-
-
-def _child_model_identity(
-    model_profile: dict[str, str] | None,
-    functional_role: FunctionalRole,
-    model_tier: str | None,
-    role: SubagentSessionRole,
-) -> tuple[str, str]:
-    """The ``(provider, model)`` :func:`_select_child_llm` is about to build.
-
-    Mirrors that function's PRECEDENCE without building a client: the persisted
-    structured-output level is looked up before the model exists. A profile
-    whose build later fails falls back to the role tier inside the builder; the
-    label then names the profile's model, which is harmless — a failed build is
-    not a structured-output rejection, so nothing is recorded for it.
-    """
-    import os
-
-    from models.LLMs.main_llm import api_name as main_model, model_provider as main_provider
-
-    if model_profile and model_profile.get("model"):
-        return (
-            str(model_profile.get("provider") or main_provider or ""),
-            str(model_profile["model"]),
-        )
-    main_identity = (str(main_provider or ""), str(main_model or ""))
-    aux_identity = (
-        os.getenv("AUXILIARY_LLM_PROVIDER") or "",
-        os.getenv("AUXILIARY_LLM_API_NAME") or "",
-    )
-    if functional_role != FunctionalRole.GENERAL and model_tier == "main":
-        return main_identity
-    if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
-        return aux_identity
-    if role == SubagentSessionRole.ORCHESTRATOR:
-        return main_identity
-    return aux_identity
-
-
-async def _build_child_agent(
-    system_prompt: str,
-    tools: list | None,
-    tool_allow: list[str] | None,
-    tool_deny: list[str] | None,
-    role: SubagentSessionRole = SubagentSessionRole.LEAF,
-    functional_role: FunctionalRole = FunctionalRole.GENERAL,
-    model_override: str | None = None,
-    model_tier: str | None = None,
-    model_profile: dict[str, str] | None = None,
-    extra_tools: list[str] | None = None,
-    session_id: str = "",
-    output_schema: dict | None = None,
-    strategy_level: int = 0,
-    spawn_depth: int = 1,
-):
-    """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
-
-    ``strategy_level`` is the structured-output degradation rung (see
-    :mod:`agent.tools.subagent.model_caps`): 0 hands the schema to LangChain's
-    ``response_format`` (a forced structured-output tool), 1 sends
-    ``response_format={"type": "json_object"}`` ourselves (the schema stays in
-    the system prompt and the result is validated locally), 2 does the same with
-    thinking OFF. The rung is resolved to a ``StructuredOutputStrategy`` here, so
-    the build reads flags rather than comparing the integer. Ignored when no
-    ``output_schema`` is given.
-
-    The LLM selection logic is:
-      - *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
-        it is a full profile descriptor, so the child can run on another provider /
-        key entirely. A build failure logs and falls through to the tier.
-      - If *model_override* is provided, attempt to resolve it by name; on failure fall through.
-      - A non-GENERAL *functional_role* with *model_tier* "main"/"auxiliary" picks that LLM.
-      - Otherwise the depth role decides: ORCHESTRATOR gets the main LLM, LEAF the auxiliary one.
-
-    Middleware stack (applied in order):
-      - **Summarization** — condenses conversation when tokens/messages exceed threshold.
-      - **IterationBudget(60)** — caps the agent to 60 reasoning/tool-call iterations.
-      - **ToolGuardrails** — validates tool calls before dispatch.
-      - **OutputRepetitionGuard** — stops the agent from emitting the same text endlessly.
-      - **MaxTokensBoostMiddleware** — re-calls the model with a boosted ``max_tokens``
-        (base × 2^n, capped) when a truncated response carries cut-off tool calls.
-      - **ToolCallNormalize** — normalises tool call format across LLM providers.
-      - **HeartbeatStaleness** — detects and recovers from stalled agent loops.
-
-    The returned agent is additionally wrapped in
-    :class:`RepetitionGuardWrapper` (``phantom_stream_guard=True``),
-    mirroring the main agent in ``agent/core.py``.
-
-    Args:
-        system_prompt: System prompt for the child agent.
-        output_schema: Optional JSON Schema constraining the child's FINAL
-            output. It is enforced at generation time through LangChain's
-            ``response_format`` (a raw schema resolves to ``AutoStrategy``: the
-            provider's native structured output where supported, else a
-            structured-output tool call WITH a forced ``tool_choice``), while
-            ``build_structured_output_prompt`` keeps the schema in the system
-            prompt as the prompt-level fallback and Tier 1 re-validates on
-            resume. Because some providers (DeepSeek) reject a forced
-            ``tool_choice`` in thinking mode, a schema-bound child is built with
-            thinking OFF (``_select_child_llm(thinking_off=True)``).
-            ``None`` = free-form output.
-        tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
-        tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
-        tool_deny: Explicit deny-list (an empty list is authoritative — it means the
-            caller intentionally unblocked the defaults, e.g. ORCHESTRATOR spawn/yield;
-            main_only metadata tools are dropped regardless).
-        role: :class:`SubagentSessionRole` — depth role, the fallback LLM selector.
-        functional_role: :class:`FunctionalRole` — overrides the depth role's LLM
-            when it carries a concrete ``model_tier``.
-        model_override: Optional model name string to override the default LLM.
-        model_tier: Resolved functional-role LLM tier ("main" | "auxiliary").
-        extra_tools: Per-spawn tool names attached on top of the role allow-list.
-        session_id: Child session key; labels the RESEARCHER-only code-intel tools.
-
-    Returns:
-        A fully-constructed LangGraph agent ready for ``ainvoke``.
-    """
-    from agent.core import StateSchema
-    from langchain.agents import create_agent
-    from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-    from agent.checkpointer import build_async_sqlite_checkpointer
-    from agent.middlewares import _SUBAGENT_REQUIRED, validate_required_middleware
-    from .. import model_caps
-
-    _assert_child_token_floor()
-    final_tools = _assemble_child_tools(
-        tools, tool_allow, tool_deny, extra_tools, functional_role, session_id
-    )
-    strategy = model_caps.strategy_for(strategy_level)
-    self_structured = output_schema is not None and strategy.sends_json_mode
-    child_llm = _select_child_llm(
-        model_profile,
-        model_override,
-        functional_role,
-        model_tier,
-        role,
-        # The thinking-off rung exists because the provider rejected even the
-        # self-sent response_format while reasoning.
-        thinking_off=bool(output_schema) and strategy.thinking_off,
-    )
-    # Levels 1/2: no framework-level structured output (no forced tool_choice);
-    # the provider's JSON mode + the prompt schema + our validator replace it.
-    # ``with_request_options`` is used instead of ``bind`` because the graph's
-    # ``bind_tools`` returns the INNER model and would drop a plain binding;
-    # the option must ride on every actual request.
-    agent_llm = child_llm
-    if self_structured:
-        from models.LLMs.reasoning_normalizer import NormalizingChatModel
-
-        if isinstance(child_llm, NormalizingChatModel):
-            agent_llm = child_llm.with_request_options({"response_format": {"type": "json_object"}})
-        else:
-            agent_llm = child_llm.bind(response_format={"type": "json_object"})
-
-    child_checkpointer = await build_async_sqlite_checkpointer()
-    await child_checkpointer.setup()
-
-    child_middleware = _build_child_middlewares(
-        auxiliary_llm=child_llm,
-        main_llm_context_window=main_llm_max_tokens,
-        functional_role=functional_role,
-        spawn_depth=spawn_depth,
-    )
-    # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
-    # middleware must abort the spawn, not ship a weakened child.
-    validate_required_middleware(child_middleware, chain="subagent", entries=_SUBAGENT_REQUIRED)
-    child_agent = create_agent(
-        model=agent_llm,
-        system_prompt=system_prompt,
-        state_schema=StateSchema,
-        checkpointer=child_checkpointer,
-        tools=final_tools,
-        middleware=child_middleware,
-        # Level 0: structured output as a CONSTRAINT, not a request — a raw
-        # schema makes LangChain auto-pick the provider's native structured
-        # output (or a structured-output tool where the provider lacks one).
-        # Levels 1/2 already carry the shape themselves (see above).
-        response_format=output_schema if (output_schema and not self_structured) else None,
-    )
-
-    # Wrap with RepetitionGuardWrapper, mirroring the main agent
-    # (``agent/core.py``). The wrapper adds stream-level interception
-    # (``astream``) plus an ``ainvoke`` post-hoc backstop on the final
-    # AIMessage. ``phantom_stream_guard=True`` is safe here for the same
-    # reason as the main agent: this middleware-equipped graph always
-    # emits before_agent "updates" (e.g. OutputRepetitionGuard.abefore_agent)
-    # before any model text on fresh dict-input runs.
-    # The ``OutputRepetitionGuard`` middleware above is intentionally KEPT:
-    # children run via ``child_agent.ainvoke(...)``, where the wrapper only
-    # inspects the final message, so per-call interception (breaking
-    # repetitive tool-call loops mid-flight) still depends on the middleware.
-    # The shared ``_INTERNAL_WARNED_KEY`` dedupe gate prevents double
-    # warnings, and the wrapper's per-turn state reset bounds any
-    # cross-call history duplication.
-    from agent.wrapper.repetition_guard import RepetitionGuardWrapper
-
-    child_agent = RepetitionGuardWrapper(child_agent, phantom_stream_guard=True)
-
-    return child_agent
-
-
-async def _rollback_spawn(
-    child_session_key: str,
-    run_id: str | None,
-    attachments_dir: str | None,
-    attachments_root_dir: str | None,
-) -> None:
-    """Clean up partial spawn state (attachments, session, registry) after a failed spawn.
-
-    Performs three cleanup steps in order:
-      1. Remove materialised attachment files from disk.
-      2. Delete the child session entry.
-      3. Remove the registry run record (if one was created) and fire stop hooks.
-
-    Args:
-        child_session_key: Session key of the failed child.
-        run_id: Run identifier if registration succeeded before the failure.
-        attachments_dir: Absolute path to the attachments directory (if created).
-        attachments_root_dir: Root directory under which attachments live.
-    """
-    if attachments_dir:
-        from ..registry.helpers import safe_remove_attachments_dir
-
-        safe_remove_attachments_dir(attachments_dir, attachments_root_dir)
-
-    await delete_subagent_session_for_cleanup(child_session_key)
-
-    if run_id:
-        from ..registry import remove_run as _remove_run
-
-        try:
-            await _remove_run(run_id)
-        except Exception as e:
-            logger.debug("remove_run failed for run {}: {}", run_id, e)
-
-        from ..hooks.base import fire_stop_hooks
-
-        try:
-            await fire_stop_hooks(
-                SubagentRunRecord(
-                    run_id=run_id,
-                    child_session_key=child_session_key,
-                    requester_session_key="",
-                    task="",
-                )
-            )
-        except Exception as e:
-            logger.debug("fire_stop_hooks error for run {}: {}", run_id, e)

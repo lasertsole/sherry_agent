@@ -26,6 +26,9 @@ export interface HitlChunkSurface {
   markRunningToolsFailed: () => void;
 }
 
+/** The decisions the approval card can send back through the HITL resume. */
+export type HitlDecision = 'approve' | 'approve_dir' | 'reject' | 'session' | 'yolo';
+
 /** Draft-persistence surface required by the HITL resume flow. */
 export interface HitlDraftSurface {
   trackDraftTurn: (sid: string, turnNum: number) => void;
@@ -98,10 +101,7 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
    * @param decision
    * @param message
    */
-  const handleHitlDecision = (
-    decision: 'approve' | 'approve_dir' | 'reject' | 'session' | 'yolo',
-    message: string = ''
-  ) => {
+  const handleHitlDecision = (decision: HitlDecision, message: string = '') => {
     const sid = sessionId.value;
     if (!sid) {
       hitlRequest.value = null;

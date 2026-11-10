@@ -124,6 +124,22 @@ Two stateful decisions are explicit objects (2026-11-09 design audit):
   terminal and an illegal edge raises `InvalidDeliveryTransitionError`; same-state
   transitions stay idempotent for crash recovery.
 
+## 🧱 Spawn Request, Modules & Completion Events
+
+The 2026-11-10 design audit reshaped the spawn pipeline without changing its
+behavior:
+
+- `spawn/request.py::SpawnRequest` is the frozen request object the
+  orchestration receives. `spawn_subagent_direct(request=None, **legacy)`
+  keeps the historical keyword-argument call shape through `from_legacy`.
+- `spawn/core.py` is a 732-line facade; the phases live in `handoff.py`,
+  `validation.py`, `isolation.py`, `child_agent_factory.py`, `lifecycle.py` and
+  `ptc_prefill.py`, and the facade re-exports every name older imports use.
+- Child completion is event-driven: terminal transitions publish through
+  `registry/completion_events.py` (backed by `runtime/event_wait.py`), and
+  `taskflow_wait_all` wakes on them. The old poll interval remains the
+  fallback that covers a missed notification.
+
 ## 🧪 Completion Judge & Goal Loop
 
 The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters on the legacy baseline; scaled with the serving model's output budget), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.

@@ -79,9 +79,23 @@ def test_subagent_middleware_order_is_pinned() -> None:
     assert "DelegationPressureGate" not in [type(mw).__name__ for mw in chain]
 
 
-class _NamedMiddleware:
-    def __init__(self, name: str) -> None:
-        self.name = name
+def test_delegation_pressure_gate_is_conditionally_appended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spec's ``when`` predicate controls the gate's presence, not position."""
+    monkeypatch.setenv("SHERRY_EVAL_DELEGATION_PRESSURE", "0")
+    monkeypatch.setitem(DELEGATION_PRESSURE, "enabled", False)
+
+    chain = agent_core._build_middlewares(
+        fallback_chain=None,
+        auxiliary_llm=None,
+        main_llm_context_window=131_072,
+        compression_trigger_ratio=0.8,
+    )
+
+    names = [type(mw).__name__ for mw in chain]
+    assert names == EXPECTED_ORDER[:-1]
+    assert "DelegationPressureGate" not in names
 
 
 class _Checkpointer:
@@ -127,16 +141,17 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(wrapper_registry, "main_llm_max_tokens", 65_536)
 
-    for name in EXPECTED_ORDER:
-        if name in {"DelegationPressureGate", "ToolResultEnrichmentMiddleware"}:
-            continue  # the real middleware is constructed by the builder
-        if name == "system_prompt_injection":
-            monkeypatch.setattr(agent_core, name, _NamedMiddleware(name))
-        else:
-            monkeypatch.setattr(agent_core, name, lambda *_, _n=name, **__: _NamedMiddleware(_n))
-
+    # No middleware stand-ins: the chain is now derived from
+    # agent.middlewares.specs, and the real constructors are cheap enough to
+    # build under the faked LLM/checkpointer seam. Their runtime class/name is
+    # exactly what the pinned contract checks.
     await agent_core.built_agent()
 
     names = [getattr(item, "name", type(item).__name__) for item in captured["middleware"]]
     assert names == EXPECTED_ORDER
+    # The single spec table is the source of truth, so the catalog projection
+    # must agree with the assembled chain (no second hand-maintained list).
+    from agent.middlewares.catalog import MIDDLEWARE_ORDER
+
+    assert names == list(MIDDLEWARE_ORDER)
     assert len(set(names)) == len(names)

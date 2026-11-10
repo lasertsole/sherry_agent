@@ -757,5 +757,26 @@
     "exportFailed": "Could not export the drawing",
     "addedToChat": "Added to the chat's pending images",
     "maxStrokes": "Too many strokes — clear or undo some first"
+  },
+  "hitl": {
+    "approve": "Approve",
+    "approveDir": "Approve Entire Directory",
+    "approveDirTooltip": "Allow the entire directory for this session (also inherited by subagents) — files inside never prompt again",
+    "approveSession": "Allow for Session",
+    "approveSessionTooltip": "Allow the same command for this session — no more prompts (matches the first two words, e.g. \"git push\" covers all git push subcommands)",
+    "reject": "Reject",
+    "title": "Action Requires Approval",
+    "tool": "Tool",
+    "yolo": "Approve All (YOLO)",
+    "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts",
+    "customPlaceholder": "Type a custom answer…",
+    "submit": "Submit",
+    "multiSubmit": "Submit All Answers",
+    "multiHint": "Please answer the questions above",
+    "annotationPlaceholder": "Other thoughts? Write here (optional)",
+    "planTitle": "Plan Awaiting Approval",
+    "planApprove": "Approve Plan",
+    "planRevise": "Request Changes",
+    "planFeedbackPlaceholder": "What should change? …"
   }
 }

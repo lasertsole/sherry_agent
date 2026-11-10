@@ -26,17 +26,16 @@ continuation clears it before streaming (F6 — one resume per interruption).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from runtime import StateKey, state_register_db, state_register_mem
+from server.service.interrupt_reason import BreakpointReason
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from langchain_core.messages import BaseMessage
     from langgraph.graph.state import CompiledStateGraph
-
-BreakpointReason = Literal["cancelled", "heartbeat_timeout"]
 
 
 class BreakpointStaleError(RuntimeError):

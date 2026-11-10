@@ -1,5 +1,8 @@
 """Build structured system prompts for sub-agents based on their role and spawn context."""
 
+from dataclasses import dataclass
+from typing import Any
+
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import (
     CODE_INTEL_ROLES,
@@ -9,25 +12,47 @@ from ..types.functional_role import (
 )
 from ..types.registry import SubagentRunRecord
 
+__all__ = [
+    "SubagentPromptContext",
+    "build_subagent_system_prompt",
+    "build_subagent_system_prompt_from_context",
+    "build_active_subagents_section",
+]
 
-def build_subagent_system_prompt(
-    role: SubagentSessionRole,
-    task: str,
-    functional_role: FunctionalRole = FunctionalRole.GENERAL,
-    role_description: str = "",
-    role_prompt_body: str = "",
-    requester_label: str = "parent agent",
-    depth: int = 1,
-    max_depth: int = 3,
-    child_session_key: str = "",
-    requester_session_key: str = "",
-    can_spawn: bool = False,
-) -> str:
-    """Generate a structured system prompt for a sub-agent, including role, rules, output format, and session context.
 
-    When no functional role is selected (GENERAL with no description/body),
-    the role section is byte-identical to the pre-migration prompt.
+@dataclass(frozen=True)
+class SubagentPromptContext:
+    """Everything the prompt sections read, in one immutable object (M1).
+
+    The section builders below take this context instead of an 11-parameter
+    argument list; adding a section that needs a new input adds one field here
+    rather than another positional parameter at every call site.
     """
+
+    role: SubagentSessionRole
+    task: str
+    functional_role: FunctionalRole = FunctionalRole.GENERAL
+    role_description: str = ""
+    role_prompt_body: str = ""
+    requester_label: str = "parent agent"
+    depth: int = 1
+    max_depth: int = 3
+    child_session_key: str = ""
+    requester_session_key: str = ""
+    can_spawn: bool = False
+
+
+def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str:
+    """Generate a structured system prompt for a sub-agent from one context."""
+    role = ctx.role
+    functional_role = ctx.functional_role
+    role_description = ctx.role_description
+    role_prompt_body = ctx.role_prompt_body
+    depth = ctx.depth
+    max_depth = ctx.max_depth
+    child_session_key = ctx.child_session_key
+    requester_session_key = ctx.requester_session_key
+    can_spawn = ctx.can_spawn
 
     sections = []
 
@@ -241,6 +266,18 @@ def build_subagent_system_prompt(
     sections.append("## Session Context\n" + "\n".join(context_lines))
 
     return "\n\n".join(sections)
+
+
+def build_subagent_system_prompt(role: SubagentSessionRole, task: str, **kwargs: Any) -> str:
+    """Compatibility entry point: build the context, then the prompt.
+
+    The context object above is the single input of the section builder; this
+    wrapper keeps the historical ``(role, task, **fields)`` call shape used by
+    tests and older call sites without re-introducing an 11-parameter list.
+    """
+    return build_subagent_system_prompt_from_context(
+        SubagentPromptContext(role=role, task=task, **kwargs)
+    )
 
 
 def build_active_subagents_section(

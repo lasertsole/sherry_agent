@@ -550,6 +550,19 @@ class StreamTurn:
         # Flag consumed by MaxTokensBoostMiddleware during model calls
         state_register_mem.delete_state(self.session_id, StateKey.IS_STREAM_TURN)
         _clear_pending_args(self.session_id)
+        # The ANSWERING signal is one of the session's busy signals: wake any
+        # event-driven idle waiter (the auto-turn's deferred continuation). A
+        # wake is a HINT — the waiter re-runs detect_state, and a missed
+        # notification costs one fallback poll. Lazy import: the subagent
+        # registry package is too heavy for this module's import graph.
+        try:
+            from agent.tools.subagent.registry.session_state import (
+                notify_busy_signals_changed,
+            )
+
+            notify_busy_signals_changed(self.session_id)
+        except Exception:  # noqa: BLE001 - a wake hint must never fail a turn
+            logger.debug("stream_dispatch: idle notification failed", exc_info=True)
 
     # ---- template -------------------------------------------------------
 

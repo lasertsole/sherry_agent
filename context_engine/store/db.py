@@ -1,3 +1,44 @@
+"""The MesMemory SQLite handle: one process-wide, serialized connection.
+
+This module deliberately does NOT use the short-lived-connection skeleton of
+``agent.tools.pub_base.sqlite_store.BaseSQLiteRepository`` (design audit M14):
+the registry stores there open a fresh connection per operation, but MesMemory's
+contract is a single shared handle, and moving it would change transaction and
+concurrency semantics rather than merely removing boilerplate. Concretely:
+
+* ``isolation_level=None`` (autocommit) and ``check_same_thread=False``: the
+  store is reached from the event loop and from ``asyncio.to_thread`` workers,
+  so two callers can execute on the SAME handle at once. SQLite's statement
+  handle is not thread-safe (the loser raises ``InterfaceError: You can only
+  execute one statement at a time`` and the caller — tool-result persistence —
+  fails open, silently losing a row), so every statement runs under
+  :class:`_SerializedConnection`'s re-entrant ``_stmt_lock``. Per-call
+  connections would avoid that hazard at the cost of losing the shared lock
+  that call sites depend on.
+* Call sites rely on the handle's OWN context-manager commit semantics:
+  ``with _shared_db():`` blocks in ``core.py`` execute statements and rely on
+  the exit commit. A per-operation connection would mean the ``with`` block
+  commits a different handle than the one the statements ran on.
+* Logical, multi-statement units are serialized by module-level locks rather
+  than SQL transactions — ``_turn_assign_lock`` guards the read-MAX-then-INSERT
+  turn assignment, and turn stamps share the same critical section — precisely
+  because the connection is in autocommit mode. Splitting work across
+  connections would either need explicit ``BEGIN IMMEDIATE`` transactions (new
+  lock ordering and retry behavior) or would weaken those invariants.
+* The schema is built with ``executescript`` (base tables, named and partial
+  indexes, two FTS5 virtual tables with six sync triggers, plus the
+  long-term-memory tables) and is created once on the shared handle; the base's
+  per-table DDL hooks cannot express it, and this is the hottest write path in
+  the process (every persisted message), where opening a connection per
+  operation is pure overhead.
+
+Cross-process contention is already handled the way the audit asks: WAL is
+enabled in the database header, ``busy_timeout`` (``MES_MEMORY["busy_timeout_s"]``,
+10s) is set on the connection, and connect itself retries a locked boot up to
+``connect_attempts`` times. Any future consolidation should keep this handle
+model rather than force the store into the short-lived base.
+"""
+
 import threading
 import time
 import sqlite3

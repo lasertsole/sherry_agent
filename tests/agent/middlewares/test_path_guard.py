@@ -173,11 +173,13 @@ async def test_built_agent_registers_path_guard_after_tool_call_normalize(
 ) -> None:
     from agent import core as agent_core
     from agent.middlewares import ToolCallNormalize, ToolGuardrails
+    from agent.middlewares import specs as middleware_specs
 
     # The shared fixture replaces middleware classes with placeholders; the two
     # neighbours this test positions PathGuard against must be the real ones.
-    monkeypatch.setattr(agent_core, "ToolCallNormalize", ToolCallNormalize)
-    monkeypatch.setattr(agent_core, "ToolGuardrails", ToolGuardrails)
+    # The chain is assembled from agent.middlewares.specs, so restore them there.
+    monkeypatch.setattr(middleware_specs, "ToolCallNormalize", ToolCallNormalize)
+    monkeypatch.setattr(middleware_specs, "ToolGuardrails", ToolGuardrails)
     captured: dict[str, Any] = {}
 
     def _capture(**kwargs: Any) -> Any:

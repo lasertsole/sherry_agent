@@ -10,7 +10,12 @@ from server.service import side_chat_service
 
 @pytest.fixture(autouse=True)
 def isolated_side_chat_store(tmp_path, monkeypatch):
+    # Fresh file AND a fresh once-per-process schema state: the DDL now runs
+    # once per process, so a relocated DB path must re-arm the init flag.
+    monkeypatch.setattr(side_chat_store, "_DB_DIR", tmp_path)
     monkeypatch.setattr(side_chat_store, "_DB_PATH", tmp_path / "side_chats.db")
+    monkeypatch.setattr(side_chat_store, "_sync_tables_ready", False)
+    monkeypatch.setattr(side_chat_store, "_schema_ready", False)
 
 
 @pytest.mark.unit

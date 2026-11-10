@@ -1,10 +1,13 @@
 """Behavior tests for taskflow_wait_all (todo 5, taskflow-dag-phase1).
 
-The tool polls ONLY the child sessions recorded on the flow's dispatched steps.
-Every test monkeypatches the tool module's registry seam
+The tool waits ONLY on the child sessions recorded on the flow's dispatched
+steps: it wakes on a keyed terminal-transition notification for those keys and
+keeps the caller's poll interval as the bounded fallback. Every test
+monkeypatches the tool module's registry seam
 (``get_run_by_child_session_key`` / ``is_live_unended_run``) with in-memory
 fakes -- the real subagent registry is never touched -- and passes a tiny poll
-interval, so no test sleeps for real wall-clock time.
+interval, so no test sleeps for real wall-clock time unless it is proving the
+event path.
 
 Coverage:
 (a) no dispatched steps -> immediate "no dispatched" result
@@ -13,9 +16,12 @@ Coverage:
 (d) one live run -> loop polls again and returns settled after it flips
 (e) timeout path returns a timeout message with a partial report
 (f) an unrelated live child key is never queried and does not block the return
+(g) a terminal notification wakes the waiter long before the fallback interval
 """
 
+import asyncio
 import importlib
+import time
 from pathlib import Path
 
 import pytest
@@ -264,3 +270,80 @@ async def test_unknown_flow_returns_error(isolated_db: Path, monkeypatch: pytest
     # Then it returns an Error string
     assert out.startswith("Error:")
     assert "ghost-flow" in out
+
+
+# ---------------------------------------------------------------------------
+# (g) terminal notification wakes the waiter before the fallback interval
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_terminal_notification_wakes_waiter_before_the_fallback(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A settled child wakes the wait immediately; the poll interval is only the fallback."""
+    from agent.tools.subagent.registry import completion_events
+
+    # Given a dispatched child that is still live, with a 10 s fallback interval
+    runs = {"c-event": _Run("c-event", live=True)}
+    queried, _ = _patch_registry(monkeypatch, runs)
+    await _seed([_step("step-1", StepStatus.DISPATCHED, child="c-event")])
+    baseline = completion_events.active_subscription_count()
+
+    async def _wait_long() -> str:
+        return await wait_mod.taskflow_wait_all.coroutine(
+            FLOW, timeout_seconds=30.0, poll_interval_seconds=10.0, session_id=_SESSION
+        )
+
+    task = asyncio.create_task(_wait_long())
+    try:
+        # Wait until the tool performed its first (still-live) check.
+        for _ in range(200):
+            if queried:
+                break
+            await asyncio.sleep(0.01)
+        assert queried, "wait_all never performed its first check"
+        assert completion_events.active_subscription_count() == baseline + 1
+
+        # When the child turns terminal and publishes its transition
+        runs["c-event"].live = False
+        completion_events.notify_run_terminal("c-event", run_id="run-event")
+
+        # Then the waiter returns far below the 10 s fallback.
+        out = await asyncio.wait_for(task, timeout=3.0)
+        assert "Error" not in out
+        assert "settled=True" in out
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    # And the tool released its subscription on the way out.
+    assert completion_events.active_subscription_count() == baseline
+
+
+@pytest.mark.asyncio
+async def test_missed_notification_still_returns_on_the_fallback_poll(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """No publication at all: the bounded fallback poll observes settlement (no hang)."""
+    # Given a run that is live on the first check and dead afterwards, and NO
+    # terminal notification (a missed-event scenario).
+    state = {"checks": 0}
+
+    def _live_once() -> bool:
+        state["checks"] += 1
+        return state["checks"] == 1
+
+    runs = {"c-missed": _Run("c-missed", live=_live_once)}
+    _patch_registry(monkeypatch, runs)
+    await _seed([_step("step-1", StepStatus.DISPATCHED, child="c-missed")])
+
+    started_at = time.monotonic()
+    out = await wait_mod.taskflow_wait_all.coroutine(
+        FLOW, timeout_seconds=5.0, poll_interval_seconds=0.05, session_id=_SESSION
+    )
+
+    # Then the fallback interval drove the re-check and the wait returned.
+    assert "Error" not in out
+    assert "settled=True" in out
+    assert time.monotonic() - started_at < 1.0

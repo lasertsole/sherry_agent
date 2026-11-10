@@ -1,11 +1,18 @@
-"""taskflow_wait_all: flow-scoped bounded-poll wait for dispatched steps.
+"""taskflow_wait_all: flow-scoped event-driven wait for dispatched steps.
 
 Waits until THIS flow's dispatched child sessions settle (or a deadline) and
 then reports each target step. It deliberately does NOT reuse the session-wide
 yield event (``register_yield_event`` / ``sessions_yield``): that fires only
 when ALL of a requester session's children settle, so it would block behind
-unrelated background work and collide with the parent's own yield. Instead this
-polls only the child keys recorded on the flow's own dispatched steps.
+unrelated background work and collide with the parent's own yield.
+
+Waking is event-driven: the tool subscribes to the keyed terminal-transition
+hub (``agent.tools.subagent.registry.completion_events``) for exactly the child
+session keys recorded on this flow's dispatched steps, so a child reaching
+TERMINAL wakes the waiter immediately instead of waiting for the next poll
+tick. The caller's ``poll_interval_seconds`` is kept as the BOUNDED FALLBACK:
+a missed notification (or a run that settles through a path that never
+publishes) still returns within one interval, and the timeout is unchanged.
 
 The subagent registry is imported lazily and held as module-level injectable
 references, so the taskflow family stays importable without the spawn pipeline
@@ -81,6 +88,39 @@ def _settled(child_session_key: str) -> bool:
     if run is None:
         return True
     return not is_live_unended_run(run)
+
+
+def _subscribe_settle_events(child_keys: list[str]) -> Any | None:
+    """Subscribe to the keyed terminal-transition hub; None degrades to polling.
+
+    The import is lazy for the same reason as the registry seam: the taskflow
+    family must stay importable without the spawn pipeline. Any failure is
+    fail-open — the bounded fallback poll still observes settlement.
+    """
+    if not child_keys:
+        return None
+    try:
+        from agent.tools.subagent.registry.completion_events import (
+            subscribe_run_terminal,
+        )
+
+        return subscribe_run_terminal(child_keys)
+    except Exception:  # noqa: BLE001 - fallback polling is the safety net
+        return None
+
+
+def _unsubscribe_settle_events(subscription: Any | None) -> None:
+    """Drop a settle subscription (fail-open; never breaks the tool result)."""
+    if subscription is None:
+        return
+    try:
+        from agent.tools.subagent.registry.completion_events import (
+            unsubscribe_run_terminal,
+        )
+
+        unsubscribe_run_terminal(subscription)
+    except Exception:  # noqa: S110 - a leaked subscription is only a wake hint
+        pass
 
 
 def _format_report(
@@ -215,11 +255,13 @@ async def taskflow_wait_all(
 ) -> str:
     """Wait until this flow's dispatched child sessions settle, then report.
 
-    Polls only the child sessions recorded on THIS flow's dispatched steps, so
-    unrelated background children can never block the return. Returns as soon
-    as every target is settled or the timeout elapses; an unknown run is treated
-    as settled. Afterwards call taskflow_resume for each child to inject its
-    result.
+    Wakes on the keyed terminal-transition notification for THIS flow's child
+    sessions (unrelated background children can never block the return) and
+    re-checks their settled state; ``poll_interval_seconds`` remains the
+    bounded fallback so a missed notification cannot hang the call. Returns as
+    soon as every target is settled or the timeout elapses; an unknown run is
+    treated as settled. Afterwards call taskflow_resume for each child to
+    inject its result.
 
     A settled (dead) child of a step carrying a retry_policy with budget left
     is re-dispatched once automatically; when the budget is exhausted the step
@@ -253,17 +295,37 @@ async def taskflow_wait_all(
 
     interval = max(_MIN_POLL_INTERVAL_SECONDS, float(poll_interval_seconds))
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    # Subscribe BEFORE the first check: a transition that lands between the
+    # subscription and the check is observed by the check itself.
+    subscription = _subscribe_settle_events([child_key for _, child_key in targets if child_key])
 
-    while True:
-        try:
-            report = [(step_id, child_key, _settled(child_key)) for step_id, child_key in targets]
-        except Exception as exc:
-            # The registry is an external seam: a lookup failure is an Error
-            # string, never a raised exception at the tool boundary.
-            return f"Error: subagent registry lookup failed: {exc}"
-        if all(settled for _, _, settled in report):
-            base = _format_report(flow_id, report, timed_out=False)
-            return base + await _retry_settled_steps(flow_id, report, session_id)
-        if time.monotonic() >= deadline:
-            return _format_report(flow_id, report, timed_out=True)
-        await asyncio.sleep(interval)
+    try:
+        while True:
+            # Re-arm BEFORE the (synchronous) re-check. A notification that
+            # lands after the check but before the wait leaves the event set,
+            # so the wait returns immediately — no lost wakeup.
+            if subscription is not None:
+                subscription.rearm()
+            try:
+                report = [
+                    (step_id, child_key, _settled(child_key)) for step_id, child_key in targets
+                ]
+            except Exception as exc:
+                # The registry is an external seam: a lookup failure is an Error
+                # string, never a raised exception at the tool boundary.
+                return f"Error: subagent registry lookup failed: {exc}"
+            if all(settled for _, _, settled in report):
+                base = _format_report(flow_id, report, timed_out=False)
+                return base + await _retry_settled_steps(flow_id, report, session_id)
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                return _format_report(flow_id, report, timed_out=True)
+            # Event first, fallback poll second: the caller's interval bounds
+            # how long a MISSED notification can delay the return.
+            wait_seconds = min(interval, remaining)
+            if subscription is not None:
+                await subscription.wait(wait_seconds)
+            else:
+                await asyncio.sleep(wait_seconds)
+    finally:
+        _unsubscribe_settle_events(subscription)

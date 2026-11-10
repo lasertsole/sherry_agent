@@ -757,5 +757,26 @@
     "exportFailed": "导出图片失败",
     "addedToChat": "已加入对话的待发送图片",
     "maxStrokes": "笔画过多，请先清空或撤销"
+  },
+  "hitl": {
+    "approve": "批准",
+    "approveDir": "批准整个目录",
+    "approveDirTooltip": "允许整个目录（本会话内有效，子代理同样适用），目录内文件不再弹出审批",
+    "approveSession": "本会话允许",
+    "approveSessionTooltip": "允许本会话内执行相同命令，不再弹出审批（前两个词匹配，如 \"git push\" 覆盖所有 git push 子命令）",
+    "reject": "拒绝",
+    "title": "操作需要审批",
+    "tool": "工具",
+    "yolo": "同意所有操作",
+    "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批",
+    "customPlaceholder": "输入自定义回答…",
+    "submit": "提交",
+    "multiSubmit": "提交所有回答",
+    "multiHint": "请回答以上问题",
+    "annotationPlaceholder": "有其他想法？写在这里（可选）",
+    "planTitle": "计划待审批",
+    "planApprove": "批准计划",
+    "planRevise": "退回修改",
+    "planFeedbackPlaceholder": "指出需要修改的地方…"
   }
 }

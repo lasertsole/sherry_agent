@@ -206,6 +206,25 @@ User message → Robyn WS → agent.core.built_agent() graph
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
        stamped there) → detached child agents → announce pipeline → drain
 
+     The 2026-11-10 design audit made the spawn shape explicit:
+     `spawn/request.py::SpawnRequest` is the frozen request the orchestration
+     receives (`spawn_subagent_direct(request=None, **legacy)` keeps the old
+     keyword call shape through `from_legacy`), and `spawn/core.py` is a
+     compatibility facade over `handoff.py` / `validation.py` / `isolation.py` /
+     `child_agent_factory.py` / `lifecycle.py` / `ptc_prefill.py` (re-exporting
+     every name older imports use). Child terminal transitions publish through
+     `registry/completion_events.py` (+ `runtime/event_wait.py`), so
+     `taskflow_wait_all`, the sweeper and auto-turn's idle wait wake on events
+     with the old poll interval as the missed-notification fallback. The main
+     and child middleware chains, their required sets and `catalog.py` all
+     derive from `agent/middlewares/specs.py::MIDDLEWARE_SPECS`. Delivery and
+     TaskFlow step statuses have one transition table each
+     (`registry/delivery_state.py`, `taskflow/step_state.py`), and
+     `side_chat_store` / `trajectory_store` reuse the SQLite base's
+     once-per-process schema + per-connection busy_timeout (the former is WAL
+     now; the local model / code-embedder states and the interrupt reason are
+     StrEnums).
+
      spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
      `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
      callers bypass the clamp and keep their own bounds), and after a

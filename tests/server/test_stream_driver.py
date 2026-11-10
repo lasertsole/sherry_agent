@@ -193,15 +193,23 @@ class TestDoneAndInterrupt:
         assert driver.hitl_flagged is True
         assert driver.logged_interrupt is True
 
-    def test_auto_turn_driver_keeps_null_defaults_and_no_hitl_flag(self):
+    def test_auto_turn_driver_keeps_null_defaults_and_sets_hitl_flag(self):
         from server.service import auto_turn
+        from agent.tools.subagent.registry.session_state import (
+            is_hitl_pending,
+            set_hitl_pending,
+        )
 
         driver = auto_turn._AutoTurnStreamDriver("s1", websocket=None)
         assert driver.done_model_name is None
         assert driver.done_input_tokens is None
         assert driver.done_output_tokens is None
-        # base-class no-op (auto turn never set the flag)
-        driver.apply_hitl_pending()  # must not raise
+        driver.apply_hitl_pending()
+        # The auto-turn driver overrides the base no-op on purpose: a headless
+        # interrupt must look busy to turn-end/drain. Clear it immediately so
+        # the process-global flag cannot leak into later test files.
+        assert is_hitl_pending("s1") is True
+        set_hitl_pending("s1", False)
 
 
 class TestCancelAndError:
@@ -264,8 +272,9 @@ class TestSiteWiring:
         get_pending_interrupt / set_hitl_pending) from turn_runner's module
         globals, so tests patching the site module keep working."""
         from server.service import turn_runner
+        from server.service.ws_turn_stream_driver import WsTurnStreamDriver
 
-        driver = turn_runner._WsTurnStreamDriver("s1", websocket=None)
+        driver = WsTurnStreamDriver("s1", websocket=None)
         assert isinstance(driver, StreamDriver)
 
         async def _no_interrupt(session_id):

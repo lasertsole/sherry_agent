@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from dataclasses import dataclass
 from config.features import WS_STREAM
 from loguru import logger
 from agent import built_agent
@@ -231,7 +232,144 @@ _REASONING_ONLY_PROMPT = (
 _MAX_REASONING_ONLY_RETRIES = WS_STREAM["max_reasoning_only_retries"]
 
 
-class _GenerateTurn(StreamTurn):
+# ---------------------------------------------------------------------------
+# Continuation policy chain (2026-11-09 audit M16)
+#
+# The truncation decision used to be one if-chain inside the turn. Each rule is
+# now a policy over an immutable context; the first non-None decision wins.
+# Adding a finish_reason or a truncation sub-case is a new policy, not another
+# branch in the turn.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ContinuationContext:
+    finish_reason: str | None
+    has_tool_calls: bool
+    has_reasoning: bool
+    has_visible_text: bool
+    reasoning_only_retries: int
+    continuation_retries: int
+
+
+@dataclass(frozen=True)
+class _ContinuationDecision:
+    should_continue: bool
+    reasoning_only: bool = False
+    content_filter_blocked: bool = False
+
+
+class _ContinuationPolicy:
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision | None:
+        raise NotImplementedError
+
+
+class _ContentFilterPolicy(_ContinuationPolicy):
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision | None:
+        if context.finish_reason == "content_filter":
+            return _ContinuationDecision(False, content_filter_blocked=True)
+        return None
+
+
+class _LengthCapPolicy(_ContinuationPolicy):
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision | None:
+        if context.finish_reason not in ("length", "max_tokens"):
+            return _ContinuationDecision(False)
+        return None
+
+
+class _ToolCallTruncationPolicy(_ContinuationPolicy):
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision | None:
+        if context.has_tool_calls:
+            # MaxTokensBoost owns tool-call truncation; a text continuation
+            # would interleave with its retry.
+            return _ContinuationDecision(False)
+        return None
+
+
+class _ReasoningOnlyPolicy(_ContinuationPolicy):
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision | None:
+        if context.has_visible_text or not context.has_reasoning:
+            return None
+        if context.reasoning_only_retries >= _MAX_REASONING_ONLY_RETRIES:
+            return _ContinuationDecision(False)
+        return _ContinuationDecision(True, reasoning_only=True)
+
+
+class _TextContinuationPolicy(_ContinuationPolicy):
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision:
+        if context.continuation_retries >= _MAX_CONTINUATION_RETRIES:
+            return _ContinuationDecision(False)
+        return _ContinuationDecision(True, reasoning_only=False)
+
+
+class _ContinuationChain:
+    def __init__(self, policies: tuple[_ContinuationPolicy, ...]) -> None:
+        self._policies = policies
+
+    def decide(self, context: _ContinuationContext) -> _ContinuationDecision:
+        for policy in self._policies:
+            decision = policy.decide(context)
+            if decision is not None:
+                return decision
+        return _ContinuationDecision(False)
+
+
+_CONTINUATION_CHAIN = _ContinuationChain(
+    (
+        _ContentFilterPolicy(),
+        _LengthCapPolicy(),
+        _ToolCallTruncationPolicy(),
+        _ReasoningOnlyPolicy(),
+        _TextContinuationPolicy(),
+    )
+)
+
+
+class _TurnLogMixin:
+    """Shared turn-end logging (2026-11-09 audit L6).
+
+    The two turn classes used to carry four nearly identical methods each; the
+    label and the optional fields differ, the structure does not. Subclasses set
+    the label and the per-event field flags.
+    """
+
+    #: Provided by StreamTurn; declared for type checkers.
+    session_id: str
+    ai_text: str
+
+    _log_label = "Agent execution"
+    _log_timeout_label = "Agent heartbeat timeout"
+    _log_completed_output_length = True
+    _log_cancelled_duration = True
+    _log_timeout_duration = True
+    _log_failed_duration = True
+
+    def _log_completed(self, elapsed: float) -> None:
+        suffix = f", duration={elapsed:.2f}s"
+        if self._log_completed_output_length:
+            suffix += f", output_length={len(self.ai_text)}"
+        logger.debug(f"{self._log_label} completed: session_id={self.session_id}{suffix}")
+
+    def _log_cancelled(self, elapsed: float) -> None:
+        suffix = f", duration={elapsed:.2f}s" if self._log_cancelled_duration else ""
+        logger.debug(f"{self._log_label} cancelled: session_id={self.session_id}{suffix}")
+
+    def _log_timeout(self, elapsed: float, exc: HeartbeatTimeoutError) -> None:
+        suffix = f", duration={elapsed:.2f}s" if self._log_timeout_duration else ""
+        logger.warning(
+            f"{self._log_timeout_label}: session_id={self.session_id}{suffix}, error={exc}"
+        )
+
+    def _log_failed(self, elapsed: float, exc: Exception) -> None:
+        suffix = f", duration={elapsed:.2f}s" if self._log_failed_duration else ""
+        logger.error(
+            f"{self._log_label} failed: session_id={self.session_id}{suffix}, error={str(exc)}"
+        )
+        logger.exception(exc)
+
+
+class _GenerateTurn(_TurnLogMixin, StreamTurn):
     """A normal user turn (stream or non-stream) through the context-assembled agent.
 
     Any NEW turn invalidates a pending resumable breakpoint: the transcript grows
@@ -417,22 +555,21 @@ class _GenerateTurn(StreamTurn):
         gets the dedicated prompt (max 2), everything else that hit the
         length cap gets the standard text continuation (max 4).
         """
-        if self.meta_finish_reason == "content_filter":
+        decision = _CONTINUATION_CHAIN.decide(
+            _ContinuationContext(
+                finish_reason=self.meta_finish_reason,
+                has_tool_calls=self._has_tool_calls,
+                has_reasoning=self._has_reasoning,
+                has_visible_text=self._has_visible_text,
+                reasoning_only_retries=self._reasoning_only_retries,
+                continuation_retries=self._continuation_retries,
+            )
+        )
+        if decision.content_filter_blocked:
             # Flag the middleware layer so the next model call can fall back
             # or terminate instead of re-prompting a filtered response.
             state_register_mem.set_state(self.session_id, StateKey.LLM_CONTENT_FILTER_BLOCKED, True)
-            return False, False
-        if self.meta_finish_reason not in ("length", "max_tokens"):
-            return False, False
-        if self._has_tool_calls:
-            return False, False
-        if not self._has_visible_text and self._has_reasoning:
-            if self._reasoning_only_retries >= _MAX_REASONING_ONLY_RETRIES:
-                return False, False
-            return True, True
-        if self._continuation_retries >= _MAX_CONTINUATION_RETRIES:
-            return False, False
-        return True, False
+        return decision.should_continue, decision.reasoning_only
 
     def _prepare_continuation(self, is_reasoning_only: bool = False) -> None:
         self._is_continuation = True
@@ -472,29 +609,6 @@ class _GenerateTurn(StreamTurn):
             has_visible_text=self._has_visible_text,
             has_reasoning=self._has_reasoning,
         )
-
-    def _log_completed(self, elapsed: float) -> None:
-        logger.debug(
-            f"Agent execution completed: session_id={self.session_id}, duration={elapsed:.2f}s, "
-            f"output_length={len(self.ai_text)}"
-        )
-
-    def _log_cancelled(self, elapsed: float) -> None:
-        logger.debug(
-            f"Agent execution cancelled: session_id={self.session_id}, duration={elapsed:.2f}s"
-        )
-
-    def _log_timeout(self, elapsed: float, exc: HeartbeatTimeoutError) -> None:
-        logger.warning(
-            f"Agent heartbeat timeout: session_id={self.session_id}, duration={elapsed:.2f}s, error={exc}"
-        )
-
-    def _log_failed(self, elapsed: float, exc: Exception) -> None:
-        logger.error(
-            f"Agent execution failed: session_id={self.session_id}, duration={elapsed:.2f}s, "
-            f"error={str(exc)}"
-        )
-        logger.exception(exc)
 
     async def _cleanup(self, kind: Literal["stream", "invoke"] | None, source: Any) -> None:
         # Gracefully close the async generator to avoid GeneratorExit/RuntimeError
@@ -591,8 +705,15 @@ class _ContinueTurn(_GenerateTurn):
         logger.info(f"Agent continuation started: session_id={self.session_id}")
 
 
-class _ResumeTurn(StreamTurn):
+class _ResumeTurn(_TurnLogMixin, StreamTurn):
     """A HITL resume turn: continues the agent after a human decision."""
+
+    _log_label = "Agent resume"
+    _log_timeout_label = "Agent resume heartbeat timeout"
+    _log_completed_output_length = False
+    _log_cancelled_duration = False
+    _log_timeout_duration = False
+    _log_failed_duration = False
 
     def __init__(
         self,
@@ -682,21 +803,6 @@ class _ResumeTurn(StreamTurn):
                 "error": bool(getattr(msg_chunk, "status", None) == "error"),
             }
         ]
-
-    def _log_completed(self, elapsed: float) -> None:
-        logger.debug(
-            f"Agent resume completed: session_id={self.session_id}, duration={elapsed:.2f}s"
-        )
-
-    def _log_cancelled(self, elapsed: float) -> None:
-        logger.debug(f"Agent resume cancelled: session_id={self.session_id}")
-
-    def _log_timeout(self, elapsed: float, exc: HeartbeatTimeoutError) -> None:
-        logger.warning(f"Agent resume heartbeat timeout: session_id={self.session_id}, error={exc}")
-
-    def _log_failed(self, elapsed: float, exc: Exception) -> None:
-        logger.error(f"Agent resume failed: session_id={self.session_id}, error={str(exc)}")
-        logger.exception(exc)
 
     async def _cleanup(self, kind: Literal["stream", "invoke"] | None, source: Any) -> None:
         # No pool-close here: closing the embedded AsyncOpenAI permanently kills

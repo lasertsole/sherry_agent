@@ -757,5 +757,26 @@
     "exportFailed": "画像の書き出しに失敗しました",
     "addedToChat": "会話の送信待ち画像に追加しました",
     "maxStrokes": "ストロークが多すぎます。先にクリアか元に戻してください"
+  },
+  "hitl": {
+    "approve": "承認",
+    "approveDir": "ディレクトリ全体を承認",
+    "approveDirTooltip": "ディレクトリ全体を許可します（このセッション内有効、サブエージェントにも継承）。配下のファイルでは確認ダイアログは表示されません",
+    "approveSession": "セッション内で許可",
+    "approveSessionTooltip": "このセッション内で同じコマンドを許可し、確認を省略（先頭2語でマッチ、\"git push\" はすべての git push サブコマンドをカバー）",
+    "reject": "拒否",
+    "title": "操作の承認が必要です",
+    "tool": "ツール",
+    "yolo": "すべての操作を承認",
+    "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません",
+    "customPlaceholder": "カスタム回答を入力…",
+    "submit": "送信",
+    "multiSubmit": "すべて回答",
+    "multiHint": "上記の質問に回答してください",
+    "annotationPlaceholder": "他に思いついたらここに（任意）",
+    "planTitle": "計画の承認待ち",
+    "planApprove": "計画を承認",
+    "planRevise": "修正を依頼",
+    "planFeedbackPlaceholder": "修正すべき点を入力…"
   }
 }

@@ -34,83 +34,15 @@
         <div
           data-test="chat-composer-dock"
           class="flex shrink-0 flex-col">
-          <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
-          <template v-if="selectedImages.length > 0">
-            <div
-              class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-              <div
-                v-for="(img, idx) in selectedImages"
-                :key="idx"
-                class="relative shrink-0 group">
-                <img
-                  :src="`data:image/*;base64,${img.base64}`"
-                  :alt="img.name"
-                  class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
-                  role="button"
-                  tabindex="0"
-                  :aria-label="t('a11y.previewImage')"
-                  @click="openPreview(`data:image/*;base64,${img.base64}`)"
-                  @keydown.enter.prevent="openPreview(`data:image/*;base64,${img.base64}`)"
-                  @keydown.space.prevent="openPreview(`data:image/*;base64,${img.base64}`)" />
-                <button
-                  type="button"
-                  :title="t('chatBox.removeImage')"
-                  class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                  @click="removeImage(idx)">
-                  ✕
-                </button>
-              </div>
-            </div>
-          </template>
-          <!-- Audio preview area (kept separate above the input box, at the same level as the image preview area) -->
-          <template v-if="selectedAudios.length > 0">
-            <div
-              class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-              <div
-                v-for="(audio, idx) in selectedAudios"
-                :key="idx"
-                class="relative shrink-0 group">
-                <div
-                  class="flex items-center gap-2 px-3 py-2 rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-gray-800">
-                  <span class="pi pi-volume-down text-xs text-[#6B7280]"></span>
-                  <span class="text-xs font-medium text-[#111827] dark:text-[#E5E7EB] max-w-32 truncate">{{
-                    audio.name
-                  }}</span>
-                </div>
-                <button
-                  type="button"
-                  :title="t('chatBox.removeAudio')"
-                  class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                  @click="removeAudio(idx)">
-                  ✕
-                </button>
-              </div>
-            </div>
-          </template>
-          <!-- Video preview area (kept separate above the input box, at the same level as the image/audio preview areas) -->
-          <template v-if="selectedVideos.length > 0">
-            <div
-              class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-              <div
-                v-for="(video, idx) in selectedVideos"
-                :key="idx"
-                class="relative shrink-0 group">
-                <video
-                  :src="`data:video/*;base64,${video.base64}`"
-                  class="w-32 h-20 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark"
-                  muted
-                  playsinline
-                  preload="metadata" />
-                <button
-                  type="button"
-                  :title="t('chatBox.removeVideo')"
-                  class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                  @click="removeVideo(idx)">
-                  ✕
-                </button>
-              </div>
-            </div>
-          </template>
+          <!-- Pending attachment previews (kept separate above the input box, so
+               they do not squeeze the h-40 input box) -->
+          <PendingMediaTray
+            :images="selectedImages"
+            :audios="selectedAudios"
+            :videos="selectedVideos"
+            @remove-image="removeImage"
+            @remove-audio="removeAudio"
+            @remove-video="removeVideo" />
           <!-- Chat input box area (position:relative parent, used as the anchor for other floating elements) -->
           <div class="relative">
             <!-- WS stream reconnect banner: shown while sendChatMessageWs is in exponential-backoff reconnection (browser mode);
@@ -134,48 +66,13 @@
               立刻 (interrupt the running turn and deliver this one next) and cancel. Hidden while a
               HITL decision occupies the input slot — a decision is what unblocks the session. -->
             <Transition name="reconn-fade">
-              <div
+              <QueuedMessageBar
                 v-if="queueBadgeList.length > 0 && !hitlRequest"
-                class="absolute top-0 left-0 right-0 z-20 bg-sky-600/90 text-white shadow-sm max-h-32 overflow-y-auto"
-                role="status"
-                aria-live="polite">
-                <div
-                  v-for="badge in queueBadgeList"
-                  :key="badge.msgId"
-                  class="flex items-center gap-2 py-1.5 px-3 text-xs font-medium border-b border-white/10 last:border-b-0">
-                  <i
-                    class="pi pi-clock"
-                    aria-hidden="true"></i>
-                  <span class="shrink-0">
-                    {{
-                      t('chatInput.queuedPosition', {
-                        position: badge.position,
-                        queueSize: badge.queueSize
-                      })
-                    }}
-                  </span>
-                  <input
-                    v-model="badge.text"
-                    class="flex-1 min-w-0 rounded bg-white/10 px-1.5 py-0.5 outline-none focus:bg-white/20"
-                    :aria-label="t('chatInput.editQueued')"
-                    @keydown.enter="($event.target as HTMLInputElement).blur()"
-                    @blur="editQueuedMessage(badge.msgId, badge.text)" />
-                  <button
-                    class="shrink-0 rounded bg-white/20 px-2 py-0.5 font-medium transition-colors hover:bg-white/30"
-                    @click="sendNow(badge.msgId)">
-                    {{ t('chatInput.sendNow') }}
-                  </button>
-                  <button
-                    class="shrink-0 rounded bg-red-500/40 px-1.5 py-0.5 transition-colors hover:bg-red-500/60"
-                    :aria-label="t('chatInput.cancelQueued')"
-                    @click="cancelQueuedMessage(badge.msgId)">
-                    <i
-                      class="pi pi-times"
-                      style="font-size: 0.6rem"
-                      aria-hidden="true"></i>
-                  </button>
-                </div>
-              </div>
+                :badges="queueBadgeList"
+                @update-text="onQueueTextUpdate"
+                @edit="editQueuedMessage"
+                @send-now="sendNow"
+                @cancel="cancelQueuedMessage" />
             </Transition>
             <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
             <div class="flex flex-col h-40">
@@ -264,224 +161,9 @@
                   @change="onVideoSelected" />
               </div>
               <!-- HITL panel occupies the same slot as the input box; the two are mutually exclusive (v-show) -->
-              <div
-                v-show="hitlRequest"
-                class="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
-                <!-- question tool: one structured question, or a batch of them -->
-                <template v-if="isQuestionHitl">
-                  <!-- Batch mode: 1-4 questions, each with its own options,
-                       custom answer and annotation box, submitted together. -->
-                  <template v-if="isMultiQuestion">
-                    <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
-                    <div class="text-xs text-gray-400">{{ t('hitl.multiHint') }}</div>
-                    <div
-                      v-for="(q, qi) in questionList"
-                      :key="qi"
-                      class="flex flex-col gap-1.5 rounded-lg border border-solid border-gray-light p-2 dark:border-gray-dark"
-                      :data-test="`hitl-question-${qi}`">
-                      <div class="text-sm font-medium">{{ q.header || q.question }}</div>
-                      <div
-                        v-if="q.header && q.question"
-                        class="text-xs whitespace-pre-wrap text-gray-500 dark:text-gray-400">
-                        {{ q.question }}
-                      </div>
-                      <div class="flex flex-col gap-1.5">
-                        <button
-                          v-for="(option, oi) in q.options"
-                          :key="oi"
-                          type="button"
-                          class="text-left px-3 py-1.5 rounded-lg border border-solid transition-colors cursor-pointer"
-                          :class="
-                            isMultiOptionSelected(qi, option.label)
-                              ? 'border-theme-main bg-theme-main/10'
-                              : 'border-gray-light dark:border-gray-dark hover:bg-gray-50 dark:hover:bg-[#1a1d21]'
-                          "
-                          :data-test="`hitl-question-${qi}-option-${oi}`"
-                          @click="selectMulti(qi, option.label)">
-                          <span class="text-sm font-medium">{{ option.label }}</span>
-                          <span
-                            v-if="option.description"
-                            class="text-xs text-gray-400 ml-2">
-                            {{ option.description }}
-                          </span>
-                          <pre
-                            v-if="option.preview"
-                            class="mt-1 m-0 overflow-x-auto rounded bg-gray-50 p-2 text-[11px] dark:bg-gray-800"
-                            >{{ option.preview }}</pre>
-                        </button>
-                        <input
-                          v-model="multiCustomAnswers[qi]"
-                          type="text"
-                          class="px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
-                          :placeholder="t('hitl.customPlaceholder')"
-                          :data-test="`hitl-question-${qi}-custom`" />
-                        <textarea
-                          v-if="q.allowAnnotation"
-                          v-model="multiAnnotations[qi]"
-                          rows="2"
-                          class="px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none resize-y focus:border-theme-main"
-                          :placeholder="t('hitl.annotationPlaceholder')"
-                          :data-test="`hitl-question-${qi}-annotation`" />
-                      </div>
-                    </div>
-                    <div class="flex items-center justify-end gap-2">
-                      <Button
-                        :label="t('hitl.reject')"
-                        size="small"
-                        severity="danger"
-                        variant="text"
-                        data-test="hitl-multi-reject"
-                        @click="rejectQuestions" />
-                      <Button
-                        :label="t('hitl.multiSubmit')"
-                        size="small"
-                        data-test="hitl-multi-submit"
-                        @click="submitMultiQuestions" />
-                    </div>
-                  </template>
-                  <!-- Single question (legacy shape, also a 1-item batch): options
-                       plus a trailing custom-input row. -->
-                  <template v-else>
-                    <div class="text-sm font-semibold">{{ questionHeader || t('hitl.title') }}</div>
-                    <div
-                      v-if="questionText"
-                      class="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-200">
-                      {{ questionText }}
-                    </div>
-                    <div class="flex flex-col gap-1.5">
-                      <button
-                        v-for="(option, idx) in questionOptions"
-                        :key="idx"
-                        type="button"
-                        class="text-left px-3 py-1.5 rounded-lg border border-solid transition-colors cursor-pointer"
-                        :class="
-                          isMultipleQuestion && selectedQuestionOptions.includes(option.label)
-                            ? 'border-theme-main bg-theme-main/10'
-                            : 'border-gray-light dark:border-gray-dark hover:bg-gray-50 dark:hover:bg-[#1a1d21]'
-                        "
-                        @click="selectQuestionOption(option.label)">
-                        <span class="text-sm font-medium">{{ option.label }}</span>
-                        <span
-                          v-if="option.description"
-                          class="text-xs text-gray-400 ml-2">
-                          {{ option.description }}
-                        </span>
-                        <pre
-                          v-if="option.preview"
-                          class="mt-1 m-0 overflow-x-auto rounded bg-gray-50 p-2 text-[11px] dark:bg-gray-800"
-                          >{{ option.preview }}</pre>
-                      </button>
-                      <!-- trailing custom-input row -->
-                      <div class="flex items-center gap-2">
-                        <input
-                          v-model="customAnswer"
-                          type="text"
-                          class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
-                          :placeholder="t('hitl.customPlaceholder')"
-                          @keydown.enter.prevent="submitCustomAnswer" />
-                        <Button
-                          :label="t('hitl.submit')"
-                          size="small"
-                          :disabled="!customAnswer.trim() && selectedQuestionOptions.length === 0"
-                          @click="submitCustomAnswer" />
-                        <Button
-                          :label="t('hitl.reject')"
-                          size="small"
-                          severity="danger"
-                          variant="text"
-                          @click="handleHitlDecision('reject')" />
-                      </div>
-                    </div>
-                  </template>
-                </template>
-                <!-- exit_plan_mode: the plan for approval (approve / request changes) -->
-                <template v-else-if="isPlanHitl">
-                  <div class="text-sm font-semibold">
-                    {{ t('hitl.planTitle') }}
-                    <span
-                      v-if="planRevision"
-                      class="text-xs text-gray-400 ml-2">
-                      {{ planRevision }}
-                    </span>
-                  </div>
-                  <pre
-                    class="flex-1 min-h-0 overflow-auto text-xs whitespace-pre-wrap bg-gray-50 dark:bg-gray-800 p-2 rounded-lg m-0"
-                    >{{ planText }}</pre>
-                  <div class="flex items-center gap-2">
-                    <input
-                      v-model="planFeedback"
-                      type="text"
-                      class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
-                      :placeholder="t('hitl.planFeedbackPlaceholder')"
-                      @keydown.enter.prevent="revisePlan" />
-                    <Button
-                      :label="t('hitl.planRevise')"
-                      size="small"
-                      severity="warn"
-                      variant="text"
-                      :disabled="!planFeedback.trim()"
-                      @click="revisePlan" />
-                    <Button
-                      :label="t('hitl.planApprove')"
-                      icon="pi pi-check"
-                      size="small"
-                      @click="approvePlan" />
-                  </div>
-                </template>
-                <!-- other tools: generic approval card -->
-                <template v-else>
-                  <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
-                  <div class="text-sm text-gray-500">
-                    {{ t('hitl.tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span>
-                  </div>
-                  <div
-                    v-if="hitlRequest?.description"
-                    class="text-sm whitespace-pre-wrap">
-                    {{ hitlRequest.description }}
-                  </div>
-                  <div
-                    v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0"
-                    class="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded-lg overflow-auto max-h-24">
-                    <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
-                  </div>
-                  <div class="mt-auto flex gap-2 justify-end">
-                    <Button
-                      :label="t('hitl.reject')"
-                      icon="pi pi-times"
-                      severity="danger"
-                      size="small"
-                      @click="handleHitlDecision('reject')" />
-                    <Button
-                      :label="t('hitl.yolo')"
-                      icon="pi pi-bolt"
-                      severity="warn"
-                      size="small"
-                      :title="t('hitl.yoloTooltip')"
-                      @click="handleHitlDecision('yolo')" />
-                    <Button
-                      v-if="(hitlRequest?.allowed_decisions ?? []).includes('approve_dir')"
-                      :label="t('hitl.approveDir')"
-                      icon="pi pi-folder"
-                      severity="secondary"
-                      size="small"
-                      :title="t('hitl.approveDirTooltip')"
-                      @click="handleHitlDecision('approve_dir')" />
-                    <Button
-                      v-if="(hitlRequest?.allowed_decisions ?? []).includes('session')"
-                      :label="t('hitl.approveSession')"
-                      icon="pi pi-bookmark"
-                      severity="secondary"
-                      size="small"
-                      :title="t('hitl.approveSessionTooltip')"
-                      @click="handleHitlDecision('session')" />
-                    <Button
-                      :label="t('hitl.approve')"
-                      icon="pi pi-check"
-                      size="small"
-                      @click="handleHitlDecision('approve')" />
-                  </div>
-                </template>
-              </div>
+              <HitlApprovalCard
+                :request="hitlRequest"
+                @decide="handleHitlDecision" />
               <!-- Edit mode banner: the composer is about to rewrite a sent
                  user message (and re-run that turn) instead of sending a new
                  one. Esc or ✕ leaves edit mode without touching the transcript. -->
@@ -541,20 +223,13 @@ useErrorCaptured();
 import ChatBox from '../components/ChatBox.vue';
 import { ChatInputBox } from '#components';
 // function
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
-import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
-import type { SelectionPayload } from '~/composables/use-chat-selection';
-import { logUtil } from '~/utils/log';
-// Bridge modules are not auto-imported (same explicit-import convention as the
-// composables that call them).
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { fetchSessionLink } from '~/composables/bridge/session';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
 import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
@@ -562,12 +237,12 @@ import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
 import MediaMenu from '../components/MediaMenu.vue';
+import PendingMediaTray from '../components/PendingMediaTray.vue';
+import QueuedMessageBar from '../components/QueuedMessageBar.vue';
+import HitlApprovalCard from '~/components/chat/hitl/HitlApprovalCard.vue';
 import { useNewSessionStore } from '~/stores/new-session';
 import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
-
-// Image preview
-const { openPreview } = useImagePreview();
 
 const { t } = useI18n();
 const route = useRoute();
@@ -598,62 +273,18 @@ const rightSidebarStore = useRightSidebarStore();
 const newSession = useNewSessionStore();
 /** Per-session project-directory chip store (hydrated on mount + turn start). */
 const projectDirectory = useProjectDirectoryStore();
+/** Running tool calls mirror (terminal entry) and the access-mode shield. */
+const runningCommands = useRunningCommandsStore();
+const accessModeStore = useAccessModeStore();
 
 /** The chat list, so the toolbar's terminal entry can reveal a command's card. */
 const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void; openFind: () => void }>('chatBoxRef');
 
 /**
- * A row of the toolbar's terminal entry was picked: show where that work lives.
- *
- * A sub-agent opens its activity tab (live trajectory + summary + steer); a
- * terminal command reveals its own tool card in the chat, because the card is
- * where the command's output streams — no extra panel needed.
- * @param payload Which row was picked (`run` / `command`) and its id.
- * @param payload.kind
- * @param payload.id
+ * Reference to the input box component instance: its exposed draft/mention
+ * surface is what edit mode and the selection/mention relays drive.
  */
-const onTasksFocus = (payload: { kind: 'run' | 'command'; id: string | number }) => {
-  if (payload.kind === 'run') {
-    rightSidebarStore.openTab('subagentActivity', { runId: String(payload.id) });
-    return;
-  }
-  // The command's log is in the chat: reveal its card in place.
-  void nextTick(() => chatBoxRef.value?.scrollToMessage(Number(payload.id)));
-};
-
-/**
- * Whether this instance is in 'active' state (false when hidden in KeepAlive cache).
- * KeepAlive cache **does not pause** reactive watch/effects of cached instances — when switching to sidB,
- * global `route` changes in all inactive instances will still trigger their `watch(sessionId)`.
- * Use this flag to distinguish "whether this instance is currently being displayed", combined with `mySidLoaded` to implement:
- *  - Switch away (inactive) → preserve memory state, never execute destructive clearing;
- *  - Switch back (reactivated) → restore as-is if already loaded (drafts/scroll/streaming/HITL), no reloading.
- */
-const isActive = ref(false);
-onActivated(() => {
-  isActive.value = true;
-  // Claim the find chord for THIS page: a cached sibling may have owned it.
-  registerGlobalHandler('find-in-conversation', openFindBar);
-  // When returning to this session, refresh the HITL card that may still be pending approval (idempotent: early-return if a card already exists or a resume is in flight)
-  if (mySid) restorePendingHitl(mySid);
-  // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
-  if (mySid) todoStore.init(mySid);
-  // Same pull for the TaskFlow board that feeds the floating progress panel.
-  if (mySid) taskflowStore.init(mySid);
-});
-onDeactivated(() => {
-  isActive.value = false;
-  // Release the chord only if it is still ours (a newer page keeps its own).
-  unregisterGlobalHandler('find-in-conversation', openFindBar);
-});
-
-/**
- * Whether this instance has already loaded history for 'its own session (mySid)'.
- * The first KeepAlive cached instance only loads history on **first** mount; when switching back to this session later
- * (sessionId changes back from other sid to mySid) it just restores memory state as-is, no repeated clearing/loading,
- * thus preserving unpersisted drafts, scroll position, and messages still streaming in background.
- */
-let mySidLoaded = false;
+const chatInputBoxRef = useTemplateRef<InstanceType<typeof ChatInputBox>>('chatInputBoxRef');
 
 // ── Shared page state (owned here, used by the slices below) ────────────────
 
@@ -757,40 +388,16 @@ const onReleaseHead = (messageIds: number[]) => {
   resetExhausted();
 };
 
-/**
- * Prompt size the provider reported for the newest finished turn — the context
- * the model actually saw. Drives the toolbar's usage ring before (and between)
- * the backend reads.
- */
-const lastPromptTokens = computed(() => {
-  for (let i = chatMessages.value.length - 1; i >= 0; i -= 1) {
-    const message = chatMessages.value[i];
-    if (message && message.role === CHAT_ROLE.AI && message.inputTokens) return message.inputTokens;
-  }
-  return 0;
-});
-
-/**
- * Running tool calls of this session feed the toolbar's terminal entry: a TOOL
- * row is only reported while the session is generating (a finished turn — or a
- * turn paused on an approval card — owns nothing that is executing).
- */
-const runningCommands = useRunningCommandsStore();
-watch([chatMessages, isSending], ([messages, sending]) => runningCommands.sync(messages, sending), {
-  immediate: true,
-  deep: false
-});
-
-/**
- * The shield's mode is DERIVED server-side — plan mode mirrors the plan status
- * — so a turn that enters or leaves plan mode changes it. Refresh at every
- * turn boundary: the same refresh covers a plan just approved (the status
- * flips to ready and the control falls back to the normal modes) and one the
- * agent entered by itself.
- */
-const accessModeStore = useAccessModeStore();
-watch(isSending, sending => {
-  if (!sending && sessionId.value) accessModeStore.hydrate(sessionId.value);
+// Toolbar-derived state: context ring usage, running-command mirror, shield
+// refresh at turn boundaries and the terminal entry's "reveal this row".
+const { lastPromptTokens, onTasksFocus } = useSessionToolbarState({
+  chatMessages,
+  isSending,
+  sessionId,
+  runningCommands,
+  accessModeStore,
+  openSubagentActivity: runId => rightSidebarStore.openTab('subagentActivity', { runId }),
+  scrollToMessage: messageId => chatBoxRef.value?.scrollToMessage(messageId)
 });
 
 const chunks = useStreamChunks(chatMessages, drafts.allocateTempId, drafts);
@@ -809,302 +416,34 @@ const hitl = useHitlApproval({
 
 const { hitlRequest, handleHitlDecision, restorePendingHitl } = hitl;
 
-// ── Question-tool HITL view (single question + batch questions) ──
-interface QuestionOptionView {
-  label: string;
-  description?: string;
-  /** Optional code/mockup shown under the option for side-by-side comparison. */
-  preview?: string;
-}
-interface QuestionView {
-  question: string;
-  header: string;
-  options: QuestionOptionView[];
-  multiple: boolean;
-  allowAnnotation: boolean;
-}
-
-const questionArgs = computed<Record<string, unknown>>(() => hitlRequest.value?.tool_args ?? {});
-const isQuestionHitl = computed(() => hitlRequest.value?.tool_name === 'question');
-/** True for a batch (2+ questions); older pending interrupts lack the flag. */
-const isMultiQuestion = computed(() => questionArgs.value['_multi'] === true);
-const questionText = computed(() => {
-  const q = questionArgs.value['question'];
-  return typeof q === 'string' ? q : (hitlRequest.value?.description ?? '');
-});
-const questionHeader = computed(() => {
-  const h = questionArgs.value['header'];
-  return typeof h === 'string' ? h : '';
-});
-/**
- * Map one raw option object (batch and flat shapes share it).
- * @param raw
- */
-const toQuestionOption = (raw: unknown): QuestionOptionView | null => {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const o = raw as Record<string, unknown>;
-  const label = String(o['label'] ?? '');
-  if (!label) return null;
-  return {
-    label,
-    description: typeof o['description'] === 'string' ? o['description'] : undefined,
-    preview: typeof o['preview'] === 'string' && o['preview'] ? o['preview'] : undefined
-  };
-};
-const questionOptions = computed<QuestionOptionView[]>(() => {
-  const raw = questionArgs.value['options'];
-  if (!Array.isArray(raw)) return [];
-  return raw.map(toQuestionOption).filter((o): o is QuestionOptionView => o !== null);
-});
-/** The batch's questions, mapped defensively (an old payload has none). */
-const questionList = computed<QuestionView[]>(() => {
-  const raw = questionArgs.value['questions'];
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((q): q is Record<string, unknown> => typeof q === 'object' && q !== null)
-    .map(q => ({
-      question: typeof q['question'] === 'string' ? q['question'] : '',
-      header: typeof q['header'] === 'string' ? q['header'] : '',
-      options: Array.isArray(q['options'])
-        ? (q['options'] as unknown[]).map(toQuestionOption).filter((o): o is QuestionOptionView => o !== null)
-        : [],
-      multiple: q['multiple'] === true,
-      allowAnnotation: q['allow_annotation'] !== false
-    }));
-});
-const isMultipleQuestion = computed(() => questionArgs.value['multiple'] === true);
-const customAnswer = ref('');
-const selectedQuestionOptions = ref<string[]>([]);
-/** Batch state, keyed by question index. */
-const multiSelections = ref<Record<number, string[]>>({});
-const multiCustomAnswers = ref<Record<number, string>>({});
-const multiAnnotations = ref<Record<number, string>>({});
-
-/**
- * Send the chosen answer (option label(s) and/or custom text) back through the HITL resume.
- * @param answer
- */
-const submitQuestionAnswer = (answer: string) => {
-  customAnswer.value = '';
-  selectedQuestionOptions.value = [];
-  handleHitlDecision('approve', answer);
-};
-
-/**
- * Single-select sends immediately; multi-select toggles the option in the selection.
- * @param label
- */
-const selectQuestionOption = (label: string) => {
-  if (isMultipleQuestion.value) {
-    const i = selectedQuestionOptions.value.indexOf(label);
-    if (i >= 0) selectedQuestionOptions.value.splice(i, 1);
-    else selectedQuestionOptions.value.push(label);
-  } else {
-    submitQuestionAnswer(label);
-  }
-};
-
-/** Submit the custom answer, combined with any selected options in multi-select mode. */
-const submitCustomAnswer = () => {
-  const parts = isMultipleQuestion.value ? [...selectedQuestionOptions.value] : [];
-  const text = customAnswer.value.trim();
-  if (text) parts.push(text);
-  if (parts.length) submitQuestionAnswer(parts.join(', '));
-};
-
-/**
- * Select an option on one batch question (single-select replaces, multi toggles).
- * @param qi Question index.
- * @param label Option label.
- */
-const selectMulti = (qi: number, label: string) => {
-  const q = questionList.value[qi];
-  if (!q) return;
-  if (!q.multiple) {
-    multiSelections.value = { ...multiSelections.value, [qi]: [label] };
-    return;
-  }
-  const current = multiSelections.value[qi] ?? [];
-  multiSelections.value = {
-    ...multiSelections.value,
-    [qi]: current.includes(label) ? current.filter(item => item !== label) : [...current, label]
-  };
-};
-
-/**
- * Whether an option is selected on one batch question.
- * @param qi Question index.
- * @param label Option label.
- */
-const isMultiOptionSelected = (qi: number, label: string): boolean => (multiSelections.value[qi] ?? []).includes(label);
-
-/** Clear every batch draft (a new request or a submitted one starts clean). */
-const resetMultiQuestionState = () => {
-  multiSelections.value = {};
-  multiCustomAnswers.value = {};
-  multiAnnotations.value = {};
-};
-
-/**
- * Submit every batch question at once: the JSON payload carries each selection
- * (plus its custom text) and the optional annotation.
- */
-const submitMultiQuestions = () => {
-  const answers = questionList.value.map((q, qi) => {
-    const selection = [...(multiSelections.value[qi] ?? [])];
-    const custom = (multiCustomAnswers.value[qi] ?? '').trim();
-    if (custom) selection.push(custom);
-    return {
-      question: q.question,
-      header: q.header,
-      selection,
-      annotation: (multiAnnotations.value[qi] ?? '').trim()
-    };
-  });
-  resetMultiQuestionState();
-  handleHitlDecision('approve', JSON.stringify({ answers }));
-};
-
-/** Decline the whole batch (the tool reports the standard decline). */
-const rejectQuestions = () => {
-  resetMultiQuestionState();
-  handleHitlDecision('reject');
-};
-
-// ── Plan-approval HITL view (exit_plan_mode: the plan + feedback) ──
-const isPlanHitl = computed(() => hitlRequest.value?.tool_name === 'exit_plan_mode');
-const planArgs = computed<Record<string, unknown>>(() => hitlRequest.value?.tool_args ?? {});
-const planText = computed(() => {
-  const p = planArgs.value['plan'];
-  return typeof p === 'string' ? p : (hitlRequest.value?.description ?? '');
-});
-const planRevision = computed(() => {
-  const r = planArgs.value['revision'];
-  return typeof r === 'string' ? r : '';
-});
-const planFeedback = ref('');
-
-/** Approve the plan: plan mode exits server-side and execution begins. */
-const approvePlan = () => {
-  planFeedback.value = '';
-  handleHitlDecision('approve');
-};
-
-/** Send the plan back with the typed feedback (reject + message = revise it). */
-const revisePlan = () => {
-  const message = planFeedback.value.trim();
-  if (!message) return;
-  planFeedback.value = '';
-  handleHitlDecision('reject', message);
-};
-
-// Reset the question-view state whenever a new HITL request arrives.
-watch(hitlRequest, () => {
-  customAnswer.value = '';
-  selectedQuestionOptions.value = [];
-  resetMultiQuestionState();
-  planFeedback.value = '';
-});
-
-// ── Media selection (per-kind picker slice; template owns the hidden inputs) ──
-
+// Pending attachments (image / audio / video pickers + the whiteboard append).
 const {
-  selected: selectedImages,
-  trigger: triggerImagePicker,
-  onSelected: onImageSelected,
-  remove: removeImage
-} = useMediaPicker('image');
+  selectedImages,
+  selectedAudios,
+  selectedVideos,
+  triggerImagePicker,
+  onImageSelected,
+  removeImage,
+  triggerAudioPicker,
+  onAudioSelected,
+  removeAudio,
+  triggerVideoPicker,
+  onVideoSelected,
+  removeVideo,
+  getPendingMedia,
+  clearMediaSelection,
+  addPendingImage
+} = usePendingMedia();
 
-const {
-  selected: selectedAudios,
-  trigger: triggerAudioPicker,
-  onSelected: onAudioSelected,
-  remove: removeAudio
-} = useMediaPicker('audio');
+// "Am I a branch child?" + branching from one answer (navigation stays here).
+const { isForkChild, refreshBranchLink, forkAtTurn } = useSessionBranch({ mySid, isSending });
 
-const {
-  selected: selectedVideos,
-  trigger: triggerVideoPicker,
-  onSelected: onVideoSelected,
-  remove: removeVideo
-} = useMediaPicker('video');
-
-/** Snapshot the pending media base64 payloads for the outgoing message. */
-const getPendingMedia = () => ({
-  images: selectedImages.value.map(img => img.base64),
-  audios: selectedAudios.value.map(a => a.base64),
-  videos: selectedVideos.value.map(v => v.base64)
+// Transcript selection: quote chip into the composer / ask in a side chat.
+const { onSelectionAdd, onSelectionSideChat } = useSessionSelection({
+  mySid,
+  chatInput: () => chatInputBoxRef.value,
+  openSideChat: request => rightSidebarStore.openTab('sideChat', { ...request, parentSessionId: mySid })
 });
-
-/** Clear the pending media selections (send took them). */
-const clearMediaSelection = () => {
-  selectedImages.value = [];
-  selectedAudios.value = [];
-  selectedVideos.value = [];
-};
-
-/**
- * Edit mode: the turn being rewritten (`null` = the composer sends normally).
- * The row id travels with it so the backend truncates at the EXACT message
- * rather than guessing from the turn number.
- */
-const editingTurn = ref<{ turnNum: number; rowId: number } | null>(null);
-
-/**
- * Enter edit mode for a sent user message: prefill the composer and focus it.
- * @param message The clicked row.
- */
-const onEditMessage = (message: MessageItem) => {
-  if (isSending.value || hitlRequest.value) return;
-  editingTurn.value = { turnNum: message.turn_num, rowId: message.id };
-  chatInputBoxRef.value?.setDraftText?.(message.content);
-};
-
-/** Leave edit mode without touching the transcript. */
-const cancelEditMessage = () => {
-  editingTurn.value = null;
-  draft.value = '';
-  chatInputBoxRef.value?.setDraftText?.('');
-};
-
-/**
- * Composer submit: in edit mode the text rewrites that turn (truncate + re-run),
- * otherwise it is a normal send.
- * @param text The composer's text (chips already extracted).
- */
-const onComposerSend = (text: string) => {
-  const editing = editingTurn.value;
-  if (!editing) {
-    void handleSend(text);
-    return;
-  }
-  editingTurn.value = null;
-  handleEdit(editing.turnNum, text, editing.rowId);
-};
-
-// Esc leaves edit mode (never while a turn streams: the composer is read-only
-// then, and its own Esc handling must stay untouched).
-const onEditModeKeydown = (event: KeyboardEvent) => {
-  if (!editingTurn.value || event.key !== 'Escape') return;
-  cancelEditMessage();
-};
-/**
- * The conversation's find bar, as a GLOBAL shortcut action.
- *
- * The PAGE owns the action, not ChatBox: every KeepAlive-cached session keeps a
- * ChatBox mounted, so a per-instance listener would open a bar in a session the
- * reader cannot see. The handler is registered while this page is active (the
- * chord itself is rebindable in 菜单 → 系统设置) and checks `isActive` anyway.
- */
-const openFindBar = (): void => {
-  if (!isActive.value || !mySid) return;
-  chatBoxRef.value?.openFind();
-};
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('keydown', onEditModeKeydown);
-  onUnmounted(() => window.removeEventListener('keydown', onEditModeKeydown));
-}
 
 const stream = useChatStream({
   chatMessages,
@@ -1148,77 +487,68 @@ const {
   onStreamResumed
 } = stream;
 
-// The page installs the session-level socket handlers ONCE: every frame of the
-// persistent session socket (chunk / hitl_request / turn_started / queued /
-// queued_cancelled / queued_updated / send_now_ack / done) is routed here
-// regardless of which send produced it.
-agentSocket.setHandlers({
-  onChunk: handleSocketChunk,
+// Composer edit mode: rewrite the newest sent user message and re-run that turn.
+const { editingTurn, onEditMessage, cancelEditMessage, onComposerSend } = useSessionEditMode({
+  draft,
+  isSending,
+  hitlRequest,
+  chatInput: () => chatInputBoxRef.value,
+  onSend: text => void handleSend(text),
+  onEdit: (turnNum, text, rowId) => handleEdit(turnNum, text, rowId)
+});
+
+// The page installs the session-level socket handlers ONCE.
+useSessionSocket({
+  socket: agentSocket,
+  handlers: {
+    onChunk: handleSocketChunk,
+    onQueued: handleQueued,
+    onQueuedCancelled: handleQueuedCancelled,
+    onQueuedUpdated: handleQueuedUpdated,
+    onSendNowAck: handleSendNowAck,
+    onTerminalBgStarted: onBackgroundTaskStarted,
+    onTerminalBgExit: onBackgroundTaskExit,
+    onTerminalBgKillAck: onBackgroundTaskKillAck,
+    onDone: handleSocketDone
+  },
   onHitl: hitl.handleHitlRequest,
-  onTurnStarted: info => {
-    handleTurnStarted(info);
+  onTurnStarted: handleTurnStarted,
+  afterTurnStarted: () => {
     // A directory choice parked mid-turn is promoted exactly at the turn
     // boundary, so the turn starting NOW may already run against the new root
     // while the chip still shows the old one — refresh it from the backend
     // (the promote path pushes no frame of its own).
     void projectDirectory.hydrate(mySid);
-  },
-  onQueued: handleQueued,
-  onQueuedCancelled: handleQueuedCancelled,
-  onQueuedUpdated: handleQueuedUpdated,
-  onSendNowAck: handleSendNowAck,
-  onTerminalBgStarted: onBackgroundTaskStarted,
-  onTerminalBgExit: onBackgroundTaskExit,
-  onTerminalBgKillAck: onBackgroundTaskKillAck,
-  onSafetyFilter: info => {
-    // A live-stream filter decision: a block is an error-level notice, a
-    // replace / warn is informational. The transcript already reflects it.
-    const text = t('safety.event', { count: info.ruleCount });
-    if (info.action === 'block') toastError(t('safety.blocked'), text);
-    else toastInfo(t('safety.replaced'), text);
-  },
-  onDone: handleSocketDone
+  }
 });
 
-/**
- * Reference to the input box component instance: when the session is deleted (frontend broadcasts `SESSION_ABORT_STREAM_EVENT`),
- * call its `clearHistory()` to wipe the history cache left in this session's KeepAlive cache slot,
- * so history is strictly cleared along with the session deletion (even if that slot has not been LRU-evicted yet).
- */
-const chatInputBoxRef = useTemplateRef<InstanceType<typeof ChatInputBox>>('chatInputBoxRef');
-
-/**
- * Stream abort handling when session is deleted:
- *
- * When this session is deleted (home/index.vue broadcasts `SESSION_ABORT_STREAM_EVENT`),
- * if this instance is exactly that session (matched by sid) and still streaming, abort its AbortController.
- * Particularly crucial for 'inactive but KeepAlive cached and stream not aborted' sessions — if not aborted after deletion,
- * backend will continue pushing chunks to deleted session's WebSocket, causing deleted chat state to be contaminated.
- *
- * Note: the handler must be defined in this scope,
- * and compare the first parameter (session id) with this instance `sessionId` to ensure only this session is aborted.
- * @param deletedSid
- */
-const handleAbortStreamOnDelete = (deletedSid: unknown) => {
-  // Use frozen this instance `mySid` for comparison, not live `sessionId`: the latter reads global route,
-  // when instance is KeepAlive cached (switched to other session) it becomes others' sid, causing this session deletion to miss comparison、
-  // background stream cannot be aborted.
-  if (deletedSid !== mySid) return;
-  if (activeAgentController.value) {
-    activeAgentController.value.abort();
-    activeAgentController.value = null;
-    isSending.value = false;
-  }
-  // Session gone: drop the queue badge so it cannot linger on a deleted session's cached instance
-  clearQueueBadge();
-  // Session deleted: clear remaining history cache/draft browsing state in this instance's KeepAlive cache slot
-  // (when deleting inactive session slot may not be released immediately, history residing in slot must be actively cleared,
-  //   ensuring history strictly follows session deletion, avoiding manually revisiting that sid to see deleted session residues).
-  chatInputBoxRef.value?.clearHistory?.();
-  // Session deleted: clear all ongoing draft turns for this session in IndexedDB, prevent orphan drafts
-  // from incorrectly re-hydrating after rebuilding same id session (Draft table still contains original deleted session content).
-  void clearDraftSession(mySid);
-};
+// KeepAlive activation + history loading: first load, switch-away restore and
+// the session-deleted stream abort.
+const { handleAbortStreamOnDelete } = useSessionActivation({
+  mySid,
+  sessionId,
+  chatMessages,
+  isSending,
+  activeAgentController,
+  draft,
+  hitl,
+  chatInput: () => chatInputBoxRef.value,
+  clearQueueBadge,
+  clearMediaSelection,
+  ensureSessionCharacter,
+  refreshBranchLink,
+  syncHistory: sid => stream.syncHistory(sid),
+  restorePendingHitl,
+  initStores: sid => {
+    // Pull the session plan snapshot and the TaskFlow board that feeds the
+    // floating progress panel (idempotent singleton listeners + one refresh frame).
+    todoStore.init(sid);
+    taskflowStore.init(sid);
+  },
+  registerFindShortcut: handler => registerGlobalHandler('find-in-conversation', handler),
+  unregisterFindShortcut: handler => unregisterGlobalHandler('find-in-conversation', handler),
+  openFindInConversation: () => chatBoxRef.value?.openFind()
+});
 
 /**
  * Session toolbar command registry (former 4-case switch over the event).
@@ -1252,95 +582,29 @@ const handleCreateSession = () => {
 };
 
 /**
- * Whether THIS session is itself a fork (a side chat or a branch).
+ * Branch from one AI answer: create the child at that turn and SWITCH to it.
  *
- * The server refuses to fork a fork (no nested side chats), so the AI rows hide
- * the branch action here instead of offering an action that must fail. The link
- * is fetched once per session load; an unreachable server reads as "root".
- *
- * Declared BEFORE `doLoadFor`: the session watch below is `immediate`, so
- * setup reaches `refreshBranchLink` before the rest of the setup body runs.
+ * Unlike a quote side chat (which opens a right-sidebar panel), a branch is a
+ * session of its own — the page navigates there, carrying the parent's model,
+ * thinking, directory and agent config (the server copies them).
+ * @param turnNum The answered turn to fork at (1-based).
  */
-const isForkChild = ref(false);
+async function onForkTurn(turnNum: number): Promise<void> {
+  const childSid = await forkAtTurn(turnNum);
+  if (!childSid) return;
+  await router.push(localePath(`/home/${childSid}`));
+}
 
 /**
- * Load history for the specified session for this instance (clears local state, then rebuilds). Only called on new sessions / exception fallback paths.
- * @param sid
+ * The queue row's text was edited in place: the row is the source of truth, so
+ * the blur-time `editQueuedMessage` reads this value.
+ * @param msgId The queued message's protocol id.
+ * @param text The new text.
  */
-const doLoadFor = (sid: string) => {
-  // When switching to / first-loading a new sid, clear all session-scoped local state first, then load this session's own history.
-  // If chatMessages still holds the previous session's messages, even a loadSessionHistory dedup merge by id
-  // would mix old and new messages together, causing "switched to the new session but the old session's content is displayed".
-  chatMessages.value = [];
-  isSending.value = false;
-  // Discard the in-flight request controller left over from the previous session (its stream was invalidated by the session switch / is no longer usable)
-  activeAgentController.value = null;
-  hitl.abortResume();
-  // The previous session's pending-approval card / input draft / selected images must not leak into the new session
-  hitl.clearRequest();
-  draft.value = '';
-  clearMediaSelection();
-  // Load this session's locked character snapshot (if none, lock using the global profile)
-  ensureSessionCharacter(sid);
-  // "Am I a branch child?" — one lookup per session load (fail-open; a root
-  // session reads as false and keeps the fork action visible).
-  void refreshBranchLink(sid);
-  // One round trip: history + the running turn's snapshot. Frames arriving
-  // during the request are held and flushed after the snapshot is applied.
-  void stream.syncHistory(sid);
-  // Restore a possibly still-pending HITL interrupt card in three-tier persistence scenarios (session switch / refresh / browser reopen / server restart)
-  restorePendingHitl(sid);
-  mySidLoaded = true;
+const onQueueTextUpdate = (msgId: string, text: string): void => {
+  const badge = queueBadgeList.value.find(item => item.msgId === msgId);
+  if (badge) badge.text = text;
 };
-
-// On first screen, load the current session's history messages and render the merged list into ChatBox
-watch(
-  sessionId,
-  sid => {
-    if (!sid) return;
-
-    // 1) First time (history not yet loaded for mySid): only load this instance's own session history.
-    //    This `[sid].vue` instance froze sid into mySid at creation time and belongs to that one session only,
-    //    so the first load only loads mySid — never any other session's content.
-    //    Note: with `immediate: true`, the watcher fires synchronously during setup when isActive is still false
-    //    (onActivated has not run yet), so the first-load check cannot rely on isActive and must fall back to mySidLoaded.
-    if (!mySidLoaded) {
-      doLoadFor(mySid);
-      return;
-    }
-
-    // 2) This instance is KeepAlive cached and inactive (the user has switched to another session):
-    //    `route.params.sid` (the global route singleton) has become someone else's value, so this instance's sessionId recomputes to the other id.
-    //    But this instance's own in-memory state (chatMessages/drafts/scroll/streaming activeAgentController/HITL card)
-    //    must be preserved as-is, to be restored when switching back — early-return here, never perform destructive clearing.
-    //    Otherwise, switching away and back would wipe all conversation/streaming state (dialog gone / background stream aborted).
-    if (!isActive.value) return;
-
-    // 3) Active, already loaded, and switched back to this very session (sessionId changed back to mySid):
-    //    restore the in-memory state as-is, no repeated clear+load, naturally preserving messages still streaming
-    //    in the background, drafts, and scroll position.
-    //    — Hardening: if the in-memory state was polluted (it contains another session's messages, e.g. wrongly written by (4) before)
-    //    or is empty, reload this session's history to guarantee the switch-back always displays this session's own content. Otherwise just an idempotent refresh.
-    if (sid === mySid) {
-      const polluted = chatMessages.value.some(m => m.session_id && m.session_id !== mySid);
-      if (chatMessages.value.length === 0 || polluted) {
-        doLoadFor(mySid);
-      } else {
-        ensureSessionCharacter(mySid);
-        restorePendingHitl(mySid);
-      }
-      return;
-    }
-
-    // 4) Active but sessionId is not this session: this is usually the "moment of switching away", where the watcher fires
-    //    before onDeactivated (route already changed to the other sid, isActive not yet false).
-    //    Never treat it as a new session and call `doLoadFor(sid)` — that would write another session's messages into
-    //    this instance's memory, and on switch-back (3) would display the wrong session's content. Here the local state
-    //    must be preserved as-is until onDeactivated sets isActive=false; on switch-back, (3) handles restore/fallback reload.
-    return;
-  },
-  { immediate: true }
-);
 
 /**
  * A "add this file to the chat" request from the file tree (or a sidebar tab
@@ -1370,97 +634,7 @@ function onAddImageRequest(request: unknown): void {
   const payload = request as { sessionId?: string; payload?: { base64?: string; name?: string } } | undefined;
   const base64 = payload?.payload?.base64;
   if (!base64 || payload?.sessionId !== mySid) return;
-  const MAX_PENDING_IMAGES = 10;
-  if (selectedImages.value.length >= MAX_PENDING_IMAGES) {
-    toastWarn(t('chatInput.maxImagesExceed', { count: MAX_PENDING_IMAGES, extra: 1 }));
-    return;
-  }
-  selectedImages.value = [...selectedImages.value, { base64, name: payload?.payload?.name || 'whiteboard.png' }];
-}
-
-/** True while a side session is being created (guards a double-click). */
-const creatingSideChat = ref(false);
-
-/**
- * The localized "from X" tooltip for a quote chip.
- * @param role The quoted message's role.
- */
-function selectionRoleLabel(role?: string): string {
-  if (role === CHAT_ROLE.USER) return t('chat.selection.sourceUser');
-  if (role === CHAT_ROLE.AI) return t('chat.selection.sourceAi');
-  return t('chat.selection.sourceTool');
-}
-
-/**
- * "添加到当前会话" (add to this conversation): insert the selected text as a quote chip at the caret.
- * @param payload The quoted selection.
- */
-function onSelectionAdd(payload: SelectionPayload): void {
-  if (!payload?.text) return;
-  chatInputBoxRef.value?.addQuoteChip?.(payload.text, selectionRoleLabel(payload.sourceRole));
-}
-
-/**
- * Refresh the branch flag for a session (fail-open: unknown reads as root).
- * @param sid
- */
-async function refreshBranchLink(sid: string): Promise<void> {
-  isForkChild.value = false;
-  if (!sid) return;
-  try {
-    isForkChild.value = (await fetchSessionLink(sid)) !== null;
-  } catch (e) {
-    logUtil.w('[Branch] parent link lookup failed:', e);
-  }
-}
-
-/**
- * Branch from one AI answer: create the child at that turn and SWITCH to it.
- *
- * Unlike a quote side chat (which opens a right-sidebar panel), a branch is a
- * session of its own — the page navigates there, carrying the parent's model,
- * thinking, directory and agent config (the server copies them).
- * @param turnNum The answered turn to fork at (1-based).
- */
-async function onForkTurn(turnNum: number): Promise<void> {
-  if (isSending.value || isForkChild.value || !mySid || turnNum <= 0) return;
-  try {
-    const { sessionId: childSid } = await createSideChatSession(mySid, '', turnNum);
-    await router.push(localePath(`/home/${childSid}`));
-  } catch (e) {
-    logUtil.e('[Branch] Failed to create the branch:', e);
-    toastError(t('errors.forkFailed'), e instanceof Error ? e.message : String(e));
-  }
-}
-
-/**
- * "在辅助会话中提问" (ask in a side session): create a normal session derived from this one (same
- * preset binding and character snapshot, no subagent semantics), open it in a
- * right-sidebar side-chat tab and hand it the quoted text.
- *
- * The child is parent-scoped, not tab-scoped: it inherits a model-only snapshot
- * of this session's history, stays in the normal session list, and is purged
- * only when this parent session is deleted (closing the tab only detaches it).
- * @param payload The quoted selection.
- */
-async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
-  if (!payload?.text || creatingSideChat.value || !mySid) return;
-  creatingSideChat.value = true;
-  try {
-    const { sessionId: childSid, inherited } = await createSideChatSession(mySid, t('chat.selection.sideChatTitle'));
-    rightSidebarStore.openTab('sideChat', {
-      sessionId: childSid,
-      parentSessionId: mySid,
-      inherited,
-      quote: payload.text,
-      source: selectionRoleLabel(payload.sourceRole)
-    });
-  } catch (e) {
-    logUtil.e('[SideChat] Failed to create the side session:', e);
-    toastError(t('chat.selection.sideChatFailed'), e instanceof Error ? e.message : String(e));
-  } finally {
-    creatingSideChat.value = false;
-  }
+  addPendingImage(base64, payload?.payload?.name || 'whiteboard.png');
 }
 
 /**
@@ -1528,100 +702,3 @@ onUnmounted(() => {
   opacity: 0;
 }
 </style>
-
-<i18n lang="json">
-{
-  "zh": {
-    "hitl": {
-      "approve": "批准",
-      "approveDir": "批准整个目录",
-      "approveDirTooltip": "允许整个目录（本会话内有效，子代理同样适用），目录内文件不再弹出审批",
-      "approveSession": "本会话允许",
-      "approveSessionTooltip": "允许本会话内执行相同命令，不再弹出审批（前两个词匹配，如 \"git push\" 覆盖所有 git push 子命令）",
-      "reject": "拒绝",
-      "title": "操作需要审批",
-      "tool": "工具",
-      "yolo": "同意所有操作",
-      "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批",
-      "customPlaceholder": "输入自定义回答…",
-      "submit": "提交",
-      "multiSubmit": "提交所有回答",
-      "multiHint": "请回答以上问题",
-      "annotationPlaceholder": "有其他想法？写在这里（可选）",
-      "planTitle": "计划待审批",
-      "planApprove": "批准计划",
-      "planRevise": "退回修改",
-      "planFeedbackPlaceholder": "指出需要修改的地方…"
-    }
-  },
-  "en": {
-    "hitl": {
-      "approve": "Approve",
-      "approveDir": "Approve Entire Directory",
-      "approveDirTooltip": "Allow the entire directory for this session (also inherited by subagents) — files inside never prompt again",
-      "approveSession": "Allow for Session",
-      "approveSessionTooltip": "Allow the same command for this session — no more prompts (matches the first two words, e.g. \"git push\" covers all git push subcommands)",
-      "reject": "Reject",
-      "title": "Action Requires Approval",
-      "tool": "Tool",
-      "yolo": "Approve All (YOLO)",
-      "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts",
-      "customPlaceholder": "Type a custom answer…",
-      "submit": "Submit",
-      "multiSubmit": "Submit All Answers",
-      "multiHint": "Please answer the questions above",
-      "annotationPlaceholder": "Other thoughts? Write here (optional)",
-      "planTitle": "Plan Awaiting Approval",
-      "planApprove": "Approve Plan",
-      "planRevise": "Request Changes",
-      "planFeedbackPlaceholder": "What should change? …"
-    }
-  },
-  "ja": {
-    "hitl": {
-      "approve": "承認",
-      "approveDir": "ディレクトリ全体を承認",
-      "approveDirTooltip": "ディレクトリ全体を許可します（このセッション内有効、サブエージェントにも継承）。配下のファイルでは確認ダイアログは表示されません",
-      "approveSession": "セッション内で許可",
-      "approveSessionTooltip": "このセッション内で同じコマンドを許可し、確認を省略（先頭2語でマッチ、\"git push\" はすべての git push サブコマンドをカバー）",
-      "reject": "拒否",
-      "title": "操作の承認が必要です",
-      "tool": "ツール",
-      "yolo": "すべての操作を承認",
-      "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません",
-      "customPlaceholder": "カスタム回答を入力…",
-      "submit": "送信",
-      "multiSubmit": "すべて回答",
-      "multiHint": "上記の質問に回答してください",
-      "annotationPlaceholder": "他に思いついたらここに（任意）",
-      "planTitle": "計画の承認待ち",
-      "planApprove": "計画を承認",
-      "planRevise": "修正を依頼",
-      "planFeedbackPlaceholder": "修正すべき点を入力…"
-    }
-  },
-  "ko": {
-    "hitl": {
-      "approve": "승인",
-      "approveDir": "디렉터리 전체 승인",
-      "approveDirTooltip": "디렉터리 전체를 허용합니다(이 세션에 한정, 하위 에이전트에도 상속). 디렉터리 내 파일은 다시 승인을 요구하지 않습니다",
-      "approveSession": "세션 내 허용",
-      "approveSessionTooltip": "이 세션 내에서 동일한 명령을 허용하고 확인을 생략 (처음 두 단어로 매칭, \"git push\"는 모든 git push 하위 명령을 포함)",
-      "reject": "거부",
-      "title": "작업 승인이 필요합니다",
-      "tool": "도구",
-      "yolo": "모든 작업 승인",
-      "yoloTooltip": "이번 작업과 이 세션의 이후 모든 작업을 승인하며 확인 창이 다시 표시되지 않습니다",
-      "customPlaceholder": "직접 답변 입력…",
-      "submit": "제출",
-      "multiSubmit": "모든 답변 제출",
-      "multiHint": "위 질문에 답변해 주세요",
-      "annotationPlaceholder": "다른 생각이 있으면 여기에 (선택)",
-      "planTitle": "계획 승인 대기",
-      "planApprove": "계획 승인",
-      "planRevise": "수정 요청",
-      "planFeedbackPlaceholder": "수정할 점을 입력하세요…"
-    }
-  }
-}
-</i18n>

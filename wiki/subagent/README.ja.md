@@ -125,6 +125,22 @@
   `DISCARDED` は終端であり、不正な辺は `InvalidDeliveryTransitionError` を送出します。
   同状態への遷移はクラッシュ復旧のため冪等です。
 
+## 🧱 spawn リクエスト、モジュール分割、完了イベント
+
+2026-11-10 の設計監査は挙動を変えずに spawn を再構成しました:
+
+- `spawn/request.py::SpawnRequest` はオーケストレーションが受け取る不変の
+  リクエストです。`spawn_subagent_direct(request=None, **legacy)` は
+  `from_legacy` で従来のキーワード引数呼び出しを維持します。
+- `spawn/core.py` は 732 行のファサードになり、各フェーズは `handoff.py`、
+  `validation.py`、`isolation.py`、`child_agent_factory.py`、`lifecycle.py`、
+  `ptc_prefill.py` に移動しました。ファサードは旧 import の全名前を
+  re-export します。
+- 子の完了はイベント駆動です。終端遷移が
+  `registry/completion_events.py`（基盤 `runtime/event_wait.py`）で publish
+  され、`taskflow_wait_all` が起床します。従来の poll 間隔は取りこぼし用の
+  フォールバックとして残ります。
+
 ## 🧪 完了判定器と goal loop
 
 完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め。これは未設定時の旧基準で、serving model の出力予算に応じて拡大縮小します）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。

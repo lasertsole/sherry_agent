@@ -24,7 +24,11 @@ def _isolated_evidence_ledger(tmp_path, monkeypatch):
 
     monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
     # purge_session_data also drops a purged session's own side-chat link.
+    monkeypatch.setattr(side_chat_store, "_DB_DIR", tmp_path)
     monkeypatch.setattr(side_chat_store, "_DB_PATH", tmp_path / "side_chats.db")
+    # The schema init is once per process now: re-arm it for the fresh file.
+    monkeypatch.setattr(side_chat_store, "_sync_tables_ready", False)
+    monkeypatch.setattr(side_chat_store, "_schema_ready", False)
 
 
 def _isolate_store(monkeypatch: pytest.MonkeyPatch, module, db_name: str, tmp_path: Path) -> None:
