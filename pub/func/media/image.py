@@ -1,10 +1,10 @@
-import io
 import re
 import time
 import base64
 import requests
-from PIL import Image
 from loguru import logger
+
+from pub.func.media.image_compress import ImageTooLargeError, prepare_for_model
 
 
 def detect_image_format(image_data: bytes) -> str | None:
@@ -68,73 +68,6 @@ def validate_and_fix_base64(base64_string: str) -> str | None:
     except Exception as e:
         logger.exception(f"base64 validation failed: {e}")
         return None
-
-
-def compress_image_if_needed(
-    image_data: bytes, max_size_mb: float = 5.0, max_dimension: int = 2048
-) -> bytes:
-    """
-    Compress the image if it exceeds the size limit.
-
-    Args:
-        image_data: Raw image bytes.
-        max_size_mb: Maximum allowed file size in MB.
-        max_dimension: Maximum width/height in pixels.
-
-    Returns:
-        Compressed image bytes.
-    """
-    try:
-        original_size_mb = len(image_data) / (1024 * 1024)
-
-        if original_size_mb <= max_size_mb:
-            logger.debug(
-                f"Image size OK: {original_size_mb:.2f}MB <= {max_size_mb}MB, no compression needed"
-            )
-            return image_data
-
-        logger.debug(
-            f"Image too large: {original_size_mb:.2f}MB > {max_size_mb}MB, starting compression..."
-        )
-
-        img = Image.open(io.BytesIO(image_data))
-        original_width, original_height = img.size
-
-        logger.debug(f"Original dimensions: {original_width}x{original_height}")
-
-        scale = min(max_dimension / original_width, max_dimension / original_height, 1.0)
-
-        if scale < 1.0:
-            new_width = int(original_width * scale)
-            new_height = int(original_height * scale)
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            logger.debug(f"Resized to: {new_width}x{new_height} (scale: {scale:.2f})")
-
-        # Convert to RGB (if RGBA or P mode)
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-            logger.debug("Converted colour mode to RGB")
-
-        # Save as JPEG (high compression ratio)
-        output_buffer = io.BytesIO()
-        img.save(output_buffer, format="JPEG", quality=85, optimize=True)
-
-        compressed_data = output_buffer.getvalue()
-        compressed_size_mb = len(compressed_data) / (1024 * 1024)
-
-        logger.debug(
-            f"✅ Compression successful: {original_size_mb:.2f}MB -> {compressed_size_mb:.2f}MB"
-        )
-
-        return compressed_data
-
-    except Exception as e:
-        logger.exception(f"Image compression failed: {e}")
-        import traceback
-
-        logger.debug(traceback.format_exc())
-        # If compression fails, return original data
-        return image_data
 
 
 def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> bytes | None:
@@ -299,12 +232,16 @@ def download_and_convert_to_base64(
 
         logger.debug(f"Detected image format: {detected_format}")
 
-        # Compress image (if too large)
-        compressed_data = compress_image_if_needed(
-            image_data,
-            max_size_mb=5.0,  # Compress to under 5MB
-            max_dimension=2048,  # Max dimension 2048px
-        )
+        # Compress through the same cascade the live send path uses.
+        try:
+            prepared = prepare_for_model(image_data)
+        except ImageTooLargeError as exc:
+            logger.warning("Downloaded image kept uncompressed: {}", exc)
+            prepared = None
+        except Exception:  # noqa: BLE001 — not a decodable image; keep the bytes
+            prepared = None
+        compressed_data = prepared.data if prepared is not None else image_data
+        mime_type = prepared.media_type if prepared is not None else "image/jpeg"
 
         compressed_size_mb = len(compressed_data) / (1024 * 1024)
         logger.debug(f"Size after compression: {compressed_size_mb:.2f}MB")
@@ -317,7 +254,6 @@ def download_and_convert_to_base64(
             logger.error("base64 conversion result is empty")
             return None
 
-        mime_type = "image/jpeg"  # Always use JPEG after compression
         data_uri = f"data:{mime_type};base64,{base64_string}"
 
         logger.debug(f"Built data URI, total length: {len(data_uri)} chars")

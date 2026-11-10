@@ -240,7 +240,7 @@
                    attribute tells its enhancement pass (Shiki/Mermaid/KaTeX) to wait until
                    the stream settles — a streaming row pays zero enhancement cost. -->
                   <div
-                    v-safe-html="bubbleView(message).text"
+                    v-safe-html="bubbleDisplayText(message)"
                     :data-streaming="message.streaming ? 'true' : undefined"></div>
                   <!-- Settled long answer: the body above is a preview; this toggles
                        the full text (see bubbleView for the measured starvation). -->
@@ -517,13 +517,13 @@ const isLatestUserMessage = (message: MessageItem): boolean => {
  * @param message Candidate row.
  */
 const canEditMessage = (message: MessageItem): boolean =>
-  props.canEdit
-  && props.selectionEnabled
-  && message.role === CHAT_ROLE.USER
-  && message.id > 0
-  && message.turn_num > 0
-  && (!message.origin || message.origin === 'user')
-  && isLatestUserMessage(message);
+  props.canEdit &&
+  props.selectionEnabled &&
+  message.role === CHAT_ROLE.USER &&
+  message.id > 0 &&
+  message.turn_num > 0 &&
+  (!message.origin || message.origin === 'user') &&
+  isLatestUserMessage(message);
 
 /**
  * Whether this AI row offers "branch from here".
@@ -785,6 +785,13 @@ const bubbleView = (message: MessageItem): BubbleView => {
   }
   return { text: content, truncated: false, collapsed: false, chars: totalChars };
 };
+
+/**
+ * The bubble's markdown with `sherry-artifact://` references resolved to
+ * `/artifacts` URLs before the sanitizer (and markdown-it) see them.
+ * @param message
+ */
+const bubbleDisplayText = (message: MessageItem): string => resolveArtifactRefsInMarkdown(bubbleView(message).text);
 
 /**
  * Whether the bubble has anything to draw: text, or media attachments (a user

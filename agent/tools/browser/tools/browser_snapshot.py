@@ -6,7 +6,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, page_line, resolve_manager
+from ._shared import (
+    MAIN_ONLY,
+    BrowserPageInput,
+    BrowserTool,
+    guard,
+    page_line,
+    resolve_manager,
+    withhold_blocked_page,
+)
 
 
 class SnapshotInput(BrowserPageInput):
@@ -67,6 +75,13 @@ class BrowserSnapshotTool(BrowserTool):
         async def operation() -> str:
             manager = resolve_manager()
             outcome = await manager.snapshot(session_id, page, max_elements=max_elements)
+            # Re-check where the page actually is (a click/redirect/script may
+            # have moved it) before any text leaves this function.
+            withheld = await withhold_blocked_page(
+                manager, session_id, page, str(outcome.get("url") or "")
+            )
+            if withheld is not None:
+                return withheld
             return _format_snapshot(outcome)
 
         return await guard(operation)

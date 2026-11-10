@@ -36,7 +36,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/taskflow/`              | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector)                                                       | `agent/tools/taskflow/config.py`                     |
 | `agent/tools/todolist/`              | Session-scoped todo planning layer                                                                                                            | `agent/tools/todolist/service.py`                    |
 | `agent/tools/subagent/`              | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles)                                                                                    | `agent/tools/subagent/spawn/core.py`                 |
-| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the SQLite evidence ledger/recorder)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
+| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the SQLite evidence ledger/recorder, the content-addressed artifact store, the optional PDF page renderer)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
 | `agent/wrapper/`                     | Graph-level wrappers (repetition guard, context limit) + pluggable registry                                                                                                          | `agent/wrapper/registry.py`                          |
 | `agent/state_port.py`                | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API)                                     | `agent/state_port.py`                                |
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
@@ -205,6 +205,25 @@ User message → Robyn WS → agent.core.built_agent() graph
   └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
        stamped there) → detached child agents → announce pipeline → drain
+
+     The 2026-11-10 design audit made the spawn shape explicit:
+     `spawn/request.py::SpawnRequest` is the frozen request the orchestration
+     receives (`spawn_subagent_direct(request=None, **legacy)` keeps the old
+     keyword call shape through `from_legacy`), and `spawn/core.py` is a
+     compatibility facade over `handoff.py` / `validation.py` / `isolation.py` /
+     `child_agent_factory.py` / `lifecycle.py` / `ptc_prefill.py` (re-exporting
+     every name older imports use). Child terminal transitions publish through
+     `registry/completion_events.py` (+ `runtime/event_wait.py`), so
+     `taskflow_wait_all`, the sweeper and auto-turn's idle wait wake on events
+     with the old poll interval as the missed-notification fallback. The main
+     and child middleware chains, their required sets and `catalog.py` all
+     derive from `agent/middlewares/specs.py::MIDDLEWARE_SPECS`. Delivery and
+     TaskFlow step statuses have one transition table each
+     (`registry/delivery_state.py`, `taskflow/step_state.py`), and
+     `side_chat_store` / `trajectory_store` reuse the SQLite base's
+     once-per-process schema + per-connection busy_timeout (the former is WAL
+     now; the local model / code-embedder states and the interrupt reason are
+     StrEnums).
 
      spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
      `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
@@ -697,9 +716,13 @@ A four-step tour (welcome → preset → core controls → ready) shown once per
 
 `createSessionFromPreset` (`persona-catalog.ts`) is the ONE session-creation orchestration the tour and `NewSessionPresetDialog.confirm()` share (apply preset → bind preset → character snapshot → placeholder meta → `session:created` → `localePath('/home/<sid>')`); the caller injects `ensureCharacter` (the page's helper) so the catalogue module never imports a component. Skip records the flag and opens the ordinary preset dialog (the previous first-run behavior); a failed Get started keeps the dialog open, shows the error and leaves the flag UNSET so the tour returns next boot. The dialog is not mask/Esc dismissable (no stray click can silently drop the user into an empty UI).
 
+## Desktop Window Frame (`TitleBar.vue` / `common/titlebar.ts`)
+
+The Tauri shell runs undecorated (`decorations:false` in `tauri.conf.json`, with start-dragging/minimize/maximize/close window permissions in `capabilities/default.json`). ONE `TitleBar.vue` is mounted in `layouts/default.vue` at `z-60`, height 36 px: its left edge is the sidebar width only on `/home` with the left sidebar expanded and the right sidebar not maximized, otherwise 0. The middle+right content gets a matching `padding-top` (persisted in `content-shell`), the left sidebar stays full height, the right sidebar's maximized overlay starts at `top:36px`, and the floating-window slot/clamp/anchors plus the input-only pill stay below the bar. The Web build renders no titlebar and uses zero inset. The close button calls the SAME Rust `CloseRequested` → `close_ack` → `CloseToTrayDialog` flow as the OS button; minimize/maximize use the Tauri window plugin.
+
 ## Composer Input Triggers (`inputBox.vue` / `use-input-trigger.ts`)
 
-The composer keeps its contenteditable + atomic-chip architecture. `$` opens the skill picker (`GET /skills`, filtered to `active !== false` and non-`subagent_only`), `/` opens the command picker (custom Markdown commands from `GET /commands?session_id=…` plus the existing command registry), and the `+` button opens the same two pickers or reveals the left sidebar's file tree. `use-input-trigger.ts` detects a trigger only at the start of the input or after whitespace (with `¥`/`￥` normalized to `$`), skips pasted `<pre>`/`<code>`, and filters by prefix/substring/description. A selected skill inserts a `skill-mention-chip`; `extractTextForSend` emits `$name` and the stable `## Skill References` prompt block tells the agent to `skill_view` it. A custom command with `argument-hint` collects its arguments in the panel, then inserts a `command-mention-chip` whose `data-command-body` carries the expanded template (`$ARGUMENTS` substituted); built-ins execute their registry handler and insert nothing. No shell expansion. Wiki: `wiki/input-triggers/`; tests: `use-input-trigger.test.ts`, the composer integration suite, and `tests/server/service/test_custom_commands_service.py`.
+The composer keeps its contenteditable + atomic-chip architecture. `$` opens the skill picker (`GET /skills`, filtered to `active !== false` and non-`subagent_only`), `/` opens the command picker (custom Markdown commands from `GET /commands?session_id=…` plus the existing command registry), and the `+` button opens ONE menu: image / audio / video upload (the old toolbar `MediaMenu` was removed, merged here), a generic OS file picker (hidden `<input type="file" multiple>`, files ride the existing base64 `selectedImages` pipeline), then the skill / command pickers. The left file tree is still reachable from the toolbar's folder button and from `@` mentions; the `+` menu no longer switches the sidebar. `use-input-trigger.ts` detects a trigger only at the start of the input or after whitespace (with `¥`/`￥` normalized to `$`), skips pasted `<pre>`/`<code>`, and filters by prefix/substring/description. A selected skill inserts a `skill-mention-chip`; `extractTextForSend` emits `$name` and the stable `## Skill References` prompt block tells the agent to `skill_view` it. A custom command with `argument-hint` collects its arguments in the panel, then inserts a `command-mention-chip` whose `data-command-body` carries the expanded template (`$ARGUMENTS` substituted); built-ins execute their registry handler and insert nothing. No shell expansion. Wiki: `wiki/input-triggers/`; tests: `use-input-trigger.test.ts`, the composer integration suite, and `tests/server/service/test_custom_commands_service.py`.
 
 ## Keyboard Shortcuts (`use-shortcuts.ts` / `client/app/plugins/shortcuts.ts` / `ShortcutSettingsSection.vue`)
 
@@ -710,7 +733,7 @@ One binding table (`SHORTCUT_BINDINGS`) declares every chord with its built-in d
 
 `ctrl` means the platform PRIMARY modifier: `comboFromEvent` folds Cmd into it, so one table serves macOS and Windows/Linux, and `formatCombo` renders ⌘⇧F vs Ctrl+Shift+F (the send button's tooltip is built from it, so it follows a rebind). Overrides persist in Dexie (`shortcuts` table, schema v5) as `{id, keys}` JSON; deleting the row restores the default.
 
-The UI is the **Shortcuts tab of Menu → System Config** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue` — the panel's footer/embedder logic is keyed by tab INDEX — and it saves on its own, like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "Conflicts with X, not saved") and the row stays in capture.
+The UI is the **Shortcuts tab of Menu → System Config** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue`; the panel now drives tabs by `TAB_ORDER` VALUE instead of hard-coded indices, so the memory-settings tab could move out to the memory panel, and it saves on its own like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "Conflicts with X, not saved") and the row stays in capture.
 
 Not migrated on purpose: component-local `@keydown` on list items / overlays (they are internal UI interactions, not user-rebindable commands) and `BrowserPanel`'s CDP key forwarding.
 
@@ -961,7 +984,13 @@ File browsing (`GET /project/tree`, `GET /project/file`,
 `server/service/project_files_service.py`) is read-only and hard-refused to the
 session's root: `resolve_within(base, path)` runs the same gate order as the
 tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
-size (413), non-UTF-8 (415), depth and entries per level. Binary previews
+size (413), non-UTF-8 (415), depth and entries per level. Since the 2026-11-09
+audit (H1) an UNBOUND session cannot read files at all (its fallback root is the
+sherry checkout, so `path=.env` used to return the model API keys), and a bound
+checkout still refuses sherry's own root config/credential files through the
+tools' `_ROOT_SENSITIVE_FILES` list (`self_path_policy.is_sensitive_root_file`,
+case-folded on Windows); a bound USER project's own `.env` stays browsable. The
+tree endpoint keeps serving names for API parity. Binary previews
 (PDF / docx / image) ride the sibling `GET /project/file/blob` — the same
 boundary and error protocol with the wider `max_blob_bytes` (20 MiB) cap and a
 `mimetypes` Content-Type instead of the 415 no-UTF-8 rule — and the viewer tab
@@ -993,7 +1022,7 @@ their label into a message). "Add to chat" travels the app-wide mitt bus
 (`chat:file-mention` with the session id) from the left sidebar to the chat page,
 which relays it to the composer it owns; the agent learns the convention from a
 stable `## File References` block in the system prompt. The sidebar's Working directory body stacks TWO collapsible sections —
-File tree and the read-only **Git Graph** (`GET /git/graph`,
+File tree and the read-only **Shadow Git Graph** (`GET /git/graph`,
 `server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
 bounds the page size, the served text and the git timeout): one
 `git log --all --date-order` page (newest first, `limit`/`skip`, one extra commit
@@ -1005,7 +1034,7 @@ repository (or a host without git) answers `available: false` with a reason
 instead of an error, so the panel renders its own empty state. `GitGraphPanel.vue`
 lays the commits into lanes and draws one SVG per row (merges and HEAD get their
 own node shapes), and it is the client's only consumer of that route. The two
-sidebar section headers (File tree / Git Graph) share one row.
+sidebar section headers (File tree / Shadow Git Graph) share one row.
 The panel is READ-ONLY: the row's context menu offers Copy hash / Copy subject
 (the reset / checkout routes and the branch switcher were removed — shadow
 checkpoints are an internal write snapshot, not a user-facing rollback surface),
@@ -2069,6 +2098,104 @@ question unanswerable by traversal. `path_search.py` adds the explicit layer
   regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
   total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
 
+## Media Pipeline: Compression, Native Reads, History Budget & Artifacts
+
+Every image the agent sends passes one compression cascade
+(`pub/func/media/image_compress.py::prepare_for_model`, aligned with ZCode's
+`prepareForModel`/`SQ`). The gate is per image: the longest edge must fit
+`image_compress_max_dimension` (2000 px), the raw payload must fit
+`max_base64_bytes * 3 / 4` (5 MiB base64 → 3.75 MiB raw), and the estimated
+tokens — `ceil(ceil(raw_len/3)*4 * 0.125)` — must fit
+`image_compress_max_tokens` (25 000). This is a SENDING gate, NOT the
+context-window estimator: `pub/func/estimate_tokens.py` keeps its fixed 85-token
+placeholder per image and `ContextLimitGuard` keeps using the provider-reported
+`usage_metadata.input_tokens`. The cascade tries WebP passthrough when it
+already fits, then a format-preserving re-encode (PNG optimize; JPEG quality
+80 → 60 → 40 → 20), a resize to the max edge, 75/50/25% downscale steps, and a
+hard JPEG-q20 ladder at 1000 → 200 px; when nothing fits it raises
+`ImageTooLargeError` and the caller falls back to its text/skill path. Four
+sites use it: `server/service/messages.py::_get_content_list` (WS/Tauri sends),
+`agent/middlewares/media_pipeline/tool_media.py::_image_block` (tool
+screenshots), `server/trigger/http/image.py::upload_image` (browser-mode HTTP
+upload), and `pub/func/media/image.py::download_and_convert_to_base64` (the
+image-to-text skill's download). `image_compress_enabled` turns the cascade off
+for byte-exact passthrough.
+
+`read_file` reads media natively instead of handing the model mojibake or a
+skill detour:
+
+- **Images** (`.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif`) go through the
+  cascade, are written to `TEMP_DIR/read_images/<sha256[:16]><ext>` (the skill path's
+  input), and are returned as `[text, image_url]` through
+  `native_image_content`. The text names the original path and the compressed
+  dimensions; a model without vision gets the text plus an `image_to_text`
+  instruction. `read_image_max_bytes` (20 MiB) bounds the file before decoding.
+- **PDFs** take one of two paths. A model whose declared capability carries
+  `pdf` and a request WITHOUT a page range gets the raw document as a native
+  block (`document` for Anthropic, `file` for OpenAI-compatible providers). A
+  page range (or a PDF-less model with vision) renders pages through
+  `agent/tools/pub_base/pdf_render.py` — PyMuPDF when installed, else poppler's
+  `pdftoppm`, 100 DPI, `pdf_render_timeout_s` (120 s), at most
+  `pdf_max_pages_per_request` (20) pages, each compressed and attached as an
+  `image_url` block. Neither renderer installed reports
+  `pdf_render_unavailable`; a supported-PDF model without vision that asks for
+  a page range gets `pdf_pages_images_unsupported`; a model with neither family
+  gets `pdf_not_supported`; `pdf_max_file_bytes` is 20 MiB.
+- `ContextEviction`'s `read_file` slicer leaves a BLOCK-LIST result untouched:
+  its text is already budgeted by the tool, and slicing `str(content)` would
+  embed the whole base64 payload and cut the media block away.
+
+History media is projected against a byte budget at REQUEST time — there is no
+checkpoint rewrite and no unconditional strip. In `wrap_model_call` the
+capability scrub runs first (`scrub_messages`: unsupported families become text
+placeholders), then `_project_history_media_budget` keeps every `image_url`
+block that fits `history_media_budget_bytes` (75 MiB, ZCode's `Mui`) choosing
+newest-first by message index. The latest real user message's media is
+PROTECTED (`preserve_latest_user_media`, resolved through
+`is_user_message`; a transcript without `metadata.origin == "user"` falls back
+to the newest media-bearing HumanMessage) and is kept even over budget. Only
+inline data-URL payloads are measured (decoded size; a remote URL is fetched by
+the provider and costs zero), and a dropped block becomes
+`[Attached image]\n[Media omitted from provider request … media budget.]` in a
+`model_copy` request copy. A session under budget therefore keeps all its
+images; the old `_strip_history_images` (which dropped history media after every
+text turn) is gone.
+
+Uploaded images are persisted in a content-addressed artifact store
+(`agent/tools/pub_base/artifact_store.py`): SHA-256 prefix (16 hex) + media
+family + extension, under `SRC_DIR/<session_id>/artifacts/`, written once
+(existence dedupe under one process lock) and referenced as
+`sherry-artifact://<session_id>/<name>`. `ImageUrlHandler` stores the original
+compressed bytes there and puts the URI in `additional_kwargs["images"]` (the
+temp copy stays timestamped because the skill path and the temp sweeper expect
+it); `GET /artifacts/:session_id/:name` serves it (`server/trigger/http/artifacts.py`,
+session-scoped — another session's name is a 404), and the client resolves the
+URI through `/artifacts` in `use-chat-media.ts` and in markdown answers
+(`ChatBox.vue` runs the answer through `resolveArtifactRefsInMarkdown` before
+markdown rendering).
+`media_offload` reuses an existing artifact (`find_artifact` by content hash)
+instead of decoding and writing a second copy at compression time.
+`artifact_store_enabled` (default true) off restores the legacy timestamped
+`media/<ts><ext>` copy and the `/media` URL; artifact URIs written earlier stay
+readable.
+
+## Multimodal Capability Catalog (`config/model_capabilities.py`)
+
+The media pipeline's auto mode resolves each media family through one cache
+(`agent/middlewares/llm_capability_cache.py`) in this order: the tracked
+`config/model_capabilities.json` catalog (overlaid by the `model_capabilities`
+object in `sherry.jsonc`) → the learned labels in
+`src/data/model_capabilities_runtime.json` → `"auto"`. A DECLARED model is
+answered without probing (and `set_capability` refuses to override a
+declaration; the user override is the correction path); an undeclared model is
+probed once and its `supported`/`unsupported` result is persisted. The
+success path of a native call writes `supported` for still-`auto` families
+(silent blindness still writes `unsupported`). `pdf` is a first-class family
+(`document` / `file` blocks, no skill fallback): an unsupported PDF is scrubbed
+to a text placeholder telling the user to supply images or text. The catalog is
+shipped via `packaging/build_backend.py`'s DATA list; editing the JSON changes
+the routing without a code change.
+
 ## URL Fetching (`agent/tools/web/web_fetch.py`)
 
 `web_fetch(url)` reads ONE http(s) URL and hands it back as markdown — the
@@ -2171,14 +2298,21 @@ by the `browser` playbook skill (`skills/builtin/core/browser/SKILL.md`,
 scriptless, hidden from the index while the feature is off). The seven verbs are
 thin handlers over the same manager; the original `browser_*` classes remain
 internal handlers and are exposed only by `build_legacy_browser_tools()` for
-tests. `browser(action="screenshot")` writes a PNG and
+tests. Since the 2026-11-09 audit (H5) navigation and reads reuse the
+`web_fetch` SSRF verdict: `agent/tools/browser/tools/_shared.py::validate_navigation_url`
+allows http(s) only, refuses local/private/metadata targets unless
+`SHERRY_BROWSER_ALLOW_LOCAL=1`, and resolves public names through
+`is_public_url`; the final URL after a redirect is re-checked, and
+snapshot/screenshot/evaluate re-check the page's ACTUAL URL before returning
+content — a blocked page is parked at `about:blank` and the result is withheld.
+`browser(action="screenshot")` writes a PNG and
 returns **the image itself** when the serving model reads images natively
 (`media_pipeline/tool_media.py::native_image_content` — the `image_to_text`
 skill is the fallback for a model without vision, never the route a
 vision-capable one takes; the per-request capability scrub and the retry
 fallback strip the block again for a model that turns out blind, and the
-per-turn history strip removes it from later turns so a screenshot does not
-ride every context); `browser_evaluate` stays a separate tool and registers only
+request-time history media budget drops it only once the session's retained
+images exceed the byte budget); `browser_evaluate` stays a separate tool and registers only
 with `SHERRY_BROWSER_ALLOW_EVALUATE=1`.
 
 **Panel** — `BrowserPanel.vue` picks CDP mode from `/browser/status` and falls
@@ -2601,6 +2735,14 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
+  The `sandbox` switch is SERVER-owned since the 2026-11-09 audit (H2): it is
+  NOT in the model-facing `SafeShellInput` / `PythonReplInput` schemas (a forged
+  argument is dropped by validation), while internal `_run(sandbox=False)`
+  callers keep the scope/policy guard and the HITL card. `python_repl` and PTC
+  also refuse class-introspection escapes statically
+  (`pub_base/safe_exec.py::validate_restricted_code`: no dunder attributes,
+  no `__builtins__`), and their restricted builtins omit
+  `getattr`/`type`/`dir`/`vars` (H4).
   `PathGuard` additionally screens the command-string arguments (`commands` /
   `query`) against the hard-deny floor AND the sherry-self policy — read-looking
   tokens against the read allow-list, extracted write targets (`>` / `>>` /

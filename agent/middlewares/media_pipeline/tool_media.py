@@ -33,16 +33,23 @@ from typing import Any
 from langchain_core.messages import BaseMessage, ToolMessage
 
 from config.features import MEDIA_PIPELINE
+from pub.func.media.image_compress import ImageTooLargeError, prepare_for_model
 
 from .media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 
 __all__ = ["effective_model_key", "native_image_content", "scrub_tool_media"]
 
-_FAMILY_LABEL: dict[MediaType, str] = {"vision": "image", "audio": "audio", "video": "video"}
-_FAMILY_SKILL: dict[MediaType, str] = {
+_FAMILY_LABEL: dict[MediaType, str] = {
+    "vision": "image",
+    "audio": "audio",
+    "video": "video",
+    "pdf": "PDF",
+}
+_FAMILY_SKILL: dict[MediaType, str | None] = {
     "vision": "image_to_text",
     "audio": "speech_to_text",
     "video": "video_text_to_text",
+    "pdf": None,
 }
 
 
@@ -102,7 +109,23 @@ def _image_block(image_path: str | Path) -> dict[str, Any] | None:
         payload = path.read_bytes()
     except OSError:
         return None
-    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    if MEDIA_PIPELINE.get("image_compress_enabled", True):
+        try:
+            prepared = prepare_for_model(
+                payload,
+                max_dimension=int(MEDIA_PIPELINE["image_compress_max_dimension"]),
+                max_tokens=int(MEDIA_PIPELINE["image_compress_max_tokens"]),
+                token_ratio=float(MEDIA_PIPELINE["image_compress_token_ratio"]),
+            )
+        except ImageTooLargeError:
+            return None
+        except Exception:  # noqa: BLE001 — not decodable; keep the old passthrough
+            mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        else:
+            payload = prepared.data
+            mime = prepared.media_type
+    else:
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
     encoded = base64.b64encode(payload).decode("ascii")
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
 
@@ -127,6 +150,11 @@ def _tool_placeholder(family: MediaType, item_type: str, model_key: str) -> str:
     label = _FAMILY_LABEL[family]
     skill = _FAMILY_SKILL[family]
     model_label = model_key if model_key.strip("/") else "the current model"
+    if skill is None:
+        return (
+            f"[Tool media] The attached {label} ({item_type}) was stripped from this request "
+            f"because {model_label} does not support {label} content."
+        )
     return (
         f"[Tool media] The attached {label} ({item_type}) was stripped from this request "
         f"because {model_label} does not support {label} content. The file path is named "

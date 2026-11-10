@@ -251,15 +251,15 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 `before_agent` 在最后一条 `HumanMessage` 的内容为多模态列表时对其进行处理：
 
 - **文本**条目直接透传（至多一条）。
-- **`image_url`**：远程 `http(s)` URL 原样保留；`data:` / base64 载荷被解码并用 PIL 保存到 `src/<session_id>/mutil_temp/<时间戳><扩展名>`（扩展名通过 `_IMAGE_MAGIC` 魔数推断），同时在 `media/` 中保留一份持久副本。
+- **`image_url`**：远程 `http(s)` URL 原样保留；`data:` / base64 载荷被解码并用 PIL 保存到 `src/<session_id>/mutil_temp/<时间戳><扩展名>`（扩展名通过 `_IMAGE_MAGIC` 魔数推断），同时在 `artifacts/` 中保留一份内容寻址持久副本（SHA-256 命名、相同字节去重；`artifact_store_enabled=false` 时保留旧的 `media/` 副本）。
 - **`audio_url`**：下载到临时文件（30 秒超时）。**`audio_bytes` / `video_url` / `video_bytes`**：以同样方式解码保存（`_AUDIO_MAGIC` / `_VIDEO_MAGIC`）。
 - **体积上限**：写盘之前先校验体积，超过 `max_media_bytes`（20 MiB，与 DeepAgents CLI 硬限一致）的载荷被跳过——不写盘、绝不记录为路径、以 warning 记录实际字节数，提示写入 `MediaPaths.skipped`，由处理器作为 `[Uploaded media] ... was skipped` 一行追加到消息文本块。远程 URL 优先按 `Content-Length` 判定，缺失时按带上限的流式读取判定，因此错误响应头也无法导致超限写盘。恰好等于上限的载荷允许通过；0 字节 / 非法载荷沿用既有失败路径。
 - `main_llm_native_multimodal` 配置决定路径：`"true"` 为主模型保留原始媒体块，`"false"` 始终走技能路径，`"auto"` 则按媒体类型（vision / audio / video）查询进程级能力缓存（键为 `"{provider}/{model_name}"`）逐类决策。
 - `"auto"` 下：**全部**在途类型均缓存为 `"unsupported"` 时整条消息走技能路径；**混合**消息（部分类型 supported、部分 unsupported）保留原生块，由每请求擦洗层只替换不支持的那些块；未探测（`"auto"`）的类型保留其块并写入本回合的原生尝试标志（`_multimodal_trying_native` / `_multimodal_native_model`）。`"[Uploaded media]"` 指令块仅在技能路径下追加，告知模型使用 `skill_view` 工具 `image_to_text` / `speech_to_text` / `video_text_to_text` 查看文件。
 - 当模型拒绝被分类为 `multimodal_not_supported` 时，`LLMRetryMiddleware` 会把消息中实际出现的媒体类型写为 `"unsupported"`，并把请求改写为技能路径；同进程内的后续会话与回合因此不再尝试原生。拒绝会记在**实际服务的**模型上：当该调用已被重绑到回退候选时，`LLMRetryMiddleware` 会在写缓存前把 `_multimodal_native_model` 改写为该候选（见其小节）。
 - **静默降级检测**（`main_llm_silent_degradation_detection`，默认开启）：当原生尝试**成功**、但回复自述无法感知媒体或要求用户描述附件时，`LLMRetryMiddleware` 会把请求中出现的媒体类型针对实际服务的模型缓存为 `"unsupported"`，后续回合不再做注定失败的原生探测。检测器（`media_pipeline/degradation.py::detect_media_blindness`）是对 EN/ZH/JA/KO 的高精度正则：只有媒体词出现在失明/描述短语附近时才判定。原先"回复从未提及媒体内容"的字面启发式被刻意弃用——有能力的模型可以完全不使用媒体关键词就描述图片，而误判会让较慢的技能路径永久生效。
-- 持久化路径写入 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`，随后由 MesMemory 写库供历史渲染使用。
-- **更早的** `HumanMessage` 中的 `image_url` 块会被剥离，避免过期的 base64 大对象滞留在上下文中；但仅在确实存在此类块时才执行剥离（廉价前置检查会跳过无可剥离内容的消息），且仅当剥离后的文本非空时才写回。
+- 持久化图片引用（`sherry-artifact://<session_id>/<name>`，或旧版 media 路径）与音视频路径写入 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`，随后由 MesMemory 写库供历史渲染使用。
+- `image_url` 块不再每轮剥离：`wrap_model_call` 按 `history_media_budget_bytes`（75 MiB）对历史媒体做从新到旧的预算投影，保护最新真实用户消息，只替换放不下的块。检查点永不被改写。
 
 `wrap_model_call` / `awrap_model_call` 在**每次模型请求**上运行（仅 `"auto"` 模式），擦洗请求副本：族被缓存为 `"unsupported"` 的媒体块被替换为文本占位符，其中写明被剥离的媒体、其落盘路径与对应技能（`image_to_text` / `speech_to_text` / `video_text_to_text`）；supported 与未探测的块原样保留。改写使用 `request.override(messages=...)`——state、checkpointer 与 MesMemory 均不被触碰——无需擦洗时原样返回原请求对象。能力查询使用环境主模型 key（`get_model_key()`）：本层包在 `LLMRetryMiddleware` 之外，无法感知在链路更内层重绑的粘性回退候选；该候选的拒绝仍由 `multimodal_not_supported` → 技能路径改写覆盖——写缓存前它会把实际服务的候选写进 `_multimodal_native_model`。
 

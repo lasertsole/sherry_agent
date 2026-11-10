@@ -156,7 +156,8 @@ describe('WebSearchPanel.vue (integration, store + env mocked)', () => {
 
     await wrapper.find('[data-test="web-search-backend-searxng"]').trigger('click');
 
-    expect(storeApi.select).toHaveBeenCalledWith('sid-1', 'searxng');
+    // The row is debounced (v-debounce:click.300): the write lands after the quiet window.
+    await vi.waitFor(() => expect(storeApi.select).toHaveBeenCalledWith('sid-1', 'searxng'));
   });
 
   it('offers "follow the default" only when a choice is set, clearing it to null', async () => {
@@ -164,7 +165,7 @@ describe('WebSearchPanel.vue (integration, store + env mocked)', () => {
 
     await wrapper.find('[data-test="web-search-follow-default"]').trigger('click');
 
-    expect(storeApi.select).toHaveBeenCalledWith('sid-1', null);
+    await vi.waitFor(() => expect(storeApi.select).toHaveBeenCalledWith('sid-1', null));
   });
 
   it('annotates a downgrade and a parked choice', async () => {

@@ -2,7 +2,7 @@
   <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
        tab label and the close button), so the mount drives the load. The add/edit
        form stays a dialog: it is an overlay, not part of the panel body. -->
-  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4 min-w-[280px]">
     <!-- Body scrolls on its own; the action row below stays pinned to the
          panel's bottom-right (the dialog it opens is unaffected). -->
     <div class="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto">
@@ -273,7 +273,7 @@
             icon="pi pi-check"
             :loading="saving"
             :disabled="!canSaveEdit"
-            @click="handleSaveJob" />
+            v-debounce:click.500="handleSaveJob" />
         </div>
       </template>
     </Dialog>

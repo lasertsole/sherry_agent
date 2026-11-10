@@ -76,10 +76,10 @@ describe('HeartbeatPanel global switch', () => {
     const wrapper = await mountPanel();
 
     await switchEl(wrapper).trigger('click');
-    await flushPromises();
+    // The switch is debounced (v-debounce:click.300).
+    await vi.waitFor(() => expect(bridge.setHeartbeatEnabled).toHaveBeenCalledWith(false));
+    await vi.waitFor(() => expect(switchEl(wrapper).classes()).not.toContain('on'));
 
-    expect(bridge.setHeartbeatEnabled).toHaveBeenCalledWith(false);
-    expect(switchEl(wrapper).classes()).not.toContain('on');
     expect(wrapper.text()).toContain('已关闭');
   });
 
@@ -88,7 +88,7 @@ describe('HeartbeatPanel global switch', () => {
     const wrapper = await mountPanel();
 
     await switchEl(wrapper).trigger('click');
-    await flushPromises();
+    await vi.waitFor(() => expect(bridge.setHeartbeatEnabled).toHaveBeenCalled());
 
     // Back to the state the backend still has.
     expect(switchEl(wrapper).classes()).toContain('on');

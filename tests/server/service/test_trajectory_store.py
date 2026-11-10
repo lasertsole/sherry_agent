@@ -277,3 +277,69 @@ async def test_an_oversized_payload_pushes_a_truncation_flag(store, monkeypatch)
         hooks.unregister(hooks.TRAJECTORY_EVENT_PUSH)
 
     assert pushed and pushed[0]["payload"] == {"truncated": True}
+
+
+# ---------------------------------------------------------------------------
+# Shared-file contention: busy_timeout is per connection, WAL is per file
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_connection_sets_the_busy_timeout(store):
+    """The pragma is not inherited from the file: each open must set it."""
+    await store.append("s1", "t1", "turn_start", {"type": "turn_start"}, seq=0)
+
+    async with ts._connect(store._db_path) as db:
+        async with db.execute("PRAGMA busy_timeout") as cursor:
+            row = await cursor.fetchone()
+
+    assert row is not None
+    assert int(row[0]) == ts._BUSY_TIMEOUT_MS
+
+
+@pytest.mark.asyncio
+async def test_the_database_is_in_wal_mode(store):
+    await store.append("s1", "t1", "turn_start", {"type": "turn_start"}, seq=0)
+
+    async with ts._connect(store._db_path) as db:
+        async with db.execute("PRAGMA journal_mode") as cursor:
+            row = await cursor.fetchone()
+
+    assert row is not None
+    assert str(row[0]).lower() == "wal"
+
+
+@pytest.mark.asyncio
+async def test_a_contended_write_waits_instead_of_being_dropped(store):
+    """A writer that meets another writer must wait for the lock.
+
+    With a zero busy timeout the INSERT raises SQLITE_BUSY immediately and
+    ``append`` swallows it (fail-open), so the event would silently vanish —
+    exactly the defect the per-connection pragma fixes.
+    """
+    import aiosqlite
+
+    await store.append("s1", "t0", "turn_start", {"type": "turn_start"}, seq=0)
+
+    blocker = await aiosqlite.connect(store._db_path)
+    try:
+        await blocker.execute("PRAGMA busy_timeout = 0")
+        await blocker.execute("BEGIN IMMEDIATE")
+        task = asyncio.create_task(
+            store.append(
+                "s1",
+                "t1",
+                "tool_start",
+                {"type": "tool_start", "content": "read_file", "tool_id": "c1"},
+                seq=1,
+            )
+        )
+        await asyncio.sleep(0.2)
+        assert not task.done(), "the writer gave up instead of waiting for the lock"
+        await blocker.commit()
+    finally:
+        await blocker.close()
+
+    await task
+    events = await store.read("s1", turn_id="t1")
+    assert [event["kind"] for event in events] == ["tool_start"]

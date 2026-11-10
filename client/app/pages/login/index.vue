@@ -9,7 +9,8 @@
 
       <form
         class="flex flex-col gap-3"
-        @submit.prevent="submit">
+        v-debounce:submit.500="submit"
+        @submit.prevent>
         <div class="flex flex-col gap-1">
           <label
             class="text-xs text-gray-500 dark:text-gray-400"

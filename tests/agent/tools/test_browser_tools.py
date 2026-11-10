@@ -45,16 +45,23 @@ class _FakeManager:
     def __init__(self) -> None:
         self.screenshot_path = "/tmp/shot.png"
         self.last_page: str | None = None
+        self.navigations: list[tuple[str, str | None]] = []
+        self.snapshot_url = "https://fake.test"
+        self.screenshot_url: str | None = None
+        self.evaluate_url = "https://fake.test"
+        self.navigate_url: str | None = None
 
     async def navigate(self, session_id, url, page=None):
         self.last_page = page
-        return {"page": "p1", "url": url, "title": "T", "session_id": session_id, "loaded": True}
+        self.navigations.append((url, page))
+        final = self.navigate_url or url
+        return {"page": "p1", "url": final, "title": "T", "session_id": session_id, "loaded": True}
 
     async def snapshot(self, session_id, page=None, *, max_elements=None):
         self.last_page = page
         return {
             "page": "p1",
-            "url": "https://fake.test",
+            "url": self.snapshot_url,
             "title": "Fake",
             "session_id": session_id,
             "text": "hello world",
@@ -94,6 +101,7 @@ class _FakeManager:
         self.last_page = page_id
         return {
             "page": "p1",
+            "url": self.screenshot_url,
             "path": self.screenshot_path,
             "bytes": 10,
             "width": 4,
@@ -103,7 +111,7 @@ class _FakeManager:
 
     async def evaluate(self, session_id, expression, page_id=None):
         self.last_page = page_id
-        return {"page": "p1", "result": "42", "truncated": False}
+        return {"page": "p1", "url": self.evaluate_url, "result": "42", "truncated": False}
 
 
 class _FailingManager(_FakeManager):
@@ -114,6 +122,16 @@ class _FailingManager(_FakeManager):
 
     async def click(self, session_id, **kwargs):
         raise self.error
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """The SSRF guard resolves DNS per call; the fakes use *.test hosts.
+
+    H5 behavior itself is covered by ``TestNavigationSsrfGuard`` below, which
+    overrides this stub where the real verdict matters.
+    """
+    monkeypatch.setattr("pub.func.validator.public_url.is_public_url", lambda url: True)
 
 
 @pytest.fixture
@@ -366,3 +384,143 @@ def test_toolnode_injects_the_session_into_the_merged_browser(enabled, bridge):
 
     assert "page p1" in result["messages"][-1].content
     assert "https://injected.test" in result["messages"][-1].content
+
+
+# ------------------------------------------------- H5: SSRF guard (2026-11-09)
+
+
+class TestNavigationSsrfGuard:
+    """``browser_navigate`` mirrors the ``web_fetch`` SSRF contract."""
+
+    def test_localhost_is_refused_without_optin(self, enabled, bridge, monkeypatch):
+        monkeypatch.delenv("SHERRY_BROWSER_ALLOW_LOCAL", raising=False)
+
+        result = asyncio.run(
+            _invoke(_tool("browser"), action="navigate", url="http://127.0.0.1:8080/")
+        )
+
+        assert result.startswith("Error:")
+        assert "opt-in" in result
+        assert bridge.navigations == [], "a refused URL must never reach the manager"
+
+    def test_cloud_metadata_address_is_refused(self, enabled, bridge, monkeypatch):
+        monkeypatch.delenv("SHERRY_BROWSER_ALLOW_LOCAL", raising=False)
+
+        result = asyncio.run(
+            _invoke(
+                _tool("browser"),
+                action="navigate",
+                url="http://169.254.169.254/latest/meta-data/",
+            )
+        )
+
+        assert result.startswith("Error:")
+        assert "local/private" in result
+        assert bridge.navigations == []
+
+    def test_local_optin_allows_the_configured_target(self, enabled, bridge, monkeypatch):
+        monkeypatch.setenv("SHERRY_BROWSER_ALLOW_LOCAL", "1")
+
+        result = asyncio.run(
+            _invoke(_tool("browser"), action="navigate", url="http://127.0.0.1:8080/app")
+        )
+
+        assert "page p1" in result
+        assert bridge.navigations == [("http://127.0.0.1:8080/app", None)]
+
+    def test_non_http_scheme_is_refused(self, enabled, bridge):
+        result = asyncio.run(_invoke(_tool("browser"), action="navigate", url="file:///etc/passwd"))
+
+        assert result.startswith("Error:")
+        assert "http" in result
+        assert bridge.navigations == []
+
+    def test_unresolvable_or_private_hostname_is_refused(self, enabled, bridge, monkeypatch):
+        monkeypatch.setattr("pub.func.validator.public_url.is_public_url", lambda url: False)
+
+        result = asyncio.run(
+            _invoke(_tool("browser"), action="navigate", url="https://rebind.test/")
+        )
+
+        assert result.startswith("Error:")
+        assert "not a public URL" in result
+        assert bridge.navigations == []
+
+    def test_redirect_to_a_blocked_target_parks_the_page(self, enabled, bridge):
+        bridge.navigate_url = "http://127.0.0.1:8080/admin"
+
+        result = asyncio.run(
+            _invoke(_tool("browser"), action="navigate", url="https://public.test/")
+        )
+
+        assert "redirected to a blocked URL" in result
+        assert ("about:blank", None) in bridge.navigations
+
+    def test_redirect_to_a_failed_load_interstitial_is_not_blocked(self, enabled, bridge):
+        # Chrome's own error page carries no fetched content; it must not be
+        # reported as an SSRF block.
+        bridge.navigate_url = "chrome-error://chromewebdata/"
+
+        result = asyncio.run(
+            _invoke(_tool("browser"), action="navigate", url="https://public.test/")
+        )
+
+        assert "page p1" in result
+        assert "blocked" not in result
+
+    def test_redirect_to_a_file_scheme_parks_the_page(self, enabled, bridge):
+        bridge.navigate_url = "file:///etc/passwd"
+
+        result = asyncio.run(
+            _invoke(_tool("browser"), action="navigate", url="https://public.test/")
+        )
+
+        assert "redirected to a blocked URL" in result
+        assert ("about:blank", None) in bridge.navigations
+
+
+class TestReadPathSsrfGuard:
+    """Snapshot / screenshot / evaluate are the exfiltration points."""
+
+    def test_snapshot_withholds_content_from_a_blocked_page(self, enabled, bridge):
+        bridge.snapshot_url = "http://127.0.0.1:8080/internal"
+
+        result = asyncio.run(_invoke(_tool("browser"), action="snapshot"))
+
+        assert "content withheld" in result
+        assert "hello world" not in result
+        assert ("about:blank", None) in bridge.navigations
+
+    def test_snapshot_of_about_blank_still_works(self, enabled, bridge):
+        bridge.snapshot_url = "about:blank"
+
+        result = asyncio.run(_invoke(_tool("browser"), action="snapshot"))
+
+        assert "hello world" in result
+
+    def test_screenshot_withholds_pixels_from_a_blocked_page(self, enabled, bridge, tmp_path):
+        capture = tmp_path / "secret.png"
+        capture.write_bytes(b"\x89PNG\r\n\x1a\nbody")
+        bridge.screenshot_path = str(capture)
+        bridge.screenshot_url = "file:///etc/secrets.png"
+
+        result = asyncio.run(_invoke(_tool("browser"), action="screenshot"))
+
+        assert isinstance(result, str)
+        assert "content withheld" in result
+        assert str(capture) not in result
+        assert not capture.exists(), "a withheld capture must be deleted from disk"
+        assert ("about:blank", None) in bridge.navigations
+
+    def test_evaluate_withholds_results_from_a_blocked_page(self, monkeypatch, bridge):
+        monkeypatch.setitem(BROWSER_AGENT, "enabled", 1)
+        monkeypatch.setitem(BROWSER_AGENT, "allow_evaluate", 1)
+        bridge.evaluate_url = "http://127.0.0.1:8080/private"
+
+        result = asyncio.run(
+            _invoke(_tool("browser_evaluate"), expression="document.body.innerText")
+        )
+
+        assert "content withheld" in result
+        assert "42" not in result
+        assert ("about:blank", None) in bridge.navigations

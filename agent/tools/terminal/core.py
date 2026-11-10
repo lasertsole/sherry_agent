@@ -2,15 +2,15 @@
 
 Sandbox-hardening additions (see wiki/sandbox/README.md):
 
-- ``SafeShellInput``: the LLM-facing schema (``commands`` + the ``sandbox`` /
-  ``run_in_background`` / ``timeout`` additions), wired as ``args_schema`` so
-  the model sees exactly this surface (frozen by
-  ``tests/agent/tools/test_tool_schema_goldens.py``).
-- ``sandbox`` parameter on ``_run``/``_arun`` (langchain injects schema fields
-  by name), with scope/policy guards: ``caller_scope != "main"`` +
-  ``sandbox=False`` is denied outright; ``SANDBOX_POLICY=required`` +
-  ``sandbox=False`` is denied (main-session human approval wiring arrives
-  with — no ``interrupt()`` here).
+- ``SafeShellInput``: the LLM-facing schema (``commands`` /
+  ``run_in_background`` / ``timeout``), wired as ``args_schema`` so the model
+  sees exactly this surface (frozen by
+  ``tests/agent/tools/test_tool_schema_goldens.py``). The ``sandbox`` switch is
+  deliberately NOT model-visible: the server owns the policy, so an LLM cannot
+  turn its own sandbox off. ``_run``/``_arun`` keep the internal ``sandbox``
+  parameter for server-side callers, guarded by scope/policy checks
+  (``caller_scope != "main"`` + ``sandbox=False`` denied outright;
+  ``SANDBOX_POLICY=required`` + ``sandbox=False`` denied).
 - ``DANGEROUS_COMMAND_REGEX``: regex blacklist over the ``" && "``-joined
   command string (re.IGNORECASE), replacing the old element-exact substring
   set that let ``["echo ok", "rm -rf /"]`` slip through. On hit a
@@ -281,14 +281,6 @@ class SafeShellInput(BaseModel):
             warnings.warn("The shell tool has no safeguards by default. Use at your own risk.")
         return values
 
-    sandbox: bool = Field(
-        default=True,
-        description=(
-            "Sandbox toggle. When false, runs in the raw env-scrubbed environment; "
-            "the main session will request human approval, while subagents/background "
-            "agents are denied"
-        ),
-    )
     run_in_background: bool = Field(
         default=False,
         description=(

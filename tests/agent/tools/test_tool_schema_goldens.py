@@ -7,6 +7,10 @@ migration is that the LLM sees EXACTLY the same tool surface as before: same
 names, same argument names, same descriptions, same required set. These
 goldens were captured from the pre-migration build (see the migration commit)
 and must not change without a deliberate, user-visible decision.
+
+The one deliberate change since then: the ``sandbox`` argument was REMOVED from
+the terminal and python_repl schemas (2026-11-09 audit H2) — the sandbox is
+server-owned policy, and an LLM must not be able to switch it off itself.
 """
 
 from __future__ import annotations
@@ -66,16 +70,6 @@ TERMINAL_SCHEMA = {
             "title": "Run In Background",
             "type": "boolean",
         },
-        "sandbox": {
-            "default": True,
-            "description": (
-                "Sandbox toggle. When false, runs in the raw env-scrubbed environment; "
-                "the main session will request human approval, while "
-                "subagents/background agents are denied"
-            ),
-            "title": "Sandbox",
-            "type": "boolean",
-        },
         "timeout": {
             "anyOf": [{"type": "integer"}, {"type": "null"}],
             "default": None,
@@ -97,10 +91,7 @@ PYTHON_REPL_SCHEMA = {
         "python command. If you want to see the output of a value, you should print it "
         "out with `print(...)`."
     ),
-    "properties": {
-        "query": {"title": "Query", "type": "string"},
-        "sandbox": {"default": True, "title": "Sandbox", "type": "boolean"},
-    },
+    "properties": {"query": {"title": "Query", "type": "string"}},
     "required": ["query"],
     "title": "python_repl",
     "type": "object",

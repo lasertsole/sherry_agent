@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
+from ._shared import (
+    MAIN_ONLY,
+    BrowserPageInput,
+    BrowserTool,
+    guard,
+    resolve_manager,
+    withhold_blocked_page,
+)
 
 
 class EvaluateInput(BrowserPageInput):
@@ -28,6 +35,11 @@ class BrowserEvaluateTool(BrowserTool):
         async def operation() -> str:
             manager = resolve_manager()
             outcome = await manager.evaluate(session_id, expression, page)
+            withheld = await withhold_blocked_page(
+                manager, session_id, page, str(outcome.get("url") or "")
+            )
+            if withheld is not None:
+                return withheld
             tail = " (truncated)" if outcome.get("truncated") else ""
             return f"page {outcome.get('page')} result{tail}: {outcome.get('result')}"
 

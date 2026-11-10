@@ -44,7 +44,7 @@ from langchain_core.messages import AIMessage
 from loguru import logger
 
 from config.features import LLM_RETRY, MEDIA_PIPELINE
-from agent.middlewares.llm_capability_cache import set_capability
+from agent.middlewares.llm_capability_cache import get_capability, set_capability
 from agent.middlewares.media_pipeline.degradation import detect_media_blindness
 from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
@@ -750,16 +750,18 @@ class LLMRetryMiddleware(AgentMiddleware):
     def _evaluate_silent_degradation(
         self, request: ModelRequest, session_id: str, result: Any
     ) -> None:
-        """Cache a native attempt the model silently ignored.
+        """Learn from a successful native attempt.
 
         Runs on the success path of a call that started as an auto-mode native
-        attempt. The model did not error, so the only evidence is its own text:
-        when it self-reports media blindness, every media family present in the
-        request is cached ``unsupported`` against the model that actually served
-        the call. The per-turn native flag is cleared either way — the attempt
-        is over, so a stale flag must never authorize a fallback for a later
-        call in the same turn. Precision-first: a false positive would silently
-        degrade a capable model (see ``detect_media_blindness``).
+        attempt. When the model self-reports media blindness, every present
+        family is cached ``unsupported`` against the model that actually served
+        the call (precision-first: a false positive would silently degrade a
+        capable model — see ``detect_media_blindness``). Otherwise a non-empty
+        success is positive evidence: every still-``auto`` family is cached
+        ``supported`` so an undeclared model is probed once, not every turn.
+        A declared catalogue entry is never written by either branch. The
+        per-turn native flag is cleared either way — the attempt is over, so a
+        stale flag must never authorize a fallback for a later call.
         """
         from agent.middlewares.media_pipeline.core import (
             MULTIMODAL_NATIVE_MODEL_KEY,
@@ -769,21 +771,38 @@ class LLMRetryMiddleware(AgentMiddleware):
         if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
             return
         state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False)
-        if not MEDIA_PIPELINE.get("main_llm_silent_degradation_detection", True):
-            return
-        if not detect_media_blindness(_extract_ai_text(result)):
-            return
 
         media_types = _detect_media_types_in_messages(getattr(request, "messages", None) or [])
         model_key = state_register_mem.get_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, "")
         if not media_types or not model_key:
             return
         provider, _, model = model_key.partition("/")
+
+        detection_on = MEDIA_PIPELINE.get("main_llm_silent_degradation_detection", True)
+        blind = detection_on and detect_media_blindness(_extract_ai_text(result))
+        if blind:
+            for media in media_types:
+                set_capability(provider, model, media, "unsupported")
+            logger.warning(
+                "Native model {}/{} ignored the media (self-reported blindness; media: {}) "
+                "— caching them as unsupported",
+                provider,
+                model,
+                ", ".join(sorted(media_types)),
+            )
+            return
+
+        # A successful native call with no rejection is positive evidence. Only
+        # undeclared/unprobed families are written; the catalog (and a user
+        # override) always wins. An empty completion is not evidence — the
+        # caller retries it, so leave the family unprobed.
+        if self._is_empty_completion(result):
+            return
         for media in media_types:
-            set_capability(provider, model, media, "unsupported")
-        logger.warning(
-            "Native model {}/{} ignored the media (self-reported blindness; media: {}) "
-            "— caching them as unsupported",
+            if get_capability(provider, model, media) == "auto":
+                set_capability(provider, model, media, "supported")
+        logger.debug(
+            "Native model {}/{} accepted the media (media: {}) — caching them as supported",
             provider,
             model,
             ", ".join(sorted(media_types)),

@@ -19,10 +19,12 @@ have no Tavily key at all), which also keeps the pair from ping-ponging.
 import os
 import asyncio
 import random
+from collections.abc import Callable
 from typing import Annotated
 from loguru import logger
 from config.path import load_env
 from config.features import TOOLS_TIMEOUTS
+from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
@@ -202,165 +204,173 @@ async def _search_via_searxng(query: str, session_id: str) -> str:
     return text
 
 
-def build_web_search_tool():
-    """Build the ``web_search`` tool over whichever backends are configured."""
+def _finalize_web_search_tool(tool: BaseTool) -> BaseTool:
+    """Pin the one shipped identity every backend branch must share.
+
+    ONE tool name across every branch. ``TavilySearch``'s own default is
+    ``tavily_search``, which would make the backend swap visible as a DIFFERENT
+    tool (the per-session tool selection, the Tools tab and the model's tool
+    list all know this tool as ``web_search``). Transcripts persisted before
+    this rename may still carry ``tavily_search`` — the untrusted-output /
+    redaction sets keep covering that name.
+
+    The keyed branch used to return BEFORE the metadata assignment, so the
+    shipped Tavily tool carried neither flag; the finalizer runs for every
+    branch, which is what keeps the three products interchangeable.
+    """
+    tool.name = "web_search"
+    tool.handle_tool_error = True
+    tool.metadata = {"idempotent": False}
+    return tool
+
+
+def _build_tavily_web_search_tool() -> BaseTool:
+    """Tavily: bounded retry + timeout, plus the SearXNG fallback."""
+    from langchain_tavily import TavilySearch
+
+    # The input model lives in the submodule (the package re-exports only the
+    # tool classes). Importing it loudly is deliberate: a rename upstream must
+    # break here, not silently drop the injected session id again.
+    from langchain_tavily.tavily_search import TavilySearchInput
+
+    class WebSearchInput(TavilySearchInput):
+        """Tavily's own input schema plus the repo's injected session id.
+
+        ``TavilySearch`` is a class-based tool, so it never sees the graph
+        state: without this field the tool has NO session id in production
+        (LangGraph injects ``InjectedState`` fields only, and the model never
+        fills one in), which silently disabled the per-session backend choice
+        AND the downgrade notice. Injecting through the input schema is the
+        same mechanism the ``@tool``-decorated session-aware tools use, and
+        ``tool_call_schema`` strips injected arguments, so the model's view is
+        unchanged.
+        """
+
+        session_id: Annotated[str, InjectedState("session_id")] = ""
+
+    class BackendAwareTavilySearch(TavilySearch):
+        """Tavily with a bounded retry, a timeout, and a SearXNG fallback.
+
+        A SUBCLASS, not a monkeypatched private method: patching
+        ``base._arun`` silently dropped the wrapper (and the metadata below)
+        the day the library renamed or stopped dispatching through that name.
+        Overriding it here fails loudly instead — the override is checked by
+        the type system.
+        """
+
+        async def _arun(self, *args, **kwargs):
+            query = str(kwargs.get("query") or (args[0] if args else ""))
+            session_id = str(kwargs.get("session_id") or "")
+            preferred = resolve_preferred_backend(session_id)
+            if preferred == "searxng":
+                # The session (or the config) picked the self-hosted backend:
+                # it is the primary, and its failures are reported as its own.
+                logger.info("web_search: SearXNG preferred (session={})", session_id or "-")
+                return await _search_via_searxng(query, session_id)
+
+            call_kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in ("query", "max_results", "search_depth", "topic", "include_domains")
+            }
+            if not call_kwargs.get("query") and args:
+                call_kwargs["query"] = args[0]
+
+            last_error = None
+            fallback_reason = "tavily_error"
+            for attempt in range(RETRY_MAX_ATTEMPTS):
+                try:
+                    result = await asyncio.wait_for(
+                        super()._arun(**call_kwargs),
+                        timeout=WEB_SEARCH_TIMEOUT,
+                    )
+                    failure = _error_envelope(result)
+                except TimeoutError:
+                    last_error = f"timed out after {WEB_SEARCH_TIMEOUT}s"
+                    fallback_reason = "tavily_timeout"
+                    logger.warning(
+                        "web_search attempt {}/{} {}",
+                        attempt + 1,
+                        RETRY_MAX_ATTEMPTS,
+                        last_error,
+                    )
+                except Exception as exc:  # noqa: BLE001 — classified below
+                    last_error = str(exc)
+                    fallback_reason = _failure_reason(exc)
+                    if fallback_reason == "tavily_auth_failed":
+                        logger.warning("Tavily rejected the API key; falling back without retries")
+                        break
+                    logger.warning(
+                        "web_search attempt {}/{} failed: {}",
+                        attempt + 1,
+                        RETRY_MAX_ATTEMPTS,
+                        last_error,
+                    )
+                else:
+                    if failure is None:
+                        return result
+                    # An error ENVELOPE is a failure too (see `_error_envelope`):
+                    # classify and retry it exactly like a raise, or a dead key
+                    # would be answered with the envelope and never fall back.
+                    last_error = str(failure)
+                    fallback_reason = _failure_reason(failure)
+                    if fallback_reason == "tavily_auth_failed":
+                        logger.warning("Tavily rejected the API key; falling back without retries")
+                        break
+                    logger.warning(
+                        "web_search attempt {}/{} failed: {}",
+                        attempt + 1,
+                        RETRY_MAX_ATTEMPTS,
+                        last_error,
+                    )
+
+                if attempt < RETRY_MAX_ATTEMPTS - 1:
+                    delay = _backoff_delay(attempt)
+                    logger.debug("web_search retry in {:.1f}s", delay)
+                    await asyncio.sleep(delay)
+
+            if searxng_available():
+                logger.info("web_search: falling back to SearXNG ({})", fallback_reason)
+                await push_search_fallback(session_id, "searxng", fallback_reason)
+                return await _search_via_searxng(query, session_id)
+
+            return (
+                f"Web search failed after {RETRY_MAX_ATTEMPTS} attempts. "
+                f"Last error: {last_error}. "
+                "Please try a more specific query or answer without web search."
+            )
+
+    base = BackendAwareTavilySearch(
+        tavily_api_key=_tavily_api_key(), max_results=5, args_schema=WebSearchInput
+    )
+    return _finalize_web_search_tool(base)
+
+
+def _build_searxng_web_search_tool() -> BaseTool:
+    """SearXNG: the self-hosted backend, with its failure breaker."""
     from langchain_core.tools import tool
 
-    if tavily_available():
-        from langchain_tavily import TavilySearch
+    class SearxngWebSearchInput(WebSearchSchema):
+        """The plain schema plus the injected session id.
 
-        # The input model lives in the submodule (the package re-exports only the
-        # tool classes). Importing it loudly is deliberate: a rename upstream must
-        # break here, not silently drop the injected session id again.
-        from langchain_tavily.tavily_search import TavilySearchInput
+        Same mechanism as the keyed branch: the breaker notices need a session
+        to push to, and ``tool_call_schema`` strips injected fields so the
+        model's view is unchanged.
+        """
 
-        class WebSearchInput(TavilySearchInput):
-            """Tavily's own input schema plus the repo's injected session id.
+        session_id: Annotated[str, InjectedState("session_id")] = ""
 
-            ``TavilySearch`` is a class-based tool, so it never sees the graph
-            state: without this field the tool has NO session id in production
-            (LangGraph injects ``InjectedState`` fields only, and the model never
-            fills one in), which silently disabled the per-session backend choice
-            AND the downgrade notice. Injecting through the input schema is the
-            same mechanism the ``@tool``-decorated session-aware tools use, and
-            ``tool_call_schema`` strips injected arguments, so the model's view is
-            unchanged.
-            """
+    @tool("web_search", args_schema=SearxngWebSearchInput)
+    async def web_search(query: str, session_id: str = "") -> str:
+        """Search the web for information through the configured SearXNG instance."""
+        return await _search_via_searxng(query, session_id)
 
-            session_id: Annotated[str, InjectedState("session_id")] = ""
+    return _finalize_web_search_tool(web_search)
 
-        class BackendAwareTavilySearch(TavilySearch):
-            """Tavily with a bounded retry, a timeout, and a SearXNG fallback.
 
-            A SUBCLASS, not a monkeypatched private method: patching
-            ``base._arun`` silently dropped the wrapper (and the metadata below)
-            the day the library renamed or stopped dispatching through that name.
-            Overriding it here fails loudly instead — the override is checked by
-            the type system.
-            """
-
-            async def _arun(self, *args, **kwargs):
-                query = str(kwargs.get("query") or (args[0] if args else ""))
-                session_id = str(kwargs.get("session_id") or "")
-                preferred = resolve_preferred_backend(session_id)
-                if preferred == "searxng":
-                    # The session (or the config) picked the self-hosted backend:
-                    # it is the primary, and its failures are reported as its own.
-                    logger.info("web_search: SearXNG preferred (session={})", session_id or "-")
-                    return await _search_via_searxng(query, session_id)
-
-                call_kwargs = {
-                    key: value
-                    for key, value in kwargs.items()
-                    if key in ("query", "max_results", "search_depth", "topic", "include_domains")
-                }
-                if not call_kwargs.get("query") and args:
-                    call_kwargs["query"] = args[0]
-
-                last_error = None
-                fallback_reason = "tavily_error"
-                for attempt in range(RETRY_MAX_ATTEMPTS):
-                    try:
-                        result = await asyncio.wait_for(
-                            super()._arun(**call_kwargs),
-                            timeout=WEB_SEARCH_TIMEOUT,
-                        )
-                        failure = _error_envelope(result)
-                    except TimeoutError:
-                        last_error = f"timed out after {WEB_SEARCH_TIMEOUT}s"
-                        fallback_reason = "tavily_timeout"
-                        logger.warning(
-                            "web_search attempt {}/{} {}",
-                            attempt + 1,
-                            RETRY_MAX_ATTEMPTS,
-                            last_error,
-                        )
-                    except Exception as exc:  # noqa: BLE001 — classified below
-                        last_error = str(exc)
-                        fallback_reason = _failure_reason(exc)
-                        if fallback_reason == "tavily_auth_failed":
-                            logger.warning(
-                                "Tavily rejected the API key; falling back without retries"
-                            )
-                            break
-                        logger.warning(
-                            "web_search attempt {}/{} failed: {}",
-                            attempt + 1,
-                            RETRY_MAX_ATTEMPTS,
-                            last_error,
-                        )
-                    else:
-                        if failure is None:
-                            return result
-                        # An error ENVELOPE is a failure too (see `_error_envelope`):
-                        # classify and retry it exactly like a raise, or a dead key
-                        # would be answered with the envelope and never fall back.
-                        last_error = str(failure)
-                        fallback_reason = _failure_reason(failure)
-                        if fallback_reason == "tavily_auth_failed":
-                            logger.warning(
-                                "Tavily rejected the API key; falling back without retries"
-                            )
-                            break
-                        logger.warning(
-                            "web_search attempt {}/{} failed: {}",
-                            attempt + 1,
-                            RETRY_MAX_ATTEMPTS,
-                            last_error,
-                        )
-
-                    if attempt < RETRY_MAX_ATTEMPTS - 1:
-                        delay = _backoff_delay(attempt)
-                        logger.debug("web_search retry in {:.1f}s", delay)
-                        await asyncio.sleep(delay)
-
-                if searxng_available():
-                    logger.info("web_search: falling back to SearXNG ({})", fallback_reason)
-                    await push_search_fallback(session_id, "searxng", fallback_reason)
-                    return await _search_via_searxng(query, session_id)
-
-                return (
-                    f"Web search failed after {RETRY_MAX_ATTEMPTS} attempts. "
-                    f"Last error: {last_error}. "
-                    "Please try a more specific query or answer without web search."
-                )
-
-        base = BackendAwareTavilySearch(
-            tavily_api_key=_tavily_api_key(), max_results=5, args_schema=WebSearchInput
-        )
-        # ONE tool name across every branch. TavilySearch's own default is
-        # ``tavily_search``, which would make the backend swap visible as a
-        # DIFFERENT tool (the per-session tool selection, the Tools tab and the
-        # model's tool list all know this tool as ``web_search``). Transcripts
-        # persisted before this rename may still carry ``tavily_search`` — the
-        # untrusted-output / redaction sets keep covering that name.
-        base.name = "web_search"
-        # The keyed branch used to return BEFORE the metadata assignment below,
-        # so the shipped Tavily tool carried neither flag.
-        base.handle_tool_error = True
-        base.metadata = {"idempotent": False}
-        return base
-
-    elif searxng_available():
-
-        class SearxngWebSearchInput(WebSearchSchema):
-            """The plain schema plus the injected session id.
-
-            Same mechanism as the keyed branch above: the breaker notices need a
-            session to push to, and ``tool_call_schema`` strips injected fields
-            so the model's view is unchanged.
-            """
-
-            session_id: Annotated[str, InjectedState("session_id")] = ""
-
-        @tool("web_search", args_schema=SearxngWebSearchInput)
-        async def web_search(query: str, session_id: str = "") -> str:
-            """Search the web for information through the configured SearXNG instance."""
-            return await _search_via_searxng(query, session_id)
-
-        web_search.handle_tool_error = True
-        web_search.metadata = {"idempotent": False}
-        return web_search
+def _build_unavailable_web_search_tool() -> BaseTool:
+    """Neither backend configured: a real tool whose answer says how to fix it."""
+    from langchain_core.tools import tool
 
     @tool("web_search", args_schema=WebSearchSchema)
     def web_search(query: str) -> str:
@@ -371,6 +381,23 @@ def build_web_search_tool():
             "answer without web search."
         )
 
-    web_search.handle_tool_error = True
-    web_search.metadata = {"idempotent": False}
-    return web_search
+    return _finalize_web_search_tool(web_search)
+
+
+#: Backend selection table: the FIRST entry whose availability probe returns
+#: true builds the tool (Tavily wins when both are configured, matching the
+#: historical if/elif order). Probes are lambdas — not direct function
+#: references — so they resolve the module globals at CALL time, which keeps
+#: ``tavily_available`` / ``searxng_available`` monkeypatchable per test.
+_WEB_SEARCH_BUILDERS: tuple[tuple[Callable[[], bool], Callable[[], BaseTool]], ...] = (
+    (lambda: tavily_available(), _build_tavily_web_search_tool),
+    (lambda: searxng_available(), _build_searxng_web_search_tool),
+)
+
+
+def build_web_search_tool() -> BaseTool:
+    """Build the ``web_search`` tool over whichever backends are configured."""
+    for available, builder in _WEB_SEARCH_BUILDERS:
+        if available():
+            return builder()
+    return _build_unavailable_web_search_tool()

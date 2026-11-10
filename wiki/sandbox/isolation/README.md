@@ -101,7 +101,7 @@ Matching the **joined** string matters: an element-exact blacklist would let `["
 
 ### 4. Human-in-the-loop bypass approval
 
-A `sandbox=False` call is a deliberate bypass request. In a **main-session** graph running the `HumanInTheLoop` middleware and not in YOLO mode, `after_model` parks the call on a LangGraph `interrupt()`:
+A server-side `sandbox=False` call is a deliberate bypass request; the model cannot send one (the `terminal` / `python_repl` schemas carry no `sandbox` field — 2026-11-09 audit H2), so this path serves internal/diagnostic callers. In a **main-session** graph running the `HumanInTheLoop` middleware and not in YOLO mode, `after_model` parks the call on a LangGraph `interrupt()`:
 
 - The interrupt payload shows the full tool call (tool name, args, command or query) with `allowed_decisions: ["approve", "reject"]`.
 - **Approve** (`{"decisions": [{"type": "approve"}]}`): the call executes with its original args. The env is still scrubbed, cwd is still clamped to the project root, and the dangerous-command regex still applies. An approved bypass skips smart approval and the dangerous-command re-prompt, because the human approved this exact call; the hardline blocklist still ran first.

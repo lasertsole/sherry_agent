@@ -82,7 +82,7 @@ const primevueStubs = {
   Divider: { name: 'Divider', template: '<div class="dv"></div>' },
   Button: { name: 'Button', props: ['label'], template: '<button class="btn">{{ label }}</button>' },
   Slider: { name: 'Slider', props: ['modelValue'], template: '<div class="sl"></div>' },
-  ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' },
+  Skeleton: { name: 'Skeleton', template: '<div class="sk"></div>' },
   TokenBudgetPanel: { name: 'TokenBudgetPanel', props: ['sessionId'], template: '<div class="tbp"></div>' }
 };
 

@@ -66,6 +66,11 @@ llama.cpp `create_embedding`，远程走 OpenAI 兼容的 `/embeddings` 端点�
 MiB）或一个支持稀疏的端点；两者都不适合桌面打包。因此稀有 ID/版本串的召回
 仍然开放，SQLite FTS5/BM25 是记录在案的未来选项，而不是双路稀疏索引。
 
+本地/远程的选择是构造期 Strategy：`build_embed_model` 注入
+`_LocalEmbeddingBackend` 或 `_RemoteEmbeddingBackend`，门面只做委托
+（2026-11-09 审计 M2）。重排器使用同一形态（`models/reranker_model` 里的
+`_LocalGgufBackend` / `_CloudBackend`，审计 H5）。
+
 ## 实测效果
 
 `evals/graph_rag/multihop_bench.py` 索引一个带近似名干扰项的 20 文档语料

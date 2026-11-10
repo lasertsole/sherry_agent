@@ -1,5 +1,7 @@
 """Tool for spawning sub-agents, invoked by the LLM to delegate tasks."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 
@@ -110,26 +112,12 @@ class SessionsSpawnTool(BaseTool):
     def _run(self, **kwargs) -> str:
         raise NotImplementedError("Use async version")
 
-    async def _arun(
-        self,
-        task: str,
-        task_name: str | None = None,
-        label: str | None = None,
-        agent_id: str = "main",
-        thinking: str | None = None,
-        cleanup: str = "delete",
-        attachments: list[AttachmentSchema] | None = None,
-        goal_max_turns: int | None = None,
-        functional_role: str | None = None,
-        extra_tools: list[str] | None = None,
-        cwd: str | None = None,
-        isolation: bool = False,
-        run_timeout_seconds: float | None = None,
-        output_schema: dict | None = None,
-    ) -> str:
-        # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
-        # if a tool instance leaked into its toolset. Returns through the tool's
-        # existing string contract instead of raising.
+    async def _arun(self, **kwargs: Any) -> str:
+        # The schema already validated and defaulted every field; a **kwargs
+        # signature keeps this method from mirroring it field-for-field (L7).
+        # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn
+        # even if a tool instance leaked into its toolset. Returns through the
+        # tool's existing string contract instead of raising.
         allowed, reason = check_spawn_permission(self.session_id)
         if not allowed:
             return f"Subagent spawn denied: status=forbidden, error={reason}"
@@ -140,6 +128,7 @@ class SessionsSpawnTool(BaseTool):
         requester_session_key = resolve_caller_session_key(self.session_id)
 
         # Flatten AttachmentSchema list to dict list for internal APIs
+        attachments = kwargs.get("attachments")
         attach_dicts = None
         if attachments:
             attach_dicts = [
@@ -153,22 +142,22 @@ class SessionsSpawnTool(BaseTool):
             ]
 
         result = await spawn_subagent_direct(
-            task=task,
+            task=kwargs["task"],
             requester_session_key=requester_session_key,
-            agent_id=agent_id,
-            task_name=task_name,
-            label=label,
-            thinking=thinking,
-            cleanup=cleanup,
+            agent_id=kwargs.get("agent_id", "main"),
+            task_name=kwargs.get("task_name"),
+            label=kwargs.get("label"),
+            thinking=kwargs.get("thinking"),
+            cleanup=kwargs.get("cleanup", "delete"),
             attachments=attach_dicts,
-            cwd=cwd,
+            cwd=kwargs.get("cwd"),
             expects_completion_message=True,
-            goal_max_turns=goal_max_turns,
-            functional_role_hint=functional_role,
-            extra_tools=extra_tools,
-            isolation=isolation,
-            run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
-            output_schema=output_schema,
+            goal_max_turns=kwargs.get("goal_max_turns"),
+            functional_role_hint=kwargs.get("functional_role"),
+            extra_tools=kwargs.get("extra_tools"),
+            isolation=kwargs.get("isolation", False),
+            run_timeout_seconds=clamp_run_timeout_seconds(kwargs.get("run_timeout_seconds")),
+            output_schema=kwargs.get("output_schema"),
         )
 
         parts = [f"Subagent spawned: status={result.status}"]

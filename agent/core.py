@@ -14,8 +14,6 @@ from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from config.features import (
-    DELEGATION_PRESSURE,
-    ITERATION_BUDGET,
     LLM_CLIENT_DEFAULTS,
     SUMMARIZATION,
     assert_max_output_valid,
@@ -24,51 +22,15 @@ from config.features import (
 from agent.tools import memory_store, build_main_tools
 from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
 from .middlewares import (
-    Summarization,
-    ToolCallNormalize,
-    PathGuard,
-    MultimodalProcessor,
-    system_prompt_injection,
-    ToolGuardrails,
-    ToolResourceLockMiddleware,
-    ContextEvictionMiddleware,
-    IterationBudget,
-    TokenBudget,
-    HeartbeatStaleness,
-    OutputRepetitionGuard,
-    MaxTokensBoostMiddleware,
-    MessagePersistenceMiddleware,
-    LLMRetryMiddleware,
-    InputSafetyFilter,
-    LLMModerationMiddleware,
-    OutputSafetyFilter,
-    InvalidToolCallRepairMiddleware,
     validate_required_middleware,
     _MAIN_REQUIRED,
 )
-from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
-from .middlewares.user_hooks import UserHooksMiddleware
-from .middlewares.tool_result_enrichment import ToolResultEnrichmentMiddleware
-from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
-from .middlewares.plan_mode_gate import PlanModeToolGate
-from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
-from .middlewares.reminder_catalog import DynamicReminderMiddleware
-from .middlewares.task_intent import TaskIntentMiddleware
-from .middlewares.thinking_control import ThinkingControlMiddleware
-from .middlewares.summarization.thresholds import resolve_compression_threshold
-from .middlewares.todo_continuation import PlanContinuationEnforcer
+from .middlewares.specs import MainBuildContext, build_main_middlewares
 from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
 from agent.skill_write_provider import register_skill_write_provider
 from .wrapper.context_limit import ContextLimitGuardWrapper
 from .safe_tool_node import install_safe_tool_node
-
-
-def _main_max_output() -> int | None:
-    """The configured main output cap, resolved lazily (model import is heavy)."""
-    from models.LLMs.main_llm import get_max_output_tokens
-
-    return get_max_output_tokens()
 
 
 # One process-level patch, before any create_agent() call. It is a no-op when
@@ -300,148 +262,26 @@ def _build_middlewares(
     compression_trigger_ratio: float,
     temperature: float | None = None,
 ) -> list[Any]:
-    """Assemble the middleware pipeline.
+    """Assemble the main-agent middleware pipeline.
 
     ORDER IS A CONTRACT: LangChain executes ``after_model`` nodes in reverse
     registration order and ``wrap_model_call`` layers outermost-first, so the
-    positions below are load-bearing. Pinned by
+    positions declared in :mod:`agent.middlewares.specs` are load-bearing.
+    This function is the thin runtime seam over that table: it resolves the
+    per-build inputs into a :class:`MainBuildContext` and lets
+    :func:`build_main_middlewares` instantiate the chain. Pinned by
     ``tests/agent/core/test_middleware_order.py``.
     """
-    drain_middleware = SubagentCompletionDrainMiddleware()
-    middlewares = [
-        # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
-        # after_agent hooks execute in REVERSE list order, so the first
-        # registered middleware sits closest to END (README "Hook
-        # Ordering Semantics"). It must observe the truly finished turn.
-        PlanContinuationEnforcer(),
-        # @dynamic_prompt middleware INSTANCE (not a constructor):
-        # the outermost wrap_model_call layer in this list.
-        system_prompt_injection,
-        # Working-directory change notice: a before_agent node, so it runs once
-        # per turn and BEFORE every before_model hook. The notice is spliced in
-        # FRONT of the turn's human message (the one other middlewares rely on
-        # staying last: TaskIntent's steering check, ContextEviction's
-        # trailing-message tag), which is why it sits next to the prompt
-        # injection — the prompt renders the CURRENT root, this layer explains
-        # why it moved.
-        WorkspaceNoticeMiddleware(),
-        # Plan mode's read-only tool whitelist (the per-session tool selection
-        # was removed — every built-in tool is always available — but an open
-        # plan must still keep the model away from write tools).
-        PlanModeToolGate(),
-        MultimodalProcessor(),
-        IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
-        # Session-level token cap (optional; absent = pass-through) and usage
-        # accumulation. Inside IterationBudget's wrapping so the per-turn
-        # iteration cap is decided first, and outside the model call so the
-        # terminal message short-circuits before any provider request.
-        TokenBudget(),
-        # Outermost wrap_tool_call: append the injector queue's output to the
-        # final ToolMessage (after ToolGuardrails has appended its warning or
-        # produced a blocked error). Error results are passed through untouched.
-        ToolResultEnrichmentMiddleware(),
-        ToolGuardrails(),
-        # Process-wide shell/code and per-session HITL resource locks. Registered
-        # after ToolGuardrails (inner to it), so a blocked call never waits on a
-        # lock it will not execute.
-        ToolResourceLockMiddleware(),
-        # User-configurable lifecycle hooks (sherry.jsonc ``hooks``): registered
-        # directly after the guardrails so a guardrail-BLOCKED call never reaches
-        # a hook, and OUTER relative to the approval/persistence layers so
-        # PostToolUse observes the result the model will see. Read-only events
-        # (PostToolUse / PostToolUseFailure / Stop); OFF unless the config enables
-        # it, and a no-op without hooks.
-        UserHooksMiddleware(),
-        # Registered directly after ToolGuardrails, i.e. OUTER relative
-        # to PathGuard / HITL / MessagePersistenceMiddleware in the wrap
-        # chain (first registered = outermost). MessagePersistence
-        # stays innermost and persists the RAW tool result the moment
-        # the handler returns; this layer then swaps in the preview on
-        # the way out, so graph state only ever holds the preview while
-        # MesMemory keeps the full text, read_file results are
-        # sliced instead of offloaded, and its before_model hook
-        # tags an oversized trailing HumanMessage after
-        # MultimodalProcessor's before_agent ran (before_agent chain
-        # precedes the model loop), and wrap_model_call truncates only
-        # the model view — state keeps the full human text.
-        ContextEvictionMiddleware(),
-        ToolCallNormalize(),
-        PathGuard(),
-        drain_middleware,
-        TaskIntentMiddleware(),
-        # Live-view reminders (<system-reminder> tags): the todo list, plan mode,
-        # TaskFlow board, boulder, continuity, working directory and knowledge
-        # index, injected from live state once per turn. Registered AFTER
-        # TaskIntent (whose dedup needs the user message still last when it
-        # runs) and BEFORE everything that does not mind a trailing reminder.
-        DynamicReminderMiddleware(),
-        # Live-stream safety (OFF by default): keyword rules on the user's
-        # message refuse a blocked turn WITHOUT a provider call, and an optional
-        # LLM review (only with a configured review model) runs inside them, so
-        # a keyword block never pays for the review.
-        InputSafetyFilter(),
-        LLMModerationMiddleware(),
-        OutputRepetitionGuard(),
-        MaxTokensBoostMiddleware(),
-        # Per-session thinking toggle: swaps the per-call model for the
-        # thinking on/off variant when the client flag is set (inner relative
-        # to MaxTokensBoost — the boost retries must re-apply on top of the
-        # swapped model, and this layer only ever changes request.model).
-        ThinkingControlMiddleware(temperature=temperature),
-        HeartbeatStaleness(),
-        HumanInTheLoop(HITLConfig()),
-        # Registered directly after HITL so its after_model node runs
-        # FIRST — langchain 1.3.9 chains after_model nodes in reverse
-        # registration order (factory.py: model -> after_model[-1] ->
-        # ... -> after_model[0]). The AI message is therefore persisted
-        # before HITL strips denied tool calls or raises a
-        # GraphInterrupt, and no other hook can skip the flush.
-        MessagePersistenceMiddleware(),
-        # Between HITL and Summarization: INNER relative to
-        # MaxTokensBoost (it only sees genuine truncations) and OUTER
-        # relative to Summarization (the retry loop wraps the
-        # T4/T5 overflow recovery from outside).
-        LLMRetryMiddleware(fallback_chain=fallback_chain),
-        # Output-side keyword rules (OFF by default). after_model hooks run in
-        # reverse registration order, so registering it AFTER
-        # MessagePersistence makes it run FIRST — the replaced text is what
-        # the transcript row stores.
-        OutputSafetyFilter(),
-        Summarization(
-            need_update_system_prompt=True,
-            # COMPRESSION_LLM_* when configured, else the auxiliary instance
-            # (the fallback lives in the factory; a bare `_build_middlewares`
-            # call in tests can still pass None and keep the old wiring).
-            model=compression_llm or auxiliary_llm,
+    return build_main_middlewares(
+        MainBuildContext(
+            fallback_chain=fallback_chain,
+            auxiliary_llm=auxiliary_llm,
+            compression_llm=compression_llm,
             main_llm_context_window=main_llm_context_window,
-            trigger=[
-                (
-                    "tokens",
-                    resolve_compression_threshold(
-                        main_llm_context_window,
-                        _main_max_output(),
-                        fallback_ratio=compression_trigger_ratio,
-                    )[0],
-                )
-            ],
-        ),
-        # Registered LAST = the innermost wrap_model_call layer, closest to the
-        # raw model call: a tool call whose arguments fail JSON parsing
-        # ("invalid tool call") is repaired BEFORE the agent loop routes on
-        # ``tool_calls``, so state / checkpointer / MessagePersistence all see
-        # the repaired message and a turn no longer ends silently on a syntax
-        # miss; the resend stage re-calls the model for the unrepairable case.
-        # Every outer retry (LLMRetry / Summarization T4-T5) re-enters this
-        # layer, and it is idempotent (a strict parse succeeds untouched).
-        InvalidToolCallRepairMiddleware(),
-    ]
-    if os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1" or DELEGATION_PRESSURE["enabled"]:
-        # Main-agent-only soft pressure: warn/block the configured read/write
-        # tools until the turn ends. Children never receive this middleware.
-        from .middlewares.delegation_pressure import DelegationPressureGate
-
-        middlewares.append(DelegationPressureGate())
-    return middlewares
+            compression_trigger_ratio=compression_trigger_ratio,
+            temperature=temperature,
+        )
+    )
 
 
 async def _build_graph(

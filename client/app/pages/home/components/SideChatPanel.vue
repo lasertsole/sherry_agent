@@ -217,8 +217,10 @@
           v-model:draft="draft"
           :sending="isSending"
           :session-id="sessionId"
+          :media-uploads="false"
           @send="handleSend"
-          @stop="handleStop" />
+          @stop="handleStop"
+          @upload-file="openFilesInSidebar" />
       </div>
     </template>
   </div>
@@ -268,6 +270,9 @@ const chatInputBoxRef = useTemplateRef<{
 
 const sessionId = ref(sid);
 const agentSocket = acquireAgentSocket(sid);
+/** Left-column state: the side panel has no attachment pipeline, so its file
+ *  entry keeps the old "reveal the workspace file tree" route. */
+const ui = useUiStore();
 const { characterInfo, ensureSessionCharacter, loadSessionHistory } = useSessionLifecycle(chatMessages);
 const drafts = useDraftPersistence(chatMessages);
 const chunks = useStreamChunks(chatMessages, drafts.allocateTempId, drafts);
@@ -322,6 +327,17 @@ function selectionRoleLabel(role?: string): string {
 function onSelectionAdd(payload: SelectionPayload): void {
   if (!payload?.text) return;
   chatInputBoxRef.value?.addQuoteChip?.(payload.text, selectionRoleLabel(payload.sourceRole));
+}
+
+/**
+ * The + menu's file entry on this surface: the side chat sends text only, so
+ * instead of a dead attachment emit it opens the workspace file tree (the
+ * pre-merge behavior) where the user can drag or `@`-reference a file.
+ */
+function openFilesInSidebar(): void {
+  ui.sidebarBody = 'files';
+  ui.filesSectionOpen = true;
+  ui.sidebarCollapsed = false;
 }
 
 // ── HITL view state (the question tool and the plan approval) ──

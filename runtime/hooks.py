@@ -74,6 +74,14 @@ Hook contracts (registration sites must provide these signatures; the
     (``server/trigger/ws/trajectory_ws.py``). Called by the ledger after its
     upsert, fail-open; missing hook -> the event is only in the database.
 
+``WS_PUSH`` (``"ws_push"``)
+    ``async (session_id: str, payload: dict) -> None``: fan a frame out to the
+    session's live sockets (``runtime.session.ws_push.broadcast_to_session``).
+    Registered by the server assembly; agent-side producers (the subagent load
+    gate) resolve it instead of importing the concrete module (audit L8).
+    Missing hook -> callers use the direct runtime import as a compatibility
+    fallback, so a bare unit test still sees its patched function.
+
 ``GET_CURRENT_TURN_ID`` (``"get_current_turn_id"``)
     ``() -> str``: the active conversation turn's uuid (the
     ``current_turn_id`` contextvar set by ``turn_scope``). The message store
@@ -99,6 +107,7 @@ __all__ = [
     "SCAN_SKILL",
     "TRAJECTORY_EVENT_PUSH",
     "WS_ACTIVE_TASKS",
+    "WS_PUSH",
     "clear",
     "register",
     "resolve",
@@ -110,6 +119,7 @@ GET_CURRENT_TURN_ID = "get_current_turn_id"
 MAYBE_TRIGGER_AUTO_TURN = "maybe_trigger_auto_turn"
 AUTO_TURN_MODULE = "auto_turn_module"
 WS_ACTIVE_TASKS = "ws_active_tasks"
+WS_PUSH = "ws_push"
 SCAN_SKILL = "scan_skill"
 BUILD_REJECT_MESSAGE = "build_reject_message"
 BUILD_BACKGROUND_AGENT_TOOLS = "build_background_agent_tools"

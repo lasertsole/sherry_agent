@@ -48,8 +48,10 @@ const stubs = {
   Button: {
     props: ['label', 'variant', 'icon', 'iconPos'],
     emits: ['click'],
-    template:
-      '<button class="trigger" @click="$emit(\'click\', $event)">{{ label }}<i v-if="icon" :class="icon"></i></button>'
+    // The control renders its glyph + label + caret as DEFAULT SLOT content (so
+    // the hover surface covers the whole control), not through PrimeVue's
+    // label/icon props; the stub has to render the slot to mirror that.
+    template: '<button class="trigger" @click="$emit(\'click\', $event)"><slot /></button>'
   },
   Menu: MenuStub
 };

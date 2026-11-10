@@ -30,7 +30,12 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path, monkeypatch):
+    # Fresh file AND a fresh once-per-process schema state (the legacy-file
+    # test below must observe the additive-column convergence itself).
+    monkeypatch.setattr(side_chat_store, "_DB_DIR", tmp_path)
     monkeypatch.setattr(side_chat_store, "_DB_PATH", tmp_path / "side_chats.db")
+    monkeypatch.setattr(side_chat_store, "_sync_tables_ready", False)
+    monkeypatch.setattr(side_chat_store, "_schema_ready", False)
 
 
 def _turn(question: str, answer: str) -> list:

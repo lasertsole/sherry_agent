@@ -10,6 +10,8 @@ grows the dict without bound: the dev database held ~7.8k runs.
 import threading
 from collections import OrderedDict
 
+from loguru import logger
+
 from config.features import SUBAGENT_INFRA
 from ..types.registry import ExecutionStatus, SubagentRunRecord
 from . import spawn_budget
@@ -47,6 +49,33 @@ def _evict_overflow() -> None:
             del _runs[run_id]
 
 
+def _became_terminal(previous: SubagentRunRecord | None, current: SubagentRunRecord) -> bool:
+    """Whether this mutation is the run's transition INTO the terminal state."""
+    if current.execution.status != ExecutionStatus.TERMINAL:
+        return False
+    return previous is None or previous.execution.status != ExecutionStatus.TERMINAL
+
+
+def _publish_settled(run: SubagentRunRecord) -> None:
+    """Tell completion waiters that this run is settled (fail-open).
+
+    This module is the single in-memory write door every terminal transition
+    passes through, so publication lives here rather than at each call site.
+    A publication failure must never break a registry write: a missed
+    notification only costs a waiter its bounded fallback poll.
+    """
+    try:
+        from .completion_events import notify_run_terminal
+
+        notify_run_terminal(run.child_session_key, run.run_id)
+    except Exception:  # noqa: BLE001 - notification is a hint, never a hard dependency
+        logger.debug(
+            "registry memory: settle notification failed for child={}",
+            run.child_session_key,
+            exc_info=True,
+        )
+
+
 def get(run_id: str) -> SubagentRunRecord | None:
     """Return the run record for the given ID, or None if not found."""
     with _lock:
@@ -56,9 +85,13 @@ def get(run_id: str) -> SubagentRunRecord | None:
 def set_run(run: SubagentRunRecord) -> None:
     """Insert or replace a run record keyed by run_id."""
     with _lock:
+        previous = _runs.get(run.run_id)
         _runs[run.run_id] = run
         _runs.move_to_end(run.run_id)
         _evict_overflow()
+        settle_now = _became_terminal(previous, run)
+    if settle_now:
+        _publish_settled(run)
 
 
 def set_run_durable(run: SubagentRunRecord) -> None:
@@ -79,7 +112,12 @@ def set_run_durable(run: SubagentRunRecord) -> None:
 def delete(run_id: str) -> SubagentRunRecord | None:
     """Remove and return a run record, or None if it did not exist."""
     with _lock:
-        return _runs.pop(run_id, None)
+        run = _runs.pop(run_id, None)
+    if run is not None:
+        # ``wait_all`` treats an absent run as settled, so a deletion settles
+        # every waiter that was still waiting on this child key.
+        _publish_settled(run)
+    return run
 
 
 def update(run_id: str, **kwargs) -> SubagentRunRecord | None:
@@ -90,7 +128,10 @@ def update(run_id: str, **kwargs) -> SubagentRunRecord | None:
             return None
         updated = run.model_copy(update=kwargs)
         _runs[run_id] = updated
-        return updated
+        settle_now = _became_terminal(run, updated)
+    if settle_now:
+        _publish_settled(updated)
+    return updated
 
 
 def snapshot() -> dict[str, SubagentRunRecord]:
@@ -117,10 +158,19 @@ def clear() -> None:
     The per-session spawn budget is derived from what the registry has seen, so
     it is wiped with it — a cleared in-memory view carries no history to budget
     against (and test suites that clear between cases get a fresh budget).
+    Every subscriber is woken: with no records, every run reads as settled.
     """
     with _lock:
+        had_runs = bool(_runs)
         _runs.clear()
     spawn_budget.clear_all()
+    if had_runs:
+        try:
+            from .completion_events import notify_all_terminal
+
+            notify_all_terminal()
+        except Exception:  # noqa: BLE001 - notification is a hint
+            logger.debug("registry memory: clear notification failed", exc_info=True)
 
 
 def find_by_child_session_key(child_session_key: str) -> SubagentRunRecord | None:

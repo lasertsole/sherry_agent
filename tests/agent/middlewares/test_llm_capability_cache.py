@@ -21,48 +21,48 @@ def _clean_cache():
 
 class TestReadWrite:
     def test_unknown_pair_returns_auto(self):
-        assert cache.get_capability("openai", "gpt-4o", "vision") == "auto"
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "auto"
 
     @pytest.mark.parametrize("media", ["vision", "audio", "video"])
     def test_roundtrip_per_media_type(self, media):
-        cache.set_capability("openai", "gpt-4o", media, "supported")
-        assert cache.get_capability("openai", "gpt-4o", media) == "supported"
+        cache.set_capability("probe-provider", "probe-model", media, "supported")
+        assert cache.get_capability("probe-provider", "probe-model", media) == "supported"
 
-        cache.set_capability("openai", "gpt-4o", media, "unsupported")
-        assert cache.get_capability("openai", "gpt-4o", media) == "unsupported"
+        cache.set_capability("probe-provider", "probe-model", media, "unsupported")
+        assert cache.get_capability("probe-provider", "probe-model", media) == "unsupported"
 
     def test_media_types_are_independent(self):
-        cache.set_capability("openai", "gpt-4o", "vision", "supported")
-        cache.set_capability("openai", "gpt-4o", "video", "unsupported")
+        cache.set_capability("probe-provider", "probe-model", "vision", "supported")
+        cache.set_capability("probe-provider", "probe-model", "video", "unsupported")
 
-        assert cache.get_capability("openai", "gpt-4o", "vision") == "supported"
-        assert cache.get_capability("openai", "gpt-4o", "video") == "unsupported"
-        assert cache.get_capability("openai", "gpt-4o", "audio") == "auto"
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "supported"
+        assert cache.get_capability("probe-provider", "probe-model", "video") == "unsupported"
+        assert cache.get_capability("probe-provider", "probe-model", "audio") == "auto"
 
 
 class TestModelKeyIsolation:
     def test_same_model_name_under_different_providers_is_isolated(self):
-        cache.set_capability("deepseek", "shared-name", "vision", "unsupported")
+        cache.set_capability("probe-deepseek", "shared-name", "vision", "unsupported")
 
-        assert cache.get_capability("deepseek", "shared-name", "vision") == "unsupported"
-        assert cache.get_capability("openai", "shared-name", "vision") == "auto"
+        assert cache.get_capability("probe-deepseek", "shared-name", "vision") == "unsupported"
+        assert cache.get_capability("probe-provider", "shared-name", "vision") == "auto"
 
     def test_same_provider_with_different_models_is_isolated(self):
-        cache.set_capability("openai", "gpt-4o", "vision", "supported")
+        cache.set_capability("probe-provider", "probe-model", "vision", "supported")
 
-        assert cache.get_capability("openai", "gpt-4o", "vision") == "supported"
-        assert cache.get_capability("openai", "gpt-4o-mini", "vision") == "auto"
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "supported"
+        assert cache.get_capability("probe-provider", "probe-other", "vision") == "auto"
 
 
 class TestResetCache:
     def test_reset_clears_every_model_and_media(self):
-        cache.set_capability("openai", "gpt-4o", "vision", "supported")
-        cache.set_capability("deepseek", "deepseek-chat", "video", "unsupported")
+        cache.set_capability("probe-provider", "probe-model", "vision", "supported")
+        cache.set_capability("probe-deepseek", "probe-chat", "video", "unsupported")
 
         cache.reset_cache()
 
-        assert cache.get_capability("openai", "gpt-4o", "vision") == "auto"
-        assert cache.get_capability("deepseek", "deepseek-chat", "video") == "auto"
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "auto"
+        assert cache.get_capability("probe-deepseek", "probe-chat", "video") == "auto"
 
 
 class TestGetModelKey:
@@ -109,7 +109,7 @@ class TestConcurrency:
 
         def writer(value: str) -> None:
             for _ in range(200):
-                cache.set_capability("openai", "gpt-4o", "vision", value)
+                cache.set_capability("probe-provider", "probe-model", "vision", value)
 
         threads = [threading.Thread(target=writer, args=(value,)) for value in values]
         for thread in threads:
@@ -118,26 +118,26 @@ class TestConcurrency:
             thread.join(timeout=30)
 
         assert all(not thread.is_alive() for thread in threads)
-        assert cache.get_capability("openai", "gpt-4o", "vision") in values
+        assert cache.get_capability("probe-provider", "probe-model", "vision") in values
 
 
 class TestProcessScope:
     def test_state_is_shared_within_the_process(self):
-        cache.set_capability("openai", "gpt-4o", "vision", "supported")
+        cache.set_capability("probe-provider", "probe-model", "vision", "supported")
 
-        assert cache.get_capability("openai", "gpt-4o", "vision") == "supported"
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "supported"
         cache.reset_cache()
-        assert cache.get_capability("openai", "gpt-4o", "vision") == "auto"
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "auto"
 
     def test_state_does_not_leak_across_processes(self):
-        cache.set_capability("openai", "gpt-4o", "vision", "supported")
+        cache.set_capability("probe-provider", "probe-model", "vision", "supported")
         module_path = Path(cache.__file__).resolve()
         code = (
             "import importlib.util, sys\n"
             "spec = importlib.util.spec_from_file_location('probe_cache', sys.argv[1])\n"
             "module = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(module)\n"
-            "print(module.get_capability('openai', 'gpt-4o', 'vision'))\n"
+            "print(module.get_capability('probe-provider', 'probe-model', 'vision'))\n"
         )
 
         completed = subprocess.run(
@@ -149,3 +149,42 @@ class TestProcessScope:
 
         assert completed.returncode == 0, completed.stderr
         assert completed.stdout.strip() == "auto"
+
+
+class TestDeclarativeCatalog:
+    def test_declared_models_are_answered_without_probing(self):
+        assert cache.get_capability("openai", "gpt-4o", "vision") == "supported"
+        assert cache.get_capability("openai", "gpt-4o", "pdf") == "supported"
+        assert cache.get_capability("deepseek", "deepseek-chat", "vision") == "unsupported"
+
+    def test_runtime_probe_cannot_override_a_declared_model(self):
+        cache.set_capability("openai", "gpt-4o", "vision", "unsupported")
+
+        assert cache.get_capability("openai", "gpt-4o", "vision") == "supported"
+
+    def test_pdf_is_a_first_class_media_family(self):
+        cache.set_capability("probe-provider", "probe-tablet", "pdf", "supported")
+
+        assert cache.get_capability("probe-provider", "probe-tablet", "pdf") == "supported"
+
+
+class TestRuntimePersistence:
+    def test_learned_labels_survive_a_cache_reload(self, tmp_path, monkeypatch):
+        path = tmp_path / "model_capabilities_runtime.json"
+        monkeypatch.setattr(cache, "model_capabilities_runtime_path", lambda: path)
+
+        cache.set_capability("probe-provider", "probe-model", "vision", "supported")
+        assert path.is_file()
+
+        cache.reload_runtime_labels()
+
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "supported"
+
+    def test_malformed_runtime_file_is_ignored(self, tmp_path, monkeypatch):
+        path = tmp_path / "model_capabilities_runtime.json"
+        path.write_text("{not json", encoding="utf-8")
+        monkeypatch.setattr(cache, "model_capabilities_runtime_path", lambda: path)
+
+        cache.reload_runtime_labels()
+
+        assert cache.get_capability("probe-provider", "probe-model", "vision") == "auto"

@@ -60,6 +60,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 圧縮が base64 ペイロードを補助要約モデルに渡してはなりません。要約されるプレフィックス（`current_messages[:cutoff]`）を直列化する前に、`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）が**その範囲だけ**のすべてのインライン・メディアブロックを書き換えます:
 
 - `data:` URL / base64 ペイロード（`image_url` / `audio_url` / `video_url`、裸の `base64` フィールド、`audio_bytes` / `video_bytes`、または Anthropic 形式の `source.data`）をデコードし、`SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}` に書き込みます; 拡張子はマジックバイトから `media_handlers._infer_extension` で導出します;
+- artifact ストアがすでに持つペイロード（取り込み時に永続化されたアップロード）は書き直しません: `find_artifact` が内容ハッシュで解決し、ポインタはその artifact ファイルを指すため、圧縮は 2 つ目のコピーを書きません;
 - 同一バイトは一度だけ書き込みます —— 内容ハッシュのファイル名が単一回および複数回の圧縮をまたいで重複を排除します;
 - ブロックはテキストポインタ `[evicted to: <path>]` に置き換わります。`pub/func/message/eviction.py` が出すのと同じマーカーなので、`_collect_evicted_refs` が拾い、`_finalize_summary_doc` がパスを `SummaryDoc.evicted_refs` に運びます（*Evicted References* として描画）;
 - デコードまたは書き込みに失敗したブロックは `<media error="failed_to_offload" />` になります —— メディアの失敗が圧縮を壊すことはありません。

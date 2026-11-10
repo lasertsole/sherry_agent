@@ -197,7 +197,7 @@ class TestSilentDegradationOnSuccess:
         )
         assert state_register_mem.get_state(SID, TRYING_KEY, False) is False
 
-    def test_normal_reply_keeps_cache_auto_and_clears_flag(self):
+    def test_normal_reply_learns_supported_and_clears_flag(self):
         mw = _middleware(max_retries=0)
         _arm_attempt()
 
@@ -206,10 +206,10 @@ class TestSilentDegradationOnSuccess:
             lambda req: AIMessage(content="The image shows an orange cat on a sofa."),
         )
 
-        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "supported"
         assert state_register_mem.get_state(SID, TRYING_KEY, False) is False
 
-    def test_switch_off_skips_cache_but_still_clears_flag(self, monkeypatch):
+    def test_switch_off_skips_blindness_detection_but_learns_support(self, monkeypatch):
         monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_silent_degradation_detection", False)
         mw = _middleware(max_retries=0)
         _arm_attempt()
@@ -219,7 +219,9 @@ class TestSilentDegradationOnSuccess:
             lambda req: AIMessage(content="I cannot see the image you uploaded."),
         )
 
-        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+        # Detection is off, so the self-report is not interpreted as blindness;
+        # the call still succeeded, which is the positive-learning signal.
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "supported"
         assert state_register_mem.get_state(SID, TRYING_KEY, False) is False
 
     def test_without_native_attempt_no_cache_write(self):

@@ -20,11 +20,12 @@ import contextvars
 import json
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 from loguru import logger
 
 from config.features import TRAJECTORY
@@ -110,6 +111,25 @@ _PRUNE_INTERVAL_S = 60.0
 _BUSY_TIMEOUT_MS = 5_000
 
 
+@contextlib.asynccontextmanager
+async def _connect(db_path: Path) -> AsyncIterator[aiosqlite.Connection]:
+    """Open a short-lived connection with the shared-file busy timeout set.
+
+    WAL lives in the database header (``_ensure`` switches it once), but
+    ``busy_timeout`` does NOT: it is per connection and defaults to 0. Every
+    caller in this module is fail-open, so a reader that met the agent's writer
+    and raised ``SQLITE_BUSY`` used to answer an empty list — a silently hollow
+    timeline. Setting the pragma as the FIRST statement of every connection
+    makes contention wait instead of disappear.
+    """
+    db = await aiosqlite.connect(db_path)
+    try:
+        await db.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        yield db
+    finally:
+        await db.close()
+
+
 def _event_id(session_id: str, turn_id: str, kind: str, frame: dict[str, Any]) -> str:
     """Deterministic upsert key: one row per tool call, one per other event kind."""
     if kind in ("tool_start", "tool_end"):
@@ -183,15 +203,11 @@ class TrajectoryStore:
         if self._ready:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        import aiosqlite
 
-        async with aiosqlite.connect(self._db_path) as db:
-            # WAL lives in the database header (set once), busy_timeout does NOT
-            # (per connection, defaults to 0): the trajectory tab reads this file
-            # while the agent writes it, so a reader would otherwise fail with
-            # SQLITE_BUSY instead of waiting.
+        async with _connect(self._db_path) as db:
+            # WAL lives in the database header (set once); busy_timeout does NOT
+            # (per connection, defaults to 0) — _connect sets it on every open.
             await db.execute("PRAGMA journal_mode = WAL")
-            await db.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             for ddl in self._ddls():
                 await db.execute(ddl)
             await db.commit()
@@ -221,9 +237,8 @@ class TrajectoryStore:
         ts = datetime.now().isoformat(timespec="milliseconds")
         try:
             await self._ensure()
-            import aiosqlite
 
-            async with self._lock, aiosqlite.connect(self._db_path) as db:
+            async with self._lock, _connect(self._db_path) as db:
                 # The upsert MERGES tool_end into its tool_start row: a tool call
                 # is one row, not two — args from the start, result/duration from
                 # the end.
@@ -303,9 +318,8 @@ class TrajectoryStore:
             return 0
         try:
             await self._ensure()
-            import aiosqlite
 
-            async with self._lock, aiosqlite.connect(self._db_path) as db:
+            async with self._lock, _connect(self._db_path) as db:
                 # Order by ROWID, not ``MAX(seq)``: the seq column is 0 for
                 # every lifecycle row and never exceeds 0 today, so ordering by
                 # it kept an ARBITRARY set of turns — the retention policy must
@@ -335,9 +349,8 @@ class TrajectoryStore:
         self._last_prune.pop(session_id, None)
         try:
             await self._ensure()
-            import aiosqlite
 
-            async with self._lock, aiosqlite.connect(self._db_path) as db:
+            async with self._lock, _connect(self._db_path) as db:
                 cursor = await db.execute(
                     "DELETE FROM trajectory_events WHERE session_id = ?", (session_id,)
                 )
@@ -355,9 +368,8 @@ class TrajectoryStore:
         """Events ordered by seq (optionally one turn)."""
         try:
             await self._ensure()
-            import aiosqlite
 
-            async with aiosqlite.connect(self._db_path) as db:
+            async with _connect(self._db_path) as db:
                 if turn_id:
                     cursor = await db.execute(
                         "SELECT event_id, turn_id, seq, ts, kind, is_error, summary, payload_json "

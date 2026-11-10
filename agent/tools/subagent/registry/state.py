@@ -5,13 +5,7 @@ import time
 
 from loguru import logger
 
-from ..types.registry import (
-    ExecutionState,
-    ExecutionStatus,
-    RunOutcome,
-    RunOutcomeStatus,
-    SubagentRunRecord,
-)
+from ..types.registry import ExecutionStatus, SubagentRunRecord
 from . import memory
 from . import store_sqlite
 
@@ -28,99 +22,23 @@ _restore_done = False
 
 
 def _finalize_restored_pending(run: SubagentRunRecord) -> SubagentRunRecord:
-    """Terminal shape for a restored PENDING run, mirroring orphan/recovery.py.
-
-    A PENDING run never started, so the lane-waiting task died with the
-    previous process and can never be promoted again. Finalizing at restore
-    time keeps the run visible in queries without letting it trickle through
-    the sweeper's orphan recovery, which announces every leftover run one by
-    one — the restart-time "Error: pending orphaned" console flood.
-    """
-    return run.model_copy(
-        update={
-            "execution": ExecutionState(
-                status=ExecutionStatus.TERMINAL,
-                started_at=None,
-                ended_at=time.monotonic(),
-                outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT, error="pending orphaned"),
-            ),
-            "ended_reason": "pending_orphaned",
-        }
-    )
+    """Terminal shape for a restored PENDING run (delegates to the record)."""
+    return run.finalize_pending_orphan()
 
 
 def _rebase_restored_clock(run: SubagentRunRecord, now: float) -> SubagentRunRecord:
     """Move every persisted monotonic timestamp onto THIS process's clock.
 
-    ``time.monotonic()`` is process-relative: a value written by the previous
-    process is meaningless here (a run that started 60 s before the restart can
-    read as hours old, or as a future time), so each ``now - timestamp`` expiry
-    check silently stops working. Rebasing to the restore point makes staleness
-    and delivery expiry count from the restart — the longest a run can hide is
-    one sweep interval after it. Durations (``accumulated_runtime_ms``) are not
-    clocks and are preserved.
+    The shaping lives on :class:`SubagentRunRecord` (audit M17); this wrapper
+    only supplies the config-derived archive window.
     """
     window = get_config().archive_after_minutes * 60
-
-    def _at(value: float | None) -> float | None:
-        return now if value is not None else None
-
-    return run.model_copy(
-        update={
-            "execution": run.execution.model_copy(
-                update={
-                    "started_at": _at(run.execution.started_at),
-                    "ended_at": _at(run.execution.ended_at),
-                }
-            ),
-            "completion": run.completion.model_copy(
-                update={"captured_at": _at(run.completion.captured_at)}
-            ),
-            "delivery": run.delivery.model_copy(
-                update={
-                    "last_attempt_at": _at(run.delivery.last_attempt_at),
-                    "suspended_at": _at(run.delivery.suspended_at),
-                    "delivered_at": _at(run.delivery.delivered_at),
-                    "announced_at": _at(run.delivery.announced_at),
-                }
-            ),
-            "kill_reconciliation": (
-                run.kill_reconciliation.model_copy(update={"killed_at": now})
-                if run.kill_reconciliation is not None
-                else None
-            ),
-            # A DEADLINE, not a timestamp: rebasing it to "now" would archive
-            # the run on the first sweep. Give it a fresh window instead.
-            "archive_at": now + window if run.archive_at is not None else None,
-            "cleanup_completed_at": _at(run.cleanup_completed_at),
-        }
-    )
+    return run.rebase_clock(now, archive_window_seconds=window)
 
 
 def _mark_restored_running_terminal(run: SubagentRunRecord, now: float) -> SubagentRunRecord:
-    """Terminalize a RUNNING run restored from disk: no task survives a restart.
-
-    Leaving it RUNNING made every reader believe the child was alive — the
-    WAITING-flow sweep never went stale, ``is_live_unended_run`` kept the link,
-    and orphan recovery waited for a staleness threshold that a rebased clock
-    had just reset. The run is reported as a TIMEOUT so its owner can re-dispatch
-    (``pause_reason`` marks the cause); the delivery stays PENDING, which the
-    sweeper's undelivered scan turns into a completion notice.
-    """
-    return run.model_copy(
-        update={
-            "execution": ExecutionState(
-                status=ExecutionStatus.TERMINAL,
-                started_at=run.execution.started_at,
-                ended_at=now,
-                outcome=RunOutcome(
-                    status=RunOutcomeStatus.TIMEOUT, error="interrupted by a process restart"
-                ),
-            ),
-            "pause_reason": "process_restart",
-            "ended_reason": "process_restarted",
-        }
-    )
+    """Terminalize a RUNNING run restored from disk (delegates to the record)."""
+    return run.terminate_on_restart(now)
 
 
 async def persist_runs_to_disk() -> None:

@@ -5,12 +5,17 @@ and ``_excluded_middleware.py::_validate_excluded_middleware_config``),
 simplified for Sherry's hardcoded middleware lists (no ``HarnessProfile`` /
 ``excluded_middleware`` mechanism yet).
 
-Two required sets:
+Two required sets, DERIVED from the single middleware table:
 
 * ``_MAIN_REQUIRED`` — the safety / reliability baseline for the main agent
-  chain assembled by ``agent/core.py::_build_middlewares``.
-* ``_SUBAGENT_REQUIRED`` — the safety baseline for the child-agent chain
-  assembled by ``agent/tools/subagent/spawn/core.py::_build_child_middlewares``.
+  chain, assembled by ``agent/core.py::_build_middlewares`` from
+  :mod:`agent.middlewares.specs`.
+* ``_SUBAGENT_REQUIRED`` — the safety baseline for the child-agent chain,
+  assembled by ``agent/tools/subagent/spawn/child_agent_factory.py::
+  _build_child_middlewares`` from the same table.
+
+The sets are computed from each spec's ``required_in`` flag, so there is no
+second source of truth to drift.
 
 ``validate_required_middleware()`` is called at both assembly points, *before*
 ``create_agent(...)``, so an accidentally removed required middleware fails the
@@ -26,106 +31,23 @@ would create a cycle.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, NamedTuple
+from typing import Any
 
 from loguru import logger
 
-from .context_eviction import ContextEvictionMiddleware
-from .heartbeat_staleness import HeartbeatStaleness
-from .humanInTheLoop import HumanInTheLoop
-from .invalid_tool_call_repair import InvalidToolCallRepairMiddleware
-from .iteration_budget import IterationBudget
-from .llm_retry import LLMRetryMiddleware
-from .max_tokens_boost import MaxTokensBoostMiddleware
-from .message_persistence import MessagePersistenceMiddleware
-from .output_repetition_guard import OutputRepetitionGuard
-from .media_pipeline import MultimodalProcessor
-from .path_guard import PathGuard
-from .workspace_notice import WorkspaceNoticeMiddleware
-from .summarization import Summarization
-from .tool_call_normalize import ToolCallNormalize
-from .tool_guardrails import ToolGuardrails
-from .tool_resource_lock import ToolResourceLockMiddleware
-
-
-class RequiredMiddlewareEntry(NamedTuple):
-    """A required middleware entry — the class plus accepted string aliases.
-
-    Mirrors deepagents' ``(class, aliases)`` tuple pattern: a required entry is
-    satisfied by an exact class match OR by any accepted name (``cls.__name__``
-    plus the optional aliases in ``names``).
-    """
-
-    cls: type
-    names: tuple[str, ...] = ()
-
+from .specs import MAIN, CHILD, RequiredMiddlewareEntry, required_entries
 
 # ---------------------------------------------------------------------------
-# Main-agent required middleware
+# Required middleware sets (derived from agent/middlewares/specs.py)
 # ---------------------------------------------------------------------------
 
-_MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
-    # Tool-call safety guardrails (failure-pathology detection / halt).
-    RequiredMiddlewareEntry(ToolGuardrails, ()),
-    # Process/session resource locks for shell and HITL interaction.
-    RequiredMiddlewareEntry(ToolResourceLockMiddleware, ()),
-    # Human-in-the-loop approval gate for sensitive operations.
-    RequiredMiddlewareEntry(HumanInTheLoop, ()),
-    # Context compaction — without it long sessions exhaust the window.
-    RequiredMiddlewareEntry(Summarization, ()),
-    # Per-turn call budget — without it a runaway loop exhausts tokens.
-    RequiredMiddlewareEntry(IterationBudget, ()),
-    # Message persistence — without it MesMemory history breaks.
-    RequiredMiddlewareEntry(MessagePersistenceMiddleware, ()),
-    # Tool-result / human-message eviction — context-overflow defense.
-    RequiredMiddlewareEntry(ContextEvictionMiddleware, ()),
-    # Path-argument screening for tool calls.
-    RequiredMiddlewareEntry(PathGuard, ()),
-    # Classified LLM retry + fallback — a single failure must not abort.
-    RequiredMiddlewareEntry(LLMRetryMiddleware, ()),
-    # Output-repetition detection (loop prevention).
-    RequiredMiddlewareEntry(OutputRepetitionGuard, ()),
-    # Truncated tool-call recovery via a boosted re-call.
-    RequiredMiddlewareEntry(MaxTokensBoostMiddleware, ()),
-    # Stuck-turn watchdog.
-    RequiredMiddlewareEntry(HeartbeatStaleness, ()),
-    # Transcript repair (tool_use / tool_result pairing).
-    RequiredMiddlewareEntry(ToolCallNormalize, ()),
-    # Working-directory change notice — the prompt renders the current root, so
-    # without this layer the agent silently keeps answering from the old tree.
-    RequiredMiddlewareEntry(WorkspaceNoticeMiddleware, ()),
-    # Multimodal preprocessing — uploaded media must be persisted and paired with
-    # the native/skill path; a turn without it loses the attachments.
-    RequiredMiddlewareEntry(MultimodalProcessor, ()),
-    # Invalid tool-call salvage — a tool call whose arguments fail JSON parsing
-    # otherwise never reaches the ToolNode, and a turn whose ONLY call is
-    # invalid ends silently (SWE-bench 20261017_003529: zero edits produced).
-    RequiredMiddlewareEntry(InvalidToolCallRepairMiddleware, ()),
-)
-
-# ---------------------------------------------------------------------------
-# Subagent required middleware
-# ---------------------------------------------------------------------------
+_MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = required_entries(MAIN)
 
 # The child chain is intentionally leaner than the main chain: no HITL,
 # eviction, persistence, path guard, or LLM retry. The entries below are the
 # per-agent safety baseline every child shares regardless of depth role
 # (ORCHESTRATOR / LEAF) or functional role.
-_SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
-    RequiredMiddlewareEntry(ToolGuardrails, ()),
-    RequiredMiddlewareEntry(ToolResourceLockMiddleware, ()),
-    RequiredMiddlewareEntry(IterationBudget, ()),
-    RequiredMiddlewareEntry(Summarization, ()),
-    RequiredMiddlewareEntry(OutputRepetitionGuard, ()),
-    RequiredMiddlewareEntry(HeartbeatStaleness, ()),
-    RequiredMiddlewareEntry(ToolCallNormalize, ()),
-    RequiredMiddlewareEntry(MaxTokensBoostMiddleware, ()),
-    # Invalid tool-call salvage — the same silent-drop failure mode as the main
-    # chain: a child whose only call failed JSON parsing ends its invocation on
-    # a narration (the completion judge may continue it, but the call itself is
-    # gone and no edit happens).
-    RequiredMiddlewareEntry(InvalidToolCallRepairMiddleware, ()),
-)
+_SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = required_entries(CHILD)
 
 
 # Derived sets for fast membership testing. ``*_CLASSES`` is the set of
@@ -152,8 +74,9 @@ def _format_rejection(missing_names: set[str], chain: str) -> str:
         f"Required middleware scaffolding violated for {chain} agent chain.\n"
         f"  Missing: {sorted(missing_names)}\n"
         f"  These middleware are safety-critical and cannot be omitted.\n"
-        f"  If this is intentional, update _MAIN_REQUIRED / _SUBAGENT_REQUIRED "
-        f"in agent/middlewares/scaffolding.py and its tests."
+        f"  If this is intentional, update the middleware spec's required_in flag "
+        f"in agent/middlewares/specs.py and the derived _MAIN_REQUIRED / "
+        f"_SUBAGENT_REQUIRED sets in agent/middlewares/scaffolding.py and its tests."
     )
 
 

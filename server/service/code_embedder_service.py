@@ -21,11 +21,12 @@ from models.embed_model.code import (
     download_code_embedder,
     enable_code_embedder,
 )
+from .download_state import DownloadState
 from server.service import model_download_events as events
 
 _LOCK = threading.RLock()
 _STATE: dict[str, Any] = {
-    "state": "idle",
+    "state": DownloadState.IDLE.value,
     "error": None,
     "downloaded_bytes": 0,
     "total_bytes": 0,
@@ -61,16 +62,16 @@ def status() -> dict[str, Any]:
         total = int(_STATE.get("total_bytes", 0)) or total
     files_ready = code_embedder_available()
     enabled = code_embedder_enabled()
-    if state == "downloading":
-        effective = "downloading"
+    if state == DownloadState.DOWNLOADING.value:
+        effective = DownloadState.DOWNLOADING.value
     elif enabled:
-        effective = "ready"
+        effective = DownloadState.READY.value
     elif files_ready:
         effective = "downloaded"
     elif error:
-        effective = "error"
+        effective = DownloadState.ERROR.value
     else:
-        effective = "idle"
+        effective = DownloadState.IDLE.value
     if enabled or files_ready:
         downloaded, total = total, total
     return {
@@ -94,11 +95,11 @@ def start_download() -> dict[str, Any]:
     size = int(_profile()["size_bytes"])
     action = "start"
     with _LOCK:
-        if _STATE["state"] == "downloading":
+        if _STATE["state"] == DownloadState.DOWNLOADING.value:
             action = "running"
         elif code_embedder_enabled():
             _STATE.update(
-                state="ready",
+                state=DownloadState.READY.value,
                 error=None,
                 downloaded_bytes=size,
                 total_bytes=size,
@@ -109,7 +110,7 @@ def start_download() -> dict[str, Any]:
             # enabling is instant and needs no network.
             enable_code_embedder()
             _STATE.update(
-                state="ready",
+                state=DownloadState.READY.value,
                 error=None,
                 downloaded_bytes=size,
                 total_bytes=size,
@@ -117,7 +118,7 @@ def start_download() -> dict[str, Any]:
             action = "ready"
         else:
             _STATE.update(
-                state="downloading",
+                state=DownloadState.DOWNLOADING.value,
                 error=None,
                 downloaded_bytes=0,
                 total_bytes=size,
@@ -151,7 +152,7 @@ def _download_and_enable() -> None:
         enable_code_embedder()
         with _LOCK:
             _STATE.update(
-                state="ready",
+                state=DownloadState.READY.value,
                 error=None,
                 downloaded_bytes=size,
                 total_bytes=size,
@@ -161,7 +162,7 @@ def _download_and_enable() -> None:
     except Exception as exc:  # noqa: BLE001 - the status endpoint reports it
         logger.warning("code embedder download failed: {}", exc)
         with _LOCK:
-            _STATE.update(state="error", error=str(exc))
+            _STATE.update(state=DownloadState.ERROR.value, error=str(exc))
         _publish(force=True)
 
 
@@ -170,6 +171,6 @@ def disable() -> dict[str, Any]:
     events.capture_loop()
     _disable()
     with _LOCK:
-        _STATE.update(state="idle", error=None)
+        _STATE.update(state=DownloadState.IDLE.value, error=None)
     _publish(force=True)
     return status()

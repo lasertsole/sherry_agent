@@ -237,7 +237,7 @@
           :label="t('extend.channelSettings.save')"
           icon="pi pi-check"
           :loading="saving"
-          @click="handleSave" />
+          v-debounce:click.500="handleSave" />
       </div>
     </template>
   </Dialog>

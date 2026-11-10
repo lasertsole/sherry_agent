@@ -22,6 +22,7 @@ SAMPLE = """// app settings
   "project_dir": "",
 
   "WORKSPACE_TEMPLATE_LANG": "en",
+  "model_capabilities": {},
   "safety_filter": {
     "enabled": false,
     "llm_moderation_mode": "off",

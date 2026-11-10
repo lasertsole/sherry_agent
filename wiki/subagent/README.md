@@ -108,6 +108,38 @@ The call-time guard backs `sessions_spawn` (the escalation path) in both the too
 
 **Functional-role containment (a third, orthogonal gate).** Depth decides *whether* a worker may spawn; containment decides *which role* it may spawn. `_check_role_containment` (`spawn/core.py`) reads the requester's own run record — one hop, never the ancestor chain — and consults `SPAWN_ALLOWED_CHILD_ROLES` (`types/functional_role.py`): an absent entry means same-role only, which is what `reviewer` keeps, and `MAIN` (no run record) plus `general` (`tools: inherit` = every tool) short-circuit as unrestricted because every specialized allow-list is already a subset of theirs. Widened entries: `executor` may additionally spawn the READ-ONLY `researcher` / `librarian` so it can research before it writes, and the two research roles may spawn each other in addition to their own role. Multi-hop safety rests on a single-hop invariant, not on chain traversal: every permitted non-parent child must be read-only, so a write role can only reach write roles and a read-only role only read-only roles — no path returns to a write capability, and a future entry that would form a cycle (say `researcher → executor`) fails the invariant test instead of opening a hole.
 
+## 🧩 Strategy Tables & Guarded Transitions
+
+Two stateful decisions are explicit objects (2026-11-09 design audit):
+
+- **Structured-output degradation** is a `StructuredOutputStrategy` in
+  `agent/tools/subagent/model_caps.py` (`level`, `label`, `sends_json_mode`,
+  `thinking_off`, `local_validation_fatal`). The spawn path resolves the
+  persisted integer once with `strategy_for()` and reads flags; the integer
+  stays the on-disk compatibility format, but no call site compares
+  `level >= 1/2`.
+- **Completion delivery** transitions through one table
+  (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`). Every `mark_delivery_*`
+  helper calls `transition_delivery()`, so `DELIVERED` and `DISCARDED` are
+  terminal and an illegal edge raises `InvalidDeliveryTransitionError`; same-state
+  transitions stay idempotent for crash recovery.
+
+## 🧱 Spawn Request, Modules & Completion Events
+
+The 2026-11-10 design audit reshaped the spawn pipeline without changing its
+behavior:
+
+- `spawn/request.py::SpawnRequest` is the frozen request object the
+  orchestration receives. `spawn_subagent_direct(request=None, **legacy)`
+  keeps the historical keyword-argument call shape through `from_legacy`.
+- `spawn/core.py` is a 732-line facade; the phases live in `handoff.py`,
+  `validation.py`, `isolation.py`, `child_agent_factory.py`, `lifecycle.py` and
+  `ptc_prefill.py`, and the facade re-exports every name older imports use.
+- Child completion is event-driven: terminal transitions publish through
+  `registry/completion_events.py` (backed by `runtime/event_wait.py`), and
+  `taskflow_wait_all` wakes on them. The old poll interval remains the
+  fallback that covers a missed notification.
+
 ## 🧪 Completion Judge & Goal Loop
 
 The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters on the legacy baseline; scaled with the serving model's output budget), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.

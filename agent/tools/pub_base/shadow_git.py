@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Iterator
@@ -36,6 +37,8 @@ from pub.git_head import (
 
 __all__ = [
     "SHADOW_REF",
+    "SnapshotToken",
+    "WorkspaceMemento",
     "diff_between_commits",
     "diff_between_commits_with_status",
     "dirty_paths",
@@ -1056,3 +1059,114 @@ def read_commit_diff(
         Path(root), ["show", "--format=", "--patch", commit, "--", path], timeout=10
     )
     return result.stdout
+
+
+# -- Memento facade (design audit M12) ---------------------------------------
+#
+# The Originator is the workspace; a SnapshotToken is the immutable Memento.
+# The facade DELEGATES to the functions above — snapshotting, floors, pruning
+# and the git plumbing are untouched, so the chain semantics and every existing
+# call site stay identical. It is additive: new callers may use a token instead
+# of passing bare hashes around, old ones need not change.
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotToken:
+    """Immutable identity of one workspace snapshot.
+
+    ``commit`` is the shadow-git commit hash (never a mutable ref), and
+    ``project_root`` pins the token to the workspace it was taken from — a
+    restore validates the pair, so a token cannot be replayed against another
+    project's tree. ``turn`` / ``reason`` / ``session_id`` describe the moment
+    the token was minted; re-saving always mints a new token.
+    """
+
+    commit: str
+    project_root: Path
+    turn: int
+    reason: str
+    session_id: str = ""
+
+    @property
+    def short_commit(self) -> str:
+        """The abbreviated hash ``list_checkpoints`` reports."""
+        return self.commit[:7]
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe view (diagnostics / logs); the token itself stays opaque."""
+        return {
+            "commit": self.commit,
+            "project_root": str(self.project_root),
+            "turn": self.turn,
+            "reason": self.reason,
+            "session_id": self.session_id,
+        }
+
+
+class WorkspaceMemento:
+    """Save/restore facade over one workspace's shadow snapshots.
+
+    ``save()`` takes a snapshot and returns its :class:`SnapshotToken`;
+    ``restore(token)`` rolls the workspace (or one file) back to it. ``floor()``
+    exposes the current turn's rollback boundary as a token and
+    ``restore_turn()`` rewinds the turn's file changes. Every method is a thin
+    call into the module-level primitives — no git logic lives here.
+    """
+
+    def __init__(self, project_root: Path | str, *, session_id: str = "") -> None:
+        self._root = Path(project_root).resolve()
+        self._session_id = session_id
+
+    @property
+    def project_root(self) -> Path:
+        return self._root
+
+    def save(
+        self, reason: str = "manual", *, session_id: str | None = None
+    ) -> SnapshotToken | None:
+        """Snapshot the workspace; ``None`` when frozen or nothing was saved."""
+        sid = self._session_id if session_id is None else session_id
+        commit = take_snapshot(self._root, reason, session_id=sid)
+        if not commit:
+            return None
+        return SnapshotToken(
+            commit=commit,
+            project_root=self._root,
+            turn=_current_turn(sid),
+            reason=reason,
+            session_id=sid,
+        )
+
+    def restore(self, token: SnapshotToken, *, file_path: str | None = None) -> dict[str, Any]:
+        """Restore the whole workspace (or one ``file_path``) to *token*."""
+        self._validate(token)
+        return restore_checkpoint(
+            token.session_id,
+            token.commit,
+            file_path=file_path,
+            project_root=self._root,
+        )
+
+    def floor(self, session_id: str | None = None) -> SnapshotToken | None:
+        """The chain tip that preceded the session's CURRENT turn, as a token."""
+        sid = self._session_id if session_id is None else session_id
+        tip = floor_for(sid, project_root=self._root)
+        if not tip:
+            return None
+        return SnapshotToken(
+            commit=tip,
+            project_root=self._root,
+            turn=_current_turn(sid),
+            reason="floor",
+            session_id=sid,
+        )
+
+    def restore_turn(self, before_turn: int, *, session_id: str | None = None) -> dict[str, Any]:
+        """Rewind the workspace to the start of the current turn (file half)."""
+        sid = self._session_id if session_id is None else session_id
+        return restore_to_turn(sid, before_turn, project_root=self._root)
+
+    def _validate(self, token: SnapshotToken) -> None:
+        """Refuse a token minted for another workspace (fail closed, no git)."""
+        if token.project_root != self._root:
+            raise ValueError(f"snapshot token belongs to {token.project_root}, not {self._root}")

@@ -1,538 +1,92 @@
 # 🍊 EMA AI Agent - Sherry
 
-![Python](https://img.shields.io/badge/Python-3.13-blue)
-![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
-![License](https://img.shields.io/badge/License-MIT-orange)
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md) · [**Wiki**](https://github.com/lasertsole/sherry_agent/wiki) · [**Releases**](https://github.com/lasertsole/sherry_agent/releases/latest)
 
-[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md) · [**Wiki**](https://github.com/lasertsole/sherry_agent/wiki)
+> 固定されたペルソナ、長期記憶、デスクトップアプリを備えた AI ロールプレイ・パートナー。会話を楽しむだけでなく、あなたの PC 上でファイルやタスクを扱えます。
 
-> **LangChain/LangGraph とマルチモーダル技術で構築されたディープ・ロールプレイング AI エージェント。**
+## ✨ Sherry について
 
-## ✨ はじめに
+Sherry は一度きりのチャットボットではありません。会話をまたいで一貫したキャラクターを保ち、あなたにとって大切なことを覚え、返答だけでは足りないタスクでは実際に PC を操作します。
 
-EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に擬人化された AI エージェントシステムです。単なるチャットボットではなく、独立した **ペルソナ**、動的な **スキルシステム**、そして定時タスクとバックグラウンドサブエージェントによる能動的な行動を備えたバーチャルコンパニオンです。
+デフォルトのキャラクター **Sherry（橘雪莉）** は、自称・少女探偵です。外見は明るく元気で、内面は冷静で鋭い。そのまま彼女と過ごすことも、**プリセットとロール** パネルでペルソナを書き換えることも、自分だけのキャラクターを作ることもできます。
 
-エージェントのキャラクター **Sherry（橘シェリー）** は自称少女探偵。外見は常に明るく元気いっぱい、その内面は冷静で切れ者です。システム全体は、記憶がセッションを越えて蓄積していく没入型の持続的ロールプレイをサポートするよう設計されています。
+アプリはあなたの PC 上で動作します。会話・記憶・設定はローカルのアプリデータディレクトリに保存され、ネットワークに出るのは設定したモデルと Web サービスの通信だけです。
 
----
+## 🚀 できること
 
-## 🚀 主な機能
+- **キャラクターとして会話。** 口調、習慣、境界、背景設定を保ったまま、長く連続した物語や日常会話を楽しめます。
+- **覚えていてくれる。** あなたやプロジェクトについての情報を長期記憶として保持し、必要なときに思い出し、再起動やセッションをまたいでも引き継ぎます。
+- **スキルで拡張。** 組み込みスキルはコーディング、調査、ドキュメント、画像、音声、動画、スケジュールなどをカバー。完了した作業から再利用可能なスキルを学び、依頼に応じて新しいスキルも作れます。
+- **実際の作業を任せられる。** 大きなタスクではタスクリストを作り、手順に分け、必要に応じてサブエージェントを並行して動かします。
+- **デスクトップを操作。** 同じウィンドウからプロジェクトのファイルを読み書きし、Web を閲覧し、ターミナルを実行し、Git 履歴を見たり、ホワイトボードに描いたりできます。
+- **見て、聞いて、話す。** 画像・音声・動画・ドキュメントを送信でき、内容の理解、音声の文字起こし、画像生成に対応します。
+- **先回りして動く。** スケジュールタスクとハートビート検査により、指示がなくても長期作業や日課をフォローできます。
+- **いつもの場所で使える。** メインはデスクトップアプリ。QQ チャネルアダプターも利用できます。
 
-### 1. 🧠 階層型メモリシステム（Context Engine）
-- **短期セッションメモリ**（[MesMemory](context_engine/README.md)）：会話履歴を SQLite（WAL モード）に永続化し、FTS5 インデックスを自動作成——中国語全文検索用の trigram トークナイザーテーブルも含みます; 永続化は二段タイミングです（`MessagePersistenceMiddleware`）: ツール結果は返った瞬間にフラッシュされ、残りの新しい human/ai/tool メッセージはモデル呼び出しの各境界で増分フラッシュされます（`persisted_message_ids` ウォーターマークで write-once）。生ストアは圧縮の発生に依存しません
-- **履歴取得**：直近 N ターン、ページング履歴、ターン範囲指定のクエリをプロンプトコンテキストとして整形
-- **セッションチェックポイント**：スレッドセーフな非同期 SQLite チェックポインター（`langgraph-checkpoint-sqlite`）がエージェント状態を再起動をまたいで永続化し、古いチェックポイントは自動クリーンアップ
-- **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
-- **コンテキスト統治**：過大なツール結果と人間メッセージは回収可能なディスクコピーを残してプロンプトから退避され、`read_file` 結果はスライスされ、あらゆる圧縮の前に LLM なしのテールクリップが走り、チェーン要約は会話ペイロードから除外されます
-- **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
-- **経験抽出（Experience Extraction）**：4 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、プランがターン境界で完了したときのスキルレビュー（圧縮時ではない）、圧縮後の todo fork、MAIN セッション削除前の記憶サルベージです。それぞれメモリストア（SQLite `memory_entries` テーブルの `memory` / `user` / `facts` ターゲット）、`skills/auto/`、`todos.db`、および生の `handoff-tree.json` 監査ファイルに書き込みます。モデル向け `knowledge` ツールとプロンプトブロックは廃止されました
-- ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
-- ▶️ _3 本の抽出経路とスキルキュレーションは [Experience README](wiki/experience/README.ja.md) を参照_
+## 🖥️ インストール
 
-### 2. 🛠️ 動的スキルシステム
-- **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーは `skills/` 配下の `builtin/`・`auto/`・`plugins/` の 3 ルートだけをスキャンします
-- **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`bugfix-contract`、`code_wiki`、`llm_wiki`、および機能ゲート付きの `browser` スキル
-- **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
-- **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
-- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](wiki/experience/README.ja.md)
-- **ツールタイムアウト**：実際のツール別制限は `TOOLS_TIMEOUTS` レジストリ（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）から取得されます。`TOOL_CALL_TIMEOUT_MINUTES` は保存設定にすぎず、**どの実行パスも消費しません**
-- ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
+### デスクトップアプリ（推奨）
 
-### 3. 🤖 マルチレベルサブエージェントシステム
-- **8 つのランタイムツール**：`sessions_spawn`、`sessions_messages`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
-- **階層ロール**：深度制限付きネスト（デフォルト最大 2 深度、ハード上限 2）、MAIN → ORCHESTRATOR → LEAF ロールと最小権限のツールスコープ
-- **独立コンテキスト**：すべてのサブエージェントは新規の独立したコンテキストで実行 —— 親トランスクリプトは決して継承しない。ファイル添付に対応
-- **信頼性の高い配信**：結果は冪等チェックと指数バックオフリトライを備えた EventBus announce パイプラインで返却
-- **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーは既定の 600 秒ランタイムアウトを強制（`run_timeout_seconds=0` で無効）
-- **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
-- **検証された完了**：すべての spawn が子ターン間に補助 LLM の完了判定器を実行します；`continue` 判定は判定器のフォローアッププロンプトを次のターンとして注入し、設定された `COMPLETION_JUDGE["goal_max_turns"]` 予算（既定 5）で上限が決まります
-- **機能ロール（オプトイン）**：`sessions_spawn(functional_role=...)` でワーカーを特化（general / researcher / executor / reviewer / librarian）。ロールが LLM 層、ツール allow-list、子のシステムプロンプトセクションを決定します
-- **隔離ワークツリー（オプトイン）**：`sessions_spawn(isolation=True)` は子にプロジェクトの専用 git ワークツリー（`agent/tools/subagent/isolation/`）を与え、**ダーティ**なベースライン（`git stash create`、コミットされていない編集が子から見える）から切り出して、announce 時に root 単位のロックの下でマージバックします — 詳細は [File Safety README](wiki/file-safety/README.md)
-- ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
+[Releases](https://github.com/lasertsole/sherry_agent/releases/latest) から Windows / macOS / Linux 用の最新インストーラーをダウンロードし、インストールして Sherry を起動します。
 
-### 4. 🌐 マルチチャンネルアクセス
-- **Robyn バックエンド**（[server/](server/)）：非同期 HTTP API + WebSocket（`/sessions/ws`）、`127.0.0.1:8080` でリッスンし、アップロードされたメディアを `/static`、`/images`、`/audio`、`/video` で配信
-- **デスクトップクライアント**（[client/](client/)）：Tauri 2 + Nuxt 4（Vue 3 + TypeScript）SPA。システムトレイ、グローバルショートカット、オフライン履歴キャッシュ（Dexie/IndexedDB）、ダーク/ライトモード、i18n に対応
-- **QQ ボット**：プラグインシステムによる QQ チャンネルアダプター（[plugins/channels/qq/](plugins/channels/qq/)）
-- **メッセージバス**（[bus/core.py](bus/core.py)）：内部非同期キューがチャンネルとエージェントコアを分離
+初回起動時:
 
-### 5. 👁️ マルチモーダルインタラクション
-- **画像理解（ITTT）**：Image-to-Text ビジョンモデルによるユーザー画像の認識・分析
-- **動画理解（VTTT）**：Video-Text-to-Text モデルによる動画コンテンツの分析
-- **音声認識（STT）**：FunASR ベースのローカル音声認識
-- **Text-to-Image（TTI）**：`text_to_image` スキルによるテキストからの画像生成
-- **ドキュメント解析**：MinerU ベースのマルチモーダルドキュメント取り込み（ナレッジグラフ RAG パイプライン向け）
+1. プリセットのキャラクターを選びます（デフォルトの Sherry のままでも構いません）。
+2. **設定 → モデル設定** を開き、モデルのプロバイダー、モデル名、API キー、少なくとも **200,000 トークン** のコンテキストウィンドウを入力して保存します。
+3. チャットを始めます。
 
-### 6. ⏰ 定時実行と能動的行動
-- **Cron サービス**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：一回限り（`at`）、間隔（`every`）、cron 式（`cron`、croniter + タイムゾーン）の 3 種類のエージェントタスクをスケジュール。JSON ジョブストア（最終実行状態のみ）に永続化し、実行ログを `logs/output/cron/<job_id>.log` に書き、チャンネル配信に対応
-- **Heartbeat サービス**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：定期的なウェイクアップ（デフォルト 30 分）で `HEARTBEAT.md` の未完了タスクを確認し、LLM が skip/run を判断、結果は通知ゲートを通過
+**モデル設定** パネルでは、ローカルモデル（埋め込み、リランカー、視覚、補助モデル）を進捗バー付きでダウンロードできます。Web 検索は任意です。必要なら **設定 → Web 検索** で Tavily または SearXNG を設定してください。
 
-### 7. ⚙️ ランタイム・並行性・セッション制御
-- **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される。ルートの `AGENTS.md`（フォールバック `CLAUDE.md`）は内容が変わるたびに `project_instructions` リマインダーとして注入され、明示的にバインドされたプロジェクトは最初のメッセージ時に統一された `.sherry/` ディレクトリをプロジェクト単位コードインデックス用に得る。書き込みスナップショットの shadow git は `APP_HOME/checkpoints/store` にグローバル保存される（バインド時には作らない）
-- **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く。行の右クリックメニューは 開く / 別のアプリで開く / 内蔵ブラウザーで開く（HTML）/ ファイルマネージャーで表示 / 絶対・相対パスのコピー / チャットに追加 を提供し、行（またはファイルビューアのタブ）はコンポーザーへドラッグできる — どちらの経路もメッセージに載るのは `@./path` メンション chip だけで、ファイル内容は決して載らない（ファイルはエージェント自身が読む）
-- **選択テキストの引用と補助セッション**: 1 つのチャットメッセージ内でテキストを選択して右クリックすると小さなメニューが開く——「現在のセッションに追加」はアトミックな引用 chip をコンポーザーへ挿入し（送信時は markdown 引用ブロック）、「補助セッションで質問」は親セッションの**完全な fork** である通常の子セッションを作成する。最初のターンには親の checkpoint 履歴全体がモデル専用で注入され（補助セッションの表示履歴は空のまま）、親のプリセット・agent 設定・セッション単位のモデル設定・プロジェクトディレクトリを継承する。fork は親の最後に完了した回答で区切られるため、未完了のツール呼び出しが再生されることはない。セッションスコープの右サイドバータブで開いて引用をプリフィルし、そのタブを閉じるのはパネルを閉じるだけ——子セッションとその状態はすべて保持され、セッション一覧に残るので後から開き直せ、親セッションを削除したときにだけ消去される。タブ列の最も左にある下向き矢印メニューは、最近閉じたタブを「現在のセッション / グローバル」ごとに最新 10 件まで一覧し（現在のセッションの履歴はそのセッションだけに属し、セッション削除で消える）、閉じた補助セッションを履歴ごと復元する。「現在のセッション」タブ群はセッションごとに分離され（セッションを切り替えるとそのセッション自身のタブ、または空の状態だけを表示し、前のセッションのページは出ない）、「グローバル」タブは全セッションで共有される。行をまたぐ選択、コントロール/承認カードから始まる選択、8,000 文字を超える選択ではネイティブのコンテキストメニューをそのまま残す
-- **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は browser ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは統合されたメイン専用 `browser` ツール（navigate / snapshot / click / type / press / scroll / screenshot）と、`browser_evaluate`（`SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
-- **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、グローバル `hooks.enabled` でのみ有効化できます（チェーン membership はビルド時契約で、セッション単位スイッチではありません）
-- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`BACKGROUND_REVIEW`（バックグラウンドレビュー呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + background_review` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
-- **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
-- **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_flow(action="create", resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の現在スキーマ列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
-- **TaskFlow の進捗** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 各フローのフラットなステップ一覧（id・タスク・状態）と状態別集計がフローティング進捗パネルに表示される。スケジューラは依然として各ステップの `depends_on` ごとに解錠する。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
-- **ストリーム復元** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): ターン途中で切断したビューアは再接続時に 1 回の履歴リクエスト（`include_active_turn=1`）を送り、離席中に完了したターンと実行中ターンのスナップショット（`turn_id`、`seq`、テキスト）を同時に受け取ります。リクエスト中 socket は受信フレームを保持し、クライアントは履歴をマージしてスナップショットを適用し、同じターンの `seq` 以下のフレームだけを破棄します——再生も重複もありません。コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できます。
-- **ツール所要時間**: すべてのツール呼び出しは、ツール返却時点で一度だけ計測される（`time.monotonic()` を使い 0 にクランプ）。メッセージ永続化ラッパーがこれを測定して `ToolMessage.additional_kwargs["tool_duration_ms"]` に記録し `messages.tool_duration_ms` に永続化する。ライブカードは実行中にティッカーを、確定後に実測値を表示する。設計上、承認待ち時間とキュー待機時間はこの窓に含まれない
-- **セッションごとのモデルと思考**: `PUT /sessions/thinking` と `PUT /sessions/model` は単一セッションの思考トグルとメインモデルを上書きする（ログインが有効な場合、クライアントは単回限りの `GET /auth/ws-ticket` を先取りする）。思考制御ミドルウェアはそれに基づいてリクエストモデルを `build_main_llm(thinking=...)` のバリアントに差し替え、セッションに明示的な選択がなければ環境変数の既定値へフォールバックする
+### ソースから実行
 
----
-
-## 🏗️ 技術スタック
-
-**Python 3.13**（依存関係管理は [uv](https://docs.astral.sh/uv/)）上に構築され、以下のコア技術を使用しています：
-
-| モジュール | 技術 |
-| :----- | :--------- |
-| **エージェントフレームワーク** | LangChain 1.3+（`create_agent` + ミドルウェア）、LangGraph コンパイル済みグラフ |
-| **チェックポイント** | langgraph-checkpoint-sqlite（スレッドセーフ非同期 SQLite セーバー） |
-| **Web サーバー** | Robyn（HTTP + WebSocket + 静的ホスティング） |
-| **データベース** | SQLite（aiosqlite、FTS5 全文検索、WAL モード） |
-| **グラフ RAG** | ベンダード LightRAG + RAG-Anything（multimodal_rag スキル）、`snkv[vector]` ストレージ |
-| **ローカル推論** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT モデル）、FunASR（STT） |
-| **ドキュメント解析** | mineru-vl-utils |
-| **Web 検索** | langchain-tavily（Tavily API）＋セルフホストの SearXNG を代替バックエンドとして利用（Tavily 失敗時は自動的にフォールバック） |
-| **Web 取得** | `web_fetch` は 1 つの http(s) URL を markdown として読みます：公開ページは SSRF ガード・DNS ピン留め・ホップごとのリダイレクト検査を通し、ローカル/開発サーバーのアドレスは明示スイッチ（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`）が必要です |
-| **コード検索** | ripgrep（依存関係と一緒に入る `ripgrep-bin`）。純 Python 走査が常時のフォールバック |
-| **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-classic + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
-| **構造化出力** | instructor、json_repair |
-| **評価（Evaluation）** | RAGAS（グラフ RAG 品質指標）+ 自製サンドボックス評価フレームワーク（`evals/`） |
-| **MCP** | langchain-mcp-adapters（`plugins/mcp_server/` でサーバーを設定） |
-| **タスクスケジューリング** | croniter、asyncio |
-| **非同期メッセージング** | asyncio キュー（MessageBus、EventBus） |
-| **メディア処理** | OpenCV（headless）、Pillow、websockets / websocket-client |
-| **デスクトップクライアント** | Tauri 2 + Nuxt 4（Vue 3、TypeScript、pnpm） |
-| **ロギング** | loguru（オプションで LangSmith トレーシング） |
-
----
-
-## 📂 プロジェクト構成
-
-```text
-sherry_agent/
-├── agent/                  # エージェントコアロジック
-│   ├── core.py             # メインエージェントループ（LangChain create_agent → LangGraph グラフ）
-│   ├── security/           # 秘匿化、PII、脅威パターン、信頼できない出力のラッピング
-│   ├── wrapper/            # グラフレベルラッパー（繰り返しガード、コンテキスト上限）
-│   ├── checkpointer/       # スレッドセーフ非同期 SQLite チェックポインター
-│   ├── middlewares/        # ミドルウェアパイプライン（要約、ガードレール、HITL など）
-│   ├── prompt_data_provider.py # ランタイム PromptDataProvider 実装（オーナー側）
-│   ├── skill_write_provider.py  # ランタイム SkillWriteProvider 実装（オーナー側）
-│   └── tools/              # エージェント利用可能なツール
-│       ├── taskflow/       # タスクオーケストレーションエンジン（DAG、予算、デッドライン、ステップ判定器）
-│       ├── subagent/       # マルチレベルサブエージェントシステム（spawn/registry/swarm など）
-│       │   └── isolation/  # オプトインの git ワークツリー隔離バックエンド（spawn された子用）
-│       ├── todolist/       # セッションスコープの todo 計画レイヤー
-│       │   └── knowledge/  # KnowledgeStore + handoff-tree 監査（モデル向けツールは廃止）
-│       ├── file_tools/     # ファイル I/O ツール（読み・書き・パッチ・検索）
-│       ├── skill_tools/    # スキル管理ツール（一覧・閲覧・管理）
-│       ├── code_intel/     # コード検索（ripgrep、tree-sitter、ast-grep、LSP、セマンティック）
-│       ├── ptc/            # プログラム的ツール呼び出し（`execute_code` 子プロセスブリッジ）
-│       ├── pub_base/       # 共有ツールユーティリティと基盤（BaseSQLiteRepository、パスユーティリティ）
-│       ├── mcp_plugin.py   # MCP ツール統合
-│       ├── web/            # Web 検索 + 取得ツール
-│       ├── python_repl.py  # Python コード実行
-│       ├── terminal/       # ターミナル + バックグラウンドツール
-│       ├── memory.py       # メモリ閲覧ツール
-│       ├── question.py     # HITL 構造化質問ツール（1〜4 問、プレビュー + 注記）
-│       └── message_search.py # 会話 FTS5 検索ツール
-│
-├── bus/                    # メッセージバス（非同期キュー）
-│   └── core.py             # MessageBus —— インバウンド/アウトバウンドキュー
-│
-├── channels/               # チャンネルインターフェース定義
-│   ├── base.py             # 抽象チャンネル基底クラス
-│   ├── deps.py             # チャンネル配線の依存性注入シーム
-│   ├── manager.py          # チャンネルライフサイクルマネージャー
-│   └── registry.py         # チャンネル登録
-│
-├── client/                 # デスクトップクライアント（Tauri 2 + Nuxt 4、pnpm）
-│   ├── app/                # Nuxt 4 SPA ソース（Vue 3）
-│   ├── src-tauri/          # Tauri 2 ネイティブシェル（Rust）
-│   └── README.md           # クライアントドキュメント
-│
-├── config/                 # 集中設定（paths、feature TypedDicts、schema、settings）
-│   ├── __init__.py         # API ホスト/ポート（127.0.0.1:8080）
-│   ├── path.py             # ファイルパス設定
-│   ├── schema.py           # 設定スキーマモデル
-│   ├── sherry_settings.py  # sherry.jsonc ローダー
-│   └── features/           # オブジェクト単位の feature TypedDict と既定インスタンス
-│
-├── context_engine/         # メモリエンジン（MesMemory）
-│   ├── core.py             # 履歴取得と FTS5 検索 API
-│   ├── store/              # セッションメッセージストア（SQLite + FTS5、WAL）
-│   ├── events/             # 追記型イベントログ + projector
-│   ├── embeddings/         # ベクトルセマンティック検索（indexer / search）
-│   └── curator/            # 自動スキルキュレーション
-│
-├── wiki/                   # サブシステム設計ドキュメント（言語別 README）
-│   ├── experience/         # 経験抽出経路 + スキルキュレーション
-│   ├── session_memory/     # セッションメモリのケイパビリティ
-│   ├── summarization/      # 圧縮トリガーとクールダウン
-│   ├── loop-prevention/    # 暴走ループ防止ハーネス
-│   ├── llm-retry/         # リトライ予算、fallback 上限、遮断範囲
-│   ├── sandbox/            # 評価サンドボックスとツール分離
-│   ├── token-guard/        # 200K コンテキストウィンドウ下限
-│   ├── context-governance/ # 永続化、退避、テールクリップ、要約フィルタリング
-│   ├── long-running-tasks/ # TaskFlow オーケストレーション
-│   ├── subagent/           # サブエージェント設計の不変条件と完了ゲート
-│   ├── code-intel/         # コード検索レイヤー
-│   ├── graph-rag/          # マルチホップ検索と召回調整
-│   ├── llm-wiki/          # markdown KB + 派生グラフクエリ
-│   ├── ptc/                # プログラム的ツール呼び出し
-│   ├── file-safety/        # アトミック書き込み、CAS、ロック、ワークツリー隔離
-│   ├── safety-filter/      # ライブ安全: キーワード ルール + LLM 審査 + ストリーム切断
-│   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
-│   └── auth/               # オプトインのログイン保護（アカウントとセッション）
-│
-├── evals/                  # 評価フレームワーク（dispatcher + 11 スイート）
-│   ├── evals.py            # スイートランナー: uv run --group evals python evals/evals.py [suite]
-│   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
-│   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
-│   ├── subagent/           # サブエージェント spawn パイプラインのベンチマーク
-│   ├── long_running_task/  # TaskFlow DAG 評価
-│   ├── session_memory/     # セッションメモリスタックのチェック
-│   ├── skill_review/   # AI 判定のスキルレビュー
-│   └── results/            # 実行ごとのレポート（gitignore 済み）
-│
-├── logs/                   # ロギングシステム
-│   ├── logger.py           # ログ設定（loguru）
-│   ├── curator/            # Curator 実行ログ
-│   └── output/             # ログ出力ディレクトリ
-│
-├── models/                 # モデルラッパーと重み
-│   ├── LLMs/               # LLM 設定（main_llm.py、auxiliary_llm/、reasoning_* プロバイダー対応）
-│   ├── ITTT_model/         # Image-to-Text モデル（クラウド API またはローカル GGUF）
-│   ├── VTTT_model/         # Video-Text-to-Text モデル（クラウド API またはローカル GGUF）
-│   ├── STT_model/          # Speech-to-Text モデル（FunASR）
-│   ├── embed_model/        # 埋め込みモデル（ローカル bge-m3 GGUF またはクラウド API）
-│   ├── reranker_model/     # リランカーモデル（ローカル GGUF またはクラウド API）
-│   ├── extract_model/      # エンティティ抽出モデル（サードパーティ重み）
-│   └── providers/          # LLM プロバイダー仕様とレジストリ
-│       └── registry.py    # 20 以上のプロバイダーの ProviderSpec
-│
-├── plugins/                # プラグインシステム
-│   ├── channels/           # チャンネルプラグイン（QQ ボットアダプター）
-│   └── mcp_server/         # MCP サーバー設定
-│
-├── pub/                    # 共有ユーティリティとデータモデル
-│   ├── func/               # 共通ユーティリティ関数
-│   │   ├── format/         # テキストフォーマットユーティリティ
-│   │   ├── media/          # メディア処理ユーティリティ
-│   │   ├── message/        # メッセージ処理ユーティリティ
-│   │   └── validator/      # 入力バリデーションユーティリティ
-│   └── types/              # 共有データモデル
-│       ├── message.py      # MultiModalMessage、Chat など
-│       ├── bus.py          # メッセージバスデータモデル
-│       └── client.py       # クライアントデータモデル
-│
-├── runtime/                # ランタイム状態、レーン、そして境界を越えるシーム
-│   ├── hooks.py            # プロセスレベルのコールバックレジストリ（agent/skills が解決する server 所有フック）
-│   ├── data_provider.py    # Prompt/スキル書き込みプロバイダーレジストリ（agent 所有、workspace/context_engine が読む）
-│   ├── lane/               # プロセスレベルの並行レーン（MAIN / SUBAGENT / BACKGROUND_REVIEW / NESTED）
-│   ├── session/            # セッション単位レジストリ
-│   │   ├── core.py         # シングルトン SessionRegister 基底 + セッション単位のクリーンアップ
-│   │   ├── relation_register.py # セッション/socket 関係レジストリ
-│   │   ├── state_register.py   # ステートレジストリ
-│   │   ├── state_keys.py       # 型付き StateKey レジストリ + TypedState ファサード
-│   │   ├── project_dir.py  # セッション単位のプロジェクトディレクトリバインド解決
-│   │   ├── count_call_register.py # 使用量/統計カウンター
-│   │   ├── timer_call_register.py # タイマーレジストリ
-│   │   └── _callback_executor.py # 非同期コールバック実行器
-│   └── process/            # プロセス単位サービス
-│       ├── crash_loop_breaker.py # 起動クラッシュループ検出
-│       └── periodic_backoff.py   # 周期バックオフ状態
-│
-├── server/                 # Robyn バックエンドサービス
-│   ├── __main__.py         # サーバーエントリーポイント（python -m server）
-│   ├── DAO/                # データアクセスオブジェクト
-│   ├── queue/              # 永続化されたユーザー入力キューストア
-│   ├── utils/              # 共有バックエンドヘルパー（JWT、パスワードハッシュ、アトミック I/O、WS）
-│   ├── service/            # ビジネスロジックサービス（skill_scanner.py を含む）
-│   └── trigger/            # ルートとハンドラーの登録
-│       ├── http/           # HTTP エンドポイントトリガー
-│       ├── ws/             # WebSocket トリガー
-│       ├── channels/       # チャンネル受信トリガー
-│       └── subagent/       # サブエージェント結果トリガー
-│
-├── skills/                 # スキルライブラリ（SKILL.md 定義ファイル）
-│   ├── loader.py           # スキル自動検出と登録
-│   ├── skills_snapshot.py  # スキルプロンプトスナップショットの構築
-│   ├── auto/               # 自動学習スキル（curator が管理）
-│   ├── plugins/            # サードパーティアップロードスキル（デフォルトで非アクティブ）
-│   └── builtin/            # 内蔵スキル
-│       ├── core/           # cron、heartbeat、clawhub、skill_creator、image_to_text、
-│       │                   # speech_to_text、video_text_to_text、multimodal_rag、
-│       │                   # taskflow、todolist、ulw-execute、bugfix-contract、browser
-│       ├── text_to_image/  # Text-to-Image スキル
-│       ├── code_wiki/      # コードベース wiki 生成スキル
-│       └── llm_wiki/       # Markdown ナレッジベーススキル
-│
-├── src/                    # ランタイムデータディレクトリ
-│   ├── checkpoints/        # セッションチェックポイント
-│   ├── data/               # データストレージ
-│   ├── store/              # データストア
-│   ├── rag/                # RAG インデックス出力
-│   └── images/ audio/ video/ # アップロードメディア（静的配信）
-│
-├── temp/                   # 一時ファイル
-│
-├── tests/                  # テストスイート（pytest）
-│
-├── workspace/              # キャラクタープロファイルと行動定義
-│   ├── SOUL.md             # 性格の対比、話し方
-│   ├── IDENTITY.md         # コア・アイデンティティカード
-│   ├── AGENTS.md           # ツール使用の優先順位、安全境界
-│   ├── USER.md             # ユーザー固有の対話設定
-│   ├── ROLE.md             # 役割宣言：AI とユーザーがそれぞれ演じる相手
-│   ├── HEARTBEAT.md        # Heartbeat サービスの未完了タスク
-│   ├── prompt_builder.py   # プロファイルからプロンプトを構築
-│   ├── file_sync.py        # ワークスペーステンプレートの遅延同期（言語別）
-│   ├── template/           # ペルソナテンプレート（en / zh / ja / ko）
-│   ├── sessions/           # セッション単位のランタイムワークスペースデータ
-│
-├── .env                    # アプリ設定・追跡対象（サンドボックス / ゲートウェイ / ログイン — キーは書かない）
-├── .models.example         # モデル設定テンプレート（初回起動で .models を生成）
-├── .network.example        # ネットワーク設定テンプレート（初回起動で .network を生成）
-├── pyproject.toml          # Python 依存関係（uv 管理）
-├── uv.lock                 # uv ロックファイル
-├── start.sh                # バックエンド起動スクリプト
-└── cron_jobs.json          # Cron ジョブスケジュールデータ
-```
-
----
-
-## 📚 サブモジュールドキュメント
-
-各主要サブシステムには詳細な README があります：
-
-| サブモジュール | 説明 | ドキュメント |
-|-----------|-------------|---------------|
-| **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **経験体系** | 会話履歴を再利用可能な経験として蓄積する 3 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
-| **セッションメモリ** | SESSION 計画のケイパビリティ: memory review、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
-| **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
-| **Code Intel** | コード検索：全エージェントが使える ripgrep キーワード検索に加え、ロール限定の 4 層——tree-sitter シンボル索引、ast-grep 構造検索、LSP 精密検索、セマンティック検索——さらに imports/継承/mixin 辺と双方向 `path` ツール | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
-| **LLM Wiki グラフ** | markdown 優先のナレッジベース + 明示的な派生グラフ：EXTRACTED/INFERRED confidence 付き wikilink/mention 辺、マルチモーダル ingest、path/god-node/community クエリ | [EN](wiki/llm-wiki/README.md) · [ZH](wiki/llm-wiki/README.zh.md) · [JA](wiki/llm-wiki/README.ja.md) · [KO](wiki/llm-wiki/README.ko.md) |
-| **GraphRAG パスクエリ** | 明示的マルチホップ検索：2-3 ホップの BFS、embedding 誘導 beam フォールバック、純稠密 LightRAG エンジン向けに調整した召回しきい値 | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
-| **プログラム的ツール呼び出し** | EXECUTOR 専用の `execute_code`：1 本の Python スクリプトを別子プロセスで実行し、loopback TCP RPC ブリッジで実ツールを呼び出す。制限付き builtins とスクリプト単位の予算を併用 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
-| **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
-| **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
-| **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
-| **Cron サービス** | 定時/周期的エージェントタスク実行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
-| **Heartbeat サービス** | 定期ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
-| **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
-| **LLM リトライ予算** | プロバイダーリトライの予算とカウント：物理/予算試行、`Retry-After` バックオフ、ターンごとの fallback 上限、タイムアウト遮断の範囲 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
-| **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
-| **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
-| **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
-| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、未参照フロー孤児 GC、ターンをまたぐメモリ継続性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | 両 LLM の 200K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
-| **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング、message 行のターン識別子 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
-| **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
-| **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
-| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
-
-## ⚡ クイックスタート
-
-### 1. 前提条件
-- **Python 3.13+**
-- **[uv](https://docs.astral.sh/uv/)** —— 依存関係マネージャー。`.venv` は uv が自動的に作成・管理するため、仮想環境を手動で作成する必要はありません。
+開発やカスタムビルドには **Python 3.13+** と **[uv](https://docs.astral.sh/uv/)**、デスクトップクライアントには **Node.js 20+**、**pnpm**、**Rust** が必要です。
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/lasertsole/sherry_agent.git
 cd sherry_agent
-uv sync   # .venv を作成し、uv.lock の依存関係を正確にインストール
+uv sync
+./start.sh          # バックエンドは http://127.0.0.1:8080 で起動
 ```
 
-### 2. モデルとネットワークの設定ファイル
-設定は機密度で 3 つのファイルに分かれています：
-
-| ファイル | 追跡 | 内容 |
-| :--- | :--- | :---------- |
-| `.env` | ✅ コミット | 非機密のアプリ設定（サンドボックス方針、ゲートウェイ、ログイン）。キーは絶対に書かない。 |
-| `.models` | 対象外 | 各モデルファミリーの provider / エンドポイント / キー（初回起動で `.models.example` から生成） |
-| `.network` | 対象外 | Web 検索（Tavily / SearXNG）、ブラウザエージェントのスイッチ、LangSmith トレーシング（初回起動で `.network.example` から生成） |
-
-少なくとも `.models` にメインチャットモデルを、Web 検索を使う場合は `.network` に Tavily キーまたは SearXNG インスタンスを設定してください（「モデル設定 / モデル検索」パネルから編集できます）：
-
-| 変数 | 必須 | 説明 |
-| :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須）。`MAIN_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
-| `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 汎用推論スイッチ。プロバイダーごとにマッピング（DeepSeek / OpenAI / GLM / Anthropic） |
-| `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
-| `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
-| `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
-| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
-| `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、スキルレビューは `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
-| `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
-| `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
-| `MODEL_PRICING_TABLE` | — | セッション予算のコスト推定用 USD/1M token 価格表（ユーザー編集可能な JSON オブジェクトを JSON 文字列として保存。provider 直返コストとローカル litellm キャッシュがフォールバック） |
-| `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector セキュリティスキャンのスイッチ（デフォルトで有効） |
-| `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | オプトインのブラウザエージェント（既定は無効）。変更後は再起動でツールが登録されます |
-| `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 保存設定のみ（デフォルト 5）— ツール実行パスは消費しません。ログレベル（INFO） |
-| `WORKSPACE_TEMPLATE_LANG` | — | ペルソナテンプレートの言語：`en` / `zh` / `ja` / `ko`（初回使用時に遅延コピー） |
-| `LANGSMITH_TRACING_V2` / `LANGSMITH_API_KEY`（`.network`） | — | オプションの LangSmith トレーシング |
-
-### 3. モデルに関する注意（HuggingFace 自動ダウンロード）
-**ローカル GGUF** モードに設定されたモデルは、初回使用時に Hugging Face から `models/<model>/model_weight/` へ自動ダウンロードされます。手動ダウンロードは不要です：
-
-- **埋め込みモデル**：`EMBEDDING_MODEL_LOCAL=true`（デフォルト）の場合、ローカルの `bge-m3` Q8_0 GGUF を初回実行時に自動ダウンロードします。
-- **リランカーモデル**：`.models` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
-- **ITTT / VTTT / Auxiliary LLM**：テンプレートのデフォルトはクラウド API。`*_MODEL_LOCAL=true` でローカル GGUF モデルに切り替え可能（同様に自動ダウンロード）。
-- **進捗付きの事前ダウンロード**：「モデル設定」パネルの内蔵ローカル項目（埋め込み、リランカー、ITTT / VTTT、補助モデル）にはダウンロードボタンとリアルタイム進捗バーがあり、スロットルされた `model_download_updated` WebSocket フレームを受信し、パネルを開いた時や再接続時に `GET /model-downloads/status` のスナップショットを 1 回取得して、未完了の `.part` ファイルから中断した転送を再開します。
-
-> 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
-
-### 4. バックエンドの起動
-`start.sh` は `pnpm` がある場合に Nuxt 開発サーバーをバックグラウンド起動してから Robyn バックエンドを起動します（Ollama は起動しません）：
-
-```bash
-chmod +x start.sh
-./start.sh          # .venv のインタプリタで python -m server --fast --disable-openapi を実行
-```
-
-手動起動（同等）：
-
-```bash
-uv run python -m server
-```
-
-バックエンドは **http://127.0.0.1:8080** でリッスンし、WebSocket エンドポイントは `/sessions/ws` です。
-
-### 5. （オプション）デスクトップクライアント
-Tauri 2 + Nuxt 4 クライアントは [client/](client/) にあり、Node.js 20+、pnpm、Rust が必要です（CI は Node 22 を固定）：
+デスクトップクライアントを開発モードで動かす:
 
 ```bash
 cd client
 pnpm install
-pnpm dev          # ブラウザモード、開発サーバー http://localhost:3000
-pnpm tauri dev    # ネイティブデスクトップモード
+pnpm tauri dev
 ```
 
-クライアントはデフォルトで `http://127.0.0.1:8080` の Python バックエンドに接続します（`client/.env` の `VITE_API_BACK_URL` で変更可能）。詳細は[クライアント README](client/README.md) を参照。
+ビルドとパッケージングの手順は [開発者ガイド](AGENTS.md) と [Wiki](https://github.com/lasertsole/sherry_agent/wiki) にあります。
 
-**デスクトップアプリのパッケージング** は **1 つの統合インストーラー** を生成します。フロントエンド、Rust シェル、CPU Python バックエンドを同じ deb/rpm/AppImage/msi/dmg に詰めます。初回起動時のバックエンドダウンロードはありません：
+## 🧭 クイックツアー
 
-```bash
-uv sync && uv pip install pyinstaller
-uv run --no-sync python packaging/build_backend.py   # バックエンド → client/src-tauri/sherry-backend/
-cd client && pnpm tauri build                         # バックエンド + SPA + シェルを同梱
-```
+- **チャット**: メインの会話ウィンドウ。左サイドバーでセッションを切り替え、セッションごとにモデルと思考レベルを設定できます。
+- **記憶**: **メニュー → 記憶** で、Sherry が覚えている内容の閲覧・検索・編集・アーカイブができ、記憶上限やセマンティック検索を調整できます。
+- **プリセットとロール**: キャラクターの identity、性格、話し方、あなたが演じる役割を編集します。
+- **タスクリスト**: 複数ステップの作業では計画と進捗が表示され、何が終わって次に何をするかが分かります。
+- **右サイドバー**: ファイル、Shadow Git Graph（影の Git グラフ）、ブラウザ、ターミナル、ホワイトボード、タスク軌跡などがチャット横のタブで開きます。
+- **サイドチャット / ブランチ**: サイド会話でメッセージを引用したり、過去の回答から新しいセッションを分岐させ、元の会話を変えずに別の方向を探索できます。
+- **スケジュールタスク**: 一回限り、一定間隔、cron 形式のタスクを作成でき、ハートビート検査で予定をフォローできます。
+- **設定**: モデルとネットワーク、ショートカット、安全フィルター、デスクトップ動作、言語と外観。
 
-`.github/workflows/desktop-build.yml` が 3 プラットフォームで統合インストーラーをビルドします。バックエンド構築とインストーラー作成はどちらも対象 OS ごとに実行が必要です（PyInstaller はクロスコンパイル不可）。アプリが所有するデータ——セッション、メモリ、ログ、学習したスキル、`.env` / `.models` / `.network`——は OS のアプリデータディレクトリ（シェルが `--sherry-home` で渡す。`SHERRY_HOME` はフォールバックのみ）に書き込まれ、読み取り専用のインストール先には書き込みません。初回起動ではモデル未設定のままウィンドウが開き、「モデル設定」でキーを入力して再起動すると有効になります。
+## 🔐 あなたのデータ
 
----
+Sherry はローカルで動作します。セッション、記憶、学習したスキル、ログ、設定は OS のアプリデータディレクトリに保存され、インストール先のフォルダーには置かれません。API キーは設定したプロバイダーにのみ送信されます。Sherry のアカウント登録やクラウドサービスへの依存はありません。
 
-## 🧪 テスト
+## 📚 ドキュメント
 
-テストは `tests/` 配下にあり、**ソースツリーをミラー**しています（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`）。uv 経由で **pytest** で実行します（単一ファイルや小規模な選択は `uv run pytest`）。ほとんどのテストファイルはモジュールレベルの `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`）を持ち、どの runner グループで実行されるかを決定します。
-
-### 推奨：プロセス分離 runner
-
-フルスイート（および CI）には split runner を使います。これは **3 つの逐次 pytest プロセス**（並列には決してしない）で MARKER（ディレクトリではなく）によりテストを選択し、終了コードを集約して、グループごとのサマリーと最終判定（全グループ通過時のみ終了コード 0）を出力します：
-
-```bash
-uv run python tests/run_tests_split.py                  # ハーメティックスイート（既定、llm_e2e 除外）
-uv run python tests/run_tests_split.py --with-llm-e2e   # 実 LLM e2e テストのみ（専用 job モード）
-uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数は pytest に転送
-```
-
-| グループ | Marker | 内容 |
-| :---- | :----- | :------- |
-| **A** | `unit` | 純ロジック、完全 mock のテスト |
-| **B** | `integration or module or system` | ハーメティックな統合 / モジュール / システムテスト |
-| **C** | `regression` | クロスモジュール回帰テスト |
-
-**なぜプロセスを分けるのか？** `tests/agent/tools/subagent/conftest.py` は conftest の *インポート* 時に stub callable をプロセスグローバルの `sys.modules` にインストールします。単一プロセスのフルスイート実行では、pytest は収集段階（テスト実行前）にすべての conftest とテストモジュールをインポートするため、それらの stub はプロセス全体で生き続け、スイートを越えて漏れます。遅延（呼び出し時）インポートは stub に解決されますが、より早く実オブジェクトを束縛したモジュールは古い束縛を保持します。結果として、subagent テストから遠く離れたスイートで不可解で順序依存の失敗が起きます（例：スキルスコープのアサーションが stub の固定スキルリストを見る、`TypeError` のトレースバックが conftest の lambda を指す）。グループを別プロセスで実行すれば、このクロススイート汚染は構造的に不可能になります。（stub 自体は `c730a46` 以降リストア安全です。runner は多層防御の運用レイヤーです。）
-
-**Windows の注意：** 子 pytest プロセスの環境には `PYTHONIOENCODING=utf-8` が注入され、runner は `errors="replace"` で出力を取得するため、GBK コンソールコードページが出力を壊したり実行をクラッシュさせたりすることはありません。
-
-### 実 LLM e2e テスト（`llm_e2e` marker）
-
-5 つのファイルにまたがる 8 つのテストが**実 LLM API** を呼び出します：`tests/agent/tools/subagent/` の 7 つ（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`）に加えて、`tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py` のマルチモーダル RAG パイプラインテストです。これらは：
-
-- **既定で選択解除**され（`-m "not llm_e2e"`、`pyproject.toml` の addopts と runner の両方で設定）、
-- `@pytest.mark.timeout` の予算（pytest-timeout）で制限され：単純テスト 300 秒、同時テスト 600 秒、
-- 明示的に、**専用 job** で実行します：`uv run python tests/run_tests_split.py --with-llm-e2e`（`-m llm_e2e` を選択）または `uv run pytest -m llm_e2e`。
-
-**想定実行時間**（単独、実バックエンド）：単純タスク約 30–60 秒、複雑な最悪ケース約 10 分、同時タスク約 2–9 分。この予算を超える場合は通常の遅さではなく実際のハングであり、テストごとの timeout が制限します（単純 300 秒 / 同時 600 秒）。
-
-**CI：** `.github/workflows/ci.yml` は `main` または `dev` への push/PR ごとに `uv run python tests/run_tests_split.py` を実行し、スイートを **3 つの逐次 pytest プロセス**（並列には決してしない）で走らせます：A = `unit`、B = `integration` + `module` + `system`、C = `regression`。`--with-llm-e2e` は別のより遅い job として維持してください（API トークンを消費するため、他のスイートと並列に実行しないでください）。
-
-> **注意：** `tests/full/` は上記の標準グループ外の補助/実験ディレクトリです。実 LLM を駆動するファイルはすべて `llm_e2e` タグが付いているため、既定の addopts で選択解除され、split runner も収集しません（さらに `tests/full/` を `--ignore` します）。手動実行：`uv run --no-sync pytest -m llm_e2e tests/full/<file>`。hermetic なテストはここに置きません — real-graph HITL テストは `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py` に移動し、標準グループで実行されます。
-
-### Evals
-
-`evals/` は pytest と並ぶ自製のサンドボックス評価フレームワークです。登録済みの全スイート、または名前で 1 つを実行できます：
-
-```bash
-uv run --group evals python evals/evals.py                # 登録済みの全スイート
-uv run --group evals python evals/evals.py graph_rag      # 名前で単一スイートを実行
-```
-
-| スイート | 評価内容 |
-| :---- | :---------------- |
-| `graph_rag` | multimodal_rag パイプラインを RAGAS で採点（faithfulness、answer relevancy、context recall、context precision） |
-| `subagent` | 実 `spawn_subagent_direct` パイプラインを決定論的タスクのベンチで評価（タスク成功率 + レイテンシ） |
-| `long_running_task` | 依存 DAG 上の TaskFlow オーケストレーションループ（ステップ成功率、フロー完了、wall time） |
-| `session_memory` | セッションメモリスタックの 6 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、セマンティック検索ランキング |
-| `skill_review` | プラン完了時のスキルレビューを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
-| `coding_capability` | 実メイン agent を小規模な自作コーディングタスク集で評価し、各タスクはそのリポジトリ自身の pytest 実行で判定——ベースラインであり外部ベンチマークではない |
-| `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。評価テストパッチはプロンプトに含まれ、実行前に checkout へ適用され、採点時にリセットして再適用される） |
-| `deepswe` | 外部 DeepSWE タスクをベンチマーク自身の Docker イメージで実行：agent は bind mount された checkout を編集し、`terminal` はコンテナ内で実行され、タスク専用の verifier イメージが diff を採点（先に gold patch を自己検査） |
-| `terminal_bench` | 外部 Terminal-Bench タスク：タスクイメージをビルドし、agent がコンテナ内で作業し、タスク自身の `run-tests.sh` の pytest 判定で評価（先に oracle を自己検査。マルチサービス構成のタスクは非対応と明示） |
-| `agentbench` | 外部 [AgentBench](https://github.com/THUDM/AgentBench) DBBench テストセット：固定 commit の公式問題とテーブルを SQLite に materialize し、AgentBench 自身の比較ルールで判定（INSERT/DELETE/UPDATE 行は非対応と明示。MySQL→SQLite の方言差は記録） |
-| `toolbench` | 外部 [ToolBench](https://github.com/OpenBMB/ToolBench) テスト命令：公式 `test_query_ids`、ツール呼び出しは公式 RapidAPI プロキシ経由、公式 answer 形式に変換し、固定 commit のリポジトリから読み込んだ公式 ToolEval で判定（データミラー：[Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)） |
-
-各スイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスへリダイレクト）、レポートは `evals/results/<suite>/<run_id>/` に書き出されます。このディレクトリは **gitignore** 済みで、実行ごとのレポートはコミットしません。
-
-`terminal_bench` は Docker が必要です。`deepswe` は既定で Docker を使いますが、`deepswe --local` は Docker なしでホスト上で動作します。`toolbench` は `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY`、OpenAI 互換の ToolEval judge key が必要です。`agentbench` は `MAIN_LLM_API_KEY` が必要です。前提条件が無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーとベンチマークデータは `~/.cache/sherry_evals` に clone / ダウンロードし（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` で上書き可能）、リポジトリ内には置きません。`--dry-run` は Docker・モデル・ToolBench の大容量ダウンロード無しで選択を検証できます。
-
-`coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench`、`toolbench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
-
----
-
-## 📝 キャラクタープロファイルの例
-
-エージェントの動作は `workspace/` 配下のファイルによって駆動されます：
-
-- **SOUL.md**：性格の対比、話し方、行動ロジックを定義。
-- **AGENTS.md**：ツール使用の優先順位、安全境界、倫理ガイドラインを定義。
-- **USER.md**：ユーザー固有の対話設定や既知情報を保存。
-- **ROLE.md**：AI とユーザーがそれぞれ誰を演じるかを宣言（「ユーザーは…を演じます」形式）。プリセットと役割パネルが現在の UI 言語で生成し、プリセットに含めて保存します。
-- **HEARTBEAT.md**：Heartbeat 定時サービスの未完了タスクを列挙。
-- **prompt_builder.py**：プロファイルファイルからシステムプロンプトを構築。
-- **file_sync.py**：不足しているペルソナファイルを `workspace/template/<lang>/`（`WORKSPACE_TEMPLATE_LANG` で選択）から遅延コピー。ユーザーの編集を上書きすることはありません。
-
----
+この README はユーザー向けガイドです。[Wiki](https://github.com/lasertsole/sherry_agent/wiki) に技術ドキュメント（アーキテクチャ、記憶エンジン、タスクオーケストレーション、サンドボックス、セキュリティモデルなど）があります。開発者とコントリビューターは [AGENTS.md](AGENTS.md) と [クライアント README](client/README.md) から始めてください。
 
 ## 🤝 コントリビューション
 
-Issue と Pull Request を歓迎します！新しいスキルの追加方法：
-
-1. `skills/builtin/` 配下にフォルダを作成（または `skills/auto/` / `skills/plugins/`、サードパーティは後者）。
-2. YAML フロントマター（`name`、`description`、オプションの `scope`）を持つ `SKILL.md` に、スキルの使い方と手順を記述。
-3. エージェントを再起動 —— ローダーはこれら 3 ルートの `SKILL.md` だけをスキャンし、モデルに公開します。（実行中のエージェントに内蔵の `skill_creator` スキルで生成させることもできます。）
-
-`skills/plugins/` 配下のサードパーティスキルは SkillSpector でスキャンされ、明示的に有効化されるまで非アクティブのままです。
-
----
-
-連絡先：QQ 3132225629
+Issue と Pull Request を歓迎します。スキルを追加するには、`skills/builtin/`、`skills/auto/`、`skills/plugins/` のいずれかに `SKILL.md` を含むフォルダーを作成します。実行中のエージェントに組み込みの `skill_creator` スキルで生成させることもできます。サードパーティ製スキルは明示的に有効化するまで無効です。
 
 ## 📄 ライセンス
 
-このプロジェクトは MIT ライセンスの下で公開されています。
+MIT License。
 
 ---
 
-> **💡 Tips**：このプロジェクトは、高度な AI エージェントとディープ・ロールプレイングの探求からインスピレーションを得ています。
+連絡先: QQ 3132225629
+
+> **💡 ヒント**: 本プロジェクトは、高度な AI エージェントと深いロールプレイの探求から生まれました。

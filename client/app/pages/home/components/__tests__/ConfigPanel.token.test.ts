@@ -73,10 +73,9 @@ const primevueStubs = {
   Divider: { name: 'Divider', template: '<div class="dv"></div>' },
   Button: { name: 'Button', props: ['label'], template: '<button class="btn">{{ label }}</button>' },
   Slider: { name: 'Slider', props: ['modelValue'], template: '<div class="sl"></div>' },
-  ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' },
+  Skeleton: { name: 'Skeleton', template: '<div class="sk"></div>' },
   TokenBudgetPanel: { name: 'TokenBudgetPanel', props: ['sessionId'], template: '<div class="tbp"></div>' },
-  ShortcutSettingsSection: { name: 'ShortcutSettingsSection', template: '<div class="shortcut-section"></div>' },
-  MemorySettingsSection: { name: 'MemorySettingsSection', template: '<div class="memory-settings-section"></div>' }
+  ShortcutSettingsSection: { name: 'ShortcutSettingsSection', template: '<div class="shortcut-section"></div>' }
 };
 
 interface ConfigPanelVm {
@@ -178,9 +177,9 @@ describe('ConfigPanel shortcut-bindings tab', () => {
     });
     const vm = wrapper.vm as unknown as ConfigPanelVm;
 
-    // The token budget left the settings for a session tab; the memory
-    // settings and desktop tabs are appended last: background / env / app /
-    // language / shortcuts / live safety / memory settings / desktop.
+    // The token budget left the settings for a session tab; the memory limits
+    // moved into the Memory panel: background / env / app / language /
+    // shortcuts / live safety / desktop.
     expect(wrapper.findAll('.tp-header').map(node => node.text())).toEqual([
       '背景图片',
       '模型配置',
@@ -188,14 +187,13 @@ describe('ConfigPanel shortcut-bindings tab', () => {
       '国际化',
       '快捷键',
       '直播安全',
-      '记忆设置',
       '桌面'
     ]);
 
     // The tab body is the (stubbed) section; it saves on its own, so the
     // footer's Save/Cancel pair must be gone while it is active.
     expect(wrapper.find('.shortcut-section').exists()).toBe(true);
-    // 背景 0 · 模型 1 · 应用 2 · 国际化 3 · 快捷键 4 (budget moved to a session tab).
+    // Background 0 · env 1 · app 2 · language 3 · shortcuts 4 (a session tab owns the budget).
     vm.activeTab = 4;
     await flushPromises();
     expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(0);

@@ -54,7 +54,7 @@
           :loading="creating"
           :disabled="!selectedId"
           data-test="new-session-confirm"
-          @click="confirm" />
+          v-debounce:click.500="confirm" />
       </div>
     </template>
   </Dialog>

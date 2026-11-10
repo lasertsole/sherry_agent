@@ -98,6 +98,8 @@ describe('BrowserPanel', () => {
 
     await wrapper.get('[data-test="browser-address"]').setValue('example.com');
     await wrapper.get('[data-test="browser-go"]').trigger('click');
+    // Go is debounced (v-debounce:click.300).
+    await vi.waitFor(() => expect(wrapper.find('[data-test="browser-frame"]').exists()).toBe(true));
 
     expect(wrapper.get('[data-test="browser-frame"]').attributes('src')).toBe('https://example.com');
   });
@@ -441,7 +443,7 @@ describe('BrowserPanel — CDP mode', () => {
 
     await wrapper.get('[data-test="browser-address"]').setValue('example.com');
     await wrapper.get('[data-test="browser-go"]').trigger('click');
-    expect(channel.sent).toContainEqual({ event: 'nav', url: 'https://example.com' });
+    await vi.waitFor(() => expect(channel.sent).toContainEqual({ event: 'nav', url: 'https://example.com' }));
 
     channel.handlers.onFrame!({ data: 'AAA', width: 393, height: 852 } as never);
     await flushPromises();
@@ -526,6 +528,8 @@ describe('BrowserPanel — CDP mode', () => {
     expect(channels.FakeChannel.instances).toHaveLength(0);
     await wrapper.get('[data-test="browser-address"]').setValue('example.com');
     await wrapper.get('[data-test="browser-go"]').trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('[data-test="browser-frame"]').exists()).toBe(true));
+
     expect(wrapper.get('[data-test="browser-frame"]').element.tagName).toBe('IFRAME');
     wrapper.unmount();
   });

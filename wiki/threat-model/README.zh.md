@@ -16,7 +16,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 8 | 沙箱子进程 → 宿主进程 | 子进程派生 | `scrub_env`、`bwrap`/`seatbelt` 隔离 |
 | 9 | 记忆 / 技能文件 → 系统提示词 | 提示词组装 | 安装时的技能扫描门禁；**写入时注入拦截待实现** |
 | 10 | TaskFlow step 结果 → 下游 step | DAG 边 | 期望→实际闭环：schema 门、step judge、证据台账 |
-| 11 | 远程页面 → Agent | 浏览器工具 | 显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED`，重启时读取）；每个工具的输出都经过**不可信输出围栏**，调试端口从不离开后端进程 |
+| 11 | 远程页面 → Agent | 浏览器工具 | 显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED`，重启时读取）；每个工具的输出都经过**不可信输出围栏**，调试端口从不离开后端进程，导航/读取 URL 还要过 **SSRF 守卫**（本地目标需 `SHERRY_BROWSER_ALLOW_LOCAL=1` 显式开启） |
 
 ## 数据分类
 
@@ -45,7 +45,8 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 子进程 env hijack（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`BASH_ENV` 等） | **hijack 变量阻止**：启动钩子（`PYTHONPATH`、`BASH_ENV`、`ENV` 等）始终剔除；加载器变量（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`DYLD_INSERT_LIBRARIES`）仅在 `SHERRY_STRICT_ENV_HIJACK=1` 下剔除——因为容器运行时会真的设置它们 | 加载器变量默认不阻止，理由见运行手册一节 |
 | 跨站请求伪造（CSRF） | **Origin 允许清单** + **CSRF 守卫**：写方法（POST/PUT/PATCH/DELETE）遇 `Sec-Fetch-Site: cross-site` 一律拒绝；`Origin`/`Referer` 存在但不是 loopback 也不在允许清单时同样拒绝 | 脚本客户端三个头都不发（curl、测试客户端）——它靠 token 鉴权，不靠这道守卫 |
 | 无凭据的远程访问 | **可选登录保护**：scrypt 哈希口令、HttpOnly 的 JWT Cookie（访问 + 轮换刷新，登出即吊销两者）与单次 WebSocket 票据；loopback 客户端按套接字地址豁免 | 默认**关闭**——初始安装只由网关 token 保护，账户菜单就是开关 |
-| 服务端请求伪造（SSRF） | **SSRF 判定**覆盖每个被抓取的 URL：非全局目标（私有、loopback、云元数据、RFC 2544、IPv6 ULA）拒绝；连接**钉在已校验的地址**上；每一次重定向逐跳复查 | fake-ip 代理主机会把公网域名解析到被拒网段——用文档化的开关作为逃生口 |
+| 服务端请求伪造（SSRF） | **SSRF 判定**覆盖每个被抓取的 URL 以及浏览器的导航/读取 URL：非全局目标（私有、loopback、云元数据、RFC 2544、IPv6 ULA）拒绝；连接**钉在已校验的地址**上；每一次重定向逐跳复查；页面若经其它途径到达被拒地址，snapshot/screenshot/evaluate 的内容会被扣留且页面被停到 `about:blank` | fake-ip 代理主机会把公网域名解析到被拒网段——用文档化的开关作为逃生口 |
+| 文件浏览器读取凭据 | `/project/file*` 拒绝**未绑定**项目目录的会话（其默认根就是 sherry 仓库本身），并拒绝 sherry 自己的根配置/凭据文件，复用 agent 工具的 `_ROOT_SENSITIVE_FILES` 名单 | 绑定后的用户项目自己的 `.env` 仍可浏览——那是用户自己的文件 |
 | 渲染内容中的 XSS | 客户端 DOMPurify 允许清单 + `vue/no-v-html` + **服务端安全响应头**（`script-src 'self'`、`object-src 'none'`、`nosniff`、防嵌套） | CSP 是第二层：客户端净化器与载荷同上下文运行 |
 | 借 `terminal` 手工发起 SSRF（模型被说服执行 `curl`） | HITL 审批模式：云元数据端点、以及**带写入**的 loopback 请求 | 模式是启发式而非边界：命令可以换个说法绕开 |
 | 上传端点内容伪造 | 网关鉴权（Origin + token） | **字节签名与声明类型一致性校验** |

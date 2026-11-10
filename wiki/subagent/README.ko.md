@@ -110,6 +110,37 @@
 
 **기능 역할 봉쇄(세 번째, 직교 게이트).** 깊이는 자식이 spawn을 *할 수 있는지*를 정하고, 봉쇄는 *어떤 역할*을 spawn할 수 있는지를 정합니다. `_check_role_containment`(`spawn/core.py`)는 요청자 자신의 run 레코드만 읽고(단일 홉, 조상 체인을 순회하지 않습니다) `SPAWN_ALLOWED_CHILD_ROLES`(`types/functional_role.py`)를 참조합니다: 항목이 없는 역할은 ‘같은 역할만’이며 `reviewer`가 그대로이고, `MAIN`(run 레코드 없음)과 `general`(`tools: inherit` = 모든 도구)은 무제한으로 단락됩니다——전문화 역할의 허용 목록은 모두 그 부분집합이기 때문입니다. 확장 항목은 두 종류입니다: `executor`는 쓰기 전 조사를 위해 **읽기 전용** `researcher` / `librarian`을 추가로 spawn할 수 있고, 두 연구 역할은 자기 역할에 더해 서로를 spawn할 수 있습니다. 다단계 안전성은 체인 순회가 아니라 단일 홉 불변식에 기댑니다: 허용되는 **부모 이외의 자식은 반드시 읽기 전용**이므로 쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 읽기 전용 역할에만 도달하며 쓰기 능력으로 돌아가는 경로가 없습니다. 앞으로 순환을 만드는 항목(예: `researcher → executor`)을 추가하면 구멍이 열리는 대신 불변식 테스트에서 실패합니다.
 
+## 🧩 전략 표와 가드된 상태 전환
+
+두 가지 상태 판단을 명시적 객체로 만들었습니다(2026-11-09 설계 감사):
+
+- **구조화 출력 강등**은 `agent/tools/subagent/model_caps.py`의
+  `StructuredOutputStrategy`(`level`, `label`, `sends_json_mode`,
+  `thinking_off`, `local_validation_fatal`)입니다. spawn 경로는 저장된 정수를
+  `strategy_for()`로 한 번 해석한 뒤 플래그를 읽습니다. 정수는 디스크 호환
+  형식으로 남지만, 호출 지점은 더 이상 `level >= 1/2`를 비교하지 않습니다.
+- **완료 전달**은 단일 전환 표
+  (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`)를 통과합니다. 모든
+  `mark_delivery_*`가 `transition_delivery()`를 호출하므로 `DELIVERED`와
+  `DISCARDED`는 종단 상태이며, 잘못된 간선은 `InvalidDeliveryTransitionError`을
+  발생시킵니다. 동일 상태 전환은 크래시 복구를 위해 멱등입니다.
+
+## 🧱 spawn 요청, 모듈 분리, 완료 이벤트
+
+2026-11-10 설계 감사는 동작을 바꾸지 않고 spawn을 재구성했습니다:
+
+- `spawn/request.py::SpawnRequest`는 오케스트레이션이 받는 불변 요청입니다.
+  `spawn_subagent_direct(request=None, **legacy)`는 `from_legacy`로 기존
+  키워드 인자 호출을 유지합니다.
+- `spawn/core.py`는 732줄 파사드가 되었고, 각 단계는 `handoff.py`,
+  `validation.py`, `isolation.py`, `child_agent_factory.py`, `lifecycle.py`,
+  `ptc_prefill.py`로 이동했습니다. 파사드는 기존 import의 모든 이름을
+  re-export합니다.
+- 자식 완료는 이벤트 기반입니다. 종단 전이가
+  `registry/completion_events.py`(기반 `runtime/event_wait.py`)로 publish되고
+  `taskflow_wait_all`이 깨어납니다. 기존 poll 간격은 누락 알림용 폴백으로
+  남습니다.
+
 ## 🧪 완료 판정기와 goal loop
 
 완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단. 미설정 시 기존 기준이며 serving model 출력 예산에 따라 조정됩니다), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.

@@ -5,8 +5,9 @@ hand the model a screenful of replacement characters for a PNG and then license
 an overwrite, so the image could be replaced by mojibake. The contract pinned
 here:
 
-* a binary target is refused by read_file (size + hint, no license), by
-  patch_file, and by write_file — the bytes are never touched;
+* a non-image binary target is refused by read_file (size + hint, no license),
+  by patch_file, and by write_file — the bytes are never touched; an image is
+  read natively (or reports ``read_image_failed`` when it cannot be decoded);
 * UTF-8, UTF-8-with-BOM and UTF-16 (LE/BE) text round-trips in its OWN codec:
   a write or a patch keeps the BOM, the byte order and therefore the file's
   bytes-as-others-expect-them; the license carries the codec forward;
@@ -64,17 +65,31 @@ def _patch(session: str, path: str, old: str, new: str) -> dict:
     )
 
 
-def test_reading_a_resource_file_is_refused_and_licenses_nothing(project):
+def test_reading_a_non_image_resource_file_is_refused_and_licenses_nothing(project):
+    archive = project / "bundle.zip"
+    raw = b"PK\x03\x04" + b"\x00" * 40
+    archive.write_bytes(raw)
+
+    out = _read(SESSION, "bundle.zip")
+
+    assert "binary" in out["error"]
+    assert str(len(raw)) in out["error"]
+    assert "terminal" in out["hint"]
+    # No license is granted, and the follow-up overwrite is refused by the
+    # binary gate before the license even matters.
+    assert read_state.licensed(SESSION, archive) is None
+    refused = json.loads(_write(SESSION, "bundle.zip", "not an archive any more"))
+    assert "binary" in refused["error"]
+    assert archive.read_bytes() == raw
+
+
+def test_reading_an_undecodable_image_reports_an_error_and_licenses_nothing(project):
     image = project / "logo.png"
     image.write_bytes(PNG_BYTES)
 
     out = _read(SESSION, "logo.png")
 
-    assert "binary" in out["error"]
-    assert str(len(PNG_BYTES)) in out["error"]
-    assert "terminal" in out["hint"]
-    # No license is granted, and the follow-up overwrite is refused by the
-    # binary gate before the license even matters.
+    assert out["error"] == "read_image_failed"
     assert read_state.licensed(SESSION, image) is None
     refused = json.loads(_write(SESSION, "logo.png", "not an image any more"))
     assert "binary" in refused["error"]

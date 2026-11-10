@@ -31,7 +31,7 @@
             :model-value="heartbeatEnabled"
             :disabled="!statusLoaded || togglingEnabled"
             :aria-label="t('config.heartbeat.globalSwitch')"
-            @update:model-value="handleToggleEnabled" />
+            v-debounce:click.300="onToggleRequested" />
         </div>
 
         <!-- Header row: effectiveHint (left) + char counter (right) -->
@@ -224,6 +224,16 @@ const handleToggleEnabled = async (value: boolean | undefined) => {
   } finally {
     togglingEnabled.value = false;
   }
+};
+
+/**
+ * Debounced switch entry (`v-debounce:click`): the next state is the inverse of
+ * what is shown, read when the debounced click fires. The native switch's own
+ * model event is not handled — the panel is the source of truth and applies the
+ * optimistic state only once the click settles.
+ */
+const onToggleRequested = (): void => {
+  void handleToggleEnabled(!heartbeatEnabled.value);
 };
 
 /** File header region above "## Active Tasks" (fixed, not editable). */

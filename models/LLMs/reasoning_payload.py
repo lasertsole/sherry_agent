@@ -35,6 +35,8 @@ wrappers so every existing call site keeps working unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from config.features import REASONING_BUDGET
@@ -261,34 +263,74 @@ _MODEL_LEVEL_OVERRIDES: dict[str, dict[str, str | None]] = {
 }
 
 
+#: Providers whose client libraries take first-class reasoning kwargs instead
+#: of a wire payload. The resolved "format" is the provider name itself.
+_NATIVE_FORMATS = frozenset(
+    {"anthropic", "bedrock", "google", "google-genai", "gemini", "vertexai"}
+)
+
+
+@dataclass(frozen=True)
+class _FormatRule:
+    """One row of the format Strategy table.
+
+    A rule matches a ``(provider, model)`` pair and names the wire format. Adding
+    a gateway is a registration (2026-11-09 audit H1), not three new ``elif``
+    branches across the module.
+    """
+
+    thinking_format: str
+    providers: frozenset[str] | None = None
+    model_prefixes: tuple[str, ...] = ()
+    requires_reasoning_model: bool = False
+
+    def matches(self, provider: str, model: str) -> bool:
+        if self.providers is not None and provider not in self.providers:
+            return False
+        if self.model_prefixes and not model.startswith(self.model_prefixes):
+            return False
+        if self.requires_reasoning_model and not is_openai_reasoning_model(model):
+            return False
+        return True
+
+
+#: Ordered rules — first match wins. ZAI's model-prefix rule sits before the
+#: provider-specific OpenAI-compatible rules on purpose: a GLM model routed
+#: through any compatible gateway keeps its ZAI wire shape.
+_FORMAT_RULES: tuple[_FormatRule, ...] = (
+    _FormatRule(ThinkingFormat.DEEPSEEK.value, providers=frozenset({"deepseek"})),
+    _FormatRule(
+        ThinkingFormat.ZAI.value,
+        providers=frozenset(_OPENAI_COMPATIBLE),
+        model_prefixes=_ZHIPU_REASONING_PREFIXES,
+    ),
+    _FormatRule(ThinkingFormat.QWEN.value, providers=frozenset({"dashscope"})),
+    _FormatRule(ThinkingFormat.OPENROUTER.value, providers=frozenset({"openrouter"})),
+    _FormatRule(ThinkingFormat.TOGETHER.value, providers=frozenset({"together"})),
+    _FormatRule(ThinkingFormat.BASETEN.value, providers=frozenset({"baseten"})),
+    _FormatRule(
+        ThinkingFormat.OPENAI.value,
+        providers=frozenset(_OPENAI_COMPATIBLE),
+        requires_reasoning_model=True,
+    ),
+)
+
+
 def resolve_thinking_format(provider: str | None, model_name: str | None) -> str | None:
     """Pick the wire format for ``(provider, model)`` — None when unsupported.
 
-    Native providers (``anthropic`` / ``google`` / ``bedrock``) resolve to their
-    own name and are handled outside the OpenAI-compatible dispatcher.
+    Native providers resolve to their own name (handled outside the
+    OpenAI-compatible dispatcher); everything else walks :data:`_FORMAT_RULES`.
     """
     if not provider:
         return None
     provider = provider.strip().lower()
-    if provider == "deepseek":
-        return ThinkingFormat.DEEPSEEK.value
-    if provider in ("anthropic", "bedrock", "google", "google-genai", "gemini", "vertexai"):
+    if provider in _NATIVE_FORMATS:
         return provider
-    if provider not in _OPENAI_COMPATIBLE:
-        return None
     model = _bare_name(model_name)
-    if model.startswith(_ZHIPU_REASONING_PREFIXES):
-        return ThinkingFormat.ZAI.value
-    if provider == "dashscope":
-        return ThinkingFormat.QWEN.value
-    if provider == "openrouter":
-        return ThinkingFormat.OPENROUTER.value
-    if provider == "together":
-        return ThinkingFormat.TOGETHER.value
-    if provider == "baseten":
-        return ThinkingFormat.BASETEN.value
-    if model_name and is_openai_reasoning_model(model_name):
-        return ThinkingFormat.OPENAI.value
+    for rule in _FORMAT_RULES:
+        if rule.matches(provider, model):
+            return rule.thinking_format
     return None
 
 
@@ -397,21 +439,8 @@ def _custom_mapping_payload(custom_mapping: dict[str, Any], wire_value: str) -> 
     A known ``wire_format`` reuses that format's shape; ``"custom"`` (or a
     missing format) writes the value at the mapping's own dotted ``wire_field``.
     """
-    known = {
-        ThinkingFormat.OPENAI.value,
-        ThinkingFormat.DEEPSEEK.value,
-        ThinkingFormat.ZAI.value,
-        ThinkingFormat.QWEN.value,
-        ThinkingFormat.TOGETHER.value,
-        ThinkingFormat.BASETEN.value,
-        ThinkingFormat.OPENROUTER.value,
-        ThinkingFormat.CHAT_TEMPLATE.value,
-        ThinkingFormat.QWEN_CHAT_TEMPLATE.value,
-        ThinkingFormat.STRING_THINKING.value,
-        ThinkingFormat.ANT_LING.value,
-    }
     wire_format = str(custom_mapping.get("wire_format") or "custom")
-    if wire_format in known:
+    if wire_format in _WIRE_ENCODERS:
         return _wire_payload(wire_format, wire_value)
     wire_field = str(custom_mapping.get("wire_field") or "")
     if not wire_field:
@@ -445,48 +474,89 @@ def _resolved_level_map(
     return resolved, resolve_thinking_level_map(provider, model_name, thinking_format=resolved)
 
 
+#: Wire values that mean "off" for the formats carrying a bool/effort field.
+_OFF_WIRE_VALUES = frozenset({"disabled", "none", "off", ""})
+
+
+def _encode_deepseek(wire_value: str) -> dict[str, Any]:
+    # ``thinking.type`` accepts enabled/disabled only; an effort level is carried
+    # by the separate ``reasoning_effort`` field (pi's own deepseek rule), with
+    # the type left enabled.
+    if wire_value in ("enabled", "disabled"):
+        return {"extra_body": {"thinking": {"type": wire_value}}}
+    return {"extra_body": {"thinking": {"type": "enabled"}}, "reasoning_effort": wire_value}
+
+
+def _encode_zai(wire_value: str) -> dict[str, Any]:
+    return {"extra_body": {"thinking": {"type": wire_value}}}
+
+
+def _encode_openai_effort(wire_value: str) -> dict[str, Any]:
+    return {"reasoning_effort": wire_value}
+
+
+def _encode_openrouter(wire_value: str) -> dict[str, Any]:
+    return {"reasoning": {"effort": wire_value}}
+
+
+def _encode_boolean_reasoning(wire_value: str) -> dict[str, Any]:
+    """Together / Baseten: ``reasoning.enabled`` plus an optional effort."""
+    enabled = wire_value not in _OFF_WIRE_VALUES
+    payload: dict[str, Any] = {"reasoning": {"enabled": enabled}}
+    if wire_value not in _OFF_WIRE_VALUES and wire_value != "enabled":
+        payload["reasoning_effort"] = wire_value
+    return payload
+
+
+def _encode_qwen(wire_value: str) -> dict[str, Any]:
+    """Qwen: ``enable_thinking`` plus an optional effort."""
+    enabled = wire_value not in _OFF_WIRE_VALUES
+    payload: dict[str, Any] = {"extra_body": {"enable_thinking": enabled}}
+    if wire_value not in _OFF_WIRE_VALUES and wire_value != "enabled":
+        payload["reasoning_effort"] = wire_value
+    return payload
+
+
+def _encode_chat_template(wire_value: str) -> dict[str, Any]:
+    enabled = wire_value not in _OFF_WIRE_VALUES
+    return {"extra_body": {"chat_template_kwargs": {"enable_thinking": enabled}}}
+
+
+def _encode_string_thinking(wire_value: str) -> dict[str, Any]:
+    return {"extra_body": {"thinking": wire_value}}
+
+
+def _encode_ant_ling(wire_value: str) -> dict[str, Any]:
+    return {"reasoning": {"effort": wire_value}} if wire_value not in ("none", "") else {}
+
+
+def _encode_nothing(wire_value: str) -> dict[str, Any]:
+    return {}
+
+
+#: Format -> wire encoder. Adding a format registers one function here (H1).
+_WIRE_ENCODERS: dict[str, Callable[[str], dict[str, Any]]] = {
+    ThinkingFormat.DEEPSEEK.value: _encode_deepseek,
+    ThinkingFormat.ZAI.value: _encode_zai,
+    ThinkingFormat.OPENAI.value: _encode_openai_effort,
+    ThinkingFormat.OPENROUTER.value: _encode_openrouter,
+    ThinkingFormat.TOGETHER.value: _encode_boolean_reasoning,
+    ThinkingFormat.BASETEN.value: _encode_boolean_reasoning,
+    ThinkingFormat.QWEN.value: _encode_qwen,
+    ThinkingFormat.QWEN_CHAT_TEMPLATE.value: _encode_qwen,
+    ThinkingFormat.CHAT_TEMPLATE.value: _encode_chat_template,
+    ThinkingFormat.STRING_THINKING.value: _encode_string_thinking,
+    ThinkingFormat.ANT_LING.value: _encode_ant_ling,
+}
+
+
 def _wire_payload(thinking_format: str, wire_value: str) -> dict[str, Any]:
     """The request fragment for one ``(format, wire value)`` pair.
 
     Wire values ``enabled`` / ``disabled`` / ``none`` / ``off`` are treated as
     state switches by the formats that carry a separate bool/effort field.
     """
-    if thinking_format == ThinkingFormat.DEEPSEEK.value:
-        # DeepSeek's thinking.type accepts enabled/disabled only; an effort
-        # level is carried by the separate reasoning_effort field (pi's own
-        # deepseek rule), with the type left enabled.
-        if wire_value in ("enabled", "disabled"):
-            return {"extra_body": {"thinking": {"type": wire_value}}}
-        return {
-            "extra_body": {"thinking": {"type": "enabled"}},
-            "reasoning_effort": wire_value,
-        }
-    if thinking_format == ThinkingFormat.ZAI.value:
-        return {"extra_body": {"thinking": {"type": wire_value}}}
-    if thinking_format == ThinkingFormat.OPENAI.value:
-        return {"reasoning_effort": wire_value}
-    if thinking_format == ThinkingFormat.OPENROUTER.value:
-        return {"reasoning": {"effort": wire_value}}
-    if thinking_format in (ThinkingFormat.TOGETHER.value, ThinkingFormat.BASETEN.value):
-        enabled = wire_value not in ("disabled", "none", "off", "")
-        payload: dict[str, Any] = {"reasoning": {"enabled": enabled}}
-        if wire_value not in ("enabled", "disabled", "none", "off", ""):
-            payload["reasoning_effort"] = wire_value
-        return payload
-    if thinking_format in (ThinkingFormat.QWEN.value, ThinkingFormat.QWEN_CHAT_TEMPLATE.value):
-        enabled = wire_value not in ("disabled", "none", "off", "")
-        payload = {"extra_body": {"enable_thinking": enabled}}
-        if wire_value not in ("enabled", "disabled", "none", "off", ""):
-            payload["reasoning_effort"] = wire_value
-        return payload
-    if thinking_format == ThinkingFormat.CHAT_TEMPLATE.value:
-        enabled = wire_value not in ("disabled", "none", "off", "")
-        return {"extra_body": {"chat_template_kwargs": {"enable_thinking": enabled}}}
-    if thinking_format == ThinkingFormat.STRING_THINKING.value:
-        return {"extra_body": {"thinking": wire_value}}
-    if thinking_format == ThinkingFormat.ANT_LING.value:
-        return {"reasoning": {"effort": wire_value}} if wire_value not in ("none", "") else {}
-    return {}
+    return _WIRE_ENCODERS.get(thinking_format, _encode_nothing)(wire_value)
 
 
 #: Anthropic models that take the ADAPTIVE thinking form
@@ -531,43 +601,60 @@ def _anthropic_thinking_kwargs(model_name: str | None, level: str) -> dict[str, 
     return {"thinking": {"type": "enabled", "budget_tokens": _DEFAULT_ANTHROPIC_BUDGET}}
 
 
+#: Bedrock carries Claude's thinking under ``additional_model_request_fields``
+#: and GPT's effort as a first-class param; the model name decides.
+def _bedrock_thinking_kwargs(model_name: str | None, level: str) -> dict[str, Any]:
+    if not model_name or level == "off":
+        return {}
+    name = _bare_name(model_name)
+    if "claude" in name:
+        effort = _ANTHROPIC_EFFORT.get(level, "high")
+        return {
+            "additional_model_request_fields": {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": effort},
+            }
+        }
+    if "gpt" in name or "openai" in name:
+        return {"reasoning_effort": _ANTHROPIC_EFFORT.get(level, "high")}
+    return {}
+
+
+#: The discrete Gemini form (Gemini 3+) with the documented four levels.
+_GOOGLE_THINKING_LEVELS: dict[str, str] = {
+    "minimal": "MINIMAL",
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+    "xhigh": "HIGH",
+    "max": "HIGH",
+}
+
+
+def _google_thinking_kwargs(model_name: str | None, level: str) -> dict[str, Any]:
+    if not model_name or level == "off":
+        # Gemini's thinking cannot be disabled; absent param = server default.
+        return {}
+    wire = _GOOGLE_THINKING_LEVELS.get(level)
+    return {"thinking_level": wire} if wire else {}
+
+
+#: Native provider -> first-class kwargs encoder. The resolved "format" of a
+#: native provider is its own name, so these keys and the resolver agree.
+_NATIVE_ENCODERS: dict[str, Callable[[str | None, str], dict[str, Any]]] = {
+    "anthropic": _anthropic_thinking_kwargs,
+    "bedrock": _bedrock_thinking_kwargs,
+    "google": _google_thinking_kwargs,
+    "google-genai": _google_thinking_kwargs,
+    "gemini": _google_thinking_kwargs,
+    "vertexai": _google_thinking_kwargs,
+}
+
+
 def _native_thinking_kwargs(provider: str, model_name: str | None, level: str) -> dict[str, Any]:
     """Anthropic / Google / Bedrock branches (first-class client kwargs)."""
-    if provider == "anthropic":
-        return _anthropic_thinking_kwargs(model_name, level)
-    if provider == "bedrock":
-        # Bedrock carries Claude's thinking under ``additional_model_request_fields``
-        # and GPT's effort as a first-class param; the model name decides.
-        if not model_name or level == "off":
-            return {}
-        name = _bare_name(model_name)
-        if "claude" in name:
-            effort = _ANTHROPIC_EFFORT.get(level, "high")
-            return {
-                "additional_model_request_fields": {
-                    "thinking": {"type": "adaptive"},
-                    "output_config": {"effort": effort},
-                }
-            }
-        if "gpt" in name or "openai" in name:
-            return {"reasoning_effort": _ANTHROPIC_EFFORT.get(level, "high")}
-        return {}
-    if provider in ("google", "google-genai", "gemini", "vertexai"):
-        if not model_name or level == "off":
-            # Gemini's thinking cannot be disabled; absent param = server default.
-            return {}
-        # The discrete form (Gemini 3+) with the documented four levels.
-        level_map = {
-            "minimal": "MINIMAL",
-            "low": "LOW",
-            "medium": "MEDIUM",
-            "high": "HIGH",
-            "xhigh": "HIGH",
-            "max": "HIGH",
-        }
-        wire = level_map.get(level)
-        return {"thinking_level": wire} if wire else {}
-    return {}
+    encoder = _NATIVE_ENCODERS.get(provider)
+    return encoder(model_name, level) if encoder is not None else {}
 
 
 def build_thinking_kwargs(

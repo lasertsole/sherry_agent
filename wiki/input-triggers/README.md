@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> Part of the chat client: `$` selects a skill, `/` selects a custom or built-in command, and the `+` button opens the same pickers (plus the sidebar file tree). The composer stays a plain contenteditable with atomic chips; no editor framework is involved.
+> Part of the chat client: `$` selects a skill, `/` selects a custom or built-in command, and the `+` button opens the upload + picker menu. The composer stays a plain contenteditable with atomic chips; no editor framework is involved.
 
 ## Trigger map
 
@@ -11,7 +11,7 @@
 | `$` | `GET /skills` (active, main-visible skills) | Insert an atomic `$skillName` chip; `extractTextForSend` emits `$skillName` |
 | `/` | Custom commands from `GET /commands?session_id=…`, plus the existing command registry | Custom command inserts an atomic chip carrying its expanded prompt body; a built-in executes immediately |
 | `@` | Existing file-mention flow (drag, tree "Add to chat") | The existing `@path` chip is unchanged |
-| `+` | Composer toolbar | Skill picker / command picker / reveal the left sidebar file tree |
+| `+` | Composer toolbar | Image / audio / video upload, generic file picker, skill picker, command picker |
 
 ## `$` skills
 
@@ -27,7 +27,7 @@ A custom command with an `argument-hint` opens a small argument field in the pan
 
 ## `+` menu and `@` file mentions
 
-The `+` button is the discoverable entry for the otherwise hidden `$` and `/` triggers. Its three rows open the skill picker, the command picker, or switch the left sidebar to the project file tree. File references remain the existing atomic `@path` chips produced by drag-and-drop or the tree's **Add to chat** action.
+The `+` button is the discoverable entry for the otherwise hidden `$` and `/` triggers. Its rows open image / audio / video uploads, a generic OS file picker, the skill picker and the command picker. File references remain the existing atomic `@path` chips produced by drag-and-drop or the tree's **Add to chat** action.
 
 ## Custom command format
 

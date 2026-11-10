@@ -70,7 +70,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 `browser` 도구가 돌려주는 텍스트(레거시 `browser_*` 결과도 동일)(그리고 스크린샷 경로)뿐입니다. 페이지 자체——DOM, 픽셀,
 screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 프레임은 `/browser/ws`로 패널에
 직행하고, 스냅샷은 도구 결과가 되기 전에 관리자가 상한(요소 / 텍스트)으로 잘라내며,
-스크린샷은 시각 지원 모델에게 이미지 자체로 전달됩니다(`image_to_text` 스킬은 네이티브 시각이 없는 모델의 폴백이며, 턴마다의 기록 정리가 오래된 스크린샷을 이후 컨텍스트에서 제거합니다). 페이지가 표시하는
+스크린샷은 시각 지원 모델에게 이미지 자체로 전달됩니다(`image_to_text` 스킬은 네이티브 시각이 없는 모델의 폴백이며, 요청 시점의 히스토리 미디어 예산이 유지된 이미지가 `history_media_budget_bytes`를 넘을 때만 오래된 스크린샷을 이후 컨텍스트에서 제거합니다). 페이지가 표시하는
 무엇이든 에이전트에 영향을 줄 수 있는 경로는 모델이 스스로 요청한 도구 결과뿐이며, 그 결과도
 다른 원격 콘텐츠와 마찬가지로 신뢰 불가 출력 펜스와 비밀정보 마스킹을 거칩니다(위협 모델 참조).
 
@@ -88,7 +88,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | cron으로 트리거된 턴 | `origin='cron'` | `True` | 예약 작업의 세션 턴(`origin_for_source`) | `messages` 행 | 사용자 요청이 아님 |
 | 압축 요약 쌍 | `lc_source='summarization'`(`additional_kwargs` 내, origin 열 아님) | — | 압축 산출물(`_build_new_messages`) | **MesMemory에 영속화되지 않음**; state 요약 쌍 | `<summary>`가 모델 뷰에 상주; `<prior-summary>`로 체인 연속 |
 | 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 구조화 요약 문서에 `evicted_refs[]` 포인터를 운반 |
-| 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 이력 메시지의 네이티브 블록 제거, 또는 압축 시점 오프로드(`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/`(영속 사본; 압축 시점 오프로드는 `sha256[:16]` 이름으로 중복 제거); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
+| 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 요청 시점 히스토리 미디어 예산(`MultimodalProcessor._project_history_media_budget`), 또는 압축 시점 오프로드(`offload_inline_media`) | `SRC_DIR/<session_id>/artifacts/`(내용 주소 기반 업로드 사본, 이름 `<family>-<sha256[:16]><ext>`, 동일 바이트 중복 제거)와 `SESSIONS_DIR/<session_id>/media/`(압축 시점 오프로드 및 파이프라인 밖 미디어); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트(artifact URI는 파일로 해석됨)와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
 | 레거시 계획 지식 | 비메시지 —— 디렉터리 | — | 모델 읽기에서 퇴역 | `workspace/knowledge/plans/<plan_key>/` | 주입하지 않음; 원본 `handoff-tree.json` 감사 파일만 남음 |
 | `facts` target | MesMemory `memory_entries` 행(유일한 전역 대상) | — | 시스템 수준 / 프로젝트 횡단 함정과 규약: 압축 시 기억 검토 + 계획 완료 스킬 리뷰 | memory 대상(1 375자 상한; 초과 시 가장 적게 사용된 항목부터 보관) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
 
@@ -190,8 +190,19 @@ sherry가 지원하는 provider 중 Anthropic만 프롬프트 캐시가 **명시
 
 | 키 | 기본값 | 의미 |
 |---|---|---|
+### 선언적 능력 카탈로그
+
+자동 모드는 "auto"에서 시작하지 않습니다. `get_capability`는 각 미디어 패밀리를 다음 순서로
+해석합니다: 버전 관리되는 `config/model_capabilities.json` 카탈로그(`sherry.jsonc`의
+`model_capabilities`로 덮어씀) → `src/data/model_capabilities_runtime.json`에 학습된 라벨 →
+`"auto"`. 선언된 모델은 프로브하지 않으며 런타임 프로브가 선언을 덮어쓸 수 없습니다(수정은
+사용자 오버라이드). 선언되지 않은 모델은 한 번만 프로브하고, 네이티브 성공은 아직 `"auto"`인
+패밀리를 `supported`로, 조용한 실명은 `unsupported`로 저장하며 재시작 후에도 유지합니다.
+`pdf`는 일급 패밀리(`document` / `file` 블록)이며 스킬 폴백이 없습니다. 지원되지 않는 PDF는
+이미지나 텍스트를 요청하는 플레이스홀더로 대체됩니다.
+
 | `main_llm_native_multimodal` | `"auto"` | 3-상태 네이티브 스위치: `"true"`는 모델에 미디어 블록을 남기고, `"false"`는 항상 스킬 경로, `"auto"`는 능력 캐시로 패밀리별 결정; 그 밖의 값은 페일세이프로 스킬 경로 |
-| `main_llm_silent_degradation_detection` | `True` | 네이티브 응답이 미디어 실명을 자술하면 요청에 나타난 미디어 패밀리를 `"unsupported"`로 캐시 |
+| `main_llm_silent_degradation_detection` | `True` | 네이티브 응답이 미디어 실명을 자술하면 요청에 나타난 미디어 패밀리를 `"unsupported"`로 캐시; 정상적인 비어 있지 않은 성공은 아직 `"auto"`인 패밀리를 `"supported"`로 학습 |
 | `max_media_bytes` | `20 * 1024 * 1024` | 페이로드당 하드 상한; 초과 페이로드는 쓰기 전에 건너뜀 |
 
 이 노브들에는 환경 변수가 없다: 설계상 위 feature TypedDict들의 코드 기본값이다.
@@ -212,7 +223,7 @@ sherry가 지원하는 provider 중 Anthropic만 프롬프트 캐시가 **명시
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 체인 요약 필터링과 `<prior-summary>` 주입 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 압축 시점 인라인 미디어 오프로드: 쓰기 + 포인터, 해시 중복 제거, 실패 플레이스홀더, 보존 윈도우 불변, 동기/비동기, `evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | 블록 단위 멀티모달 추정: 고정 미디어 비용, 5 MB base64 회귀, 미디어를 숨긴 미지 블록, `str` / `None` / 빈 리스트 경계 |
-| `tests/agent/middlewares/test_multimodal_processor.py` | 3-상태 네이티브 스위치와 요청별 스크럽: 혼합 패밀리는 지원되지 않는 블록만 제거, 지원 블록은 그대로, state/kwargs/디스크 불변, `"true"`는 결코 스크럽하지 않음, 이력 이미지 제거 |
+| `tests/agent/middlewares/test_multimodal_processor.py` | 3-상태 네이티브 스위치와 요청별 스크럽: 혼합 패밀리는 지원되지 않는 블록만 제거, 지원 블록은 그대로, state/kwargs/디스크 불변, `"true"`는 결코 스크럽하지 않음; 히스토리 미디어 예산 투영은 `media_pipeline/test_history_budget.py`(전체 수용 / 최신순 / 최신 사용자 보호 / 원격 URL / 전체 폐기) |
 | `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` 상한: 초과 페이로드는 쓰기 전에 건너뜀, 모델 가시 알림, 상한 정확히는 허용, 선언된 `Content-Length` 고속 경로, 제한된 읽기 |
 | `tests/agent/middlewares/test_media_degradation.py` | 조용한 퇴화 감지: en / zh / ja / ko 실명 정규식 + 설명 요청 패턴, 유능하거나 무관한 응답은 오탐 없음, 실제 나타난 모든 패밀리 캐시, 어느 쪽이든 플래그 해제, 폴백 후보 귀속 |
 | `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | 거부 → 캐시 + 스킬 경로 재작성: 다음 세션 네이티브 건너뜀, 모델 키 격리, 명시 `"true"`는 폴백하지 않음 |

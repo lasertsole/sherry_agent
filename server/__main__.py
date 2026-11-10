@@ -224,6 +224,12 @@ def main() -> None:
     hooks.register(hooks.AUTO_TURN_MODULE, lambda: auto_turn_service)
     hooks.register(hooks.WS_ACTIVE_TASKS, lambda: ws_messages._active_tasks)
 
+    # Fan-out for agent-side producers (the subagent load gate): they resolve
+    # this instead of importing the concrete runtime module (audit L8).
+    from runtime.session.ws_push import broadcast_to_session
+
+    hooks.register(hooks.WS_PUSH, broadcast_to_session)
+
     # Agent-controllable browser (opt-in): the browser_* tools resolve the
     # process-wide manager through this hook (agent/** cannot import server/**).
     # Registration is unconditional — the manager itself still answers nothing

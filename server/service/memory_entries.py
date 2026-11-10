@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from enum import StrEnum
 from typing import Any
 
 from loguru import logger
@@ -264,6 +265,14 @@ def consolidate_memory() -> dict[str, Any]:
     }
 
 
+class ConsolidationTaskStatus(StrEnum):
+    """The process-local state of one manual consolidation task (audit L10)."""
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 #: ``{task_id: record}`` for the async manual-consolidation button. Process-local
 #: on purpose: a restart abandons an in-flight pass, and the panel simply starts
 #: a new one.
@@ -272,7 +281,11 @@ _CONSOLIDATION_KEEP = 50
 
 
 def _prune_consolidation_tasks() -> None:
-    finished = [key for key, value in _CONSOLIDATION_TASKS.items() if value["status"] != "running"]
+    finished = [
+        key
+        for key, value in _CONSOLIDATION_TASKS.items()
+        if value["status"] != ConsolidationTaskStatus.RUNNING.value
+    ]
     for key in finished[: max(0, len(finished) - _CONSOLIDATION_KEEP)]:
         _CONSOLIDATION_TASKS.pop(key, None)
 
@@ -291,7 +304,7 @@ def start_memory_consolidation(session_id: str) -> dict[str, Any]:
     record: dict[str, Any] = {
         "task_id": task_id,
         "session_id": session_id,
-        "status": "running",
+        "status": ConsolidationTaskStatus.RUNNING.value,
         "started_at": time.time(),
         "finished_at": None,
         "result": None,
@@ -309,13 +322,13 @@ def start_memory_consolidation(session_id: str) -> dict[str, Any]:
             record["result"] = result
         except Exception as exc:  # noqa: BLE001 - report on the task record
             logger.exception("memory consolidation task {} failed", task_id)
-            record["status"] = "failed"
+            record["status"] = ConsolidationTaskStatus.FAILED.value
             record["error"] = str(exc)
         finally:
             record["finished_at"] = time.time()
 
     loop.create_task(_runner())
-    return {"task_id": task_id, "status": "running"}
+    return {"task_id": task_id, "status": ConsolidationTaskStatus.RUNNING.value}
 
 
 def consolidation_status(task_id: str) -> dict[str, Any] | None:

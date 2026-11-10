@@ -19,8 +19,8 @@
       @keydown.stop="onComposerKeydown"></div>
 
     <div class="sendActions">
-      <!-- Discoverable entry for the hidden trigger characters: opens the same
-          skill/command pickers as `$` and `/`, or the sidebar file tree. -->
+      <!-- Discoverable entry for everything the composer can attach or insert:
+          the media/file pickers and the same skill/command pickers as `$` / `/`. -->
       <Button
         v-if="!disabled"
         icon="pi pi-plus"
@@ -30,9 +30,61 @@
         severity="secondary"
         :aria-label="t('chatInput.insertTrigger')"
         :title="t('chatInput.insertTrigger')"
-        @click="toggleInsertMenu" />
+        v-debounce:click.300="toggleInsertMenu" />
       <Popover ref="insertMenuRef">
         <div class="insert-menu">
+          <!-- Media uploads (merged from the toolbar's former MediaMenu + the
+               generic file attachment): one entry point for everything the + can
+               attach, above the `$` / `/` shortcut entries. Hidden on surfaces
+               without an attachment pipeline (the side chat keeps only the file
+               reference + trigger shortcuts). -->
+          <template v-if="mediaUploads">
+            <button
+              type="button"
+              class="insert-item"
+              :aria-label="t('chatInput.uploadImage')"
+              @click="uploadImageFromMenu">
+              <span
+                class="pi pi-image"
+                aria-hidden="true" />
+              <span>{{ t('chatInput.uploadImage') }}</span>
+            </button>
+            <button
+              type="button"
+              class="insert-item"
+              :aria-label="t('chatInput.uploadAudio')"
+              @click="uploadAudioFromMenu">
+              <span
+                class="pi pi-volume-up"
+                aria-hidden="true" />
+              <span>{{ t('chatInput.uploadAudio') }}</span>
+            </button>
+            <button
+              type="button"
+              class="insert-item"
+              :aria-label="t('chatInput.uploadVideo')"
+              @click="uploadVideoFromMenu">
+              <span
+                class="pi pi-video"
+                aria-hidden="true" />
+              <span>{{ t('chatInput.uploadVideo') }}</span>
+            </button>
+            <div
+              class="insert-menu-divider"
+              role="separator"></div>
+          </template>
+          <!-- Files: the OS picker (ZCode's hidden-input pattern), not the
+               left-sidebar tree. Typing `@` still opens the mention picker. -->
+          <button
+            type="button"
+            class="insert-item"
+            :aria-label="t('chatInput.uploadFile')"
+            @click="openFilesFromMenu">
+            <span
+              class="pi pi-paperclip"
+              aria-hidden="true" />
+            <span>{{ t('chatInput.uploadFile') }}</span>
+          </button>
           <button
             type="button"
             class="insert-item"
@@ -49,38 +101,14 @@
             <span>{{ t('chatInput.commandShortcut') }}</span>
             <code>/</code>
           </button>
-          <button
-            type="button"
-            class="insert-item"
-            @click="openFilesFromMenu">
-            <span class="pi pi-folder" />
-            <span>{{ t('chatInput.fileShortcut') }}</span>
-            <code>@</code>
-          </button>
         </div>
       </Popover>
-      <!-- Voice input: mic → record → transcribe → insert at the caret, fully
-          inside this component (the composable is UI-free). Hidden while the
-          box is disabled (a HITL card owns the input slot); disabled when STT
-          is unconfigured (the status route's weights probe). While recording
-          the button turns into the stop control, so it must stay clickable. -->
-      <span
-        v-if="voiceRecording"
-        class="voiceTimer"
-        >{{ voiceTimerLabel }}</span
-      >
-      <Button
-        v-if="!disabled"
-        v-debounce:click.300="toggleVoiceRecording"
-        class="voice"
-        :class="{ 'voice-recording': voiceRecording }"
-        :icon="voiceIcon"
-        text
-        rounded
-        :severity="voiceRecording ? 'danger' : 'secondary'"
-        :aria-label="voiceAriaLabel"
-        :title="voiceTooltip"
-        :disabled="voiceStartBlocked && !voiceRecording" />
+      <!-- Voice input: mic → record → transcribe → insert at the caret (the
+          button owns the recording state machine; the transcript comes back
+          through `transcript` and is inserted by this composer). -->
+      <VoiceRecordButton
+        :disabled="disabled"
+        @transcript="insertVoiceText" />
       <!-- Stop: only while generating; Send stays enabled/clickable while streaming —
           the backend queues the new message (queued frame) instead of rejecting it -->
       <Button
@@ -110,16 +138,14 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onBeforeUnmount, onMounted, watch, ref, type ShallowRef } from 'vue';
+import { computed, nextTick, onMounted, watch, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
 // Type-only: the mention helpers themselves are auto-imported composable
 // exports (the repo's `no-restricted-imports` rule keeps value imports out of
 // components).
 import type { FileMentionPayload } from '~/composables/use-file-mention';
-import type { TriggerKind } from '~/composables/use-input-trigger';
-import type { TriggerSelection } from '~/components/chat/InputTriggerPanel.vue';
-import type { VoiceErrorKind } from '~/composables/use-voice-input';
+import VoiceRecordButton from './VoiceRecordButton.vue';
 
 const { t } = useI18n();
 
@@ -128,7 +154,8 @@ const props = withDefaults(defineProps<Props>(), {
   sending: false,
   disabled: false,
   disabledText: '',
-  sessionId: ''
+  sessionId: '',
+  mediaUploads: true
 });
 
 interface Props {
@@ -139,6 +166,12 @@ interface Props {
   disabledText?: string;
   /** Current session, used for workspace-scoped custom commands. */
   sessionId?: string;
+  /**
+   * Whether the + menu offers the image / audio / video uploads. Off for
+   * surfaces without a pending-media tray (the side chat): the entries would
+   * emit into nothing.
+   */
+  mediaUploads?: boolean;
 }
 
 const emit = defineEmits<{
@@ -146,115 +179,36 @@ const emit = defineEmits<{
   (e: 'send', text: string): void;
   /** Stop the current AI reply generation */
   (e: 'stop'): void;
+  /** The + menu's upload entries: the page owns the hidden inputs and pickers. */
+  (e: 'uploadImage'): void;
+  (e: 'uploadAudio'): void;
+  (e: 'uploadVideo'): void;
+  /** Generic file attachment (the + menu's "add file" entry). */
+  (e: 'uploadFile'): void;
 }>();
 
 /** Input area DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
 
 /** Insert (+ button) popover, and the `$`/`/` candidate panel it can open. */
-const insertMenuRef = useTemplateRef<{ toggle?: (event: Event) => void; hide?: () => void }>('insertMenuRef');
+const insertMenuRef = useTemplateRef<{
+  toggle?: (event: Event, target?: HTMLElement) => void;
+  hide?: () => void;
+}>('insertMenuRef');
 const triggerPanelRef = useTemplateRef<{
   move: (delta: number) => void;
   selectActive: () => void;
   close: () => void;
 }>('triggerPanelRef');
-const triggerKind = ref<TriggerKind | null>(null);
-const triggerQuery = ref('');
-const triggerAnchor = ref<{ left: number; top: number; width: number } | null>(null);
-let triggerTokenLength = 0;
-const ui = useUiStore();
 
-/**
- * Voice input state machine (mic button: record → transcribe → insert).
- * `probeAvailability` runs once on mount; `null` (backend unreachable) keeps
- * the button clickable so the first attempt surfaces the real error.
- */
-const voice = useVoiceInput();
+/** `$` / `/` picker state + insertion (the + menu opens the same two pickers). */
+const { triggerKind, triggerQuery, triggerAnchor, openTrigger, closeTrigger, syncTriggerFromCaret, onTriggerSelect } =
+  useComposerTrigger({ inputDom, isDisabled: () => props.disabled });
 
-const voiceRecording = computed(() => voice.state.value === 'recording');
-const voiceTranscribing = computed(() => voice.state.value === 'transcribing');
-
-/** The mic is blocked while a transcription runs or the box itself is disabled; unconfigured STT stays CLICKABLE — the click toasts the reason instead of silently refusing. */
-const voiceStartBlocked = computed(() => props.disabled || voiceTranscribing.value);
-
-const voiceIcon = computed(() =>
-  voiceTranscribing.value ? 'pi pi-spin pi-spinner' : voiceRecording.value ? 'pi pi-stop-circle' : 'pi pi-microphone'
-);
-
-const voiceTimerLabel = computed(() => {
-  const total = voice.elapsedSec.value;
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+/** Workspace-file drop: highlight the composer and insert a mention chip. */
+const { isDragOver, onDragOver, onDragLeave, onDrop } = useComposerFileDrop({
+  insert: payload => insertFileMention(inputDom.value, payload)
 });
-
-const voiceAriaLabel = computed(() => (voiceRecording.value ? t('chatInput.voiceStop') : t('chatInput.voiceRecord')));
-
-const voiceTooltip = computed(() => {
-  if (voice.isSttAvailable.value === false) return t('chatInput.voiceUnavailable');
-  return voiceAriaLabel.value;
-});
-
-/** Toast-able failure kinds → the `chatInput.voice*` key that explains them. */
-const VOICE_ERROR_KEYS: Record<VoiceErrorKind, string> = {
-  permission: 'chatInput.voicePermissionDenied',
-  unsupported: 'chatInput.voiceFailed',
-  too_short: 'chatInput.voiceTooShort',
-  warming: 'chatInput.voiceWarming',
-  unavailable: 'chatInput.voiceUnavailable',
-  failed: 'chatInput.voiceFailed'
-};
-
-/** Mic click: toggle record/stop; the stop half inserts the transcript at the caret. */
-async function toggleVoiceRecording(): Promise<void> {
-  if (voiceRecording.value) {
-    const result = await voice.stopRecording();
-    if (result.ok && result.text) {
-      insertVoiceText(result.text);
-    } else if (result.reason && result.reason !== 'idle') {
-      toastWarn(t(VOICE_ERROR_KEYS[result.reason as VoiceErrorKind] ?? 'chatInput.voiceFailed'));
-    }
-    return;
-  }
-  const started = await voice.startRecording();
-  if (!started && voice.lastError.value) {
-    toastWarn(t(VOICE_ERROR_KEYS[voice.lastError.value] ?? 'chatInput.voiceFailed'));
-  }
-}
-
-/** True while a workspace file is dragged over the composer (highlight hint). */
-const isDragOver = ref(false);
-
-/**
- * Highlight only for a workspace-file drag: an OS file drop is a different
- * feature (attachment upload) and must not light up this surface.
- * @param event
- */
-function onDragOver(event: DragEvent): void {
-  if (!event.dataTransfer?.types.includes(FILE_MENTION_MIME)) return;
-  isDragOver.value = true;
-  event.dataTransfer.dropEffect = 'copy';
-}
-
-/** The pointer left the composer: drop the highlight. */
-function onDragLeave(): void {
-  isDragOver.value = false;
-}
-
-/**
- * Drop a workspace file onto the composer: insert its mention chip at the
- * caret (never its content — the agent reads the file itself).
- * @param event
- */
-function onDrop(event: DragEvent): void {
-  isDragOver.value = false;
-  const raw = event.dataTransfer?.getData(FILE_MENTION_MIME);
-  if (!raw) return;
-  try {
-    const payload = JSON.parse(raw) as FileMentionPayload;
-    if (payload?.path) insertFileMention(inputDom.value, payload);
-  } catch {
-    // A malformed payload (another app's drag) is ignored, not fatal.
-  }
-}
 
 /**
  * Insert a mention chip programmatically (the file tree's "Add to chat",
@@ -303,31 +257,6 @@ const placeholderText = computed(() => {
 });
 
 /**
- * In-memory history cache of user questions already sent in this session (memory-level, following
- * this input box instance/session lifecycle, isolated per session by KeepAlive). Stored in send
- * order, newest at the end of the array, keeping at most the 10 most recent entries.
- */
-const questionHistory = ref<string[]>([]);
-
-/** Max number of cached history questions browsable with the up/down arrow keys */
-const MAX_HISTORY = 10;
-
-/**
- * Current browse position: an index into `questionHistory`; -1 means "not browsing — the input box
- * shows the user's own live draft". Pressing ↑ starts from the most recent entry (length-1) and
- * steps toward earlier ones one by one; pressing ↓ steps back toward newer ones. After passing the
- * earliest entry, it falls back to -1 (restoring the current draft).
- */
-const browseIndex = ref(-1);
-
-/**
- * Backup of the draft the user was editing before entering browse mode. Restored from this snapshot
- * when browse mode is exited via Escape; if the user edited the input box directly (inputFunc fired),
- * the snapshot is treated as abandoned and reset to the not-browsing state.
- */
-let browsingSnapshot = '';
-
-/**
  * Writes the given text into the input DOM and syncs the controlled draft (used to fill in a
  * "switched question" while browsing history with the up/down keys). Directly assigning `textContent`
  * loses the cursor and resets the existing content (full selection replaced), which matches the
@@ -353,158 +282,59 @@ function writeDraftToInput(text: string): void {
   draft.value = text;
 }
 
-/** ↑ key: browse older history questions. When the oldest entry is reached, return to the current draft (browseIndex = -1). */
-function handleKeyArrowUp(): void {
-  if (props.sending || props.disabled || questionHistory.value.length === 0) return;
-
-  // First ↑ press: enter browse mode, remember the current draft, start from the newest history entry
-  if (browseIndex.value === -1) {
-    browsingSnapshot = draft.value;
-    browseIndex.value = questionHistory.value.length - 1;
-  } else if (browseIndex.value > 0) {
-    // Continue upward: hit an older entry
-    browseIndex.value -= 1;
-  } else {
-    // Already at the oldest entry (index === 0); pressing ↑ again returns to the current draft
-    browseIndex.value = -1;
-  }
-
-  const nextDraft =
-    browseIndex.value === -1 ? browsingSnapshot : (questionHistory.value[browseIndex.value] ?? browsingSnapshot);
-  writeDraftToInput(nextDraft);
-}
-
-/** ↓ key: browse newer history questions. After returning to the latest draft (browseIndex = -1), further ↓ presses do nothing. */
-function handleKeyArrowDown(): void {
-  if (props.sending || props.disabled) return;
-
-  if (browseIndex.value === -1) return;
-  // On the current draft (browseIndex already back to -1): keep as is
-  if (browseIndex.value >= questionHistory.value.length - 1) {
-    browseIndex.value = -1;
-    writeDraftToInput(browsingSnapshot);
-    return;
-  }
-  // Move down to a newer history question
-  browseIndex.value += 1;
-  writeDraftToInput(questionHistory.value[browseIndex.value] ?? browsingSnapshot);
-}
-
-/** Escape key: exit browse mode, restoring the user's draft from before browsing began. */
-function handleKeyEscape(): void {
-  if (props.sending || props.disabled) return;
-  if (browseIndex.value === -1) return;
-  browseIndex.value = -1;
-  writeDraftToInput(browsingSnapshot);
-}
-
-/** Anchor the picker to the composer's top edge (upward expansion). */
-function currentAnchor(): { left: number; top: number; width: number } | null {
-  const rect = inputDom.value?.getBoundingClientRect();
-  return rect ? { left: rect.left, top: rect.top, width: rect.width } : null;
-}
-
-/**
- * Open the `$`/`/` picker, optionally seeding the query (the + button path).
- * @param kind
- * @param query
- * @param tokenLength
- */
-function openTrigger(kind: TriggerKind, query = '', tokenLength = 0): void {
-  triggerKind.value = kind;
-  triggerQuery.value = query;
-  triggerTokenLength = tokenLength;
-  triggerAnchor.value = currentAnchor();
-}
-
-/** Dismiss the picker without touching the composer. */
-function closeTrigger(): void {
-  triggerKind.value = null;
-  triggerQuery.value = '';
-  triggerAnchor.value = null;
-  triggerTokenLength = 0;
-}
+/** ↑/↓/Esc question-history browser (the sent-questions cache). */
+const { handleKeyArrowUp, handleKeyArrowDown, handleKeyEscape, recordQuestion, clearHistory } = useComposerHistory({
+  draft,
+  blocked: () => props.sending || props.disabled,
+  writeDraft: writeDraftToInput
+});
 
 function toggleInsertMenu(event: Event): void {
-  insertMenuRef.value?.toggle?.(event);
+  // The click arrives through v-debounce, i.e. AFTER dispatch: `currentTarget`
+  // is already null, so pass the persistent `target` explicitly or PrimeVue
+  // would have nothing to anchor the popup to.
+  insertMenuRef.value?.toggle?.(event, (event.target as HTMLElement | null) ?? undefined);
 }
 
-function openSkillsFromMenu(): void {
+/**
+ * Close the + menu, then (once its dismiss animation/overlay is gone) open the
+ * matching picker. The ordering matters: opening the picker from inside the
+ * click that hides the Popover used to race the overlay, which swallowed the
+ * panel's first click — hide first, await one tick, then open.
+ */
+async function closeMenuAndOpenTrigger(kind: 'skill' | 'slash'): Promise<void> {
   insertMenuRef.value?.hide?.();
-  openTrigger('skill');
+  await nextTick();
+  openTrigger(kind);
 }
 
-function openCommandsFromMenu(): void {
+function uploadImageFromMenu(): void {
   insertMenuRef.value?.hide?.();
-  openTrigger('slash');
+  emit('uploadImage');
 }
 
-/** Files keep their existing left-sidebar tree; the + entry reveals it. */
+function uploadAudioFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  emit('uploadAudio');
+}
+
+function uploadVideoFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  emit('uploadVideo');
+}
+
+async function openSkillsFromMenu(): Promise<void> {
+  await closeMenuAndOpenTrigger('skill');
+}
+
+async function openCommandsFromMenu(): Promise<void> {
+  await closeMenuAndOpenTrigger('slash');
+}
+
+/** Files: open the OS file picker (ZCode's hidden-input pattern), not the sidebar tree. */
 function openFilesFromMenu(): void {
   insertMenuRef.value?.hide?.();
-  ui.sidebarBody = 'files';
-  ui.filesSectionOpen = true;
-  ui.sidebarCollapsed = false;
-}
-
-/**
- * Refresh the trigger state from the caret after every composer input.
- * @param target
- */
-function syncTriggerFromCaret(target: HTMLElement): void {
-  if (props.disabled || isCaretInCode(target)) {
-    closeTrigger();
-    return;
-  }
-  const before = textBeforeCaret(target);
-  const match = before === null ? null : detectTrigger(before, before.length);
-  if (!match) {
-    closeTrigger();
-    return;
-  }
-  openTrigger(match.kind, match.query, match.tokenLength);
-}
-
-/**
- * Insert the selected skill/command (or run a built-in command).
- * @param selection
- */
-function onTriggerSelect(selection: TriggerSelection): void {
-  const tokenLength = triggerTokenLength;
-  if (tokenLength > 0) removeTriggerChars(tokenLength);
-
-  if (selection.kind === 'skill') {
-    insertChipAtCaret(inputDom.value, createSkillChip(selection.name));
-    closeTrigger();
-    return;
-  }
-
-  const command = selection.command;
-  if (command?.kind === 'builtin') {
-    inputDom.value?.focus();
-    inputDom.value?.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    void command.entry?.handler?.();
-  } else {
-    const body = (command?.body ?? '').replaceAll('$ARGUMENTS', selection.args ?? '');
-    insertChipAtCaret(inputDom.value, createCommandChip(selection.name, body || `/${selection.name}`));
-  }
-  closeTrigger();
-}
-
-/**
- * Outside pointerdown dismisses the picker (the composer itself keeps it).
- * @param event
- */
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!triggerKind.value) return;
-  const target = event.target as Node | null;
-  if (
-    target &&
-    (inputDom.value?.contains(target) || (target as Element).closest?.('[data-test="input-trigger-panel"]'))
-  ) {
-    return;
-  }
-  closeTrigger();
+  emit('uploadFile');
 }
 
 /** Input callback: strip contenteditable markup, keeping only plain text for validation
@@ -603,25 +433,6 @@ function handleKeyEnter(event: KeyboardEvent): void {
   handleSend();
 }
 
-/**
- * Stores a sent user question into the history cache (dedup, keeping at most the most recent MAX_HISTORY entries).
- * Identical text is deduplicated only at the end: if it already exists, remove it from its old position and append
- * it to the end, keeping the "newest" semantics correct.
- * @param text
- */
-function recordQuestion(text: string): void {
-  if (isEmpty(text)) return;
-  const withoutDup = questionHistory.value.filter(q => q !== text);
-  withoutDup.push(text);
-  // Over the limit: drop the oldest entry
-  if (withoutDup.length > MAX_HISTORY) withoutDup.splice(0, withoutDup.length - MAX_HISTORY);
-  questionHistory.value = withoutDup;
-
-  // Sending exits browse mode, returning to the "live draft" state (the draft is already cleared at this point)
-  browseIndex.value = -1;
-  browsingSnapshot = '';
-}
-
 /** Send: validate → record history → clear the input area → emit the text upward.
  *  Gating note: `sending` no longer blocks the send — while the agent is streaming the backend
  *  enqueues the new message and reports it back as a `queued` frame (queue badge in [sid].vue). */
@@ -663,14 +474,6 @@ watch(draft, () => syncDraftToDom());
 // Sync once after the component mounts (onMounted also fires on KeepAlive restore)
 onMounted(() => {
   syncDraftToDom();
-  // Voice availability is a one-shot probe; a backend that is down leaves
-  // `null` (unknown) and the button stays clickable.
-  void voice.probeAvailability();
-  document.addEventListener('pointerdown', onDocumentPointerDown);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown);
 });
 
 watch(
@@ -679,21 +482,6 @@ watch(
     if (disabled) closeTrigger();
   }
 );
-
-/**
- * Clears this session's history cache and browse state (for the parent to call when a session is deleted).
- *
- * After a session is deleted, its KeepAlive cache slot may still reside in memory (the slot is released
- * immediately only when the deleted session is the currently active one). If the slot lingers, this
- * inputBox's `questionHistory` remains with the cache, and the user would see the deleted session's
- * history the next time they manually visit that sid. The parent calls this method upon receiving the
- * `SESSION_ABORT_STREAM_EVENT` broadcast, so the history cache is cleared strictly in step with session deletion.
- */
-function clearHistory(): void {
-  questionHistory.value = [];
-  browseIndex.value = -1;
-  browsingSnapshot = '';
-}
 
 /**
  * Insert transcribed voice text at the caret (plain text — no chip), with the
@@ -830,30 +618,6 @@ defineExpose({
     align-items: center;
     gap: 0.5rem;
   }
-
-  // Recording timer next to the mic button: tabular digits keep the mm:ss steady.
-  > .sendActions > .voiceTimer {
-    font-size: 0.75rem;
-    color: #ef4444;
-    font-variant-numeric: tabular-nums;
-    user-select: none;
-  }
-
-  // The recording mic breathes instead of blinking — a stop control you can
-  // still aim at, never a seizure risk.
-  > .sendActions > .voice.voice-recording {
-    animation: voice-pulse 1.2s ease-in-out infinite;
-  }
-}
-
-@keyframes voice-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
 }
 
 /* Insert-menu lives in a PrimeVue Popover teleported to <body>, so its styles
@@ -884,9 +648,22 @@ defineExpose({
 :global(.insert-menu .insert-item code) {
   margin-left: auto;
   border-radius: 0.25rem;
-  background: var(--p-surface-100, #f3f4f6);
+  /* Follow the item's own text colour instead of a fixed surface tint: the
+     surface-100 variable stayed light inside the teleported Popover body in dark
+     mode, which read as a white box next to the dark menu. */
+  background: color-mix(in srgb, currentColor 12%, transparent);
   padding: 0 0.3rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
+  /* Let the shortcut tag recede behind the entry's label. */
+  opacity: 0.7;
+}
+
+/* Separates the attachment group (image / audio / video / file) from the
+   trigger shortcuts ($ / /). */
+:global(.insert-menu .insert-menu-divider) {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--gray-light, #eef0f3);
 }
 </style>

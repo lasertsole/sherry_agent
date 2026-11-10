@@ -253,7 +253,10 @@ defineExpose({ move, selectActive, close });
 <style scoped>
 .input-trigger-panel {
   position: fixed;
-  z-index: 80;
+  /* Above the + Popover's overlay: the panel opens from a menu click while the
+     Popover is still dismissing, and a lower layer would swallow its first
+     click. PrimeVue's popper layers sit in the 1000+ range. */
+  z-index: 1100;
   overflow: hidden;
   border: 1px solid var(--p-content-border-color, #e5e7eb);
   border-radius: 0.5rem;

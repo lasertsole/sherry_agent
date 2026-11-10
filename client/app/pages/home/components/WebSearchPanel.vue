@@ -5,7 +5,7 @@
        .network file and are WITHHELD from the 模型配置 tab, so this panel reads
        them from the search state payload and writes them through
        PUT /network-config. Mounted/unmounted with its tab. -->
-  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4 min-w-[280px]">
     <div class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
       <!-- ── Section 1: backend choice (per session) ─────────────────────── -->
       <section class="flex flex-col gap-2">
@@ -18,7 +18,8 @@
             type="button"
             class="text-xs text-theme-main hover:underline"
             data-test="web-search-follow-default"
-            @click="choose(null)">
+            :disabled="backendBusy"
+            v-debounce:click.300="() => choose(null)">
             {{ t('webSearch.backend.followDefault') }}
           </button>
         </div>
@@ -48,10 +49,16 @@
                 ? 'border-theme-main bg-theme-main/5'
                 : 'border-gray-light dark:border-[#555]'
             "
-            :disabled="!sessionId || !available(option.id)"
+            :disabled="!sessionId || !available(option.id) || backendBusy"
+            :aria-busy="backendBusy && selectedBackend === option.id"
             :data-test="`web-search-backend-${option.id}`"
-            @click="choose(option.id)">
+            v-debounce:click.300="() => choose(option.id)">
             <i
+              v-if="backendBusy && selectedBackend === option.id"
+              class="pi pi-spin pi-spinner mt-1 text-xs text-theme-main"
+              aria-hidden="true"></i>
+            <i
+              v-else
               class="pi mt-1 text-xs"
               :class="[
                 selectedBackend === option.id ? 'pi-circle-fill' : 'pi-circle',
@@ -187,7 +194,7 @@
               :loading="saving"
               :disabled="saving"
               data-test="web-search-searxng-save"
-              @click="saveSearxng" />
+              v-debounce:click.500="saveSearxng" />
           </div>
         </div>
         <span
@@ -241,7 +248,7 @@
               :loading="tavilyBusy"
               :disabled="tavilyBusy"
               data-test="web-search-tavily-clear"
-              @click="clearTavilyKey" />
+              v-debounce:click.500="clearTavilyKey" />
             <Button
               :label="t('webSearch.tavily.save')"
               icon="pi pi-save"
@@ -249,7 +256,7 @@
               :loading="tavilyBusy"
               :disabled="tavilyBusy || !tavilyDraft.trim()"
               data-test="web-search-tavily-save"
-              @click="saveTavilyKey" />
+              v-debounce:click.500="saveTavilyKey" />
           </div>
           <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ t('webSearch.tavily.hint') }}</span>
         </div>
@@ -297,6 +304,8 @@ const SEARXNG_KEYS = {
 } as const;
 
 const saving = ref(false);
+/** A backend-choice write is in flight (the rows' radio turns into a spinner). */
+const backendBusy = ref(false);
 const saveState = ref<'idle' | 'saved' | 'failed'>('idle');
 /** The SearXNG card starts collapsed; a configured instance opens it. */
 const searxngOpen = ref(false);
@@ -407,8 +416,13 @@ function adoptEnvView(view: SearchBackendState['env']): void {
  */
 async function choose(backend: SearchBackend | null): Promise<void> {
   const sid = sessionId.value;
-  if (!sid) return;
-  await store.select(sid, backend);
+  if (!sid || backendBusy.value) return;
+  backendBusy.value = true;
+  try {
+    await store.select(sid, backend);
+  } finally {
+    backendBusy.value = false;
+  }
 }
 
 /**

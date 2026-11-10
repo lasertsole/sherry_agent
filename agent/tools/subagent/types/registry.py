@@ -1,5 +1,8 @@
 """Sub-agent run record and three state-machine models: execution, completion, and delivery."""
 
+from __future__ import annotations
+
+import time
 from enum import StrEnum
 from typing import Literal
 
@@ -165,3 +168,76 @@ class SubagentRunRecord(BaseModel):
     spawned_cwd: str | None = None
 
     label: str | None = None
+
+    # ------------------------------------------------------------------
+    # Restart shaping (2026-11-09 audit M17: the record owns its own data)
+    # ------------------------------------------------------------------
+
+    def finalize_pending_orphan(self, now: float | None = None) -> SubagentRunRecord:
+        """Terminal shape for a restored PENDING run (it never started)."""
+        return self.model_copy(
+            update={
+                "execution": ExecutionState(
+                    status=ExecutionStatus.TERMINAL,
+                    started_at=None,
+                    ended_at=now if now is not None else time.monotonic(),
+                    outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT, error="pending orphaned"),
+                ),
+                "ended_reason": "pending_orphaned",
+            }
+        )
+
+    def terminate_on_restart(self, now: float) -> SubagentRunRecord:
+        """Terminalize a RUNNING run restored from disk: no task survives a restart."""
+        return self.model_copy(
+            update={
+                "execution": ExecutionState(
+                    status=ExecutionStatus.TERMINAL,
+                    started_at=self.execution.started_at,
+                    ended_at=now,
+                    outcome=RunOutcome(
+                        status=RunOutcomeStatus.TIMEOUT,
+                        error="interrupted by a process restart",
+                    ),
+                ),
+                "pause_reason": "process_restart",
+                "ended_reason": "process_restarted",
+            }
+        )
+
+    def rebase_clock(self, now: float, *, archive_window_seconds: float) -> SubagentRunRecord:
+        """Move every persisted monotonic timestamp onto THIS process's clock."""
+
+        def _at(value: float | None) -> float | None:
+            return now if value is not None else None
+
+        return self.model_copy(
+            update={
+                "execution": self.execution.model_copy(
+                    update={
+                        "started_at": _at(self.execution.started_at),
+                        "ended_at": _at(self.execution.ended_at),
+                    }
+                ),
+                "completion": self.completion.model_copy(
+                    update={"captured_at": _at(self.completion.captured_at)}
+                ),
+                "delivery": self.delivery.model_copy(
+                    update={
+                        "last_attempt_at": _at(self.delivery.last_attempt_at),
+                        "suspended_at": _at(self.delivery.suspended_at),
+                        "delivered_at": _at(self.delivery.delivered_at),
+                        "announced_at": _at(self.delivery.announced_at),
+                    }
+                ),
+                "kill_reconciliation": (
+                    self.kill_reconciliation.model_copy(update={"killed_at": now})
+                    if self.kill_reconciliation is not None
+                    else None
+                ),
+                # A DEADLINE, not a timestamp: rebasing it to "now" would archive
+                # the run on the first sweep. Give it a fresh window instead.
+                "archive_at": now + archive_window_seconds if self.archive_at is not None else None,
+                "cleanup_completed_at": _at(self.cleanup_completed_at),
+            }
+        )

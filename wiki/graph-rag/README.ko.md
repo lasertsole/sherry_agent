@@ -73,6 +73,11 @@ LightRAG 기본값은 거의 모든 후보를 통과시켰습니다: `TOP_K=40`,
 문자열 검색은 미해결로 남고, SQLite FTS5/BM25가 이중 스파스 인덱스가 아닌
 향후 선택지로 기록되어 있습니다.
 
+로컬/원격 선택은 생성 시점의 Strategy입니다: `build_embed_model`이
+`_LocalEmbeddingBackend` 또는 `_RemoteEmbeddingBackend`를 주입하고, 파사드는
+위임만 합니다(2026-11-09 감사 M2). 리랭커도 같은 형태입니다
+(`models/reranker_model`의 `_LocalGgufBackend` / `_CloudBackend`, 감사 H5).
+
 ## 실측 효과
 
 `evals/graph_rag/multihop_bench.py`는 비슷한 이름의 방해 엔티티가 섞인 20개

@@ -1072,7 +1072,7 @@ http = [
 
 [[package]]
 name = "funasr"
-version = "1.4.17"
+version = "1.4.22"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -1103,9 +1103,9 @@ dependencies = [
     { name = "umap-learn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8a/46/f978574fc774de22e389c4ac4720d1c405902e077d920059d0413147fdc8/funasr-1.4.17.tar.gz", hash = "sha256:d7868abc85af6c41321a0c6dbd58d00324d18d5e920d2e4d491f8d18c89e2b3f", size = 1042053, upload-time = "2026-10-28T11:19:03.429Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/a0/38e28a3ca0f28c86253425153098a9fdc1e091cc7d9506ca92020806fd19/funasr-1.4.22.tar.gz", hash = "sha256:db8c67f2bf36df25bd26e724d7a432ec04667e877cd81119d8d388a58ae82eb0", size = 1069356, upload-time = "2026-11-05T17:13:20.444Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/f3/967023d3da4f71687476ac3df0ad6f7ec60d36f142548dc99e6f6bd06002/funasr-1.4.17-py3-none-any.whl", hash = "sha256:1eaf11d07b69cc20a41ed3b818a2ae6d5030282d7046296a40e0f330f4cedbb8", size = 1012679, upload-time = "2026-10-28T11:19:00.875Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/6d/0a4aa0966ce25e13f86ca48bf08d85ada210c1d38fb34dbb7e1c0053d253/funasr-1.4.22-py3-none-any.whl", hash = "sha256:83525bb5f185e29032f840f232eb226080ffa37e9d86988893faa225e609dc35", size = 1014515, upload-time = "2026-11-05T17:13:17.475Z" },
 ]
 
 [[package]]

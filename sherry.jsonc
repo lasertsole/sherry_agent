@@ -36,6 +36,11 @@
   // Default workspace template language (lazy-copied persona files from workspace/template/{lang}/): en / zh / ja / ko
   "WORKSPACE_TEMPLATE_LANG": "en",
 
+  // Per-model multimodal capability overrides, merged over the tracked
+  // config/model_capabilities.json catalog. Example:
+  //   "custom-provider/my-model": { "supports_images": true, "supports_pdf": false }
+  "model_capabilities": {},
+
   // Live-stream safety filter (系统配置 → 直播安全). OFF by default.
   // Keyword rules live in the file named by keyword_file (relative to the
   // workspace dir); nothing is bundled with the app.

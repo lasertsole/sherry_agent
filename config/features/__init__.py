@@ -123,6 +123,7 @@ from .agent_side import (
     assert_max_token_valid as assert_max_token_valid,
     assert_max_output_valid as assert_max_output_valid,
 )
+from config.model_capabilities import get_declared_capability as get_declared_capability
 from .infra_side import (
     AUTH as AUTH,
     BROWSER_AGENT as BROWSER_AGENT,

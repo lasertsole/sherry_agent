@@ -528,3 +528,104 @@ def test_public_git_head_reads_the_override_store(project, tmp_path):
 
     assert shadow_head(project) is not None
     assert shadow_head(other) is None
+
+
+class TestMementoFacade:
+    """The additive Memento facade: a token, ``save()``, ``restore(token)``.
+
+    The facade must never grow its own git logic — every operation delegates to
+    the module-level primitives, so the chain/prune/floor semantics stay
+    exactly what the tests above pin.
+    """
+
+    def test_save_returns_an_immutable_token(self, project):
+        from dataclasses import FrozenInstanceError
+
+        memento = shadow_git.WorkspaceMemento(project, session_id="s")
+
+        token = memento.save("manual:memento")
+
+        assert token is not None
+        assert token.commit
+        assert token.project_root == project.resolve()
+        assert token.turn == 0
+        assert token.reason == "manual:memento"
+        assert token.session_id == "s"
+        assert token.short_commit == token.commit[:7]
+        assert token.to_dict()["commit"] == token.commit
+        with pytest.raises(FrozenInstanceError):
+            setattr(token, "commit", "another-commit")
+
+    def test_save_returns_none_when_the_root_is_frozen(self, project):
+        memento = shadow_git.WorkspaceMemento(project)
+
+        shadow_git.freeze(project)
+        try:
+            assert memento.save("manual:frozen") is None
+        finally:
+            shadow_git.unfreeze(project)
+
+    def test_restore_delegates_to_restore_checkpoint(self, project, monkeypatch):
+        memento = shadow_git.WorkspaceMemento(project, session_id="s")
+        token = memento.save("manual:base")
+        assert token is not None
+
+        calls: list[tuple[str, str, str | None, Path | None]] = []
+
+        def _fake_restore(session_id, commit, *, file_path=None, project_root=None):
+            calls.append((session_id, commit, file_path, project_root))
+            return {"restored_to": commit, "file": file_path or "all"}
+
+        monkeypatch.setattr(shadow_git, "restore_checkpoint", _fake_restore)
+
+        result = memento.restore(token, file_path="a.txt")
+
+        assert result == {"restored_to": token.commit, "file": "a.txt"}
+        assert calls == [("s", token.commit, "a.txt", project.resolve())]
+
+    def test_restore_reverts_the_saved_state(self, project):
+        memento = shadow_git.WorkspaceMemento(project, session_id="s")
+        token = memento.save("manual:base")
+        assert token is not None
+        (project / "a.txt").write_text("two\n", encoding="utf-8")
+
+        memento.restore(token)
+
+        assert (project / "a.txt").read_text(encoding="utf-8") == "one\n"
+
+        (project / "a.txt").write_text("three\n", encoding="utf-8")
+        memento.restore(token, file_path="a.txt")
+        assert (project / "a.txt").read_text(encoding="utf-8") == "one\n"
+
+    def test_restore_refuses_a_token_from_another_workspace(self, project, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / "b.txt").write_text("b\n", encoding="utf-8")
+        other_token = shadow_git.WorkspaceMemento(other).save("manual:other")
+        assert other_token is not None
+
+        with pytest.raises(ValueError, match="belongs to"):
+            shadow_git.WorkspaceMemento(project).restore(other_token)
+
+    def test_floor_and_restore_turn_round_trip(self, project):
+        memento = shadow_git.WorkspaceMemento(project, session_id="s")
+        base = memento.save("manual:base")
+        assert base is not None
+        shadow_git.new_turn("s")
+        assert memento.floor() is None  # nothing snapshotted in this turn yet
+
+        assert memento.save("before_write:write_file:a.txt") is not None
+        floor = memento.floor()
+        assert floor is not None
+        assert floor.commit == base.commit
+        assert floor.reason == "floor"
+        assert floor.turn == 1
+
+        (project / "a.txt").write_text("two\n", encoding="utf-8")
+        (project / "new.txt").write_text("new\n", encoding="utf-8")
+
+        result = memento.restore_turn(1)
+
+        assert result["restored"] is True
+        assert (project / "a.txt").read_text(encoding="utf-8") == "one\n"
+        assert not (project / "new.txt").exists()

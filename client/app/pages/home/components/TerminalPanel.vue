@@ -21,7 +21,8 @@
         :title="t('terminal.refreshCwd')"
         :aria-label="t('terminal.refreshCwd')"
         data-test="terminal-refresh"
-        @click="loadInfo" />
+        :loading="cwdLoading"
+        v-debounce:click.500="loadInfo" />
       <Button
         icon="pi pi-trash"
         size="small"
@@ -94,7 +95,7 @@
         :title="t('terminal.run')"
         :aria-label="t('terminal.run')"
         data-test="terminal-run"
-        @click="run" />
+        v-debounce:click.300="run" />
     </div>
   </div>
 </template>
@@ -130,6 +131,8 @@ const store = useToolboxStore();
 const command = ref('');
 /** A command is in flight (the input stays usable, the button spins). */
 const running = ref(false);
+/** The cwd refresh request is in flight (button spinner only). */
+const cwdLoading = ref(false);
 const logRef = ref<HTMLElement | null>(null);
 
 /** The session's scrollback (kept in the store: the panel remounts per tab). */
@@ -140,11 +143,14 @@ const cwd = computed(() => store.terminalCwd[stateKey.value] ?? '');
 /** Read the directory the terminal runs in (fail-open: the prompt stays blank). */
 const loadInfo = async (): Promise<void> => {
   if (!sessionId.value) return;
+  cwdLoading.value = true;
   try {
     const info = await fetchTerminalInfo(sessionId.value);
     store.setTerminalCwd(stateKey.value, info.cwd);
   } catch (e) {
     logUtil.e('[TerminalPanel] Failed to read the terminal cwd:', e);
+  } finally {
+    cwdLoading.value = false;
   }
 };
 

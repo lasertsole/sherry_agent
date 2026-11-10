@@ -7,6 +7,8 @@
  *    into `data:<mime>;base64,<data>`;
  *  - AI messages: persisted absolute file paths → served via the backend
  *    `/media` endpoint (basename only, via `mediaUrl`);
+ *  - Content-addressed `sherry-artifact://<sid>/<name>` references → served via
+ *    `/artifacts/<sid>/<name>`;
  *  - Absolute `http(s)://` URLs pass through verbatim (never misrouted by
  *    extension into a `/media` request).
  *
@@ -36,6 +38,11 @@ import type { MessageItem } from '~/pages/home/type';
 export function resolveImageSrc(message: MessageItem, entry: string): string {
   const s = (entry ?? '').trim();
   if (!s) return '';
+  // Content-addressed artifact references resolve through /artifacts (the
+  // backend session owns the bytes). Checked before the extension branch: the
+  // name ends with an image extension but is not a filesystem path.
+  const artifact = artifactUriToHttp(s);
+  if (artifact) return artifact;
   // Absolute URLs (http/https) pass through as-is: user images injected by the middleware are
   // already-served http(s)://…/images/<hash>.png addresses, which must be rendered verbatim;
   // do not misjudge them as /media file paths by extension (otherwise 404 / broken image).
@@ -78,6 +85,21 @@ export function messageImages(message: MessageItem): string[] {
   return explicit.length > 0 ? explicit : extractContentImageUrls(message.content);
 }
 
+/** One artifact reference; excludes markdown delimiters and whitespace. */
+const ARTIFACT_REF = /sherry-artifact:\/\/([^/\s)"'\]]+)\/([^\s)"'\]]+)/g;
+
+/**
+ * Rewrite `sherry-artifact://<sid>/<name>` references inside markdown text to
+ * their served `/artifacts` URLs. The AI can write an artifact reference as a
+ * markdown image; DOMPurify would strip the unknown scheme and the browser
+ * cannot load it, so the chat resolves the scheme before rendering.
+ * @param text AI answer markdown
+ */
+export function resolveArtifactRefsInMarkdown(text: string): string {
+  if (!text || !text.includes(ARTIFACT_URI_PREFIX)) return text;
+  return text.replace(ARTIFACT_REF, match => artifactUriToHttp(match) ?? match);
+}
+
 /**
  * Resolve the audio/video entries in a message into playable src values.
  * Semantics are identical to `resolveImageSrc` (user messages → local base64; AI messages →
@@ -94,6 +116,8 @@ export function messageImages(message: MessageItem): string[] {
 export function resolveMediaSrc(message: MessageItem, entry: string, mimePrefix: string): string {
   const s = (entry ?? '').trim();
   if (!s) return '';
+  const artifact = artifactUriToHttp(s);
+  if (artifact) return artifact;
   // Absolute URLs (http/https) pass through as-is: media addresses injected by the middleware start with http(s)://
   if (/^https?:\/\//i.test(s)) return s;
   const isFilePath = s.includes('\\') || /\.(mp3|wav|ogg|m4a|aac|flac|mp4|webm|mov|avi|mkv|m4v)$/i.test(s);

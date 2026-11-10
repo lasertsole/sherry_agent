@@ -335,3 +335,20 @@ class TestShellScreen:
     def test_a_dynamic_write_is_a_known_limitation(self, repo: Path):
         """Static scanning cannot see this — the file-tool gate is the real one."""
         assert _screen_command_paths("python -c \"open('agent/core.py','w')\"", repo, "s1") is None
+
+
+class TestSensitiveRootFileIdentity:
+    """The H1 browser guard reuses this predicate, so its path identity matters."""
+
+    def test_case_variants_are_the_same_file_under_windows_normcase(self, repo, monkeypatch):
+        import agent.tools.pub_base.self_path_policy as policy
+
+        monkeypatch.setattr(policy.os.path, "normcase", lambda value: value.lower())
+
+        assert policy.is_sensitive_root_file(repo / ".ENV") is True
+        assert policy.is_sensitive_root_file(repo / ".env") is True
+
+    def test_posix_case_variant_is_a_different_file(self, repo):
+        import agent.tools.pub_base.self_path_policy as policy
+
+        assert policy.is_sensitive_root_file(repo / ".ENV") is False

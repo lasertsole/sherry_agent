@@ -95,6 +95,10 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # config/path.py::resolve_default_project_dir).
     "project_dir": "",
     "WORKSPACE_TEMPLATE_LANG": "en",
+    # Per-model multimodal capability overrides, merged over the tracked
+    # config/model_capabilities.json catalog:
+    # {"custom-provider/my-model": {"supports_images": true}}
+    "model_capabilities": {},
     # Live-stream safety filter (keyword rules + optional LLM moderation).
     # OFF by default: an untouched install behaves exactly as before. These are
     # read LIVE (the 系统配置 → 直播安全 tab flips them from a switch), not only
@@ -155,6 +159,9 @@ _INT_KEYS = frozenset(
     }
 )
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
+#: Keys whose value is a JSON object (dict) rather than a scalar. The value is
+#: already parsed by json5; a string form is accepted for API writes.
+_OBJECT_KEYS = frozenset({"model_capabilities"})
 _BOOL_KEYS = frozenset(
     {
         "safety_filter.enabled",
@@ -173,6 +180,16 @@ _BOOL_KEYS = frozenset(
 
 def _coerce(key: str, value: Any) -> Any:
     """Coerce a parsed value to the key's declared type."""
+    if key in _OBJECT_KEYS:
+        if isinstance(value, dict):
+            return dict(value)
+        text = str(value).strip()
+        if not text:
+            return {}
+        parsed = json5.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{key} must be a JSON object")
+        return parsed
     if key in _INT_KEYS:
         return int(value)
     if key in _FLOAT_KEYS:

@@ -5,13 +5,12 @@ child process is killed cleanly — no thread/memory leakage.
 
 Sandbox-hardening additions (see wiki/sandbox/README.md):
 
-- ``sandbox`` parameter on ``_run``/``_arun``/``_run_with_timeout`` — the
-  schema auto-derivation path (PythonREPLTool has NO explicit ``args_schema``,
-  the opposite mechanism from terminal's ShellTool subclassing), so the flag
-  is picked up from the ``_run`` signature.
+- ``sandbox`` parameter on ``_run``/``_arun``/``_run_with_timeout`` for
+  server-side callers. It is NOT in the model-facing ``args_schema``
+  (``PythonReplInput`` carries ``query`` only): an LLM must not be able to
+  turn its own sandbox off, so the server keeps that decision.
 - scope/policy guards: ``caller_scope != "main"`` + ``sandbox=False`` is
-  denied outright; ``SANDBOX_POLICY=required`` + ``sandbox=False`` is denied
-  (main-session human approval wiring arrives with).
+  denied outright; ``SANDBOX_POLICY=required`` + ``sandbox=False`` is denied.
 - env scrub: the child process always gets ``env=scrub_env()``.
 - cwd clamp: the child process always starts in ``ROOT_DIR`` (feasibility gap
   5: inheriting the server's launch directory is a defect).
@@ -31,6 +30,7 @@ import json
 import textwrap
 import subprocess
 from loguru import logger
+from pydantic import BaseModel
 from langchain_core.tools import BaseTool
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 
@@ -49,6 +49,7 @@ from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
+from agent.tools.pub_base.safe_exec import validate_restricted_code
 from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 
 #: Injected calling session (see terminal.SessionId for why the runnable-config
@@ -71,13 +72,13 @@ def _process_group_kwargs() -> dict[str, Any]:
 
 
 # Path-hardening assessment — deliberately NO deny-read scan here:
-# the wrapper's restricted builtins already omit `open` / `__import__`, so a
-# literal `open("/etc/passwd")` fails with NameError before any file is
-# touched (locked by tests/agent/tools/pub_base/test_python_repl_tool.py).
-# A source-level regex cannot stop the class-introspection escapes that are
-# the only remaining route, and would add false positives without raising the
-# real barrier — that is the OS sandbox read-shield in sandbox_bwrap.py /
-# sandbox_seatbelt.py.
+# the wrapper's restricted builtins omit `open` / `__import__` (and, since the
+# 2026-11-09 audit, `getattr` / `type` / `dir` / `vars`), so a literal
+# `open("/etc/passwd")` fails with NameError before any file is touched
+# (locked by tests/agent/tools/pub_base/test_python_repl_tool.py). The
+# remaining class-introspection route is refused by the AST guard in
+# ``pub_base/safe_exec.py`` before the child spawns; the real barrier is still
+# the OS sandbox read-shield in sandbox_bwrap.py / sandbox_seatbelt.py.
 _REPL_WRAPPER = textwrap.dedent("""\
 import sys, json, traceback
 from io import StringIO
@@ -94,9 +95,9 @@ __builtins__ = {{
     "reversed": reversed, "sorted": sorted,
     "any": any, "all": all, "sum": sum, "min": min, "max": max,
     "abs": abs, "round": round, "pow": pow,
-    "print": print, "type": type,
-    "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
-    "dir": dir, "vars": vars, "id": id, "repr": repr,
+    "print": print,
+    "isinstance": isinstance, "hasattr": hasattr,
+    "id": id, "repr": repr,
     "Exception": Exception, "ValueError": ValueError,
     "TypeError": TypeError, "KeyError": KeyError,
     "IndexError": IndexError, "AttributeError": AttributeError,
@@ -161,7 +162,16 @@ def _run_with_timeout(
 
     Extra ``**kwargs`` are absorbed for forward compatibility (/9 may
     add flags) and deliberately ignored.
+
+    Model-authored code is statically screened first (H4): a class-introspection
+    escape does not need ``open``/``__import__``, so it is refused before the
+    child spawns. The OS sandbox remains the barrier; this is the cheap layer.
     """
+    try:
+        validate_restricted_code(command, label="python_repl")
+    except ValueError as exc:
+        return f"Error: {exc}", False
+
     safe_repr = repr(command)
     script = _REPL_WRAPPER.format(command_repr=safe_repr)
 
@@ -246,6 +256,16 @@ def _run_with_timeout(
     return result["out"] or "(no output)", ran_sandboxed
 
 
+class PythonReplInput(BaseModel):
+    """The LLM-facing schema: ``query`` only.
+
+    The sandbox switch is server-owned (H2 in the 2026-11-09 audit) — exposing
+    it let the model disable its own sandbox with no approval.
+    """
+
+    query: str
+
+
 class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
     """A Python REPL that runs each call in a sandboxed, time-limited subprocess.
 
@@ -265,10 +285,11 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         "should print it out with `print(...)`."
     )
 
-    # ``args_schema`` stays unset: the tool_call_schema (query + sandbox) is
-    # derived from the ``_run`` signature below. Pinned byte-for-byte by
-    # ``tests/agent/tools/test_tool_schema_goldens.py``.
-    #
+    #: The explicit schema (query only) — an auto-derived one would expose the
+    #: internal ``sandbox`` parameter. Pinned byte-for-byte by
+    #: ``tests/agent/tools/test_tool_schema_goldens.py``.
+    args_schema: type[BaseModel] = PythonReplInput
+
     #: CLASS-level access keeps working through the same descriptor the terminal
     #: tool uses (langchain-core's ``tool_call_schema`` is an instance property).
     tool_call_schema: ClassVar[Any] = class_or_instance_schema(BaseTool)

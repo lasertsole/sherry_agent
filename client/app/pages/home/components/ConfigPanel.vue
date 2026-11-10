@@ -1,11 +1,30 @@
 <template>
   <!-- Right-sidebar tab body: mounted and unmounted with its tab, which drives
        loadContent / onHide; the sidebar owns the tab label and its close button. -->
-  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+  <div class="flex flex-col gap-3 h-full min-h-0 overflow-auto p-4 min-w-[420px]">
+    <!-- Loading skeleton: tab strip + a form-shaped body, so the panel does
+         not open as a lone spinner. -->
     <div
       v-if="loading"
-      class="flex items-center justify-center py-8">
-      <ProgressSpinner style="width: 2rem; height: 2rem" />
+      class="flex flex-col gap-2 p-2"
+      data-test="config-skeleton">
+      <div class="flex gap-2">
+        <Skeleton
+          v-for="n in 5"
+          :key="n"
+          width="5rem"
+          height="2.2rem" />
+      </div>
+      <div class="flex flex-col gap-3">
+        <Skeleton
+          width="30%"
+          height="1rem" />
+        <Skeleton
+          v-for="n in 3"
+          :key="n"
+          height="3rem"
+          border-radius="0.5rem" />
+      </div>
     </div>
     <template v-else>
       <TabView
@@ -126,7 +145,7 @@
                     severity="secondary"
                     text
                     :loading="codeEmbedderBusy"
-                    @click="onCodeEmbedderAction" />
+                    v-debounce:click.500="onCodeEmbedderAction" />
                   <Button
                     v-else
                     :label="
@@ -140,7 +159,7 @@
                     size="small"
                     :loading="codeEmbedderBusy || codeEmbedder?.state === 'downloading'"
                     :disabled="codeEmbedder?.state === 'downloading'"
-                    @click="onCodeEmbedderAction" />
+                    v-debounce:click.500="onCodeEmbedderAction" />
                 </div>
               </div>
               <div
@@ -232,7 +251,7 @@
                       size="small"
                       :loading="saving"
                       :disabled="!envHasChanges"
-                      @click="handleSave" />
+                      v-debounce:click.500="handleSave" />
                   </div>
                 </div>
               </template>
@@ -341,7 +360,7 @@
                     size="small"
                     :loading="saving"
                     :disabled="!groupHasChanges(group)"
-                    @click="handleSave" />
+                    v-debounce:click.500="handleSave" />
                 </div>
               </div>
             </template>
@@ -349,42 +368,30 @@
         </TabPanel>
 
         <!-- Interface language: an app-wide (browser-profile) setting, so it sits
-             with the other system settings instead of in the toolbar. Appended
-             LAST on purpose: the footer / embedder / dirty-state logic below is
-             keyed by tab INDEX, and inserting a tab anywhere else would silently
-             re-target it. -->
+             with the other system settings instead of in the toolbar. Each tab
+             below manages its own save path, so it is footer-less. -->
         <TabPanel
           value="i18n"
           :header="t('config.tabs.i18n')">
           <I18nPanel />
         </TabPanel>
         <!-- Shortcut bindings: rebindable chords for the composer and the global
-             commands. Appended LAST for the same reason as the language tab —
-             the footer / embedder / dirty-state logic is keyed by tab INDEX —
-             and it saves on its own (no footer button). -->
+             commands; saves on its own (no footer button). -->
         <TabPanel
           value="shortcuts"
           :header="t('config.tabs.shortcuts')">
           <ShortcutSettingsSection />
         </TabPanel>
         <!-- Live-stream safety: the master switch, the optional LLM review and
-             the operator's keyword rules, all applied live. Appended LAST for
-             the same index-keyed reasons as the tabs above. -->
+             the operator's keyword rules, all applied live. -->
         <TabPanel
           value="safetyFilter"
           :header="t('config.tabs.safetyFilter')">
           <SafetyFilterPanel />
         </TabPanel>
-        <!-- Long-term memory limits: stored in the memory DB and applied live.
-             Appended LAST for the same index-keyed reasons as the tabs above;
-             it saves on its own (no footer button). -->
-        <TabPanel
-          value="memorySettings"
-          :header="t('config.tabs.memorySettings')">
-          <MemorySettingsSection />
-        </TabPanel>
-        <!-- Desktop-only window behaviour (close-to-tray). Appended LAST for the
-             same index-keyed reasons as the tabs above; it saves on its own. -->
+        <!-- Long-term memory limits moved into the Memory panel: managing the
+             entries and configuring their caps belong on one surface. -->
+        <!-- Desktop-only window behaviour (close-to-tray); it saves on its own. -->
         <TabPanel
           value="desktop"
           :header="t('config.tabs.desktop')">
@@ -398,13 +405,12 @@
          saves or applies on its own inside its own group card and the language
          list applies on click. (角色配置 moved to the 预设 panel together with
          the persona presets; Token 预算 became a session tab opened from the
-         context ring, because the cap is per conversation.)
-         Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
-         shortcuts 4, safety filter 5, memory settings 6, desktop 7. -->
+         context ring, because the cap is per conversation; the memory limits
+         moved into the Memory panel.)
+         Keyed by the tab VALUE, not its index: every tab here owns its own save
+         path, so there is no index to keep in sync when a tab is added or moved. -->
     <div
-      v-if="
-        activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6 && activeTab !== 7
-      "
+      v-if="!FOOTERLESS_TABS.includes(activeTabValue)"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -416,7 +422,7 @@
         icon="pi pi-check"
         :loading="saving"
         :disabled="!canSave"
-        @click="saveDialogSettings" />
+        v-debounce:click.500="saveDialogSettings" />
     </div>
 
     <AvatarCropDialog
@@ -477,7 +483,25 @@ const downloadGroupFor = (name: string): string => LOCAL_DOWNLOAD_GROUP[name] ??
 
 const emits = defineEmits<{ saved: [] }>();
 
-const activeTab = ref(0);
+/**
+ * Tab order of the panel. The VALUE list is the single source of truth: the
+ * PrimeVue TabView speaks indices, so `activeTab` maps one onto the other and
+ * every behaviour below (footer, lazy loads, dirty state, reset) keys off the
+ * value — adding or moving a tab can never silently re-target them.
+ */
+const TAB_ORDER = ['background', 'env', 'sherry', 'i18n', 'shortcuts', 'safetyFilter', 'desktop'] as const;
+type ConfigTab = (typeof TAB_ORDER)[number];
+
+/** Tabs that save on their own (no shared footer). */
+const FOOTERLESS_TABS: readonly ConfigTab[] = ['env', 'i18n', 'shortcuts', 'safetyFilter', 'desktop'];
+
+const activeTabValue = ref<ConfigTab>('background');
+const activeTab = computed<number>({
+  get: () => Math.max(0, TAB_ORDER.indexOf(activeTabValue.value)),
+  set: index => {
+    activeTabValue.value = TAB_ORDER[index] ?? 'background';
+  }
+});
 const loading = ref(false);
 const saving = ref(false);
 
@@ -536,7 +560,7 @@ function applyCodeEmbedderFrame(payload: unknown): void {
 }
 
 function refreshCodeEmbedderOnConnect(): void {
-  if (activeTab.value === 1) void refreshCodeEmbedderStatus();
+  if (activeTabValue.value === 'env') void refreshCodeEmbedderStatus();
 }
 
 /** Download+enable, or disable an already-enabled code embedder. */
@@ -818,18 +842,18 @@ const resetSherryState = () => {
 };
 
 // ── Env config load trigger (setup scope) ──────────────
-// The env tab (activeTab===1) is watched in setup scope. A PrimeVue TabPanel
+// The env tab is watched in setup scope. A PrimeVue TabPanel
 // @show callback runs outside setup, where getCurrentInstance() is null and
 // Nuxt useFetch(server:true) never issues GET /env in SPA mode; the fallback
 // then renders a misleading "No .env file found".
 watch(
-  activeTab,
+  activeTabValue,
   tab => {
-    if (tab === 1) {
+    if (tab === 'env') {
       void loadEnvConfig();
       void refreshCodeEmbedderStatus();
     }
-    if (tab === 2) {
+    if (tab === 'sherry') {
       void loadEnvConfig();
       void loadSherryConfig();
     }
@@ -858,7 +882,7 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
   // Sherry config: saveable only when there are changes.
-  if (activeTab.value === 2) return sherryHasChanges.value;
+  if (activeTabValue.value === 'sherry') return sherryHasChanges.value;
   // Background: nothing extra to validate.
   return true;
 });
@@ -1031,7 +1055,7 @@ const saveDialogSettings = async () => {
 
     // Sherry config: same contract as the env tab — abort on save failure
     // without closing the dialog.
-    if (activeTab.value === 2 && sherryHasChanges.value) {
+    if (activeTabValue.value === 'sherry' && sherryHasChanges.value) {
       const ok = await persistSherryChanges();
       if (!ok) {
         sherryLoadError.value = t('config.sherry.saveFailed');
@@ -1048,7 +1072,7 @@ const saveDialogSettings = async () => {
 };
 
 const onHide = () => {
-  activeTab.value = 0;
+  activeTabValue.value = 'background';
   backgroundOpacityValue.value = backgroundOpacity.value;
   codeEmbedder.value = null;
   codeEmbedderError.value = '';
@@ -1133,7 +1157,6 @@ onBeforeUnmount(onHide);
         "i18n": "国际化",
         "shortcuts": "快捷键",
         "safetyFilter": "直播安全",
-        "memorySettings": "记忆设置",
         "desktop": "桌面",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
@@ -1443,7 +1466,6 @@ onBeforeUnmount(onHide);
         "i18n": "Language",
         "shortcuts": "Shortcuts",
         "safetyFilter": "Live safety",
-        "memorySettings": "Memory settings",
         "desktop": "Desktop",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
@@ -1768,7 +1790,6 @@ onBeforeUnmount(onHide);
         "i18n": "国際化",
         "shortcuts": "ショートカット",
         "safetyFilter": "ライブ安全",
-        "memorySettings": "記憶設定",
         "desktop": "デスクトップ",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
@@ -2093,7 +2114,6 @@ onBeforeUnmount(onHide);
         "i18n": "국제화",
         "shortcuts": "단축키",
         "safetyFilter": "라이브 안전",
-        "memorySettings": "기억 설정",
         "desktop": "데스크톱",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
@@ -2362,6 +2382,31 @@ onBeforeUnmount(onHide);
    below is the only thing that scrolls. */
 :deep(.p-tabview-tablist-container) {
   flex-shrink: 0;
+}
+
+/* Narrow right column: the seven tab headers must stay readable instead of
+   being squeezed. PrimeVue already scrolls the strip's scroll-container
+   horizontally, but its items shrink — pin their natural width, keep them on
+   one line, and re-enable a thin scrollbar (PrimeVue hides it by default) so
+   the remaining tabs are discoverable. */
+:deep(.p-tabview-tablist-scroll-container) {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+:deep(.p-tabview-tablist-scroll-container::-webkit-scrollbar) {
+  display: block;
+  height: 6px;
+}
+
+:deep(.p-tabview-tablist) {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+}
+
+:deep(.p-tabview-tablist-item) {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 :deep(.p-tabview-panels) {

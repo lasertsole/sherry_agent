@@ -5,8 +5,9 @@
       store.maximized
         ? // `fixed` must REPLACE `relative`: both are the same-specificity
           // position utility, and the sheet's order (relative after fixed) would
-          // otherwise keep the panel in flow and leave it at its min width.
-          'fixed inset-0 z-40 bg-white dark:bg-[#181820]'
+          // otherwise keep the panel in flow and leave it at its min width. The
+          // overlay starts BELOW the custom title bar instead of covering it.
+          'fixed left-0 right-0 bottom-0 z-40 bg-white dark:bg-[#181820]'
         : collapsed
           ? 'relative w-0'
           : // `shrink` lets the column give way when the window is too narrow for
@@ -15,7 +16,13 @@
             'relative shrink border-l border-solid border-gray-light min-w-[280px] dark:border-gray-dark',
       dragging ? '' : 'transition-all duration-300'
     ]"
-    :style="collapsed || store.maximized ? undefined : { width: `${displayWidth}px` }">
+    :style="
+      store.maximized
+        ? { top: `${titlebarInset}px`, width: '100%', height: 'auto' }
+        : collapsed
+          ? undefined
+          : { width: `${displayWidth}px` }
+    ">
     <!-- Resize handle on the left edge: dragging left widens the panel (it is
          right-anchored); the store clamps every step to the allowed band. The
          grip pill is the affordance — an 8px edge alone reads as a border, so
@@ -196,12 +203,21 @@ import { useSidebarWidthStore } from '~/stores/sidebar-width';
 import { useUiStore } from '~/stores/ui';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
 import { middleMinWidth } from '@/common/layout';
+import { TITLEBAR_HEIGHT } from '@/common/titlebar';
+import { isTauriRuntime } from '~/utils/project-directory';
 import RecentClosedTabsMenu from './RecentClosedTabsMenu.vue';
 
 /** The session the main area shows (the recent-tabs menu filters by it). */
 const props = withDefaults(defineProps<{ sessionId?: string; extraWidth?: number }>(), { extraWidth: 0 });
 
 const { t } = useI18n({ useScope: 'local' });
+
+/**
+ * Height of the custom title bar the maximized overlay must start below. The
+ * overlay is fixed and full-window; leaving the bar uncovered keeps its window
+ * controls reachable. The Web build has no custom bar (0).
+ */
+const titlebarInset = isTauriRuntime() ? TITLEBAR_HEIGHT : 0;
 
 const store = useRightSidebarStore();
 /**

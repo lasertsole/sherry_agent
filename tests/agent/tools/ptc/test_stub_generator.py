@@ -76,7 +76,6 @@ def test_specs_match_real_tool_signatures_and_exclude_injected_state() -> None:
     )
     assert specs["terminal"].params == (
         ("commands", None),
-        ("sandbox", "True"),
         ("run_in_background", "False"),
         ("timeout", "None"),
     )

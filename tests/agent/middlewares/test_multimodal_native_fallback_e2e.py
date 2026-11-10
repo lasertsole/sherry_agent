@@ -161,7 +161,7 @@ def test_rejection_records_cache_and_next_session_skips_native(src_root):
     assert _MediaRejectingStubModel.text_attempts == 1
     assert llm_capability_cache.get_capability(PROVIDER, MODEL, "vision") == "unsupported"
     assert state_register_mem.get_state("e2e-native-1", TRYING_KEY, False) is False
-    assert len(list((src_root / "e2e-native-1" / "media").glob("*.png"))) == 1
+    assert len(list((src_root / "e2e-native-1" / "artifacts").glob("*.png"))) == 1
 
     assert _invoke(graph, "e2e-native-2") == "skill path reply"
     assert _MediaRejectingStubModel.media_attempts == 1
@@ -195,15 +195,15 @@ def test_explicit_true_override_never_falls_back(monkeypatch):
     assert _MediaRejectingStubModel.text_attempts == 0
 
 
-def test_native_success_keeps_cache_auto_and_reuses_native_next_session(src_root):
-    """A model that silently accepts (or ignores) the blocks writes no cache
-    entry — the next session probes native again instead of degrading early."""
+def test_native_success_learns_supported_and_reuses_native_next_session(src_root):
+    """A model that accepts the blocks writes a positive cache label — the next
+    session keeps the native path (and does not re-probe the family)."""
     graph = _build_graph(_MediaAcceptingStubModel())
 
     assert _invoke(graph, "e2e-native-ok-1") == "native reply"
-    assert llm_capability_cache.get_capability(PROVIDER, MODEL, "vision") == "auto"
+    assert llm_capability_cache.get_capability(PROVIDER, MODEL, "vision") == "supported"
 
     assert _invoke(graph, "e2e-native-ok-2") == "native reply"
     assert _MediaAcceptingStubModel.media_seen_flags == [True, True]
     assert _MediaAcceptingStubModel.media_attempts == 2
-    assert llm_capability_cache.get_capability(PROVIDER, MODEL, "vision") == "auto"
+    assert llm_capability_cache.get_capability(PROVIDER, MODEL, "vision") == "supported"

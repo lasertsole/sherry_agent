@@ -170,9 +170,9 @@ describe('CronPanel skill binding', () => {
 
     const save = wrapper.findAll('button.btn').find(b => b.text() === '保存');
     await save!.trigger('click');
-    await flushPromises();
+    // Save is debounced (v-debounce:click.500).
+    await vi.waitFor(() => expect(bridge.updateCronJob).toHaveBeenCalledTimes(1));
 
-    expect(bridge.updateCronJob).toHaveBeenCalledTimes(1);
     const [, patch] = bridge.updateCronJob.mock.calls[0]!;
     expect(patch.skills).toEqual(['news-digest', 'github-auth']);
   });
@@ -191,7 +191,7 @@ describe('CronPanel skill binding', () => {
 
     const save = wrapper.findAll('button.btn').find(b => b.text() === '保存');
     await save!.trigger('click');
-    await flushPromises();
+    await vi.waitFor(() => expect(bridge.updateCronJob).toHaveBeenCalled());
 
     const [, patch] = bridge.updateCronJob.mock.calls[0]!;
     expect(patch.skills).toBeNull();

@@ -146,7 +146,12 @@ class TestShippedConfigFile:
             for name, value in node.items():
                 path = f"{prefix}{name}"
                 if isinstance(value, dict):
-                    yield from dotted_keys(value, f"{path}.")
+                    # An EMPTY object is itself a typed key (model_capabilities);
+                    # a populated one is a group whose leaves are dotted paths.
+                    if value:
+                        yield from dotted_keys(value, f"{path}.")
+                    else:
+                        yield path
                 else:
                     yield path
 

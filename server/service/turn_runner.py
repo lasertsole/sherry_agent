@@ -50,7 +50,6 @@ from server.service.input_queue_service import (
     route_for,
 )
 from server.service.session_settings_service import promote_pending_settings
-from server.service.stream_driver import StreamDriver
 from server.service.stream_diag import public_error_text
 from server.service.trajectory_store import turn_start_event, turn_scope
 from runtime.session.ws_push import broadcast_to_session
@@ -120,6 +119,20 @@ def is_hitl_pending(session_id: str) -> bool:
     )
 
     return _read(session_id)
+
+
+def notify_busy_signals_changed(session_id: str) -> None:
+    """Seam over session_state's busy-signal notification (lazy, cycle-safe).
+
+    Wakes event-driven idle waiters (the auto-turn's deferred continuation)
+    after a turn releases its busy signals. The callee is fail-open, so a
+    broken subscriber can never fail the turn that just ended.
+    """
+    from agent.tools.subagent.registry.session_state import (  # noqa: PLC0415
+        notify_busy_signals_changed as _notify,
+    )
+
+    _notify(session_id)
 
 
 def async_generate(*args: Any, **kwargs: Any) -> Any:
@@ -199,6 +212,8 @@ async def cancel_session_turn(session_id: str) -> None:
                     exc,
                 )
         state_register_mem.set_state(session_id, StateKey.ANSWERING, False)
+        # The answering signal just cleared: wake event-driven idle waiters.
+        notify_busy_signals_changed(session_id)
     except Exception:  # noqa: BLE001 - purge proceeds even if cancellation fails
         logger.exception("cancel_session_turn failed for {}", session_id)
 
@@ -564,10 +579,16 @@ class WsTurnExecutor(BatchTurnExecutor):
         finally:
             if child is not None and active.get(session_id) is child:
                 active.pop(session_id, None)
-            if completed:
-                await on_turn_finished(session_id, claim_row_ids or None)
-            else:
-                await on_turn_finished(session_id)
+            try:
+                if completed:
+                    await on_turn_finished(session_id, claim_row_ids or None)
+                else:
+                    await on_turn_finished(session_id)
+            finally:
+                # The session's WS task slot is released (popped above) and the
+                # turn's own cleanup cleared ANSWERING: wake event-driven idle
+                # waiters. A missed wake only costs their fallback poll.
+                notify_busy_signals_changed(session_id)
 
     @staticmethod
     async def _void_claimed_rows(queue: Any, claim_row_ids: Sequence[str]) -> None:
@@ -659,42 +680,8 @@ class WsTurnExecutor(BatchTurnExecutor):
                 self.__class__.__name__,
                 len(batch),
             )
-            await _WsTurnStreamDriver(session_id, websocket, turn_info).drive(
+            from server.service.ws_turn_stream_driver import WsTurnStreamDriver
+
+            await WsTurnStreamDriver(session_id, websocket, turn_info).drive(
                 async_generate_multi(session_id, messages, origin=origin)
             )
-
-
-class _WsTurnStreamDriver(StreamDriver):
-    """Driver for the queue executor's generation turns (WsTurnExecutor._drive).
-
-    The error frame is surfaced here; the row is still delivered so the drain
-    never double-sends an error for the same row.
-    """
-
-    async def send_frame(self, payload: dict[str, Any]) -> None:
-        # Same fan-out contract as the resume path: every live socket of the
-        # session receives each frame exactly once, never a replay.
-        await broadcast_to_session(self.session_id, payload)
-
-    async def check_interrupt(self) -> dict[str, Any] | None:
-        return await get_pending_interrupt(self.session_id)
-
-    def apply_hitl_pending(self) -> None:
-        set_hitl_pending(self.session_id, True)
-
-    def log_interrupt(self, interrupt: dict[str, Any]) -> None:
-        logger.info(
-            f"TurnRunner: HITL interrupt for session {self.session_id}, "
-            f"tool={interrupt.get('tool_name')}"
-        )
-
-    def log_cancelled(self) -> None:
-        logger.info(f"TurnRunner: generation cancelled: session_id={self.session_id}")
-
-    def log_error(self, exc: Exception, elapsed: float) -> None:
-        logger.warning(f"TurnRunner: generation failed: session_id={self.session_id}, error={exc}")
-
-    def public_error(self, exc: Exception) -> str:
-        from server.service.stream_diag import public_error_text
-
-        return public_error_text(exc)

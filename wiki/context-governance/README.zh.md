@@ -69,7 +69,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 （`config/features/infra_side/browser_agent.py`）向本管线贡献的东西只有一件：`browser`
 工具返回的文本（旧的 `browser_*` 结果同样处理）（以及截图路径）。页面本身——它的 DOM、像素、screencast 帧——从不进入消息
 存储：帧走 `/browser/ws` 直接给面板，快照在成为工具结果之前就被管理器按上限截断（元素 /
-文本），截图会以图像本身送到有视觉能力的模型（`image_to_text` 技能只是无原生视觉模型的兜底，且每轮的历史清理会让旧截图不再进入后续上下文）。页面显示的任何内容都只能
+文本），截图会以图像本身送到有视觉能力的模型（`image_to_text` 技能只是无原生视觉模型的兜底，且请求期的历史媒体预算只在保留图像超过 `history_media_budget_bytes` 后才让旧截图退出后续上下文）。页面显示的任何内容都只能
 经由"模型自己要求的工具结果"影响 agent——而这些结果和其他远程内容一样，会经过不可信输出
 围栏与密钥脱敏（见威胁模型）。
 
@@ -87,7 +87,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | cron 触发的轮次 | `origin='cron'` | `True` | 定时任务的会话轮次（`origin_for_source`） | `messages` 行 | 非用户请求 |
 | 压缩摘要对 | `lc_source='summarization'`（在 `additional_kwargs`，非 origin 列） | — | 压缩产物（`_build_new_messages`） | **不落 MesMemory**；state 摘要对 | `<summary>` 常驻模型视图；以 `<prior-summary>` 链式延续 |
 | 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链在结构化摘要文档中携带 `evicted_refs[]` 指针 |
-| 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、历史消息原生块剥离，或压缩期卸载（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（持久副本；压缩期卸载以 `sha256[:16]` 命名并去重）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
+| 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、请求期历史媒体预算（`MultimodalProcessor._project_history_media_budget`），或压缩期卸载（`offload_inline_media`） | `SRC_DIR/<session_id>/artifacts/`（内容寻址的上传副本，名为 `<family>-<sha256[:16]><ext>`；相同字节去重）以及 `SESSIONS_DIR/<session_id>/media/`（压缩期卸载与非流水线媒体）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示（artifact URI 会解析回文件）与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
 | 遗留计划知识 | 非消息 —— 磁盘目录 | — | 已退出模型读取 | `workspace/knowledge/plans/<plan_key>/` | 不再注入；仅保留原始 `handoff-tree.json` 审计文件 |
 | `facts` target | MesMemory `memory_entries` 行（唯一全局 target） | — | 系统级 / 跨项目普适的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory target（1 375 字符上限；超限先归档最不活跃条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
 
@@ -189,8 +189,18 @@ sherry 支持的 provider 里，只有 Anthropic 的 prompt cache 是**要显式
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
+### 声明式能力目录
+
+自动模式的判断不再从“auto”起步。`get_capability` 按以下顺序解析每个媒体族：受版本管理的
+`config/model_capabilities.json` 目录（由 `sherry.jsonc` 的 `model_capabilities`
+覆盖）→ `src/data/model_capabilities_runtime.json` 中学习到的标签 → `"auto"`。已声明的模型
+无需探测；运行时探测不能覆盖声明（用户覆盖是纠正入口）。未声明的模型只探测一次：原生调用
+成功会把仍为 `"auto"` 的族写成 `supported`，静默失明写成 `unsupported`，两者跨重启保留。
+`pdf` 是一等媒体族（`document` / `file` 块），没有技能回退：不支持的 PDF 会被替换为
+提示用户改用图片或文本的占位文本。
+
 | `main_llm_native_multimodal` | `"auto"` | 三态原生开关：`"true"` 为模型保留媒体块、`"false"` 始终走技能路径、`"auto"` 经能力缓存逐媒体族决定；其他值一律 fail-safe 走技能路径 |
-| `main_llm_silent_degradation_detection` | `True` | 原生回复自述媒体盲时，把请求中实际出现的媒体族缓存为 `"unsupported"` |
+| `main_llm_silent_degradation_detection` | `True` | 原生回复自述媒体盲时，把请求中实际出现的媒体族缓存为 `"unsupported"`；正常非空成功会把仍为 `"auto"` 的族学习为 `"supported"` |
 | `max_media_bytes` | `20 * 1024 * 1024` | 单个载荷硬上限；超限载荷在任何写盘之前即被跳过 |
 
 这些旋钮没有环境变量：按设计它们就是上述 feature TypedDict 中的代码默认值。
@@ -211,7 +221,7 @@ sherry 支持的 provider 里，只有 Anthropic 的 prompt cache 是**要显式
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 链式摘要过滤与 `<prior-summary>` 注入 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 压缩期内联媒体卸载：写盘 + 指针、hash 去重、失败占位、保留窗口不动、同步/异步、`evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | 逐块多模态估算：固定媒体成本、5 MB base64 回归、未知块藏媒体、`str` / `None` / 空列表边界 |
-| `tests/agent/middlewares/test_multimodal_processor.py` | 三态原生开关与每请求擦洗：混合族只剥离 unsupported 块、supported 块原样保留、state/kwargs/磁盘不动、`"true"` 永不擦洗、历史图片剥离 |
+| `tests/agent/middlewares/test_multimodal_processor.py` | 三态原生开关与每请求擦洗：混合族只剥离 unsupported 块、supported 块原样保留、state/kwargs/磁盘不动、`"true"` 永不擦洗；历史媒体预算投影见 `media_pipeline/test_history_budget.py`（全部容纳 / 从新到旧 / 保护最新用户 / 远程 URL / 全部丢弃） |
 | `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` 上限：超限载荷在写入前跳过、模型可见提示、恰好等于上限允许、声明的 `Content-Length` 快路径、限量读取 |
 | `tests/agent/middlewares/test_media_degradation.py` | 静默降级检测：en / zh / ja / ko 盲区正则 + 请求描述模式、有能力或无关回复不误报、实际出现的媒体族全部写缓存、标志无论是否命中都清除、回退候选归属 |
 | `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | 拒绝 → 缓存 + 技能路径改写：后续会话跳过原生、模型 key 隔离、显式 `"true"` 永不回退 |

@@ -57,7 +57,7 @@ const stubs = {
   FileUpload: { name: 'FileUpload', template: '<div />' },
   Divider: { name: 'Divider', template: '<div />' },
   Slider: { name: 'Slider', template: '<div />' },
-  ProgressSpinner: { name: 'ProgressSpinner', template: '<div />' },
+  Skeleton: { name: 'Skeleton', template: '<div class="sk"></div>' },
   ReplayAllowlistEditor: { name: 'ReplayAllowlistEditor', template: '<div class="allowlist-stub" />' }
 };
 

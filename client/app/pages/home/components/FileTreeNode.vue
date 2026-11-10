@@ -7,7 +7,7 @@
       :title="node.path"
       :data-test="`file-node-${node.path}`"
       draggable="true"
-      @click="onClick"
+      v-debounce:click.200="onClick"
       @contextmenu.prevent="emit('menu', $event, node)"
       @dragstart="onDragStart">
       <i

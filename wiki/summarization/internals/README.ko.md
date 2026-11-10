@@ -60,6 +60,7 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 압축이 base64 페이로드를 보조 요약 모델에 넘겨서는 안 됩니다. 요약될 프리픽스(`current_messages[:cutoff]`)를 직렬화하기 전에 `offload_inline_media`(`agent/middlewares/summarization/media_offload.py`)가 **그 범위만** 모든 인라인 미디어 블록을 다시 씁니다:
 
 - `data:` URL / base64 페이로드(`image_url` / `audio_url` / `video_url`, 맨 `base64` 필드, `audio_bytes` / `video_bytes`, 또는 Anthropic 형식 `source.data`)를 디코드해 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`에 씁니다; 확장자는 매직 바이트에서 `media_handlers._infer_extension`으로 도출합니다;
+- artifact 저장소가 이미 보유한 페이로드(수집 시점에 영속화된 업로드)는 다시 쓰지 않습니다: `find_artifact`가 내용 해시로 찾고 포인터가 그 artifact 파일을 가리키므로, 압축이 두 번째 사본을 만들지 않습니다;
 - 동일 바이트는 한 번만 씁니다 —— 내용 해시 파일명이 단일 및 여러 압축에 걸쳐 중복을 제거합니다;
 - 블록은 텍스트 포인터 `[evicted to: <path>]`로 대체됩니다. `pub/func/message/eviction.py`가 내는 것과 같은 마커라서 `_collect_evicted_refs`가 줍고 `_finalize_summary_doc`이 경로를 `SummaryDoc.evicted_refs`로 실어 나릅니다(*Evicted References*로 렌더링);
 - 디코드나 쓰기에 실패한 블록은 `<media error="failed_to_offload" />`가 됩니다 —— 미디어 실패가 압축을 망치는 일은 없습니다.

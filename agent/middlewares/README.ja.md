@@ -253,15 +253,15 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 `before_agent` は、内容がマルチモーダルリストである**最後の** `HumanMessage` を処理します：
 
 - **テキスト**項目はそのまま通します（最大 1 件）。
-- **`image_url`**：リモートの `http(s)` URL はそのまま保持。`data:` / base64 ペイロードはデコードされ、PIL で `src/<session_id>/mutil_temp/<タイムスタンプ><拡張子>` に保存されます（拡張子は `_IMAGE_MAGIC` のマジックバイトから推定）。永続コピーが `media/` にも作られます。
+- **`image_url`**：リモートの `http(s)` URL はそのまま保持。`data:` / base64 ペイロードはデコードされ、PIL で `src/<session_id>/mutil_temp/<タイムスタンプ><拡張子>` に保存されます（拡張子は `_IMAGE_MAGIC` のマジックバイトから推定）。内容アドレス型の永続コピーが `artifacts/` にも作られます（SHA-256 名、同一バイトは重複排除、`artifact_store_enabled=false` なら従来の `media/` コピー）。
 - **`audio_url`**：一時ファイルへダウンロード（タイムアウト 30 秒）。**`audio_bytes` / `video_url` / `video_bytes`**：同様にデコード・保存（`_AUDIO_MAGIC` / `_VIDEO_MAGIC`）。
 - **サイズ上限**：書き込みの前にサイズを検証し、`max_media_bytes`（20 MiB、DeepAgents の CLI ハードリミットに一致）を超えるペイロードはスキップされます — ディスクへ書かれず、パスとしても記録されず、warning に実際のバイト数を記録し、通知は `MediaPaths.skipped` に入り、プロセッサが `[Uploaded media] ... was skipped` の 1 行としてメッセージのテキストブロックに追記します。リモート URL は `Content-Length` があればそれで、無ければ上限付きストリーミング読み取りで判定するため、誤ったヘッダーでも過大な書き込みは発生しません。ちょうど上限のペイロードは許可され、0 バイト / 不正なペイロードは既存の失敗経路を維持します。
 - `main_llm_native_multimodal` 設定が経路を決めます：`"true"` はメディアブロックをモデルにそのまま渡し、`"false"` は常にスキルパス、`"auto"` はメディア種別（vision / audio / video）ごとにプロセス単位の能力キャッシュ（キーは `"{provider}/{model_name}"`）で判定します。
 - `"auto"` では：**すべて**の在途種別が `"unsupported"` キャッシュならメッセージ全体がスキルパスへ。**混合**メッセージ（一部 supported、一部 unsupported）はネイティブブロックを保持し、リクエスト単位スクラブが未対応ブロックだけを置換します。未検証（`"auto"`）の種別はブロックを保持し、ターン単位のネイティブ試行フラグ（`_multimodal_trying_native` / `_multimodal_native_model`）を記録します。`"[Uploaded media]"` 命令ブロックはスキルパス時のみ追加され、`skill_view` ツールの `image_to_text` / `speech_to_text` / `video_text_to_text` でファイルを確認するようモデルに指示します。
 - モデルが `multimodal_not_supported` として分類される拒否を返すと、`LLMRetryMiddleware` がメッセージに実際に含まれるメディア種別を `"unsupported"` として記録し、リクエストをスキルパスへ書き換えます。同じプロセス内の以降のセッションとターンはネイティブ試行を省略します。拒否は**実際に処理した**モデルに記録されます：呼び出しがフォールバック候補へ再バインドされていた場合、`LLMRetryMiddleware` はキャッシュ書き込み前に `_multimodal_native_model` をその候補へ書き換えます（同セクション参照）。
 - **サイレント劣化の検知**（`main_llm_silent_degradation_detection`、既定で有効）：ネイティブ試行が**成功**したのに、返信がメディアを認識できないと自ら述べたり、添付の説明をユーザーに求めたりした場合、`LLMRetryMiddleware` はリクエストに含まれる全メディア種別を実際に処理したモデルに対して `"unsupported"` としてキャッシュし、以降のターンは失敗必至のネイティブ試行を行いません。検出器（`media_pipeline/degradation.py::detect_media_blindness`）は EN/ZH/JA/KO 対応の高精度正規表現で、失明/説明要求フレーズの近くにメディア語がある場合のみ一致します。「返信がメディアに言及しない」という字面のヒューリスティックは意図的に採用していません — 有能なモデルはメディア語を一切使わずに画像を説明でき、誤検知は遅いスキルパスを恒久化してしまうためです。
-- 永続化パスは `additional_kwargs["images"]` / `["audios"]` / `["videos"]` に格納され、後から MesMemory に書き込まれ履歴レンダリングに使われます。
-- **より古い** `HumanMessage` からは `image_url` ブロックが剥ぎ取られ、古い base64 がコンテキストに残りません。ただし、そのようなブロックが実際に存在する場合のみ実行され（剥ぎ取るものが無いメッセージは安価な事前チェックでスキップ）、剥ぎ取り後のテキストが空でない場合のみ書き戻します。
+- 永続化された画像参照（`sherry-artifact://<session_id>/<name>`、または従来の media パス）と音声・動画パスは `additional_kwargs["images"]` / `["audios"]` / `["videos"]` に格納され、後から MesMemory に書き込まれ履歴レンダリングに使われます。
+- `image_url` ブロックはターンごとに剥ぎ取られません：`wrap_model_call` が履歴メディアを `history_media_budget_bytes`（75 MiB）に対して新しい順に投影し、最新の実ユーザーメッセージを保護して、収まらないブロックだけを置換します。チェックポイントは決して書き換えません。
 
 `wrap_model_call` / `awrap_model_call` は**すべてのモデルリクエスト**で（`"auto"` モードのみ）実行され、リクエストのコピーをスクラブします：種別が `"unsupported"` キャッシュのメディアブロックは、剥ぎ取られたメディア・そのディスク上のパス・対応スキル（`image_to_text` / `speech_to_text` / `video_text_to_text`）を示すテキストプレースホルダーに置換されます。supported と未検証のブロックはそのまま通ります。書き換えは `request.override(messages=...)` で行い、state・checkpointer・MesMemory には一切触れず、スクラブ不要なら元のリクエストオブジェクトをそのまま返します。能力参照には環境のメインモデルキー（`get_model_key()`）を使います：本層は `LLMRetryMiddleware` の外側を包むため、チェーン内層で再バインドされたスティッキー・フォールバック候補を観測できません。その候補の拒否は `multimodal_not_supported` → スキルパス書き換えが引き続き担い、キャッシュ書き込み前に実際に処理した候補を `_multimodal_native_model` へ記録します。
 

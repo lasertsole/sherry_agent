@@ -2,10 +2,9 @@
 
 Covers the sandbox-hardening spec:
 
-- schema auto-derivation: PythonREPLTool has NO explicit ``args_schema`` (the
-  OPPOSITE mechanism from terminal's ShellTool), so ``tool_call_schema``
-  derives from the ``_run`` signature — adding ``sandbox: bool = True`` to
-  ``_run`` must surface it in the schema with default True (no pydantic Field).
+- model-facing schema: ``PythonReplInput`` exposes ``query`` ONLY. The internal
+  ``sandbox`` parameter stays on ``_run``/``_arun`` for server-side callers but
+  is deliberately not model-visible (2026-11-09 audit H2).
 - env scrub: Popen gains ``env=scrub_env()`` (no secret vars survive).
 - cwd clamp: Popen gains ``cwd=str(ROOT_DIR)``.
 - sandbox wrap: sandbox=True + backend present → ``backend.wrap([sys.executable,
@@ -143,28 +142,27 @@ class _FakeBackend:
 pytestmark = [pytest.mark.module]
 
 
-def test_schema_auto_derives_sandbox_with_default_true():
+def test_schema_is_query_only_and_hides_the_sandbox_switch():
     tool = build_python_repl_tool()
     props = tool.tool_call_schema.model_json_schema()["properties"]
-    # Proves the schema picked the plain _run parameter up (no pydantic Field).
-    assert "sandbox" in props
-    assert props["sandbox"].get("default") is True
-    assert props["sandbox"].get("type") == "boolean"
-    # Still the stdin-feed protocol's single code arg plus the new flag.
-    assert set(props) == {"query", "sandbox"}
+    # H2 (2026-11-09 audit): the sandbox is server-owned policy, so the model
+    # sees only the code argument.
+    assert set(props) == {"query"}
 
 
 def test_class_level_tool_call_schema_access():
     # Plan acceptance one-liner (sandbox-hardening.md line 694) reads the
     # schema from the CLASS; the descriptor must support that too.
     props = TimedPythonREPLTool.tool_call_schema.model_json_schema()["properties"]
-    assert "sandbox" in props
+    assert set(props) == {"query"}
 
 
-def test_schema_has_no_explicit_args_schema():
-    # Auto-derivation proof: the class chain must NOT carry an explicit
-    # args_schema (that would be terminal's mechanism, not this one).
-    assert getattr(TimedPythonREPLTool, "args_schema", None) is None
+def test_schema_is_explicit_query_only_input():
+    # The explicit args_schema is what keeps the internal sandbox parameter out.
+    from agent.tools.python_repl import PythonReplInput
+
+    assert TimedPythonREPLTool.model_fields["args_schema"].default is PythonReplInput
+    assert set(PythonReplInput.model_fields) == {"query"}
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +330,28 @@ def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch)
     assert len(calls) == 1
 
 
-def test_scope_deny_via_public_run(monkeypatch: pytest.MonkeyPatch):
-    # handle_tool_error=True (langchain_core 1.4.7) returns the exception
-    # message as a plain string — the deny must surface, never raise.
+def test_public_run_discards_model_supplied_sandbox_false(monkeypatch: pytest.MonkeyPatch):
+    # H2 (2026-11-09 audit): the model cannot reach the internal switch. A
+    # forged ``sandbox=false`` is dropped by the query-only args_schema, so the
+    # run stays on the sandboxed/default path.
+    calls = _install_fake_popen(monkeypatch)
+    monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
+
+    tool = build_python_repl_tool()
+    out = tool.run({"query": "print(1)", "sandbox": False})
+
+    assert out == "2\n"
+    assert len(calls) == 1
+
+
+def test_scope_deny_still_applies_to_internal_callers(monkeypatch: pytest.MonkeyPatch):
+    # The server-side parameter keeps its guard (tool layer, not HITL).
     _install_fake_popen(monkeypatch)
     _set_policy(monkeypatch, SandboxPolicy.REQUIRED)
     tool = build_python_repl_tool()
-    out = tool.run({"query": "print(1)", "sandbox": False})
-    assert "main-session" in out or "main" in out
+    with pytest.raises(ToolException):
+        tool._run("print(1)", sandbox=False)
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +424,34 @@ def test_import_is_unavailable_in_restricted_builtins():
 def test_benign_repl_code_still_executes():
     out, _sandboxed = python_repl._run_with_timeout("print(sum(range(5)))", 10, sandbox=False)
     assert out.strip() == "10"
+
+
+# 2026-11-09 audit H4: the builtins set alone cannot stop class introspection.
+def test_class_introspection_escape_refused_before_spawn(monkeypatch: pytest.MonkeyPatch):
+    calls = _install_fake_popen(monkeypatch)
+
+    out, ran_sandboxed = python_repl._run_with_timeout(
+        "print(().__class__.__base__.__subclasses__())", 10, sandbox=False
+    )
+
+    assert "refused" in out
+    assert "not allowed in restricted code" in out
+    assert "attribute access" in out
+    assert ran_sandboxed is False
+    assert calls == [], "a refused script must never spawn a child"
+
+
+def test_introspection_helpers_removed_from_builtins():
+    snippets = {
+        "getattr": "getattr(1, 'real')",
+        "type": "type(1)",
+        "dir": "dir()",
+        "vars": "vars()",
+    }
+    for helper, snippet in snippets.items():
+        out, _sandboxed = python_repl._run_with_timeout(snippet, 10, sandbox=False)
+        assert "NameError" in out, f"{helper} must be absent, got: {out}"
+        assert helper in out
 
 
 # ---------------------------------------------------------------------------

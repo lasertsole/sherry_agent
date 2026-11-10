@@ -56,7 +56,8 @@ Design notes
 """
 
 import hashlib
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 from langchain.agents.middleware import AgentMiddleware
 from loguru import logger
@@ -99,6 +100,60 @@ _applied_model_configs: dict[str, dict[str, Any]] = {}
 _last_applied: dict[str, tuple[str | None, str, str]] = {}
 
 
+class _ThinkingStrategy(Protocol):
+    """One thinking choice → the ``build_main_llm*`` keyword arguments."""
+
+    def kwargs(self) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True)
+class _SwitchStrategy:
+    """The on/off switch positions (``off_floor`` is the learned fallback)."""
+
+    enabled: bool
+    floor: bool = False
+
+    def kwargs(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"thinking": self.enabled}
+        if self.floor:
+            result["thinking_floor"] = True
+        return result
+
+
+@dataclass(frozen=True)
+class _LevelStrategy:
+    """One explicit effort level (``level:<token>``)."""
+
+    level: str
+
+    def kwargs(self) -> dict[str, Any]:
+        return {"thinking_level": self.level}
+
+
+class _EnvDefaultStrategy:
+    """No explicit choice: keep ``MAIN_LLM_ENABLE_THINKING``."""
+
+    def kwargs(self) -> dict[str, Any]:
+        return {}
+
+
+_ENV_DEFAULT_THINKING = _EnvDefaultStrategy()
+_SWITCH_STRATEGIES: dict[str, _ThinkingStrategy] = {
+    "on": _SwitchStrategy(enabled=True),
+    "off": _SwitchStrategy(enabled=False),
+    "off_floor": _SwitchStrategy(enabled=False, floor=True),
+}
+_LEVEL_PREFIX = "level:"
+
+
+def _thinking_strategy(cache_key: str | None) -> _ThinkingStrategy:
+    if not cache_key:
+        return _ENV_DEFAULT_THINKING
+    if cache_key.startswith(_LEVEL_PREFIX):
+        return _LevelStrategy(cache_key.split(":", 1)[1])
+    return _SWITCH_STRATEGIES.get(cache_key, _ENV_DEFAULT_THINKING)
+
+
 def _mapping_signature(custom_mapping: dict | None) -> str:
     """A stable fingerprint of the session's custom wire mapping."""
     if not custom_mapping:
@@ -134,17 +189,11 @@ class ThinkingControlMiddleware(AgentMiddleware):
 
         An empty dict means "keep the env default" (``MAIN_LLM_ENABLE_THINKING``)
         — only reachable together with a model override, since a bare thinking
-        toggle always resolves to one of the explicit keys.
+        toggle always resolves to one of the explicit keys. The mapping is a
+        strategy table (2026-11-09 audit M6): adding a switch position is one
+        registration, not another branch here.
         """
-        if cache_key == "on":
-            return {"thinking": True}
-        if cache_key == "off_floor":
-            return {"thinking": False, "thinking_floor": True}
-        if cache_key == "off":
-            return {"thinking": False}
-        if cache_key and cache_key.startswith("level:"):
-            return {"thinking_level": cache_key.split(":", 1)[1]}
-        return {}
+        return _thinking_strategy(cache_key).kwargs()
 
     def _build(
         self,

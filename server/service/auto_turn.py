@@ -44,6 +44,8 @@ from agent.tools.subagent.registry.session_state import (
     REASON_AUTO_TURN_INFLIGHT,
     REASON_WS_TASK,
     detect_state,
+    subscribe_busy_change,
+    unsubscribe_busy_change,
 )
 from config.features import TODOLIST_INFRA
 from runtime.session.relation_register import relation_register
@@ -176,20 +178,51 @@ _SELF_BUSY_REASONS = (REASON_WS_TASK, REASON_ANSWERING)
 async def _wait_for_self_idle(bare: str) -> bool:
     """Wait (bounded) for the ending turn to release its own busy signals.
 
+    Event-driven: a session-scoped subscription wakes the wait the moment a
+    busy signal may have changed (turn end / WS task release / HITL clear), so
+    a deferred directive fires immediately instead of at the next poll tick.
+    ``continuation_self_idle_poll_s`` is kept as the BOUNDED FALLBACK — a
+    missed notification cannot hang the directive, and the cap
+    (``continuation_self_idle_wait_s``) is unchanged.
+
     :returns: True when the session reads idle (or only our own in-flight
         auto turn), False when it stayed busy past the cap — a real user turn
         took over, so the directive is dropped and the next turn end decides.
     """
-    deadline = asyncio.get_running_loop().time() + TODOLIST_INFRA["continuation_self_idle_wait_s"]
-    while True:
-        st = detect_state(bare)
-        # REASON_AUTO_TURN_INFLIGHT is our own registration (the runner task is
-        # in _INFLIGHT before its body starts) — not somebody else's turn.
-        if not st.busy or st.reason == REASON_AUTO_TURN_INFLIGHT:
-            return True
-        if asyncio.get_running_loop().time() >= deadline:
-            return False
-        await asyncio.sleep(TODOLIST_INFRA["continuation_self_idle_poll_s"])
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + TODOLIST_INFRA["continuation_self_idle_wait_s"]
+    fallback_wait = TODOLIST_INFRA["continuation_self_idle_poll_s"]
+    try:
+        subscription = subscribe_busy_change(bare)
+    except Exception:  # noqa: BLE001 - fail-open: pure fallback polling
+        subscription = None
+    try:
+        while True:
+            # Re-arm BEFORE the (synchronous) state check: a signal change
+            # between the check and the wait leaves the event set, so the wait
+            # returns immediately — no lost wakeup.
+            if subscription is not None:
+                subscription.rearm()
+            st = detect_state(bare)
+            # REASON_AUTO_TURN_INFLIGHT is our own registration (the runner task
+            # is in _INFLIGHT before its body starts) — not somebody else's
+            # turn.
+            if not st.busy or st.reason == REASON_AUTO_TURN_INFLIGHT:
+                return True
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return False
+            wait_seconds = min(fallback_wait, remaining)
+            if subscription is not None:
+                await subscription.wait(wait_seconds)
+            else:
+                await asyncio.sleep(wait_seconds)
+    finally:
+        if subscription is not None:
+            try:
+                unsubscribe_busy_change(subscription)
+            except Exception:  # noqa: S110 - a leaked subscription is only a hint
+                pass
 
 
 async def _run_auto_turn(

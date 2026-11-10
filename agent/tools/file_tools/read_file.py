@@ -28,12 +28,14 @@ read IN FULL (the license exists) and that has not changed answers with a
 pointer instead of the content — read a range (offset >= 2) to force content.
 """
 
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 
 from loguru import logger
-from typing import override
+from typing import Any, override
 from pydantic import BaseModel, Field, field_validator
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import SessionId
@@ -52,8 +54,10 @@ from agent.tools.pub_base import (
     sniff_text_encoding,
 )
 from agent.tools.pub_base.stream_read import read_line_window
-from config.features import TOKEN_ESTIMATION, TOOLS_TIMEOUTS
+from config.features import MEDIA_PIPELINE, TOKEN_ESTIMATION, TOOLS_TIMEOUTS
+from config.path import TEMP_DIR
 from pub.func.cjk import is_cjk_codepoint
+from pub.func.media.image_compress import ImageTooLargeError, prepare_for_model
 from pub.func.message.token_truncation import _chars_for_tokens
 from langchain_core.callbacks import CallbackManagerForToolRun
 
@@ -113,6 +117,11 @@ _BINARY_EXTENSIONS: frozenset[str] = frozenset(
         ".swp",
         ".swo",
     }
+)
+
+#: Image extensions get the native-vision branch (never the text reader).
+IMAGE_EXTENSIONS: frozenset[str] = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
 )
 
 #: Device paths whose read would block or never end (ZCode's list).
@@ -296,7 +305,9 @@ class ReadFileTool(BaseTool):
         "device paths are refused. "
         "Reading the WHOLE file (first page, nothing truncated) is what allows "
         "write_file to overwrite it later — write_file refuses to replace a file "
-        "this session has not read."
+        "this session has not read. Image files (png/jpg/gif/webp/bmp/tiff) are "
+        "shown to a vision model directly; a model without image input gets the "
+        "path for the image_to_text skill instead."
     )
     metadata: dict = {"idempotent": True}
 
@@ -324,13 +335,177 @@ class ReadFileTool(BaseTool):
             return None, None, tool_error(f"Failed to read file: {safe_error_detail(e)}")
         return data, read_stat, None
 
+    def _read_pdf(
+        self,
+        resolved: Path,
+        root: Path,
+        raw: bytes,
+        session_id: str,
+        offset: int,
+        limit: int,
+    ) -> str | list[dict[str, Any]]:
+        """Native PDF block, or rendered page images for image-only models."""
+        from agent.middlewares.llm_capability_cache import get_capability
+        from agent.middlewares.media_pipeline.tool_media import effective_model_key
+
+        label = display_path(resolved, root)
+        max_bytes = TOOLS_TIMEOUTS["pdf_max_file_bytes"]
+        if len(raw) > max_bytes:
+            return json.dumps(
+                {"error": "pdf_too_large", "max_bytes": max_bytes, "size": len(raw)},
+                ensure_ascii=False,
+            )
+
+        model_key = effective_model_key(session_id)
+        provider, _, model = model_key.partition("/")
+        pdf_cap = get_capability(provider, model, "pdf") if model else "auto"
+        vision_cap = get_capability(provider, model, "vision") if model else "auto"
+        page_range_requested = offset > 1 or limit != _READ_DEFAULT_LIMIT
+        max_pages = int(TOOLS_TIMEOUTS["pdf_max_pages_per_request"])
+        text = f"[PDF read: {label} ({len(raw)} bytes)]"
+
+        if pdf_cap == "supported" and not page_range_requested:
+            encoded = base64.b64encode(raw).decode("ascii")
+            if provider == "anthropic":
+                block = {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": encoded,
+                    },
+                }
+            else:
+                block = {
+                    "type": "file",
+                    "file": {
+                        "filename": resolved.name,
+                        "file_data": f"data:application/pdf;base64,{encoded}",
+                    },
+                }
+            return [{"type": "text", "text": text}, block]
+
+        if pdf_cap == "supported" and page_range_requested and vision_cap != "supported":
+            return json.dumps({"error": "pdf_pages_images_unsupported"}, ensure_ascii=False)
+
+        if vision_cap != "supported":
+            return json.dumps({"error": "pdf_not_supported"}, ensure_ascii=False)
+
+        from agent.tools.pub_base.pdf_render import PdfRenderUnavailable, render_pdf_pages
+
+        first_page = offset
+        page_count = min(max(1, limit), max_pages)
+        try:
+            pages = render_pdf_pages(
+                resolved,
+                first_page=first_page,
+                last_page=first_page + page_count - 1,
+                dpi=int(TOOLS_TIMEOUTS["pdf_render_dpi"]),
+                timeout_s=float(TOOLS_TIMEOUTS["pdf_render_timeout_s"]),
+            )
+        except PdfRenderUnavailable as exc:
+            return json.dumps(
+                {"error": "pdf_render_unavailable", "message": str(exc)},
+                ensure_ascii=False,
+            )
+
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for page in pages[:max_pages]:
+            try:
+                prepared = prepare_for_model(
+                    page.data,
+                    max_dimension=int(MEDIA_PIPELINE["image_compress_max_dimension"]),
+                    max_tokens=int(MEDIA_PIPELINE["image_compress_max_tokens"]),
+                    token_ratio=float(MEDIA_PIPELINE["image_compress_token_ratio"]),
+                )
+            except ImageTooLargeError:
+                continue
+            encoded = base64.b64encode(prepared.data).decode("ascii")
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{prepared.media_type};base64,{encoded}"},
+                }
+            )
+        if len(content) == 1:
+            return json.dumps({"error": "pdf_render_failed"}, ensure_ascii=False)
+        return content
+
+    def _read_image(
+        self, resolved: Path, root: Path, raw: bytes, session_id: str
+    ) -> str | list[dict[str, Any]]:
+        """Return a native ``image_url`` ToolMessage payload (or the skill hint).
+
+        The compressed copy is written once so the existing
+        ``native_image_content`` path (the browser-screenshot mechanism) can
+        attach it; the text keeps the ORIGINAL path for the ``image_to_text``
+        fallback.
+        """
+        from agent.middlewares.media_pipeline.tool_media import native_image_content
+
+        label = display_path(resolved, root)
+        max_bytes = TOOLS_TIMEOUTS["read_image_max_bytes"]
+        if len(raw) > max_bytes:
+            return json.dumps(
+                {
+                    "error": "read_image_input_too_large",
+                    "max_bytes": max_bytes,
+                    "size": len(raw),
+                },
+                ensure_ascii=False,
+            )
+        try:
+            prepared = prepare_for_model(
+                raw,
+                max_dimension=int(MEDIA_PIPELINE["image_compress_max_dimension"]),
+                max_tokens=int(MEDIA_PIPELINE["image_compress_max_tokens"]),
+                token_ratio=float(MEDIA_PIPELINE["image_compress_token_ratio"]),
+            )
+        except ImageTooLargeError as exc:
+            return json.dumps(
+                {"error": "read_image_input_too_large", "message": str(exc)},
+                ensure_ascii=False,
+            )
+        except Exception as exc:  # noqa: BLE001 — not a decodable image
+            return json.dumps(
+                {
+                    "error": "read_image_failed",
+                    "message": safe_error_detail(exc),
+                },
+                ensure_ascii=False,
+            )
+
+        directory = Path(TEMP_DIR) / "read_images"
+        directory.mkdir(parents=True, exist_ok=True)
+        # Content-addressed name: reading the same image again reuses the temp
+        # copy instead of growing the directory.
+        digest = hashlib.sha256(prepared.data).hexdigest()[:16]
+        saved = directory / f"{digest}{prepared.extension}"
+        if not saved.exists():
+            try:
+                saved.write_bytes(prepared.data)
+            except OSError as exc:
+                return json.dumps(
+                    {"error": "read_image_failed", "message": safe_error_detail(exc)},
+                    ensure_ascii=False,
+                )
+
+        text = f"[Image read: {label} ({len(raw)} bytes, {prepared.width}x{prepared.height})]"
+        content = native_image_content(session_id, text, saved)
+        if isinstance(content, str):
+            content += (
+                f"\nThe current model does not accept image input; use the "
+                f"image_to_text skill on {label}."
+            )
+        return content
+
     def _core(
         self,
         file_path: str,
         offset: int = 1,
         limit: int = _READ_DEFAULT_LIMIT,
         session_id: str = "",
-    ) -> str:
+    ) -> str | list[dict[str, Any]]:
         root, resolved, error = resolve_tool_path(file_path, session_id, "read file", mode="read")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
@@ -345,6 +520,43 @@ class ReadFileTool(BaseTool):
                 {"error": f"Path is a directory: {display_path(resolved, root)}"},
                 ensure_ascii=False,
             )
+
+        suffix = resolved.suffix.lower()
+        if suffix == ".pdf" or suffix in IMAGE_EXTENSIONS:
+            # Reject an oversized media file BEFORE reading it whole: the cap
+            # is a memory guard as much as a provider guard.
+            try:
+                media_size = resolved.stat().st_size
+            except OSError:
+                media_size = 0
+            if suffix == ".pdf":
+                max_media_bytes = TOOLS_TIMEOUTS["pdf_max_file_bytes"]
+                if media_size > max_media_bytes:
+                    return json.dumps(
+                        {
+                            "error": "pdf_too_large",
+                            "max_bytes": max_media_bytes,
+                            "size": media_size,
+                        },
+                        ensure_ascii=False,
+                    )
+            else:
+                max_media_bytes = TOOLS_TIMEOUTS["read_image_max_bytes"]
+                if media_size > max_media_bytes:
+                    return json.dumps(
+                        {
+                            "error": "read_image_input_too_large",
+                            "max_bytes": max_media_bytes,
+                            "size": media_size,
+                        },
+                        ensure_ascii=False,
+                    )
+            raw, _stat, read_error = self._read_bytes(resolved)
+            if read_error is not None or raw is None:
+                return read_error or tool_error("Failed to read the media file")
+            if suffix == ".pdf":
+                return self._read_pdf(resolved, root, raw, session_id, offset, limit)
+            return self._read_image(resolved, root, raw, session_id)
 
         try:
             file_size = resolved.stat().st_size
@@ -668,7 +880,7 @@ class ReadFileTool(BaseTool):
         limit: int = _READ_DEFAULT_LIMIT,
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
-    ) -> str:
+    ) -> str | list[dict[str, Any]]:
         session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(file_path, offset, limit, session_id)
 
@@ -680,7 +892,7 @@ class ReadFileTool(BaseTool):
         limit: int = _READ_DEFAULT_LIMIT,
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
-    ) -> str:
+    ) -> str | list[dict[str, Any]]:
         session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(file_path, offset, limit, session_id)
 

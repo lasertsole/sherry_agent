@@ -8,7 +8,10 @@ from server.trigger.core import app
 from runtime import state_register_mem
 from runtime.session.relation_register import relation_register
 from runtime.session.ws_push import broadcast_to_session
-from agent.tools.subagent.registry.session_state import set_hitl_pending
+from agent.tools.subagent.registry.session_state import (
+    notify_busy_signals_changed,
+    set_hitl_pending,
+)
 from server.service import get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
 from server.service import turn_runner
@@ -138,7 +141,14 @@ class _AgentWsStreamDriver(StreamDriver):
             _active_tasks.pop(self.session_id, None)
         # the turn's row is marked terminal (when it owns one) and the
         # TurnRunner drains whatever rows were queued while the turn ran.
-        await turn_runner.on_turn_finished(self.session_id, self.claim_row_id)
+        try:
+            await turn_runner.on_turn_finished(self.session_id, self.claim_row_id)
+        finally:
+            # Both owned busy signals are now clear (WS task popped above,
+            # ANSWERING cleared by the driver's cleanup): wake event-driven
+            # idle waiters so a deferred directive fires immediately instead of
+            # at the next poll tick. A wake is only a hint; waiters re-check.
+            notify_busy_signals_changed(self.session_id)
 
 
 async def _cancel_session(session_id: str) -> None:
@@ -160,6 +170,9 @@ async def _cancel_session(session_id: str) -> None:
             )
     else:
         state_register_mem.set_state(session_id, StateKey.ANSWERING, False)
+        # No task to await: this stop itself cleared the answering signal, so
+        # wake event-driven idle waiters (a deferred continuation may now fire).
+        notify_busy_signals_changed(session_id)
         logger.info(f"Agent WS stop requested (no active task): session_id={session_id}")
 
 
@@ -290,18 +303,32 @@ async def _handle_edit_queued(
     )
 
 
+class _SendNowCommand:
+    """``send_now`` as one ordered operation (2026-11-09 audit L2).
+
+    Priority must be stamped BEFORE the cancel: ``_cancel_session`` awaits the
+    task's cancellation and its finally drains the queue, so a late prioritize
+    would let the drain claim whatever was first. Keeping the pair in one
+    execute() makes the ordering impossible to split at a call site.
+    """
+
+    def __init__(self, session_id: str, msg_id: str) -> None:
+        self._session_id = session_id
+        self._msg_id = msg_id
+
+    async def execute(self) -> bool:
+        ok = await iqs.prioritize_queued_message(self._session_id, self._msg_id)
+        if ok:
+            await _cancel_session(self._session_id)
+        return ok
+
+
 async def _handle_send_now(
     websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
 ) -> None:
     """``send_now``: flag the row to claim first (priority=1), then cancel."""
     msg_id = str(obj.get("msg_id", ""))
-    # Order matters: prioritize BEFORE cancelling. `_cancel_session`
-    # awaits the task's cancellation and its finally drains the
-    # queue, so a late prioritize would let the drain claim
-    # whatever was first.
-    ok = await iqs.prioritize_queued_message(session_id, msg_id)
-    if ok:
-        await _cancel_session(session_id)
+    ok = await _SendNowCommand(session_id, msg_id).execute()
     await _send_ws(
         websocket,
         {

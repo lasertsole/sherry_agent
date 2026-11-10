@@ -41,6 +41,7 @@ from loguru import logger
 from config.path import ROOT_DIR, TEMP_DIR
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import kill_process_tree, reap_process
+from agent.tools.pub_base.safe_exec import validate_restricted_code
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 
@@ -252,6 +253,14 @@ async def run_ptc(
     max_stdout = int(config["ptc_max_stdout_bytes"])
     max_stderr = int(config["ptc_max_stderr_bytes"])
     timeout = int(config["ptc_timeout_seconds"])
+
+    # H4 (2026-11-09 audit): refuse class-introspection escapes BEFORE any
+    # server/temp-dir/child exists. The restricted builtins close `open` and
+    # most imports; the object graph would otherwise reopen both.
+    try:
+        validate_restricted_code(code, label="execute_code")
+    except ValueError as exc:
+        return _result("error", "", str(exc), -1, 0)
 
     loop = asyncio.get_running_loop()
     token = secrets.token_urlsafe(32)

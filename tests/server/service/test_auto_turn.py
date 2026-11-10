@@ -252,6 +252,70 @@ async def test_self_busy_that_never_clears_is_dropped(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_self_busy_wakes_immediately_on_idle_notification(monkeypatch):
+    """M8: a busy-signal notification wakes the deferred runner at once.
+
+    The fallback poll is set to 5 s, so a start inside ~1 s can only come from
+    the event. The wake is a HINT: the runner re-runs ``detect_state`` before
+    firing (the same check the old poll made).
+    """
+    at = _mod()
+    calls, started, finished = [], asyncio.Event(), asyncio.Event()
+    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
+    monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
+    monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
+    monkeypatch.setitem(at.TODOLIST_INFRA, "continuation_self_idle_poll_s", 5.0)
+
+    state = {"busy": True, "reason": "ws_task"}
+    _fake_detect(monkeypatch, at, state)
+
+    result = await at.maybe_trigger_auto_turn("sess-event", _injection("run-ev"))
+    assert result.outcome == at.AutoTurnOutcome.TRIGGERED
+    task = at._INFLIGHT["sess-event"]
+    await asyncio.sleep(0.05)
+    assert calls == []  # the ending stream is still draining
+
+    # When the ending turn releases its busy signals and publishes the change
+    from agent.tools.subagent.registry import session_state
+
+    state.update(busy=False, reason="idle")
+    session_state.notify_busy_signals_changed("sess-event")
+
+    # Then the deferred runner fires before the 5 s fallback could.
+    await asyncio.wait_for(started.wait(), timeout=4.0)
+    await asyncio.wait_for(task, timeout=10)
+    assert calls and calls[0][0] == "sess-event"
+    assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_idle_notification_for_another_session_does_not_wake(monkeypatch):
+    """The notification is keyed: an unrelated session's change cannot wake this wait."""
+    at = _mod()
+    calls, started, finished = [], asyncio.Event(), asyncio.Event()
+    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
+    monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
+    monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
+    monkeypatch.setitem(at.TODOLIST_INFRA, "continuation_self_idle_poll_s", 0.5)
+    monkeypatch.setitem(at.TODOLIST_INFRA, "continuation_self_idle_wait_s", 30.0)
+
+    state = {"busy": True, "reason": "ws_task"}
+    _fake_detect(monkeypatch, at, state)
+
+    result = await at.maybe_trigger_auto_turn("sess-keyed", _injection("run-k"))
+    assert result.outcome == at.AutoTurnOutcome.TRIGGERED
+    try:
+        await asyncio.sleep(0.05)
+        from agent.tools.subagent.registry import session_state
+
+        session_state.notify_busy_signals_changed("some-other-session")
+        await asyncio.sleep(0.1)
+        assert calls == []  # still waiting for ITS OWN session
+    finally:
+        await _cancel_inflight(at)
+
+
+@pytest.mark.asyncio
 async def test_user_input_no_longer_cancels_turn(monkeypatch, tmp_path):
     """Task 8 new queueing semantics: user input mid-turn queues; the auto
     turn is NOT cancelled, completes normally, and no PENDING requeue happens."""

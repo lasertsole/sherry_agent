@@ -12,6 +12,18 @@ from typing import Any
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_capability_labels(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
+    """Keep learned multimodal labels out of the repo-wide runtime file."""
+    from agent.middlewares import llm_capability_cache as cache
+
+    path = tmp_path / "model_capabilities_runtime.json"
+    monkeypatch.setattr(cache, "model_capabilities_runtime_path", lambda: path)
+    cache.reset_cache()
+    yield
+    cache.reset_cache()
+
+
 @pytest.fixture
 def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, Any]]:
     """Yield ``(agent_core, fake_compiled_graph)`` with built_agent's deps faked.
@@ -69,6 +81,10 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
     from agent.wrapper import registry as wrapper_registry
 
     monkeypatch.setattr(wrapper_registry, "main_llm_max_tokens", context_window)
+    # The chain is assembled from agent.middlewares.specs, so the placeholder
+    # seam lives there now (agent.core only forwards the build context).
+    from agent.middlewares import specs as middleware_specs
+
     for middleware_name in (
         "Summarization",
         "ToolCallNormalize",
@@ -88,6 +104,6 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
         "DynamicReminderMiddleware",
         "PlanContinuationEnforcer",
     ):
-        monkeypatch.setattr(agent_core, middleware_name, lambda *_, **__: object())
+        monkeypatch.setattr(middleware_specs, middleware_name, lambda *_, **__: object())
 
     yield agent_core, fake_compiled_graph

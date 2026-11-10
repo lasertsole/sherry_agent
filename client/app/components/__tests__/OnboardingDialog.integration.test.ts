@@ -55,10 +55,12 @@ function mountTour() {
  * @param wrapper
  * @param label
  */
-async function clickLabel(wrapper: ReturnType<typeof mount>, label: string) {
+async function clickLabel(wrapper: ReturnType<typeof mount>, label: string, debounced = false) {
   const button = wrapper.findAll('button').find(candidate => candidate.text() === label);
   if (!button) throw new Error(`no button labelled ${label}`);
   await button.trigger('click');
+  // The tour's exits (Skip / Get started) carry v-debounce:click.500.
+  if (debounced) await new Promise(resolve => setTimeout(resolve, 600));
   await flushPromises();
 }
 
@@ -91,7 +93,7 @@ describe('OnboardingDialog', () => {
   it('跳过 records the flag, closes, and hands over the preset dialog', async () => {
     const wrapper = mountTour();
 
-    await clickLabel(wrapper, '跳过');
+    await clickLabel(wrapper, '跳过', true);
 
     expect(flags.setAppFlag).toHaveBeenCalledWith('onboarding_completed', true);
     expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false]);
@@ -105,7 +107,7 @@ describe('OnboardingDialog', () => {
     await wrapper.get('[data-test="onboarding-preset-companion"]').trigger('click');
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '下一步');
-    await clickLabel(wrapper, '开始使用');
+    await clickLabel(wrapper, '开始使用', true);
     await flushPromises();
 
     expect(catalogApi.createSessionFromPreset).toHaveBeenCalledWith(
@@ -122,7 +124,7 @@ describe('OnboardingDialog', () => {
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '下一步');
-    await clickLabel(wrapper, '开始使用');
+    await clickLabel(wrapper, '开始使用', true);
     await flushPromises();
 
     expect(wrapper.find('[data-test="onboarding-error"]').text()).toContain('apply failed');

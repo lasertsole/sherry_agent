@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-3 overflow-auto p-1 text-sm">
+  <div class="flex h-full min-h-0 flex-col gap-3 overflow-auto p-4 text-sm min-w-[280px]">
     <!-- Status -->
     <div class="flex items-center gap-2">
       <i :class="auth.authEnabled ? 'pi pi-shield text-emerald-500' : 'pi pi-shield text-gray-400'"></i>

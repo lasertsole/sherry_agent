@@ -18,6 +18,8 @@ from config.features import MODEL_DOWNLOADS, LocalModelFile, LocalModelSpec
 from config.path import ROOT_DIR
 from loguru import logger
 from models.downloader import probe_size, stream_download
+
+from .download_state import DownloadState
 from server.service import model_download_events as events
 
 _LOCK = threading.RLock()
@@ -74,15 +76,15 @@ def status_for(family: str) -> dict[str, Any]:
     ready = files_done == file_count
     with _LOCK:
         state = _STATES.get(family, {})
-        phase = str(state.get("state", "idle"))
+        phase = str(state.get("state", DownloadState.IDLE.value))
         error = state.get("error")
         downloaded = int(state.get("downloaded_bytes", 0))
         total = int(state.get("total_bytes", 0))
     if ready:
-        phase = "ready"
+        phase = DownloadState.READY.value
         downloaded = total = sum(_target(f).stat().st_size for f in spec["files"])
-    elif phase not in {"downloading"}:
-        phase = "error" if error else "idle"
+    elif phase not in {DownloadState.DOWNLOADING.value}:
+        phase = DownloadState.ERROR.value if error else DownloadState.IDLE.value
     return {
         "label": spec["label"],
         "state": phase,
@@ -123,11 +125,11 @@ def start(family: str) -> dict[str, Any]:
     with _LOCK:
         if _ready(spec):
             ready = True
-        elif _STATES.get(family, {}).get("state") == "downloading":
+        elif _STATES.get(family, {}).get("state") == DownloadState.DOWNLOADING.value:
             already_running = True
         else:
             _STATES[family] = {
-                "state": "downloading",
+                "state": DownloadState.DOWNLOADING.value,
                 "error": None,
                 "downloaded_bytes": 0,
                 "total_bytes": 0,
@@ -210,7 +212,7 @@ def _run(family: str, spec: LocalModelSpec) -> None:
         total = sum(_target(file).stat().st_size for file in files)
         _update(
             family,
-            state="ready",
+            state=DownloadState.READY.value,
             error=None,
             downloaded_bytes=total,
             total_bytes=total,
@@ -219,7 +221,7 @@ def _run(family: str, spec: LocalModelSpec) -> None:
         logger.info("local model {} downloaded", family)
     except Exception as exc:  # noqa: BLE001 - the status endpoint reports it
         logger.warning("local model {} download failed: {}", family, exc)
-        _update(family, state="error", error=str(exc))
+        _update(family, state=DownloadState.ERROR.value, error=str(exc))
         _publish(family, force=True)
 
 

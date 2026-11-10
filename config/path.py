@@ -445,6 +445,17 @@ def subagent_model_caps_path() -> Path:
     return SRC_DIR / "data" / "subagent_model_caps.json"
 
 
+def model_capabilities_runtime_path() -> Path:
+    """Return the learned multimodal-capability labels path.
+
+    ``SRC_DIR/data/model_capabilities_runtime.json`` — only models NOT declared
+    in the tracked catalog are learned here; a declared model always follows
+    the catalog (or the ``sherry.jsonc`` override). Read at call time so tests
+    can repoint ``SRC_DIR``; a missing file means "nothing learned yet".
+    """
+    return SRC_DIR / "data" / "model_capabilities_runtime.json"
+
+
 #: Warn-once guard for an invalid configured project directory (see
 #: :func:`resolve_default_project_dir`). Tool calls resolve the default on the
 #: cold path, so a bad value would otherwise log per call.

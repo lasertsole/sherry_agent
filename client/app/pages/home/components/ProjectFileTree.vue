@@ -14,7 +14,8 @@
         class="ml-auto"
         :title="t('projectFiles.refresh')"
         :aria-label="t('projectFiles.refresh')"
-        @click="reload" />
+        :loading="loading"
+        v-debounce:click.500="reload" />
     </div>
 
     <div class="min-h-0 flex-1 overflow-auto p-2">

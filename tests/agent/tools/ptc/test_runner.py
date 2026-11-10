@@ -65,6 +65,24 @@ def test_restricted_builtins_block_open() -> None:
     assert "name 'open' is not defined" in result["error"]
 
 
+def test_introspection_escape_is_refused_before_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _never_spawn(*args, **kwargs):
+        raise AssertionError("a refused script must never spawn a child")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", _never_spawn)
+
+    result = _run("print(().__class__.__base__.__subclasses__())\n", _config())
+    assert result["status"] == "error"
+    assert "not allowed in restricted code" in result["error"]
+    assert "attribute access" in result["error"]
+
+
+def test_introspection_helpers_are_not_in_restricted_builtins() -> None:
+    result = _run("print(getattr(1, 'real'))\n", _config())
+    assert result["status"] == "error"
+    assert "name 'getattr' is not defined" in result["error"]
+
+
 def test_import_allowlist_blocks_os_but_allows_sherry_tools() -> None:
     blocked = _run("import os\nprint(os.getcwd())\n", _config())
     assert blocked["status"] == "error"

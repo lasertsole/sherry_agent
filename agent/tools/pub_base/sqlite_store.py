@@ -16,9 +16,10 @@ This base class owns that skeleton. Each store keeps its own schema by
 overriding the ``_*_ddls`` hooks — no table, column or index definition moves
 here, so every DDL string stays byte-identical to what it was. A store's schema
 is the CURRENT one: there is no additive-migration hook, so an old database is
-not converged in place. The todolist store is the one deliberate exception: it
-wraps its init to converge two additive columns (``metadata`` / ``notes``) once
-per process, because existing checklist rows must survive that upgrade.
+not converged in place. Two stores are deliberate exceptions that converge
+additive columns once per process, because existing rows must survive an
+upgrade: the todolist store (``metadata`` / ``notes``) and the side-chat link
+store (``client_request_id`` / ``fork_turn_num``).
 
 Per-store process state and configuration (the database path/dir, the busy
 timeout and the once-per-process init flags) deliberately stay in the owning

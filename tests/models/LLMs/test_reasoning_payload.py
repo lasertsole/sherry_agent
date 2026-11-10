@@ -231,5 +231,33 @@ class TestApplyThinkingBudget:
             main_llm.apply_thinking_budget(config, "deepseek", "deepseek-chat", True)
             assert config["max_tokens"] == 9000 + rp._DEFAULT_NON_ANTHROPIC_BUDGET
         finally:
+            # Drop the env BEFORE reloading: monkeypatch restores it only after
+            # the test, so a reload here would freeze OUTPUT_MAX_TOKEN=9000 for
+            # every later test file in the same process.
+            monkeypatch.delenv("MAIN_LLM_OUTPUT_MAX_TOKEN", raising=False)
             importlib.reload(main_llm)
             importlib.reload(boost)
+
+
+class TestStrategyTables:
+    """H1: format/branch selection is a table, so completeness is testable."""
+
+    def test_every_thinking_format_has_a_wire_encoder(self):
+        from config.features.agent_side.thinking_levels import ThinkingFormat
+
+        assert set(rp._WIRE_ENCODERS) == {fmt.value for fmt in ThinkingFormat}
+
+    def test_every_native_format_has_an_encoder(self):
+        assert set(rp._NATIVE_FORMATS) == set(rp._NATIVE_ENCODERS)
+
+    def test_format_rules_cover_the_documented_gateways(self):
+        formats = {rule.thinking_format for rule in rp._FORMAT_RULES}
+        assert {
+            "deepseek",
+            "zai",
+            "qwen",
+            "openrouter",
+            "together",
+            "baseten",
+            "openai",
+        } <= formats

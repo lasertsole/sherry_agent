@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "EMA AI Agent",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "identifier": "com.ema-ai.agent",
   "build": {
     "frontendDist": "../.output/public",
@@ -13,6 +13,8 @@
     "windows": [
       {
         "title": "sherry_agent",
+        "decorations": false,
+        "transparent": false,
         "width": 800,
         "height": 600,
         "minWidth": 480,

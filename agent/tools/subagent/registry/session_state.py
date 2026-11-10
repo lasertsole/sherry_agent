@@ -50,6 +50,11 @@ Guarantees:
       ``set_hitl_pending`` alone;
     - call-time truth only: no caching, no TTL — each call re-reads the
       sources (cheap dict/state lookups);
+    - the busy signals are ANNOUNCED, not cached for waiters: producers call
+      ``notify_busy_signals_changed`` after a signal mutates (turn end,
+      ANSWERING / WS-task release, HITL change) and event-driven waiters
+      re-run ``detect_state`` on every wake — a notification is a hint, never
+      a promise of idleness, and a missed one costs one fallback poll;
     - no heavy imports at module load: the WS task table and the auto-turn
       module are reached through ``runtime.hooks`` getters (resolved at call
       time; the server boot registers them), and a process that never assembled
@@ -68,6 +73,7 @@ from loguru import logger
 
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from runtime import hooks
+from runtime.event_wait import WakeRegistry, WakeSubscription
 from runtime.session.state_keys import StateKey
 
 __all__ = [
@@ -75,7 +81,10 @@ __all__ = [
     "detect_state",
     "is_hitl_pending",
     "is_session_busy",
+    "notify_busy_signals_changed",
     "set_hitl_pending",
+    "subscribe_busy_change",
+    "unsubscribe_busy_change",
 ]
 
 REASON_WS_TASK = "ws_task"
@@ -96,6 +105,48 @@ class SessionState:
 
 _HITL_PENDING: set[str] = set()  # bare ids currently waiting on a HITL decision
 _HITL_LOCK = threading.Lock()  # guards _HITL_PENDING mutations (cheap, never awaited)
+
+#: Idle-wait notifications, keyed by bare session id. Consumers that used to
+#: poll ``detect_state`` (the auto-turn's bounded self-idle wait) subscribe
+#: here and are woken whenever a busy signal may have changed — turn end, WS
+#: task release, ANSWERING clear, HITL clear. A wake is a HINT only: the
+#: consumer MUST re-run ``detect_state``, because a notification never promises
+#: idleness (and a missed one is covered by the consumer's fallback poll).
+_busy_wake_hub = WakeRegistry()
+
+
+def subscribe_busy_change(session_key: str) -> WakeSubscription:
+    """Subscribe to "this session's busy signals may have changed" notifications.
+
+    Empty/unknown ids subscribe to nothing (the notification path ignores empty
+    keys too). The caller owns the subscription and must release it with
+    :func:`unsubscribe_busy_change`.
+    """
+    bare = normalize_session_key(session_key)
+    return _busy_wake_hub.subscribe({bare} if bare else ())
+
+
+def unsubscribe_busy_change(subscription: WakeSubscription) -> None:
+    """Drop a busy-change subscription (idempotent)."""
+    _busy_wake_hub.unsubscribe(subscription)
+
+
+def notify_busy_signals_changed(session_key: str) -> None:
+    """Wake waiters whose session's busy signals may just have changed.
+
+    Fail-open by contract: a notification is an optimization over polling, so
+    nothing here may raise into a turn/cleanup path.
+    """
+    try:
+        bare = normalize_session_key(session_key)
+        if bare:
+            _busy_wake_hub.notify(bare)
+    except Exception:  # noqa: BLE001 - a wake hint must never break a turn
+        logger.debug(
+            "session_state: busy-change notification failed for {}",
+            session_key,
+            exc_info=True,
+        )
 
 
 _hook_misses_logged: set[str] = set()
@@ -166,15 +217,23 @@ def set_hitl_pending(session_id: str, value: bool) -> None:
     Bare ids are normalized so announce-side prefixed keys hit the same
     entry. Empty/unknown ids are ignored. wires the calls: set when
     the ``hitl_request`` frame goes out, cleared when the resume turn starts.
+
+    A real change wakes idle waiters (the flag is one of the four busy
+    signals, so setting OR clearing it can change what ``detect_state``
+    answers).
     """
     bare = normalize_session_key(session_id)
     if not bare:
         return
     with _HITL_LOCK:
         if value:
+            changed = bare not in _HITL_PENDING
             _HITL_PENDING.add(bare)
         else:
+            changed = bare in _HITL_PENDING
             _HITL_PENDING.discard(bare)
+    if changed:
+        notify_busy_signals_changed(bare)
 
 
 def _is_hitl_pending(session_id: str) -> bool:

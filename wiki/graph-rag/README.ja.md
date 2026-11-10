@@ -77,6 +77,11 @@ BGE-M3 のネイティブなスパース出力には `FlagEmbedding`（PyTorch �
 FTS5/BM25 が二重スパースインデックスではなく将来の選択肢として記録されて
 います。
 
+ローカル/リモートの選択は構築時の Strategy です: `build_embed_model` が
+`_LocalEmbeddingBackend` または `_RemoteEmbeddingBackend` を注入し、ファサードは
+委譲するだけです(2026-11-09 監査 M2)。リランカーも同じ形です
+(`models/reranker_model` の `_LocalGgufBackend` / `_CloudBackend`、監査 H5)。
+
 ## 実測効果
 
 `evals/graph_rag/multihop_bench.py` は、似た名前の妨害エンティティを含む

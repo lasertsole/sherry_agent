@@ -22,8 +22,19 @@
       v-model:current-session-id="currentSessionId"
       :extra-width="sideExtra.left" />
 
-    <!-- Right side - session main area -->
-    <!-- The conversation keeps TWO floors: 320px absolute (a message row needs
+    <!-- Middle + right content, pushed below the custom title bar (desktop
+         only). The LEFT column stays full height: the title bar starts at its
+         right edge and never covers it. The padding lives on this wrapper (not
+         on the middle column) so the docked conversation and the right sidebar
+         share the same top edge; the floating conversation is `fixed` and gets
+         its own title-bar clearance from the float geometry instead. -->
+    <div
+      class="flex min-w-0 flex-1 flex-col"
+      data-test="content-shell"
+      :style="{ paddingTop: `${titlebarInset}px` }">
+      <div class="flex min-h-0 flex-1 flex-row">
+        <!-- Right side - session main area -->
+        <!-- The conversation keeps TWO floors: 320px absolute (a message row needs
          it) and 35% of the viewport (on a large display it keeps its share
          instead of shrinking to the absolute floor while the side panels eat the
          rest). `max()` applies both; `common/layout.ts` holds the numbers
@@ -35,119 +46,119 @@
          floor would win over the computed window width. z-50 puts the window
          ABOVE the right sidebar's maximized overlay (z-40), so it stays visible
          while that panel covers the shell. -->
-    <div
-      ref="middleColumnRef"
-      data-test="chat-column"
-      :data-presentation="chatFloat.floating ? 'floating' : 'docked'"
-      :class="[
-        'flex flex-col h-full',
-        chatFloat.floating
-          ? [
-              'fixed z-50 rounded-xl border border-solid border-gray-light bg-white shadow-2xl dark:border-gray-dark dark:bg-[#181820]',
-              draggingFloat || resizingFloat ? 'select-none transition-none' : 'transition-all duration-150'
-            ]
-          : 'relative flex-1 bg-transparent dark:bg-transparent'
-      ]"
-      :style="middleColumnStyle">
-      <!-- Floating header: the drag handle + the explicit restore button. Only
+        <div
+          ref="middleColumnRef"
+          data-test="chat-column"
+          :data-presentation="chatFloat.floating ? 'floating' : 'docked'"
+          :class="[
+            'flex flex-col h-full',
+            chatFloat.floating
+              ? [
+                  'fixed z-50 rounded-xl border border-solid border-gray-light bg-white shadow-2xl dark:border-gray-dark dark:bg-[#181820]',
+                  draggingFloat || resizingFloat ? 'select-none transition-none' : 'transition-all duration-150'
+                ]
+              : 'relative flex-1 bg-transparent dark:bg-transparent'
+          ]"
+          :style="middleColumnStyle">
+          <!-- Floating header: the drag handle + the explicit restore button. Only
            the window has it; in the docked layout the toolbar below is the
            top edge. Dragging is ignored when the pointer starts on a control.
            Hidden in the input-only bar (collapsed by dragging the lower bound). -->
-      <div
-        v-if="chatFloat.floating && !collapsedView"
-        class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-light px-3 h-9 dark:border-gray-dark"
-        :class="draggingFloat ? 'cursor-grabbing' : 'cursor-grab'"
-        data-test="chat-float-header"
-        role="button"
-        tabindex="0"
-        :aria-label="t('chatFloat.dragHint')"
-        :title="t('chatFloat.dragHint')"
-        @pointerdown="startFloatDrag"
-        @pointermove="moveFloatDrag"
-        @pointerup="endFloatDrag"
-        @pointercancel="cancelFloatDrag">
-        <i
-          class="pi pi-bars text-xs text-gray-500 dark:text-gray-400"
-          aria-hidden="true" />
-        <span class="truncate text-xs text-gray-500 dark:text-gray-400">{{ t('chatFloat.title') }}</span>
-        <span class="flex-1" />
-        <Button
-          v-if="composerDockHeight > 0"
-          size="small"
-          text
-          icon="pi pi-chevron-down"
-          :label="t('chatFloat.collapse')"
-          data-test="chat-float-collapse"
-          @pointerdown.stop
-          @click="collapseChatFloat" />
-        <Button
-          size="small"
-          text
-          :label="t('chatFloat.restore')"
-          data-test="chat-float-restore"
-          @pointerdown.stop
-          @click="dockChatFloat" />
-      </div>
-      <!-- Input-only bar: no header/toolbar, just the composer. A visible pill
+          <div
+            v-if="chatFloat.floating && !collapsedView"
+            class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-light px-3 h-9 dark:border-gray-dark"
+            :class="draggingFloat ? 'cursor-grabbing' : 'cursor-grab'"
+            data-test="chat-float-header"
+            role="button"
+            tabindex="0"
+            :aria-label="t('chatFloat.dragHint')"
+            :title="t('chatFloat.dragHint')"
+            @pointerdown="startFloatDrag"
+            @pointermove="moveFloatDrag"
+            @pointerup="endFloatDrag"
+            @pointercancel="cancelFloatDrag">
+            <i
+              class="pi pi-bars text-xs text-gray-500 dark:text-gray-400"
+              aria-hidden="true" />
+            <span class="truncate text-xs text-gray-500 dark:text-gray-400">{{ t('chatFloat.title') }}</span>
+            <span class="flex-1" />
+            <Button
+              v-if="composerDockHeight > 0"
+              size="small"
+              text
+              icon="pi pi-chevron-down"
+              :label="t('chatFloat.collapse')"
+              data-test="chat-float-collapse"
+              @pointerdown.stop
+              @click="collapseChatFloat" />
+            <Button
+              size="small"
+              text
+              :label="t('chatFloat.restore')"
+              data-test="chat-float-restore"
+              @pointerdown.stop
+              @click="dockChatFloat" />
+          </div>
+          <!-- Input-only bar: no header/toolbar, just the composer. A visible pill
            just above the bar is the one-click way back to the normal window. -->
-      <button
-        v-if="chatFloat.floating && collapsedView"
-        type="button"
-        class="absolute -top-8 right-3 z-20 flex h-7 items-center gap-1 rounded-md border border-solid border-gray-light bg-white px-2 text-xs text-gray-600 shadow-sm transition-colors hover:text-theme-main dark:border-gray-dark dark:bg-[#181820] dark:text-gray-300"
-        data-test="chat-float-expand"
-        :title="t('chatFloat.expand')"
-        :aria-label="t('chatFloat.expand')"
-        @pointerdown.stop
-        @click="expandChatFloat">
-        <i
-          class="pi pi-chevron-up text-[10px]"
-          aria-hidden="true" />
-        <span>{{ t('chatFloat.expand') }}</span>
-      </button>
-      <!-- Resize edges: left/right adjust the width, bottom sets the height and
+          <button
+            v-if="chatFloat.floating && collapsedView"
+            type="button"
+            class="absolute -top-8 right-3 z-20 flex h-7 items-center gap-1 rounded-md border border-solid border-gray-light bg-white px-2 text-xs text-gray-600 shadow-sm transition-colors hover:text-theme-main dark:border-gray-dark dark:bg-[#181820] dark:text-gray-300"
+            data-test="chat-float-expand"
+            :title="t('chatFloat.expand')"
+            :aria-label="t('chatFloat.expand')"
+            @pointerdown.stop
+            @click="expandChatFloat">
+            <i
+              class="pi pi-chevron-up text-[10px]"
+              aria-hidden="true" />
+            <span>{{ t('chatFloat.expand') }}</span>
+          </button>
+          <!-- Resize edges: left/right adjust the width, bottom sets the height and
            snaps into the input-only bar when dragged to the lower bound. Thin
            and translucent so they never cover the composer's controls. -->
-      <div
-        v-if="chatFloat.floating"
-        class="absolute left-0 top-1/2 z-20 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
-        data-test="chat-float-resize-left"
-        role="separator"
-        aria-orientation="vertical"
-        :aria-label="t('chatFloat.resize')"
-        :title="t('chatFloat.resize')"
-        @pointerdown="event => startFloatResize(event, 'left')"
-        @pointermove="moveFloatResize"
-        @pointerup="endFloatResize"
-        @pointercancel="cancelFloatResize" />
-      <div
-        v-if="chatFloat.floating"
-        class="absolute right-0 top-1/2 z-20 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
-        data-test="chat-float-resize-right"
-        role="separator"
-        aria-orientation="vertical"
-        :aria-label="t('chatFloat.resize')"
-        :title="t('chatFloat.resize')"
-        @pointerdown="event => startFloatResize(event, 'right')"
-        @pointermove="moveFloatResize"
-        @pointerup="endFloatResize"
-        @pointercancel="cancelFloatResize" />
-      <div
-        v-if="chatFloat.floating"
-        class="absolute bottom-0 left-1/2 z-20 h-1.5 w-10 -translate-x-1/2 cursor-ns-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
-        data-test="chat-float-resize-bottom"
-        role="separator"
-        aria-orientation="horizontal"
-        :aria-label="t('chatFloat.resize')"
-        :title="t('chatFloat.resize')"
-        @pointerdown="event => startFloatResize(event, 'bottom')"
-        @pointermove="moveFloatResize"
-        @pointerup="endFloatResize"
-        @pointercancel="cancelFloatResize" />
-      <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
+          <div
+            v-if="chatFloat.floating"
+            class="absolute left-0 top-1/2 z-20 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
+            data-test="chat-float-resize-left"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('chatFloat.resize')"
+            :title="t('chatFloat.resize')"
+            @pointerdown="event => startFloatResize(event, 'left')"
+            @pointermove="moveFloatResize"
+            @pointerup="endFloatResize"
+            @pointercancel="cancelFloatResize" />
+          <div
+            v-if="chatFloat.floating"
+            class="absolute right-0 top-1/2 z-20 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
+            data-test="chat-float-resize-right"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('chatFloat.resize')"
+            :title="t('chatFloat.resize')"
+            @pointerdown="event => startFloatResize(event, 'right')"
+            @pointermove="moveFloatResize"
+            @pointerup="endFloatResize"
+            @pointercancel="cancelFloatResize" />
+          <div
+            v-if="chatFloat.floating"
+            class="absolute bottom-0 left-1/2 z-20 h-1.5 w-10 -translate-x-1/2 cursor-ns-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
+            data-test="chat-float-resize-bottom"
+            role="separator"
+            aria-orientation="horizontal"
+            :aria-label="t('chatFloat.resize')"
+            :title="t('chatFloat.resize')"
+            @pointerdown="event => startFloatResize(event, 'bottom')"
+            @pointermove="moveFloatResize"
+            @pointerup="endFloatResize"
+            @pointercancel="cancelFloatResize" />
+          <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
            stays in the top-left corner of the session area so it can be expanded again). -->
-      <!-- `@container` + the @max variants below: the toolbar's own width is the middle
+          <!-- `@container` + the @max variants below: the toolbar's own width is the middle
            column's width, so the row thins out in two steps instead of being squeezed.
            Below 620px the theme switch and the language picker drop out; below 300px only
            the two sidebar collapse buttons remain — the row needs ~250px (both collapse
@@ -158,201 +169,203 @@
            unlayered rule outranks anything in `@layer utilities`, so a plain
            `@max-[480px]:hidden` would be dead on a `Button` (probe-verified: the same class
            hides a plain element and does nothing to `p-button`). -->
-      <div
-        v-if="!collapsedView"
-        class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
-        <!-- Left: collapse/expand the sidebar, then the body switch
+          <div
+            v-if="!collapsedView"
+            class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
+            <!-- Left: collapse/expand the sidebar, then the body switch
              (sessions ↔ project files) -->
-        <div
-          class="flex items-center gap-1"
-          data-test="toolbar-left">
-          <!-- The left column's collapse toggle. Hidden while the chat floats:
+            <div
+              class="flex items-center gap-1"
+              data-test="toolbar-left">
+              <!-- The left column's collapse toggle. Hidden while the chat floats:
                the window owns its restore control, and Ctrl+B still closes it. -->
-          <Button
-            v-if="!chatFloat.floating"
-            :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
-            :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
-            :aria-label="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
-            variant="text"
-            class="text-theme-main"
-            @click="toggleSidebar" />
-          <!-- Float / restore the conversation column. The button is a toggle:
+              <Button
+                v-if="!chatFloat.floating"
+                :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
+                :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+                :aria-label="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+                variant="text"
+                class="text-theme-main"
+                @click="toggleSidebar" />
+              <!-- Float / restore the conversation column. The button is a toggle:
                docked → pop the middle column out; floating → put it back. -->
-          <Button
-            v-if="canFloatChat"
-            :icon="chatFloat.floating ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
-            :title="chatFloat.floating ? t('toolbar.restoreChat') : t('toolbar.floatChat')"
-            :aria-label="chatFloat.floating ? t('toolbar.restoreChat') : t('toolbar.floatChat')"
-            :aria-pressed="chatFloat.floating"
-            variant="text"
-            data-test="chat-float"
-            :class="[
-              chatFloat.floating
-                ? 'bg-theme-main/10 text-theme-main'
-                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            ]"
-            @click="toggleChatFloat" />
-          <Button
-            v-if="canShowProjectFiles"
-            :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
-            :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
-            :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
-            :aria-pressed="showFiles"
-            variant="text"
-            :class="[
-              showFiles
-                ? 'bg-theme-main/10 text-theme-main'
-                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
-              '@max-[300px]:hidden!'
-            ]"
-            @click="toggleSidebarBodyWithHint" />
-        </div>
-        <!-- Right: the function button area. The theme switch and the language
+              <Button
+                v-if="canFloatChat"
+                :icon="chatFloat.floating ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
+                :title="chatFloat.floating ? t('toolbar.restoreChat') : t('toolbar.floatChat')"
+                :aria-label="chatFloat.floating ? t('toolbar.restoreChat') : t('toolbar.floatChat')"
+                :aria-pressed="chatFloat.floating"
+                variant="text"
+                data-test="chat-float"
+                :class="[
+                  chatFloat.floating
+                    ? 'bg-theme-main/10 text-theme-main'
+                    : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                ]"
+                @click="toggleChatFloat" />
+              <Button
+                v-if="canShowProjectFiles"
+                :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
+                :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
+                :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
+                :aria-pressed="showFiles"
+                variant="text"
+                :class="[
+                  showFiles
+                    ? 'bg-theme-main/10 text-theme-main'
+                    : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
+                  '@max-[300px]:hidden!'
+                ]"
+                @click="toggleSidebarBodyWithHint" />
+            </div>
+            <!-- Right: the function button area. The theme switch and the language
              picker are NOT here any more — both moved into the left sidebar's
              title row (they are workspace settings, not per-turn controls). -->
-        <div
-          class="flex items-center gap-3"
-          data-test="toolbar-right">
-          <div class="hidden md:flex justify-end items-center flex-1 gap-3">
-            <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged
+            <div
+              class="flex items-center gap-3"
+              data-test="toolbar-right">
+              <div class="hidden md:flex justify-end items-center flex-1 gap-3">
+                <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged
                  count. It lives on the RIGHT now — among the tools, where the rest of
                  the shell's entries are; clicking opens the notification TAB (全局)
                  and clears the badge. -->
-            <div class="relative flex items-center @max-[300px]:hidden!">
-              <Button
-                icon="pi pi-bell"
-                :title="t('toolbar.notification')"
-                :aria-label="t('toolbar.notification')"
-                variant="text"
-                @click="handleOperate('headerBar', 'notification')" />
-              <span
-                v-if="notifications.unreadCount > 0"
-                class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
-                :title="t('toolbar.notification')">
-                {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
-              </span>
-            </div>
-            <!-- Session preset (icon-only): opens the preset VIEW as a right-sidebar
+                <div class="relative flex items-center @max-[300px]:hidden!">
+                  <Button
+                    icon="pi pi-bell"
+                    :title="t('toolbar.notification')"
+                    :aria-label="t('toolbar.notification')"
+                    variant="text"
+                    @click="handleOperate('headerBar', 'notification')" />
+                  <span
+                    v-if="notifications.unreadCount > 0"
+                    class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
+                    :title="t('toolbar.notification')">
+                    {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
+                  </span>
+                </div>
+                <!-- Session preset (icon-only): opens the preset VIEW as a right-sidebar
                  tab in the 当前会话 group (no popup — the tab survives outside clicks
                  and resizes with the panel). -->
-            <SessionPresetButton
-              v-if="currentSessionId"
-              :session-id="currentSessionId" />
-            <!-- Toolbox: the hammer button. Three working surfaces that are not
+                <SessionPresetButton
+                  v-if="currentSessionId"
+                  :session-id="currentSessionId" />
+                <!-- Toolbox: the hammer button. Three working surfaces that are not
                  settings — the browser, the user's terminal and the whiteboard
                  — open as tabs in the session group (see toolboxTools). -->
-            <Button
-              icon="pi pi-hammer"
-              :title="t('toolbar.toolbox')"
-              :aria-label="t('toolbar.toolbox')"
-              variant="text"
-              class="@max-[300px]:hidden!"
-              data-test="toolbox-button"
-              @click="isToolboxOpen = true" />
-            <!-- Theme switch: the one app-wide toggle left in the bar (the
+                <Button
+                  icon="pi pi-hammer"
+                  :title="t('toolbar.toolbox')"
+                  :aria-label="t('toolbar.toolbox')"
+                  variant="text"
+                  class="@max-[300px]:hidden!"
+                  data-test="toolbox-button"
+                  @click="isToolboxOpen = true" />
+                <!-- Theme switch: the one app-wide toggle left in the bar (the
                  interface language lives in the 菜单 grid's first entry, where a
                  user who cannot read the current UI will actually find it). It is
                  the first control to go when the column gets narrow — the wrapper
                  is a span because ModeSwitch's root is a fragment. -->
-            <span class="@max-[620px]:hidden"><ModeSwitch /></span>
-            <!-- Settings menu entry: the three-bars button. All other functions
+                <span class="@max-[620px]:hidden"><ModeSwitch /></span>
+                <!-- Settings menu entry: the three-bars button. All other functions
                  (Skills / Knowledge Graph / System Config / Extend) have been moved from the top
                  bar into the large dialog nine-grid that this button pops open. -->
-            <Button
-              icon="pi pi-bars"
-              :title="t('toolbar.settingsMenu')"
-              :aria-label="t('toolbar.settingsMenu')"
-              variant="text"
-              class="@max-[300px]:hidden!"
-              @click="isSettingsMenuOpen = true" />
-            <!-- Right sidebar toggle: mirrors the left sidebar's collapse button,
+                <Button
+                  icon="pi pi-bars"
+                  :title="t('toolbar.settingsMenu')"
+                  :aria-label="t('toolbar.settingsMenu')"
+                  variant="text"
+                  class="@max-[300px]:hidden!"
+                  @click="isSettingsMenuOpen = true" />
+                <!-- Right sidebar toggle: mirrors the left sidebar's collapse button,
                  sitting at the far right of the toolbar (the sidebar it controls
                  is the rightmost region of the shell). Hidden while the chat
                  floats — the toolbar belongs to the window then, and its side
                  columns are already laid out around it. -->
-            <Button
-              v-if="!chatFloat.floating"
-              :icon="isRightSidebarCollapsed ? 'pi pi-angle-double-left' : 'pi pi-angle-double-right'"
-              :title="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
-              :aria-label="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
-              variant="text"
-              @click="toggleRightSidebar" />
+                <Button
+                  v-if="!chatFloat.floating"
+                  :icon="isRightSidebarCollapsed ? 'pi pi-angle-double-left' : 'pi pi-angle-double-right'"
+                  :title="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+                  :aria-label="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+                  variant="text"
+                  @click="toggleRightSidebar" />
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <!-- Toolbox: the same dialog shape as the settings menu, with the two
+          <!-- Toolbox: the same dialog shape as the settings menu, with the two
            working surfaces. Two entries share the grid, so each block is wider
            instead of a four-wide row of one. -->
-      <Dialog
-        v-model:visible="isToolboxOpen"
-        :header="t('toolbar.toolbox')"
-        :modal="true"
-        :closable="true"
-        class="w-[min(92vw,560px)]"
-        data-test="toolbox-dialog">
-        <div class="grid grid-cols-2 gap-4">
-          <button
-            v-for="tool in toolboxTools"
-            :key="tool.event"
-            type="button"
-            class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
-            :title="t(tool.title ?? tool.toolName)"
-            :data-test="`toolbox-${tool.event}`"
-            @click="handleToolboxSelect(tool.event)">
-            <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
-            <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
-          </button>
-        </div>
-      </Dialog>
+          <Dialog
+            v-model:visible="isToolboxOpen"
+            :header="t('toolbar.toolbox')"
+            :modal="true"
+            :closable="true"
+            class="w-[min(92vw,560px)]"
+            data-test="toolbox-dialog">
+            <div class="grid grid-cols-2 gap-4">
+              <button
+                v-for="tool in toolboxTools"
+                :key="tool.event"
+                type="button"
+                class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                :title="t(tool.title ?? tool.toolName)"
+                :data-test="`toolbox-${tool.event}`"
+                @click="handleToolboxSelect(tool.event)">
+                <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
+                <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
+              </button>
+            </div>
+          </Dialog>
 
-      <!-- Settings menu: shown centered in a large dialog containing the entry grid.
+          <!-- Settings menu: shown centered in a large dialog containing the entry grid.
            Each function is a square block with a large icon on top and the function name below.
            Clicking an item directly triggers the corresponding function (right-sidebar tab / route jump). -->
-      <Dialog
-        v-model:visible="isSettingsMenuOpen"
-        :header="t('toolbar.settingsMenu')"
-        :modal="true"
-        :closable="true"
-        class="w-[min(92vw,800px)]">
-        <div class="grid grid-cols-4 gap-4">
-          <button
-            v-for="tool in headerTools"
-            :key="tool.event"
-            type="button"
-            class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
-            :title="t(tool.title ?? tool.toolName)"
-            @click="handleMenuSelect(tool.event)">
-            <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
-            <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
-          </button>
-        </div>
-      </Dialog>
-      <!-- Session main area: each session is rendered by [sid].vue. Using route.params.sid as
+          <Dialog
+            v-model:visible="isSettingsMenuOpen"
+            :header="t('toolbar.settingsMenu')"
+            :modal="true"
+            :closable="true"
+            class="w-[min(92vw,800px)]">
+            <div class="grid grid-cols-4 gap-4">
+              <button
+                v-for="tool in headerTools"
+                :key="tool.event"
+                type="button"
+                class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                :title="t(tool.title ?? tool.toolName)"
+                @click="handleMenuSelect(tool.event)">
+                <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
+                <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
+              </button>
+            </div>
+          </Dialog>
+          <!-- Session main area: each session is rendered by [sid].vue. Using route.params.sid as
            the page-key gives each session its own KeepAlive cache slot, so switching restores its
            draft/scroll/streaming/HITL state exactly as it was.
            `max` cap: when there are more than N cache slots, KeepAlive evicts the
            least-recently-visited slot by LRU, preventing unbounded growth from deleted inactive
            sessions (their page-key is no longer referenced by the route, but the slot still
            lingers in memory). -->
-      <div class="flex flex-1 min-h-0">
-        <div class="flex-1 min-w-0 min-h-0">
-          <NuxtPage
-            :page-key="resolvePageKey"
-            :keepalive="{ max: KEEP_ALIVE_MAX }" />
+          <div class="flex flex-1 min-h-0">
+            <div class="flex-1 min-w-0 min-h-0">
+              <NuxtPage
+                :page-key="resolvePageKey"
+                :keepalive="{ max: KEEP_ALIVE_MAX }" />
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Collapsible right sidebar (viewer + tool tabs). It is a full-height column of
+        <!-- Collapsible right sidebar (viewer + tool tabs). It is a full-height column of
          the shell row, exactly like the left session sidebar, so opening it narrows the
          toolbar above the session area instead of sliding in under it — and, living
          outside the KeepAlive'd session page, its tabs survive session switches. -->
-    <RightSidebar
-      :session-id="openSessionId"
-      :extra-width="sideExtra.right"
-      @saved="loadCharacter"
-      @close-tab="handleCloseRightTab" />
+        <RightSidebar
+          :session-id="openSessionId"
+          :extra-width="sideExtra.right"
+          @saved="loadCharacter"
+          @close-tab="handleCloseRightTab" />
+      </div>
+    </div>
 
     <!-- Every toolbar / settings-menu entry is a right-sidebar tab (see dialogs.ts), so
          the panels mount and unmount with their tab; the notification badge keeps counting
@@ -411,8 +424,10 @@ import {
   FLOATING_RESIZE_WIDTH_MAX_PX,
   FLOATING_RESIZE_WIDTH_MIN_PX,
   clampCollapsedHeight,
+  clampCollapsedPosition,
   clampFloatingPosition,
   distributeSideExtra,
+  floatingSlotForViewport,
   isFloatingAvailable,
   resolveFloatingPosition,
   resolveFloatingSize,
@@ -425,6 +440,8 @@ import ModeSwitch from './components/ModeSwitch.vue';
 import { buildHomeToolbarCommands, type HomeToolbarContext } from './dialogs';
 import { buildNotificationCommandEntries, buildSessionCommandEntries, buildToolbarCommandEntries } from './commands';
 import { middleMinWidthCss } from '@/common/layout';
+import { TITLEBAR_HEIGHT } from '@/common/titlebar';
+import { isTauriRuntime } from '~/utils/project-directory';
 
 const { t, locale } = useI18n();
 
@@ -564,13 +581,25 @@ const sidebarWidthStore = useSidebarWidthStore();
 // ── Floating conversation column ───────────────────────────────────────────
 /** Whether the middle column is popped out as a window (persisted, global). */
 const chatFloat = useChatFloatStore();
+/**
+ * Title-bar height to reserve in the home layout, in px. The desktop shell draws
+ * its own 36px bar; the Web build keeps the browser chrome and reserves nothing.
+ */
+const isDesktop = isTauriRuntime();
+const titlebarInset = isDesktop ? TITLEBAR_HEIGHT : 0;
 /** Viewport size the float geometry is derived from (updated on window resize). */
 const viewportSize = ref({
   width: typeof window === 'undefined' ? 0 : window.innerWidth,
   height: typeof window === 'undefined' ? 0 : window.innerHeight
 });
-/** The shell's content area: the float stays inside it. */
-const floatSlot = computed(() => ({ left: 0, top: 0, ...viewportSize.value }));
+/**
+ * The shell's usable content area: the float stays inside it AND below the
+ * title bar. Passing the titlebar-adjusted slot means every clamp, snap anchor
+ * and size cap keeps its clearance without any extra math at the call sites.
+ */
+const floatSlot = computed(() =>
+  floatingSlotForViewport(viewportSize.value.width, viewportSize.value.height, titlebarInset)
+);
 /** The middle column element (the composer dock is measured inside it). */
 const middleColumnRef = ref<HTMLElement | null>(null);
 /** Measured height of the composer dock (0 = no session page / not measured yet). */
@@ -605,12 +634,14 @@ const dragPosition = shallowRef<FloatingPosition | null>(null);
 /** Top-left corner kept after a resize (the anchor re-applies on the next move). */
 const resizePosition = shallowRef<FloatingPosition | null>(null);
 /** The window's current corner: dragging > resizing > the anchor. */
-const floatPosition = computed(
-  () =>
-    dragPosition.value ??
-    resizePosition.value ??
-    resolveFloatingPosition(chatFloat.anchor, floatSlot.value, floatSize.value)
-);
+const floatPosition = computed<FloatingPosition>(() => {
+  const explicit = dragPosition.value ?? resizePosition.value;
+  if (explicit) return explicit;
+  const resting = resolveFloatingPosition(chatFloat.anchor, floatSlot.value, floatSize.value);
+  // The input-only bar's expand pill hangs above the bar: keep the bar far
+  // enough below the title bar for the pill to stay visible.
+  return collapsedView.value ? clampCollapsedPosition(resting, floatSlot.value, floatSize.value) : resting;
+});
 
 /** (Re)bind the composer-dock observer to the active session page's dock. */
 const bindComposerDock = (): void => {
@@ -803,17 +834,21 @@ const moveFloatResize = (event: PointerEvent): void => {
     // jump when the message area disappears.
     if (composerDockHeight.value > 0 && rawHeight < FLOATING_RESIZE_HEIGHT_MIN_PX) {
       resizingCollapsed.value = true;
-      resizePosition.value = {
-        left: session.startLeft,
-        top: Math.max(0, session.startTop + session.startHeight - collapsedHeight.value)
-      };
+      resizePosition.value = clampCollapsedPosition(
+        {
+          left: session.startLeft,
+          top: session.startTop + session.startHeight - collapsedHeight.value
+        },
+        slot,
+        { width: session.startWidth, height: collapsedHeight.value }
+      );
       resizeDraft.value = { width: session.startWidth, height: collapsedHeight.value };
       return;
     }
     resizingCollapsed.value = false;
     const maxHeight = Math.max(
       FLOATING_RESIZE_HEIGHT_MIN_PX,
-      Math.min(FLOATING_RESIZE_HEIGHT_MAX_PX, slot.height - session.startTop - FLOATING_MARGIN_PX)
+      Math.min(FLOATING_RESIZE_HEIGHT_MAX_PX, slot.top + slot.height - session.startTop - FLOATING_MARGIN_PX)
     );
     resizeDraft.value = {
       width: session.startWidth,
@@ -831,7 +866,7 @@ const moveFloatResize = (event: PointerEvent): void => {
   } else {
     // Left edge: the right edge stays fixed.
     const rightEdge = session.startLeft + session.startWidth;
-    const minLeft = Math.max(FLOATING_MARGIN_PX, rightEdge - FLOATING_RESIZE_WIDTH_MAX_PX);
+    const minLeft = Math.max(slot.left + FLOATING_MARGIN_PX, rightEdge - FLOATING_RESIZE_WIDTH_MAX_PX);
     const maxLeft = rightEdge - FLOATING_RESIZE_WIDTH_MIN_PX;
     const left = Math.min(maxLeft, Math.max(minLeft, session.startLeft + dx));
     width = rightEdge - left;
@@ -893,7 +928,7 @@ const collapseChatFloat = (): void => {
   const width = floatSize.value.width;
   const bottom = floatPosition.value.top + floatSize.value.height;
   chatFloat.setCollapsed(true);
-  resizePosition.value = clampFloatingPosition(
+  resizePosition.value = clampCollapsedPosition(
     { left: floatPosition.value.left, top: bottom - collapsedHeight.value },
     floatSlot.value,
     { width, height: collapsedHeight.value }
@@ -1192,8 +1227,12 @@ const onViewportResize = (): void => {
     return;
   }
   // A resized window keeps its corner; the computed size already re-clamps.
+  // The input-only bar also re-applies the pill's clearance (a shorter window
+  // can otherwise push its top under the title bar).
   if (resizePosition.value) {
-    resizePosition.value = clampFloatingPosition(resizePosition.value, floatSlot.value, floatSize.value);
+    resizePosition.value = collapsedView.value
+      ? clampCollapsedPosition(resizePosition.value, floatSlot.value, floatSize.value)
+      : clampFloatingPosition(resizePosition.value, floatSlot.value, floatSize.value);
   }
 };
 
