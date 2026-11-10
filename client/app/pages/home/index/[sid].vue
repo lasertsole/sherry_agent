@@ -7,7 +7,58 @@
       v-if="sessionId"
       class="flex flex-col flex-1 h-full min-h-0">
       <div class="flex flex-1 flex-col min-h-0">
+        <!-- History is still loading and nothing is on screen yet: a chat-shaped
+             skeleton, so switching sessions does not flash an empty state. A
+             KeepAlive restore already holds its messages and never matches. -->
+        <div
+          v-if="isHistoryLoading && chatMessages.length === 0"
+          class="flex flex-1 flex-col gap-4 overflow-hidden p-4"
+          data-test="chat-history-skeleton">
+          <div class="flex gap-2">
+            <Skeleton
+              shape="circle"
+              size="2rem" />
+            <div class="flex flex-1 flex-col gap-1">
+              <Skeleton
+                width="30%"
+                height="0.7rem" />
+              <Skeleton
+                width="60%"
+                height="0.7rem" />
+            </div>
+          </div>
+          <div class="flex flex-row-reverse gap-2">
+            <Skeleton
+              shape="circle"
+              size="2rem" />
+            <div class="flex flex-1 flex-col items-end gap-1">
+              <Skeleton
+                width="40%"
+                height="0.7rem" />
+              <Skeleton
+                width="50%"
+                height="0.7rem" />
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <Skeleton
+              shape="circle"
+              size="2rem" />
+            <div class="flex flex-1 flex-col gap-1">
+              <Skeleton
+                width="25%"
+                height="0.7rem" />
+              <Skeleton
+                width="70%"
+                height="0.7rem" />
+              <Skeleton
+                width="55%"
+                height="0.7rem" />
+            </div>
+          </div>
+        </div>
         <ChatBox
+          v-else
           ref="chatBoxRef"
           :messages="chatMessages"
           :user-avatar="characterInfo.userAvatar"
@@ -78,22 +129,21 @@
             <div class="flex flex-col h-40">
               <!-- Chat tools (hidden while a HITL request occupies the input slot).
                  [@container]: with both sidebars open this row narrows to ~280px
-                 while its content needs ~472px, so below 500px only the three
-                 anchors survive — the media (+) entry, the access-mode list and
-                 the project-directory chip (right side); the task badge, the
-                 context ring, the model picker and the thinking control hide.
+                 while its content needs ~472px, so below 500px only the anchors
+                 survive — the access-mode list and the project-directory chip
+                 (right side); the task badge, the context ring, the model picker
+                 and the thinking control hide.
                  `hidden!` is the important form: PrimeVue's own display rules and
                  the sibling `flex` utility are unlayered/later, so the plain
                  variant loses the tie. -->
               <div
                 v-show="!hitlRequest"
+                data-test="composer-toolbar"
                 class="@container h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-                <!-- Media entry: image / audio / video uploads collapsed into one
-                   dropdown (same trigger + popup shape as the model picker) -->
-                <MediaMenu @select="event => handleOperate('toolBar', event)" />
-                <!-- Access mode: one position right of the media entry, showing the
-                   current mode's shield (confirm changes / auto-edit / full
-                   access). -->
+                <!-- Access mode: the leftmost anchor, showing the current mode's
+                   shield (confirm changes / auto-edit / full access). The media
+                   uploads moved into the composer's + menu, so this row no
+                   longer carries a second plus button. -->
                 <AccessModePicker
                   v-if="mySid"
                   :session-id="mySid" />
@@ -135,7 +185,7 @@
                      and path check resolves against. -->
                   <ProjectDirectoryChip :session-id="mySid" />
                 </div>
-                <!-- Hidden image file input: triggered by the media menu's image entry via triggerImagePicker() -->
+                <!-- Hidden image file input: triggered by the composer + menu's image entry via triggerImagePicker() -->
                 <input
                   ref="imageFileInputRef"
                   type="file"
@@ -143,7 +193,7 @@
                   multiple
                   class="hidden"
                   @change="onImageSelected" />
-                <!-- Hidden audio file input: triggered by the media menu's audio entry via triggerAudioPicker() -->
+                <!-- Hidden audio file input: triggered by the composer + menu's audio entry via triggerAudioPicker() -->
                 <input
                   ref="audioFileInputRef"
                   type="file"
@@ -151,7 +201,7 @@
                   multiple
                   class="hidden"
                   @change="onAudioSelected" />
-                <!-- Hidden video file input: triggered by the media menu's video entry via triggerVideoPicker() -->
+                <!-- Hidden video file input: triggered by the composer + menu's video entry via triggerVideoPicker() -->
                 <input
                   ref="videoFileInputRef"
                   type="file"
@@ -159,6 +209,15 @@
                   multiple
                   class="hidden"
                   @change="onVideoSelected" />
+                <!-- Hidden generic file input: triggered by the composer + menu's
+                   "add file" entry (no accept filter — any file becomes an
+                   attachment through the same base64 pipeline). -->
+                <input
+                  ref="fileAttachmentInputRef"
+                  type="file"
+                  multiple
+                  class="hidden"
+                  @change="onFileAttachmentSelected" />
               </div>
               <!-- HITL panel occupies the same slot as the input box; the two are mutually exclusive (v-show) -->
               <HitlApprovalCard
@@ -191,7 +250,11 @@
                 :disabled-text="t('chatInput.waitingApproval')"
                 :session-id="sessionId"
                 @send="onComposerSend"
-                @stop="handleStop" />
+                @stop="handleStop"
+                @upload-image="triggerImagePicker"
+                @upload-audio="triggerAudioPicker"
+                @upload-video="triggerVideoPicker"
+                @upload-file="triggerFilePicker" />
             </div>
           </div>
         </div>
@@ -227,7 +290,6 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
-import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
@@ -236,13 +298,13 @@ import TasksButton from '../components/TasksButton.vue';
 import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
-import MediaMenu from '../components/MediaMenu.vue';
 import PendingMediaTray from '../components/PendingMediaTray.vue';
 import QueuedMessageBar from '../components/QueuedMessageBar.vue';
 import HitlApprovalCard from '~/components/chat/hitl/HitlApprovalCard.vue';
 import { useNewSessionStore } from '~/stores/new-session';
 import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
+import { logUtil } from '~/utils/log';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -285,6 +347,9 @@ const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void; openF
  * surface is what edit mode and the selection/mention relays drive.
  */
 const chatInputBoxRef = useTemplateRef<InstanceType<typeof ChatInputBox>>('chatInputBoxRef');
+
+/** Hidden generic file input (the + menu's "add file" entry). */
+const fileAttachmentInputRef = useTemplateRef<HTMLInputElement>('fileAttachmentInputRef');
 
 // ── Shared page state (owned here, used by the slices below) ────────────────
 
@@ -524,7 +589,7 @@ useSessionSocket({
 
 // KeepAlive activation + history loading: first load, switch-away restore and
 // the session-deleted stream abort.
-const { handleAbortStreamOnDelete } = useSessionActivation({
+const { isHistoryLoading, handleAbortStreamOnDelete } = useSessionActivation({
   mySid,
   sessionId,
   chatMessages,
@@ -549,28 +614,6 @@ const { handleAbortStreamOnDelete } = useSessionActivation({
   unregisterFindShortcut: handler => unregisterGlobalHandler('find-in-conversation', handler),
   openFindInConversation: () => chatBoxRef.value?.openFind()
 });
-
-/**
- * Session toolbar command registry (former 4-case switch over the event).
- * `createSession` stays a registry entry even though the empty-state button
- * invokes `handleCreateSession` directly — the dispatch surface is unchanged.
- */
-const sessionToolbarCommands = buildSessionToolbarCommands({
-  createSession: () => handleCreateSession(),
-  uploadImage: () => triggerImagePicker(),
-  uploadAudio: () => triggerAudioPicker(),
-  uploadVideo: () => triggerVideoPicker()
-});
-
-/**
- * Tool trigger
- * @param type
- * @param event
- */
-const handleOperate = (type: string, event: string) => {
-  if (!event || !type) return;
-  sessionToolbarCommands[event]?.();
-};
 
 /**
  * Create session: the mandatory preset dialog (mounted in the shell) picks the
@@ -635,6 +678,52 @@ function onAddImageRequest(request: unknown): void {
   const base64 = payload?.payload?.base64;
   if (!base64 || payload?.sessionId !== mySid) return;
   addPendingImage(base64, payload?.payload?.name || 'whiteboard.png');
+}
+
+/** Open the OS picker for the composer + menu's generic "add file" entry. */
+function triggerFilePicker(): void {
+  fileAttachmentInputRef.value?.click();
+}
+
+/**
+ * Read one picked file as base64. A DataURL keeps the existing attachment
+ * pipeline (the same `MediaPick` shape the three media pickers produce).
+ * @param file The picked file.
+ * @returns The file's DataURL (including the `data:` prefix).
+ */
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Generic file attachments: any file the picker returns becomes a pending
+ * attachment through the SAME tray the image/audio/video pickers use, so the
+ * send path, the preview strip and the per-message cap are shared (the tray
+ * caps at 10; a full list warns and stops the loop).
+ * @param event The hidden input's change event.
+ */
+async function onFileAttachmentSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  // Snapshot before resetting: `input.files` is live and empties with `value`.
+  const files = Array.from(input.files ?? []);
+  input.value = ''; // allow picking the same file again
+  for (const file of files) {
+    const before = selectedImages.value.length;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      addPendingImage(extractBase64(dataUrl), file.name);
+    } catch (e) {
+      logUtil.w('[sid] Failed to read a file attachment:', file.name, e);
+      continue;
+    }
+    // The tray's cap refused this one and already told the user: stop.
+    if (selectedImages.value.length === before) break;
+  }
 }
 
 /**

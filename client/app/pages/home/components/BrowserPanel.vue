@@ -89,7 +89,8 @@
         :title="t('browser.go')"
         :aria-label="t('browser.go')"
         data-test="browser-go"
-        @click="go" />
+        :loading="navigating"
+        v-debounce:click.300="go" />
     </div>
 
     <!-- The page. An iframe is what a web client can offer (the desktop build's
@@ -289,7 +290,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import BrowserHistoryDropdown from './BrowserHistoryDropdown.vue';
 import { useRoute } from 'vue-router';
@@ -371,6 +372,7 @@ const statusHint = computed(() => {
  * @param message
  */
 function showError(message: string): void {
+  endNavigate();
   lastError.value = message;
   if (errorTimer) clearTimeout(errorTimer);
   errorTimer = setTimeout(() => {
@@ -396,6 +398,7 @@ function applyPage(next: {
   title?: string;
 }): void {
   everConnected.value = true;
+  endNavigate();
   store.setBrowserNav(stateKey.value, {
     url: next.url,
     canBack: next.can_back,
@@ -636,6 +639,7 @@ onUnmounted(() => {
   if (viewportTimer) clearTimeout(viewportTimer);
   if (errorTimer) clearTimeout(errorTimer);
   if (historyBlurTimer) clearTimeout(historyBlurTimer);
+  if (navTimer) clearTimeout(navTimer);
 });
 
 /**
@@ -901,14 +905,47 @@ watch(pageUrl, next => {
 /** Bumped on a reload: the iframe re-mounts on a new key (an `src` set to the
  *  same URL is a no-op for the browser). */
 const frameKey = ref(0);
+/**
+ * A navigation request is in flight (Go button spinner). CDP mode clears it on
+ * the next `page` frame (or an error); iframe mode clears it on the next tick
+ * (the store's URL change is synchronous). A timeout bounds a server that never
+ * answers, so the button cannot spin forever.
+ */
+const navigating = ref(false);
+let navTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Arm the spinner and its fallback release. */
+function beginNavigate(): void {
+  navigating.value = true;
+  if (navTimer) clearTimeout(navTimer);
+  navTimer = setTimeout(() => {
+    navTimer = null;
+    navigating.value = false;
+  }, 10000);
+}
+
+/** Release the spinner (page frame / error / unmount). */
+function endNavigate(): void {
+  navigating.value = false;
+  if (navTimer) {
+    clearTimeout(navTimer);
+    navTimer = null;
+  }
+}
 
 /** Navigate to what the address bar holds (CDP mode sends it over the channel). */
 const go = (): void => {
   if (cdp.value) {
-    channel?.send({ event: 'nav', url: normalizeUrl(address.value) });
+    // Before the CDP socket is up there is no channel to send on; keep the
+    // button inert instead of starting a spinner nothing will clear.
+    if (!channel) return;
+    beginNavigate();
+    channel.send({ event: 'nav', url: normalizeUrl(address.value) });
     return;
   }
+  beginNavigate();
   store.navigate(stateKey.value, address.value);
+  void nextTick(endNavigate);
 };
 
 /** Whether the address bar's history dropdown is open. */

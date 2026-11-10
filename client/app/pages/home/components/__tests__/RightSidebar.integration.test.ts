@@ -4,6 +4,7 @@ import { nextTick, reactive, ref } from 'vue';
 import RightSidebar from '@/pages/home/components/RightSidebar.vue';
 import { RIGHT_SIDEBAR_PANEL_MIN_HEIGHT, RIGHT_SIDEBAR_PANEL_MIN_WIDTH } from '@/stores/right-sidebar';
 import { middleMinWidth } from '@/common/layout';
+import { TITLEBAR_HEIGHT } from '@/common/titlebar';
 
 // The store is a Nuxt auto-import: shadow it with a real-shaped double so the
 // strip's rendering and the tab actions can be asserted directly. `reactive`
@@ -396,7 +397,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(false);
   });
 
-  it('maximizes to the whole viewport from the button LEFT of the group pills', async () => {
+  it('maximizes to the window below the title bar from the button LEFT of the group pills', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [{ id: 't1', kind: 'stats', scope: 'global' }];
     const wrapper = mount(RightSidebar);
@@ -411,11 +412,18 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(sidebarApi.toggleMaximized).toHaveBeenCalledTimes(1);
     await nextTick();
 
-    // Maximized: a fixed, full-viewport overlay without the drag handle.
+    // Maximized: a fixed overlay that stops at the bottom/left/right window
+    // edges (the top is the title bar's, set below) without the drag handle.
     const aside = wrapper.get('aside');
     expect(aside.classes()).toContain('fixed');
-    expect(aside.classes()).toContain('inset-0');
-    expect(aside.attributes('style') ?? '').not.toContain('width');
+    expect(aside.classes()).toContain('left-0');
+    expect(aside.classes()).toContain('right-0');
+    expect(aside.classes()).toContain('bottom-0');
+    // `inset-0` would cover the title bar (and its window controls).
+    expect(aside.classes()).not.toContain('inset-0');
+    // The Web build has no custom bar: the overlay starts at the window top.
+    expect(aside.attributes('style') ?? '').toContain('top: 0px');
+    expect(aside.attributes('style') ?? '').toContain('width: 100%');
     expect(wrapper.find('[role="separator"]').exists()).toBe(false);
     // The body fills the overlay rather than the stored width.
     expect(wrapper.find('[data-test="scope-tabs"]').exists()).toBe(true);
@@ -427,6 +435,26 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(wrapper.get('aside').classes()).not.toContain('fixed');
     expect(wrapper.get('aside').attributes('style') ?? '').toContain('width: 420px');
     expect(wrapper.find('[role="separator"]').exists()).toBe(true);
+  });
+
+  it('starts the maximized overlay below the desktop title bar', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [{ id: 't1', kind: 'stats', scope: 'global' }];
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      const wrapper = mount(RightSidebar);
+      sidebarApi.maximized = true;
+      await nextTick();
+
+      const aside = wrapper.get('aside');
+      expect(aside.classes()).toEqual(expect.arrayContaining(['fixed', 'left-0', 'right-0', 'bottom-0']));
+      expect(aside.attributes('style') ?? '').toContain(`top: ${TITLEBAR_HEIGHT}px`);
+      // No `h-full`: with top+bottom pinned, a 100% height would push the
+      // overlay 36px past the bottom edge.
+      expect(aside.attributes('style') ?? '').toContain('height: auto');
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
   });
 
   it('carries no add / collapse controls: both live in the top toolbar', () => {

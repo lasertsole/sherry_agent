@@ -94,7 +94,7 @@
 <template>
   <!-- Right-sidebar tab body: the sidebar owns the tab label and the close button,
        so only the graph's own actions live in this bar. -->
-  <div class="flex flex-col h-full bg-[#f8f9fa] dark:bg-[#131619]">
+  <div class="flex flex-col h-full bg-[#f8f9fa] dark:bg-[#131619] min-w-[280px]">
     <!-- Action bar: upload / refresh -->
     <div
       class="shrink-0 h-11 flex items-center gap-2 px-3 border-b border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21]">
@@ -106,7 +106,7 @@
           rounded
           :loading="uploading"
           :aria-label="t('knowledgeGraph.upload')"
-          @click="triggerUpload" />
+          v-debounce:click.500="triggerUpload" />
         <input
           ref="fileInputRef"
           type="file"
@@ -120,7 +120,7 @@
           rounded
           :loading="loading"
           :aria-label="t('knowledgeGraph.refresh')"
-          @click="loadGraph" />
+          v-debounce:click.500="loadGraph" />
       </div>
     </div>
 
@@ -140,11 +140,26 @@
           {{ uploadMessage }}
         </div>
 
-        <!-- Loading state -->
+        <!-- Loading state: graph-shaped skeleton (title + canvas + details). -->
         <div
           v-if="loading"
-          class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/60 dark:bg-[#131619]/60">
-          <i class="pi pi-spin pi-spinner text-3xl text-gray-400 dark:text-gray-500" />
+          class="absolute inset-0 flex flex-col gap-3 bg-white/60 p-4 dark:bg-[#131619]/60"
+          role="status"
+          data-test="knowledge-skeleton">
+          <Skeleton
+            width="40%"
+            height="1.2rem" />
+          <Skeleton
+            height="55%"
+            border-radius="0.5rem" />
+          <div class="flex flex-col gap-2">
+            <Skeleton
+              width="80%"
+              height="0.9rem" />
+            <Skeleton
+              width="60%"
+              height="0.9rem" />
+          </div>
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('knowledgeGraph.loading') }}</span>
         </div>
 
@@ -170,7 +185,7 @@
             :label="t('knowledgeGraph.refresh')"
             icon="pi pi-refresh"
             severity="secondary"
-            @click="loadGraph" />
+            v-debounce:click.500="loadGraph" />
         </div>
       </div>
 

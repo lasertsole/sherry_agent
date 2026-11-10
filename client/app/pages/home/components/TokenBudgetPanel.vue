@@ -148,14 +148,14 @@
           severity="secondary"
           size="small"
           :loading="busy"
-          @click="resetUsage" />
+          v-debounce:click.500="resetUsage" />
         <Button
           :label="t('budget.save')"
           icon="pi pi-check"
           size="small"
           :loading="busy"
           :disabled="!dirty"
-          @click="saveCap" />
+          v-debounce:click.500="saveCap" />
       </div>
     </template>
   </div>

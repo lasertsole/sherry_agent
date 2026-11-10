@@ -1,7 +1,7 @@
 <template>
   <!-- 系统配置 → 直播安全. Everything here applies LIVE (the backend reads
        sherry.jsonc through an mtime cache), so the switches need no restart. -->
-  <div class="flex flex-col gap-4">
+  <div class="flex flex-col gap-4 min-w-[280px]">
     <p
       v-if="error"
       class="m-0 text-sm text-red-600 dark:text-red-400">
@@ -87,7 +87,7 @@
           size="small"
           :loading="saving"
           data-test="safety-rules-save"
-          @click="saveRules" />
+          v-debounce:click.500="saveRules" />
         <span class="text-xs text-gray-400">{{ t('safetyFilter.rulesFormat') }}</span>
       </div>
     </section>
@@ -111,8 +111,9 @@
           size="small"
           text
           data-test="safety-test-run"
+          :loading="testing"
           :disabled="!testText.trim()"
-          @click="runTest" />
+          v-debounce:click.500="runTest" />
       </div>
       <ul
         v-if="testHits.length"
@@ -148,7 +149,8 @@
           severity="secondary"
           :aria-label="t('safetyFilter.refresh')"
           data-test="safety-log-refresh"
-          @click="loadLog" />
+          :loading="logLoading"
+          v-debounce:click.500="loadLog" />
       </div>
       <ul
         v-if="logEvents.length"
@@ -205,8 +207,12 @@ const saving = ref(false);
 const testText = ref('');
 const testHits = ref<SafetyTestHit[]>([]);
 const tested = ref(false);
+/** A rule-test request is in flight (spinner lock; the debounce eats fast double clicks). */
+const testing = ref(false);
 
 const logEvents = ref<SafetyLogEvent[]>([]);
+/** A log read is in flight. */
+const logLoading = ref(false);
 const error = ref('');
 
 /** The LLM review strategy options (the SELECT the switch reveals). */
@@ -335,20 +341,26 @@ const saveRules = async (): Promise<void> => {
 /** Scan the sample text (output scope) against the loaded rules. */
 const runTest = async (): Promise<void> => {
   tested.value = false;
+  testing.value = true;
   try {
     testHits.value = await testSafetyRules(testText.value, 'output');
     tested.value = true;
   } catch {
     error.value = t('safetyFilter.loadError');
+  } finally {
+    testing.value = false;
   }
 };
 
 /** Pull the recent filter events. */
 async function loadLog(): Promise<void> {
+  logLoading.value = true;
   try {
     logEvents.value = await readSafetyLog(undefined, 50);
   } catch {
     error.value = t('safetyFilter.loadError');
+  } finally {
+    logLoading.value = false;
   }
 }
 

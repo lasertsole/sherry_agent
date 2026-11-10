@@ -13,6 +13,8 @@
     "windows": [
       {
         "title": "sherry_agent",
+        "decorations": false,
+        "transparent": false,
         "width": 800,
         "height": 600,
         "minWidth": 480,

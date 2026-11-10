@@ -36,7 +36,7 @@
 
     <div
       v-if="!collapsed"
-      class="grid gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
+      class="grid gap-4 md:grid-cols-[minmax(140px,240px)_minmax(200px,1fr)] min-w-[480px]">
       <!-- Left column: model list + add button -->
       <div class="flex flex-col gap-2">
         <!-- Saved-model budget: only the stored (non-local) entries count against
@@ -127,6 +127,13 @@
             v-if="isOutputCapKey(key) && !isLocalEntrySelected"
             class="m-0 text-xs text-gray-400 dark:text-gray-500">
             {{ t('config.llm.maxOutputHint', { min: MIN_OUTPUT_TOKENS }) }}
+          </p>
+          <!-- One-line explanation of the remaining env fields: the raw key
+               alone did not say what the setting does. -->
+          <p
+            v-if="paramHint(key) && !isLocalEntrySelected"
+            class="m-0 text-xs text-gray-400 dark:text-gray-500">
+            {{ paramHint(key) }}
           </p>
           <!-- Penalty keys use a native number input: type/min/max constrain the
                spinner, and save/apply/test refuse a typed out-of-range value. -->
@@ -449,15 +456,46 @@ const penaltyLabel = (key: string): string =>
   key.endsWith('_FREQUENCY_PENALTY') ? t('config.llm.frequencyPenalty') : t('config.llm.presencePenalty');
 
 /**
- * Localized label for the two token-budget fields; every other parameter keeps
- * its raw env key (the key stays available as the label's tooltip).
+ * Localized label for one parameter field. The raw env key stays available as
+ * the label's tooltip and, for unknown keys, as the label itself.
  * @param key
  */
 const paramLabel = (key: string): string => {
   if (isPenaltyKey(key)) return penaltyLabel(key);
   if (key.endsWith('_MAX_OUTPUT_TOKEN')) return t('config.llm.maxOutputLabel');
   if (key.endsWith('_MAX_TOKEN')) return t('config.llm.maxContextLabel');
+  if (key.endsWith('_PROVIDER')) return t('config.llm.providerLabel');
+  if (key.endsWith('_API_BASE')) return t('config.llm.apiBaseLabel');
+  if (key.endsWith('_API_KEY')) return t('config.llm.apiKeyLabel');
+  if (key.endsWith('_ENABLE_THINKING')) return t('config.llm.enableThinkingLabel');
+  if (key.endsWith('_REASONING_EFFORT')) return t('config.llm.reasoningEffortLabel');
+  if (key.endsWith('_TEMPERATURE')) return t('config.llm.temperatureLabel');
+  if (key.endsWith('_TOP_P')) return t('config.llm.topPLabel');
+  if (key.endsWith('_MAX_RETRIES')) return t('config.llm.maxRetriesLabel');
+  if (key.endsWith('_TIMEOUT')) return t('config.llm.timeoutLabel');
+  // `*_API_NAME` also ends with `_NAME`: both name the provider-side model id.
+  if (key.endsWith('_NAME')) return t('config.llm.nameLabel');
   return key;
+};
+
+/**
+ * One-line explanation of a parameter field ('' when the field has none or is
+ * covered by a dedicated hint — the 200K floor / penalty range / output cap
+ * are rendered by their own paragraphs).
+ * @param key
+ */
+const paramHint = (key: string): string => {
+  if (key.endsWith('_PROVIDER')) return t('config.llm.providerHint');
+  if (key.endsWith('_API_BASE')) return t('config.llm.apiBaseHint');
+  if (key.endsWith('_API_KEY')) return t('config.llm.apiKeyHint');
+  if (key.endsWith('_ENABLE_THINKING')) return t('config.llm.enableThinkingHint');
+  if (key.endsWith('_REASONING_EFFORT')) return t('config.llm.reasoningEffortHint');
+  if (key.endsWith('_TEMPERATURE')) return t('config.llm.temperatureHint');
+  if (key.endsWith('_TOP_P')) return t('config.llm.topPHint');
+  if (key.endsWith('_MAX_RETRIES')) return t('config.llm.maxRetriesHint');
+  if (key.endsWith('_TIMEOUT')) return t('config.llm.timeoutHint');
+  if (key.endsWith('_NAME')) return t('config.llm.nameHint');
+  return '';
 };
 
 /**

@@ -224,7 +224,7 @@
             :label="t('history.batchDelete')"
             :disabled="selectedSessionIds.length === 0 || batchDeleting"
             :loading="batchDeleting"
-            @click="handleBatchDelete" />
+            v-debounce:click.500="handleBatchDelete" />
         </div>
       </template>
     </div>

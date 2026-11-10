@@ -144,7 +144,8 @@ describe('NewSessionPresetDialog', () => {
 
     await wrapper.get('[data-test="new-session-preset-option-sherry"]').trigger('click');
     await buttonByText(wrapper, '创建会话').trigger('click');
-    await flushPromises();
+    // The confirm button is debounced (v-debounce:click.500).
+    await vi.waitFor(() => expect(db.cacheSessionPreset).toHaveBeenCalled());
 
     // 1. The preset was applied (files written + verified) …
     expect(written['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
@@ -195,7 +196,8 @@ describe('NewSessionPresetDialog', () => {
 
     await wrapper.get('[data-test="new-session-preset-option-pure"]').trigger('click');
     await buttonByText(wrapper, '创建会话').trigger('click');
-    await flushPromises();
+    // Debounced confirm.
+    await vi.waitFor(() => expect(db.cacheSessionPreset).toHaveBeenCalled());
 
     // Nobody named, nothing written — the operating rules included.
     expect(written).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
@@ -226,6 +228,8 @@ describe('NewSessionPresetDialog', () => {
     bridge.readSystemPrompt.mockResolvedValue({ 'AGENTS.md': 'something else' });
 
     await buttonByText(wrapper, '创建会话').trigger('click');
+    // Let the debounce fire and the failed apply settle before asserting the no-op.
+    await new Promise(resolve => setTimeout(resolve, 650));
     await flushPromises();
 
     expect(wrapper.emitted('update:visible')).toBeUndefined();

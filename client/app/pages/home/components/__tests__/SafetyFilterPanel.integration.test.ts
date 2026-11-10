@@ -169,7 +169,8 @@ describe('SafetyFilterPanel', () => {
     const wrapper = await mountPanel();
 
     await wrapper.find('[data-test="safety-rules-save"]').trigger('click');
-    await flushPromises();
+    // Save is debounced (v-debounce:click.500).
+    await vi.waitFor(() => expect(api.toastSuccess).toHaveBeenCalled());
 
     const put = api.fetchApi.mock.calls.find(
       ([params]) => String(params.url) === '/safety-filter/rules' && params.method === 'put'
@@ -177,7 +178,6 @@ describe('SafetyFilterPanel', () => {
     expect(put?.[0]?.opts).toEqual({
       rules: [{ pattern: 'secret', type: 'contains', action: 'block', scope: 'both', replacement: '' }]
     });
-    expect(api.toastSuccess).toHaveBeenCalled();
   });
 
   it('refuses a broken rules document without calling the backend', async () => {
@@ -186,13 +186,13 @@ describe('SafetyFilterPanel', () => {
     const before = api.fetchApi.mock.calls.length;
     await wrapper.find('[data-test="safety-rules-editor"]').setValue('{not json');
     await wrapper.find('[data-test="safety-rules-save"]').trigger('click');
-    await flushPromises();
+    // Debounced save; wait for its validation message.
+    await vi.waitFor(() => expect(wrapper.text()).toContain('JSON 格式不合法'));
 
     const writes = api.fetchApi.mock.calls
       .slice(before)
       .filter(([params]) => String(params.url) === '/safety-filter/rules' && params.method === 'put');
     expect(writes).toHaveLength(0);
-    expect(wrapper.text()).toContain('JSON 格式不合法');
   });
 
   it('shows the backend\u2019s validation message when a rule is refused', async () => {
@@ -201,9 +201,8 @@ describe('SafetyFilterPanel', () => {
     const wrapper = await mountPanel();
 
     await wrapper.find('[data-test="safety-rules-save"]').trigger('click');
-    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.text()).toContain('invalid regex'));
 
-    expect(wrapper.text()).toContain('invalid regex');
     expect(api.toastSuccess).not.toHaveBeenCalled();
   });
 
@@ -230,12 +229,11 @@ describe('SafetyFilterPanel', () => {
 
     await wrapper.find('[data-test="safety-test-input"]').setValue('a secret');
     await wrapper.find('[data-test="safety-test-run"]').trigger('click');
-    await flushPromises();
-    expect(wrapper.find('[data-test="safety-test-hits"]').text()).toContain('secret');
+    // Test-run is debounced (v-debounce:click.500).
+    await vi.waitFor(() => expect(wrapper.find('[data-test="safety-test-hits"]').text()).toContain('secret'));
 
     routes.hits = [];
     await wrapper.find('[data-test="safety-test-run"]').trigger('click');
-    await flushPromises();
-    expect(wrapper.find('[data-test="safety-test-empty"]').exists()).toBe(true);
+    await vi.waitFor(() => expect(wrapper.find('[data-test="safety-test-empty"]').exists()).toBe(true));
   });
 });

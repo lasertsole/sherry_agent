@@ -77,10 +77,10 @@ describe('login page', () => {
 
     await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
     await wrapper.get('form').trigger('submit');
-    await flushPromises();
+    // The submit event is debounced (v-debounce:submit.500).
+    await vi.waitFor(() => expect(bridge.loginRequest).toHaveBeenCalledWith('hunter2-long'));
 
-    expect(bridge.loginRequest).toHaveBeenCalledWith('hunter2-long');
-    expect(navigate).toHaveBeenCalledWith('/home');
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/home'));
   });
 
   it('shows the throttle message while a lockout is in force', async () => {
@@ -93,10 +93,8 @@ describe('login page', () => {
 
     await wrapper.get('[data-test="login-password"]').setValue('wrong');
     await wrapper.get('form').trigger('submit');
-    await flushPromises();
-
-    // The wait itself is actionable; a wrong password keeps the generic line.
-    expect(wrapper.get('[data-test="login-error"]').text()).toContain('try again in 5s');
+    // Debounced submit; wait for the failure line.
+    await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('try again in 5s'));
   });
 
   it('renders a uniform failure and stays put', async () => {
@@ -107,9 +105,8 @@ describe('login page', () => {
 
     await wrapper.get('[data-test="login-password"]').setValue('wrong');
     await wrapper.get('form').trigger('submit');
-    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('密码错误'));
 
-    expect(wrapper.get('[data-test="login-error"]').text()).toContain('密码错误');
     expect(navigate).not.toHaveBeenCalled();
   });
 });

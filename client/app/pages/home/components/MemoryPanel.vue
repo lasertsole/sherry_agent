@@ -1,11 +1,29 @@
 <template>
   <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
        tab label and the close button), so the mount drives the load. -->
-  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4 min-w-[280px]">
+    <!-- Loading skeleton: target tabs + capacity bar + entry cards, matching
+         the loaded layout instead of a lone spinner. -->
     <div
       v-if="loading && !entries.length"
-      class="flex items-center justify-center py-8">
-      <ProgressSpinner style="width: 2rem; height: 2rem" />
+      class="flex flex-col gap-3"
+      data-test="memory-skeleton">
+      <div class="flex gap-1">
+        <Skeleton
+          v-for="n in 3"
+          :key="n"
+          width="4rem"
+          height="1.8rem" />
+      </div>
+      <Skeleton
+        width="100%"
+        height="0.4rem"
+        border-radius="9999px" />
+      <Skeleton
+        v-for="n in 4"
+        :key="n"
+        height="3.5rem"
+        border-radius="0.5rem" />
     </div>
     <template v-else>
       <!-- Target tabs (记忆 / 用户画像 / 系统事实). A plain button row keeps the
@@ -47,6 +65,146 @@
           <span>{{ t('memoryPanel.stats.archived', { n: targetStats.archived }) }}</span>
           <span>·</span>
           <span>{{ t('memoryPanel.stats.avgUsage', { n: targetStats.avg_usage.toFixed(1) }) }}</span>
+        </div>
+      </div>
+
+      <!-- Memory settings, moved here from the system-config panel so managing
+           entries and configuring their caps live on one surface. Collapsed by
+           default: it must not push the entry list away. -->
+      <div
+        class="shrink-0"
+        data-test="memory-settings">
+        <button
+          type="button"
+          class="flex w-full items-center gap-1.5 py-1 text-xs text-gray-500 transition-colors hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          :aria-expanded="showSettings"
+          data-test="memory-settings-toggle"
+          @click="showSettings = !showSettings">
+          <i
+            class="pi text-[10px]"
+            :class="showSettings ? 'pi-chevron-down' : 'pi-chevron-right'"
+            aria-hidden="true" />
+          {{ t('memoryPanel.settings') }}
+        </button>
+
+        <div
+          v-if="showSettings"
+          class="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800">
+          <p class="m-0 text-xs text-gray-500 dark:text-gray-400">{{ t('memorySettings.hint') }}</p>
+          <div
+            v-if="settingsError"
+            class="text-xs text-red-600 dark:text-red-400"
+            data-test="memory-settings-error">
+            {{ settingsError }}
+          </div>
+
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-medium text-gray-700 dark:text-gray-200">
+                {{ t('memorySettings.memoryLimit') }}
+              </label>
+              <InputNumber
+                v-model="settingsForm.memory_char_limit"
+                :min="1"
+                :max="8000"
+                :use-grouping="false"
+                class="w-full" />
+            </div>
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-medium text-gray-700 dark:text-gray-200">
+                {{ t('memorySettings.userLimit') }}
+              </label>
+              <InputNumber
+                v-model="settingsForm.user_char_limit"
+                :min="1"
+                :max="8000"
+                :use-grouping="false"
+                class="w-full" />
+            </div>
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-medium text-gray-700 dark:text-gray-200">
+                {{ t('memorySettings.factsLimit') }}
+              </label>
+              <InputNumber
+                v-model="settingsForm.facts_char_limit"
+                :min="1"
+                :max="8000"
+                :use-grouping="false"
+                class="w-full" />
+            </div>
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-medium text-gray-700 dark:text-gray-200">
+                {{ t('memorySettings.maxUnusedDays') }}
+              </label>
+              <InputNumber
+                v-model="settingsForm.max_unused_days"
+                :min="1"
+                :max="3650"
+                :use-grouping="false"
+                class="w-full" />
+              <span class="text-[11px] text-gray-400">{{ t('memorySettings.maxUnusedDaysHint') }}</span>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2 rounded-lg border border-dashed border-gray-200 p-2 dark:border-gray-700">
+            <div class="flex items-center gap-2">
+              <ToggleSwitch
+                v-model="settingsForm.semantic_recall_enabled"
+                data-test="memory-semantic-toggle" />
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+                {{ t('memorySettings.semanticRecall') }}
+              </span>
+            </div>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div class="flex flex-col gap-1">
+                <label class="text-xs text-gray-600 dark:text-gray-300">{{ t('memorySettings.semanticTopK') }}</label>
+                <InputNumber
+                  v-model="settingsForm.semantic_recall_top_k"
+                  :min="1"
+                  :max="20"
+                  :use-grouping="false"
+                  :disabled="!settingsForm.semantic_recall_enabled"
+                  data-test="memory-semantic-top-k"
+                  class="w-full" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="text-xs text-gray-600 dark:text-gray-300">{{ t('memorySettings.semanticBudget') }}</label>
+                <InputNumber
+                  v-model="settingsForm.semantic_recall_char_budget"
+                  :min="200"
+                  :max="20000"
+                  :use-grouping="false"
+                  :disabled="!settingsForm.semantic_recall_enabled"
+                  data-test="memory-semantic-budget"
+                  class="w-full" />
+              </div>
+            </div>
+            <span class="text-[11px] text-gray-400">{{ t('memorySettings.semanticRecallHint') }}</span>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <Button
+              :label="t('memorySettings.save')"
+              icon="pi pi-check"
+              size="small"
+              :loading="savingSettings"
+              :disabled="!settingsDirty"
+              data-test="memory-settings-save"
+              v-debounce:click.500="handleSaveSettings" />
+            <Button
+              :label="t('memorySettings.consolidate')"
+              icon="pi pi-filter-slash"
+              size="small"
+              severity="secondary"
+              :loading="consolidating"
+              data-test="memory-consolidate"
+              v-debounce:click.500="handleConsolidate" />
+            <span
+              v-if="consolidationMessage"
+              class="text-xs text-gray-500 dark:text-gray-400">
+              {{ consolidationMessage }}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -152,7 +310,7 @@
                 icon="pi pi-check"
                 :loading="busy"
                 :disabled="!editText.trim()"
-                @click="saveEdit(entry)" />
+                v-debounce:click.500="() => saveEdit(entry)" />
             </div>
           </template>
           <template v-else>
@@ -172,14 +330,16 @@
                 text
                 severity="danger"
                 icon="pi pi-inbox"
-                @click="handleArchive(entry)" />
+                :loading="busy"
+                v-debounce:click.500="() => handleArchive(entry)" />
               <Button
                 v-else
                 :label="t('memoryPanel.restore')"
                 size="small"
                 text
                 icon="pi pi-replay"
-                @click="handleRestore(entry)" />
+                :loading="busy"
+                v-debounce:click.500="() => handleRestore(entry)" />
             </div>
           </template>
         </div>
@@ -227,7 +387,7 @@
                 icon="pi pi-check"
                 :loading="busy"
                 :disabled="!newText.trim()"
-                @click="handleAdd" />
+                v-debounce:click.500="handleAdd" />
             </div>
           </div>
         </template>
@@ -249,11 +409,20 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute } from 'vue-router';
 import { logUtil } from '~/utils/log';
-import type { MemoryArchiveReason, MemoryEntry, MemoryStats, MemoryTarget } from '~/composables/bridge';
+import type { MemoryArchiveReason, MemoryEntry, MemorySettings, MemoryStats, MemoryTarget } from '~/composables/bridge';
 
 const { t } = useI18n({ useScope: 'local' });
 const emits = defineEmits<{ saved: [] }>();
+
+/**
+ * The session the manual consolidation pass runs under (model + prompt). The
+ * panel is a right-sidebar tab of the session page, so the route's sid is the
+ * same source the former system-config section used.
+ */
+const route = useRoute() as unknown as { params?: Record<string, unknown> } | undefined;
+const sessionId = computed(() => String(route?.params?.sid ?? ''));
 
 const TARGETS: { value: MemoryTarget; i18nKey: string }[] = [
   { value: 'memory', i18nKey: 'memoryPanel.tabs.memory' },
@@ -278,6 +447,44 @@ const editText = ref('');
 const adding = ref(false);
 const newText = ref('');
 const newType = ref<string | null>(null);
+
+// ── Memory settings (moved here from the system-config panel) ──────────────
+// The caps / semantic-recall switch / aging window are stored in the memory DB
+// and apply live. They keep their own form + dirty state so editing them never
+// touches the entry list, and the shared `stats` readout below follows a save.
+const DEFAULT_SETTINGS: Pick<
+  MemorySettings,
+  | 'memory_char_limit'
+  | 'user_char_limit'
+  | 'facts_char_limit'
+  | 'max_unused_days'
+  | 'semantic_recall_enabled'
+  | 'semantic_recall_top_k'
+  | 'semantic_recall_char_budget'
+> = {
+  memory_char_limit: 2200,
+  user_char_limit: 1375,
+  facts_char_limit: 1375,
+  max_unused_days: 90,
+  semantic_recall_enabled: false,
+  semantic_recall_top_k: 5,
+  semantic_recall_char_budget: 4000
+};
+
+/** Collapsed by default: the configuration must not push the entries away. */
+const showSettings = ref(false);
+const settingsForm = ref({ ...DEFAULT_SETTINGS });
+const settingsOriginal = ref({ ...DEFAULT_SETTINGS });
+const savingSettings = ref(false);
+const consolidating = ref(false);
+const consolidationMessage = ref('');
+const settingsError = ref('');
+
+const settingsDirty = computed(() =>
+  (Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).some(
+    key => settingsForm.value[key] !== settingsOriginal.value[key]
+  )
+);
 
 const sortOptions = computed(() => [
   { label: t('memoryPanel.sorts.created'), value: 'created' },
@@ -444,8 +651,100 @@ function reasonLabel(entry: MemoryEntry): string {
   return t(`memoryPanel.reasons.${entry.archived_reason ?? 'manual'}`);
 }
 
-// The tab's lifetime drives the load.
-onMounted(() => void load());
+/**
+ * Copy a backend settings payload into the editable form + its clean baseline.
+ * @param settings The values read from / saved to the backend.
+ */
+function applySettings(settings: MemorySettings): void {
+  settingsForm.value = {
+    memory_char_limit: settings.memory_char_limit,
+    user_char_limit: settings.user_char_limit,
+    facts_char_limit: settings.facts_char_limit,
+    max_unused_days: settings.max_unused_days,
+    semantic_recall_enabled: settings.semantic_recall_enabled,
+    semantic_recall_top_k: settings.semantic_recall_top_k,
+    semantic_recall_char_budget: settings.semantic_recall_char_budget
+  };
+  settingsOriginal.value = { ...settingsForm.value };
+}
+
+async function loadSettings(): Promise<void> {
+  settingsError.value = '';
+  try {
+    const settings = await readMemorySettings();
+    // A transport stub may answer nothing; keep the defaults instead of
+    // rendering NaN fields.
+    if (!settings) return;
+    applySettings(settings);
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+    logUtil.e('[MemoryPanel] Failed to load memory settings:', e);
+  }
+}
+
+/** Persist the caps and refresh the capacity readout they define. */
+async function handleSaveSettings(): Promise<void> {
+  if (savingSettings.value || !settingsDirty.value) return;
+  savingSettings.value = true;
+  settingsError.value = '';
+  try {
+    const saved = await writeMemorySettings({ ...settingsForm.value });
+    if (saved) applySettings(saved);
+    else settingsOriginal.value = { ...settingsForm.value };
+    // The capacity bar reads the caps, so a saved limit must re-render at once.
+    await load();
+    emits('saved');
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    savingSettings.value = false;
+  }
+}
+
+/** Run the async aging + LLM consolidation pass under the current session. */
+async function handleConsolidate(): Promise<void> {
+  if (consolidating.value) return;
+  if (!sessionId.value) {
+    settingsError.value = t('memorySettings.sessionRequired');
+    return;
+  }
+  consolidating.value = true;
+  consolidationMessage.value = '';
+  settingsError.value = '';
+  try {
+    const started = await consolidateMemory(sessionId.value);
+    let task = started;
+    const deadline = Date.now() + 300_000;
+    while (task.status === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      task = await readConsolidationStatus(task.task_id);
+    }
+    if (task.status === 'running') {
+      throw new Error(t('memorySettings.consolidationTimeout'));
+    }
+    if (task.status === 'failed') {
+      throw new Error(task.error || t('memorySettings.consolidationFailed'));
+    }
+    const archived = task.result?.archived ?? 0;
+    const remaining = task.result?.entries_after;
+    consolidationMessage.value =
+      task.status === 'skipped'
+        ? t('memorySettings.consolidationSkipped', { n: archived })
+        : t('memorySettings.consolidationDone', { n: archived, m: remaining ?? '?' });
+    await load();
+    emits('saved');
+  } catch (e) {
+    settingsError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    consolidating.value = false;
+  }
+}
+
+// The tab's lifetime drives the load (entries + configuration).
+onMounted(() => {
+  void load();
+  void loadSettings();
+});
 
 // The two toolbar controls change the query, not just the view.
 watch([sort, showArchived], () => void load());
@@ -495,7 +794,27 @@ watch([sort, showArchived], () => void load());
       "archive": "归档",
       "restore": "恢复",
       "save": "保存",
-      "cancel": "取消"
+      "cancel": "取消",
+      "settings": "记忆设置"
+    },
+    "memorySettings": {
+      "hint": "记忆条目保存在 SQLite 中；这里的容量上限与老化窗口立即生效。",
+      "memoryLimit": "记忆容量上限（字符）",
+      "userLimit": "用户画像容量上限（字符）",
+      "factsLimit": "系统事实容量上限（字符）",
+      "maxUnusedDays": "未使用老化天数",
+      "maxUnusedDaysHint": "超过该天数未使用的条目会在整理时归档（不会删除）。",
+      "save": "保存记忆设置",
+      "consolidate": "立即整理",
+      "consolidationDone": "已整理：归档 {n} 条，剩余 {m} 条",
+      "consolidationSkipped": "条目不足，仅执行老化（归档 {n} 条）",
+      "consolidationFailed": "整理失败",
+      "consolidationTimeout": "整理超时，请稍后重试",
+      "sessionRequired": "请先打开一个会话再整理记忆",
+      "semanticRecall": "语义召回",
+      "semanticRecallHint": "开启后系统提示词只放记忆索引，每轮按需检索相关条目；需要 embedding 与 reranker 模型。",
+      "semanticTopK": "召回条数",
+      "semanticBudget": "召回字符预算"
     }
   },
   "en": {
@@ -540,7 +859,27 @@ watch([sort, showArchived], () => void load());
       "archive": "Archive",
       "restore": "Restore",
       "save": "Save",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "settings": "Memory settings"
+    },
+    "memorySettings": {
+      "hint": "Memory entries live in SQLite; these caps and the aging window apply immediately.",
+      "memoryLimit": "Memory cap (characters)",
+      "userLimit": "User-profile cap (characters)",
+      "factsLimit": "System-facts cap (characters)",
+      "maxUnusedDays": "Unused aging window (days)",
+      "maxUnusedDaysHint": "Entries unused for longer than this are archived during consolidation (never deleted).",
+      "save": "Save memory settings",
+      "consolidate": "Consolidate now",
+      "consolidationDone": "Consolidated: {n} archived, {m} remaining",
+      "consolidationSkipped": "Too few entries; aging only ({n} archived)",
+      "consolidationFailed": "Consolidation failed",
+      "consolidationTimeout": "Consolidation timed out; try again later",
+      "sessionRequired": "Open a session before consolidating memory",
+      "semanticRecall": "Semantic recall",
+      "semanticRecallHint": "When on, the system prompt carries only a memory index and relevant entries are recalled per turn; requires the embedding and reranker models.",
+      "semanticTopK": "Recall count",
+      "semanticBudget": "Recall character budget"
     }
   },
   "ja": {
@@ -585,7 +924,27 @@ watch([sort, showArchived], () => void load());
       "archive": "アーカイブ",
       "restore": "復元",
       "save": "保存",
-      "cancel": "キャンセル"
+      "cancel": "キャンセル",
+      "settings": "記憶設定"
+    },
+    "memorySettings": {
+      "hint": "記憶エントリは SQLite に保存されます。この上限と老化期間はすぐに反映されます。",
+      "memoryLimit": "記憶の上限（文字数）",
+      "userLimit": "ユーザープロファイルの上限（文字数）",
+      "factsLimit": "システム事実の上限（文字数）",
+      "maxUnusedDays": "未使用の老化日数",
+      "maxUnusedDaysHint": "この日数を超えて未使用のエントリは整理時にアーカイブされます（削除されません）。",
+      "save": "記憶設定を保存",
+      "consolidate": "今すぐ整理",
+      "consolidationDone": "整理完了：{n} 件をアーカイブ、残り {m} 件",
+      "consolidationSkipped": "件数が少ないため老化のみ実行（{n} 件をアーカイブ）",
+      "consolidationFailed": "整理に失敗しました",
+      "consolidationTimeout": "整理がタイムアウトしました。後でもう一度お試しください",
+      "sessionRequired": "記憶を整理する前にセッションを開いてください",
+      "semanticRecall": "意味検索",
+      "semanticRecallHint": "オンにするとシステムプロンプトは記憶インデックスのみになり、ターンごとに関連エントリを検索します。embedding と reranker モデルが必要です。",
+      "semanticTopK": "検索件数",
+      "semanticBudget": "検索の文字予算"
     }
   },
   "ko": {
@@ -630,7 +989,27 @@ watch([sort, showArchived], () => void load());
       "archive": "보관",
       "restore": "복원",
       "save": "저장",
-      "cancel": "취소"
+      "cancel": "취소",
+      "settings": "기억 설정"
+    },
+    "memorySettings": {
+      "hint": "기억 항목은 SQLite에 저장됩니다. 여기의 상한과 노화 기간은 즉시 적용됩니다.",
+      "memoryLimit": "기억 용량 상한(문자)",
+      "userLimit": "사용자 프로필 상한(문자)",
+      "factsLimit": "시스템 사실 상한(문자)",
+      "maxUnusedDays": "미사용 노화 일수",
+      "maxUnusedDaysHint": "이 일수보다 오래 사용되지 않은 항목은 정리 시 보관됩니다(삭제되지 않음).",
+      "save": "기억 설정 저장",
+      "consolidate": "지금 정리",
+      "consolidationDone": "정리 완료: {n}개 보관, {m}개 남음",
+      "consolidationSkipped": "항목이 적어 노화만 실행({n}개 보관)",
+      "consolidationFailed": "정리에 실패했습니다",
+      "consolidationTimeout": "정리 시간이 초과되었습니다. 나중에 다시 시도하세요",
+      "sessionRequired": "기억을 정리하기 전에 세션을 여세요",
+      "semanticRecall": "의미 검색",
+      "semanticRecallHint": "켜면 시스템 프롬프트에는 기억 색인만 들어가고 매 턴 관련 항목을 검색합니다. embedding과 reranker 모델이 필요합니다.",
+      "semanticTopK": "검색 개수",
+      "semanticBudget": "검색 문자 예산"
     }
   }
 }

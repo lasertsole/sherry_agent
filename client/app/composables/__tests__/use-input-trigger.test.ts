@@ -34,4 +34,9 @@ describe('scoreTriggerMatch', () => {
     expect(scoreTriggerMatch('review', 'security review', 'security')).toBeGreaterThan(0);
     expect(scoreTriggerMatch('review', '', 'deploy')).toBe(-1);
   });
+
+  it('matches every candidate for an empty query (the + menu opens with no "trigger")', () => {
+    expect(scoreTriggerMatch('review', '', '')).toBeGreaterThanOrEqual(0);
+    expect(scoreTriggerMatch('anything', 'some description', '')).toBeGreaterThanOrEqual(0);
+  });
 });

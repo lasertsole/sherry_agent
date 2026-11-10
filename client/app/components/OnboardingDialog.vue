@@ -116,7 +116,7 @@
             severity="secondary"
             :disabled="creating"
             data-test="onboarding-skip"
-            @click="skip" />
+            v-debounce:click.500="skip" />
           <Button
             v-if="step < 3"
             :label="t('onboarding.next')"
@@ -129,7 +129,7 @@
             size="small"
             :loading="creating"
             data-test="onboarding-start"
-            @click="finish" />
+            v-debounce:click.500="finish" />
         </div>
       </div>
     </div>

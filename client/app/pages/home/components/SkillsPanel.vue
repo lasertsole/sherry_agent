@@ -186,12 +186,49 @@
 <template>
   <!-- Right-sidebar tab body: mounted with the tab (load, onMounted) and unmounted
        with it (state reset, onBeforeUnmount); the sidebar owns the tab strip. -->
-  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
-    <div class="flex flex-col gap-3">
+  <div class="flex flex-col h-full min-h-0 overflow-auto p-4 min-w-[520px]">
+    <!-- The sidebar baseline (RIGHT_SIDEBAR_PANEL_MIN_WIDTH) is an INLINE
+         min-width on the panel root, which would win over this root's class;
+         repeating the two-column floor on the content wrapper is what actually
+         makes the panel wider than that baseline and scroll here. -->
+    <div class="flex min-w-[520px] flex-col gap-3">
+      <!-- Loading skeleton mirrors the real layout (category chips + list +
+           editor) instead of a lone spinner, so the panel does not jump when
+           the data arrives. -->
       <div
         v-if="loading"
-        class="flex items-center justify-center py-8">
-        <ProgressSpinner style="width: 2rem; height: 2rem" />
+        class="flex flex-col gap-3"
+        data-test="skills-skeleton">
+        <Skeleton
+          width="40%"
+          height="1.2rem" />
+        <div class="flex flex-wrap gap-2">
+          <Skeleton
+            v-for="n in 3"
+            :key="n"
+            width="6rem"
+            height="2rem"
+            border-radius="0.375rem" />
+        </div>
+        <div class="flex gap-3">
+          <div class="flex w-72 flex-col gap-1">
+            <Skeleton
+              v-for="n in 5"
+              :key="n"
+              height="2.5rem"
+              border-radius="0.5rem" />
+          </div>
+          <div class="flex flex-1 flex-col gap-1">
+            <Skeleton
+              width="60%"
+              height="0.8rem" />
+            <Skeleton height="2rem" />
+            <Skeleton
+              width="80%"
+              height="0.8rem" />
+            <Skeleton height="2rem" />
+          </div>
+        </div>
       </div>
       <template v-else>
         <div class="flex gap-2 flex-wrap">
@@ -219,7 +256,7 @@
                   size="small"
                   class="shrink-0"
                   style="flex-shrink: 0"
-                  @click="runCurator" />
+                  v-debounce:click.500="runCurator" />
                 <Button
                   v-tooltip.right="t('skills.tabs.runCuratorHint')"
                   icon="pi pi-question-circle"
@@ -372,7 +409,8 @@
                         :data-testid="`pin-skill-${skill.name}`"
                         class="p-button-icon-only"
                         :aria-label="skill.pinned ? t('skills.tabs.unpin') : t('skills.tabs.pin')"
-                        @click.stop="togglePin(skill, !!skill.pinned)" />
+                        @click.stop
+                        v-debounce:click.300="() => togglePin(skill, !!skill.pinned)" />
                       <Button
                         v-tooltip.top="t('skills.tabs.delete')"
                         :disabled="!!skill.pinned"
@@ -503,7 +541,7 @@
           size="small"
           :loading="deleteSaving"
           icon="pi pi-trash"
-          @click="performDelete" />
+          v-debounce:click.500="performDelete" />
       </div>
     </Dialog>
   </div>

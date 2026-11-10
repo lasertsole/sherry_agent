@@ -20,10 +20,15 @@ const bridge = vi.hoisted(() => ({
   readMemorySettings: vi.fn(),
   writeMemorySettings: vi.fn(),
   searchMemoryEntries: vi.fn(),
-  consolidateMemory: vi.fn()
+  consolidateMemory: vi.fn(),
+  readConsolidationStatus: vi.fn()
 }));
 
 vi.mock('~/composables/bridge', () => bridge);
+vi.mock('vue-router', async importOriginal => {
+  const actual = await importOriginal<typeof import('vue-router')>();
+  return { ...actual, useRoute: () => ({ params: { sid: 's1' } }) };
+});
 
 const stubs = {
   Button: {
@@ -59,7 +64,13 @@ const stubs = {
     props: ['value'],
     template: '<span class="tag">{{ value }}</span>'
   },
-  ProgressSpinner: { template: '<div class="spinner" />' }
+  InputNumber: {
+    props: ['modelValue', 'min', 'max', 'disabled'],
+    emits: ['update:modelValue'],
+    template:
+      '<input class="num" type="number" :value="modelValue" :min="min" :max="max" :disabled="disabled" @input="$emit(\'update:modelValue\', Number($event.target.value))" />'
+  },
+  Skeleton: { template: '<div class="skeleton" />' }
 };
 
 function entry(overrides: Record<string, unknown> = {}) {
@@ -117,6 +128,7 @@ describe('MemoryPanel CRUD', () => {
       target: 'memory'
     });
     bridge.readMemoryStats.mockResolvedValue(stats());
+    bridge.readMemorySettings.mockResolvedValue(stats().settings);
     bridge.createMemoryEntry.mockResolvedValue(entry({ id: 2, content: 'new row' }));
     bridge.updateMemoryEntry.mockResolvedValue(entry({ content: 'edited row' }));
     bridge.archiveMemoryEntry.mockResolvedValue(entry({ archived: true, archived_reason: 'manual' }));
@@ -143,14 +155,15 @@ describe('MemoryPanel CRUD', () => {
     const save = wrapper.findAll('button').find(button => button.text() === '保存');
     expect(save).toBeTruthy();
     await save!.trigger('click');
-    await flushPromises();
-
-    expect(bridge.createMemoryEntry).toHaveBeenCalledWith({
-      target: 'memory',
-      content: 'new row',
-      entry_type: null
-    });
-    expect(bridge.readMemoryEntries).toHaveBeenCalledTimes(2);
+    // Save is debounced (v-debounce:click.500): the write lands after the quiet window.
+    await vi.waitFor(() =>
+      expect(bridge.createMemoryEntry).toHaveBeenCalledWith({
+        target: 'memory',
+        content: 'new row',
+        entry_type: null
+      })
+    );
+    await vi.waitFor(() => expect(bridge.readMemoryEntries).toHaveBeenCalledTimes(2));
   });
 
   it('edits an entry in place', async () => {
@@ -161,9 +174,8 @@ describe('MemoryPanel CRUD', () => {
     await wrapper.find('textarea.ta').setValue('edited row');
     const save = wrapper.findAll('button').find(button => button.text() === '保存');
     await save!.trigger('click');
-    await flushPromises();
-
-    expect(bridge.updateMemoryEntry).toHaveBeenCalledWith(1, { content: 'edited row' });
+    // Debounced save.
+    await vi.waitFor(() => expect(bridge.updateMemoryEntry).toHaveBeenCalledWith(1, { content: 'edited row' }));
   });
 
   it('archives with the selected reason', async () => {
@@ -173,9 +185,8 @@ describe('MemoryPanel CRUD', () => {
     await reason.setValue('contradicted');
     const archive = wrapper.findAll('button').find(button => button.text() === '归档');
     await archive!.trigger('click');
-    await flushPromises();
-
-    expect(bridge.archiveMemoryEntry).toHaveBeenCalledWith(1, 'contradicted');
+    // Debounced archive.
+    await vi.waitFor(() => expect(bridge.archiveMemoryEntry).toHaveBeenCalledWith(1, 'contradicted'));
   });
 
   it('restores an archived row', async () => {
@@ -191,9 +202,8 @@ describe('MemoryPanel CRUD', () => {
     const restore = wrapper.findAll('button').find(button => button.text() === '恢复');
     expect(restore).toBeTruthy();
     await restore!.trigger('click');
-    await flushPromises();
-
-    expect(bridge.restoreMemoryEntry).toHaveBeenCalledWith(1);
+    // Debounced restore.
+    await vi.waitFor(() => expect(bridge.restoreMemoryEntry).toHaveBeenCalledWith(1));
   });
 
   it('reloads with the archived filter when the toggle flips', async () => {
@@ -220,5 +230,61 @@ describe('MemoryPanel CRUD', () => {
 
     expect(wrapper.text()).toContain('User: likes tea');
     expect(wrapper.text()).not.toContain('Environment: Python 3.13');
+  });
+});
+
+describe('MemoryPanel settings section (moved from the system-config tab)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bridge.readMemoryEntries.mockResolvedValue({
+      entries: [entry()],
+      total: 1,
+      limit: 100,
+      offset: 0,
+      target: 'memory'
+    });
+    bridge.readMemoryStats.mockResolvedValue(stats());
+    bridge.readMemorySettings.mockResolvedValue(stats().settings);
+  });
+
+  it('loads the settings collapsed and saves an edited cap', async () => {
+    const wrapper = await mountPanel();
+
+    // Collapsed by default: the entry list is not pushed away.
+    expect(wrapper.find('[data-test="memory-settings-save"]').exists()).toBe(false);
+    expect(bridge.readMemorySettings).toHaveBeenCalled();
+
+    await wrapper.find('[data-test="memory-settings-toggle"]').trigger('click');
+    const save = wrapper.find('[data-test="memory-settings-save"]');
+    expect(save.exists()).toBe(true);
+    // Clean form: the save stays disabled until a cap changes.
+    expect(save.attributes('disabled')).toBeDefined();
+
+    bridge.writeMemorySettings.mockResolvedValue({ ...stats().settings, memory_char_limit: 3000 });
+    await wrapper.findAll('input.num')[0]!.setValue(3000);
+    expect(save.attributes('disabled')).toBeUndefined();
+
+    await save.trigger('click');
+    // Debounced (v-debounce:click.500), like the other write buttons.
+    await vi.waitFor(() =>
+      expect(bridge.writeMemorySettings).toHaveBeenCalledWith(expect.objectContaining({ memory_char_limit: 3000 }))
+    );
+    // The capacity readout is re-read after a save.
+    await vi.waitFor(() => expect(bridge.readMemoryStats).toHaveBeenCalledTimes(2));
+  });
+
+  it('consolidates under the route session and reports the result', async () => {
+    bridge.consolidateMemory.mockResolvedValue({
+      task_id: 't1',
+      status: 'done',
+      result: { archived: 2, entries_after: 3 }
+    });
+    const wrapper = await mountPanel();
+
+    await wrapper.find('[data-test="memory-settings-toggle"]').trigger('click');
+    await wrapper.find('[data-test="memory-consolidate"]').trigger('click');
+
+    await vi.waitFor(() => expect(bridge.consolidateMemory).toHaveBeenCalledWith('s1'));
+    await vi.waitFor(() => expect(wrapper.text()).toContain('已整理：归档 2 条，剩余 3 条'));
   });
 });

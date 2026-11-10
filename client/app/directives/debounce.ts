@@ -10,7 +10,7 @@ import type { Directive, DirectiveBinding } from 'vue';
  *       modifier wins, default 300ms
  *   The value is the callback to debounce; after the event fires, the callback runs
  *   only after a silent `delay` ms, and repeated triggers during that window restart
- *   the timer.
+ *   the timer. The originating DOM event is forwarded to the callback.
  *
  * Implementation notes:
  *   - The event listener is bound only once (mounted) and forwards to the "latest
@@ -59,12 +59,14 @@ export const vDebounce: Directive<HTMLElement> = {
       latest: (...args: unknown[]) => {
         if (typeof binding.value === 'function') binding.value(...args);
       },
-      listener: () => {
+      listener: (event: Event) => {
         // Repeated trigger: reset the timer
         if (state.timer) clearTimeout(state.timer);
         state.timer = setTimeout(() => {
           state.timer = null;
-          state.latest();
+          // Forward the originating event: handlers that anchor a popup
+          // (`Popover.toggle(event)`) need its target after the quiet window.
+          state.latest(event);
         }, state.delay);
       },
       timer: null

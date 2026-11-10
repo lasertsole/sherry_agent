@@ -1,28 +1,6 @@
 import type { Tool } from './type';
 
 /**
- * Media entries of the session input toolbar: the option list behind the plus
- * glyph (see home/components/MediaMenu.vue).
- */
-export const tools: Tool[] = [
-  {
-    toolName: 'toolbar.image',
-    icon: 'pi pi-image',
-    event: 'uploadImage'
-  },
-  {
-    toolName: 'toolbar.audio',
-    icon: 'pi pi-microphone',
-    event: 'uploadAudio'
-  },
-  {
-    toolName: 'toolbar.video',
-    icon: 'pi pi-video',
-    event: 'uploadVideo'
-  }
-];
-
-/**
  * The toolbox dialog's entries (the hammer button): the browser, the user's
  * terminal and the whiteboard. Deliberately NOT a part of `headerTools` — that
  * grid is the settings menu; these three are working surfaces.

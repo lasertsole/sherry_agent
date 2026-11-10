@@ -3,24 +3,28 @@
     <!-- Glyph + trigger are one visual unit (a word-sized gap would read as two
          separate controls), so they sit in their own tighter row. -->
     <div class="flex items-center gap-0.5">
-      <!-- The control's name is a brain glyph rather than a word: the trigger next
-           to it already says ON/OFF (or 低/高/最高), so a second word only adds noise. -->
-      <i
-        class="hidden md:inline brain-icon text-sm text-gray-500 dark:text-gray-400"
-        aria-hidden="true"></i>
-
       <!-- Collapsed picker for both modes: the trigger shows only the current
            selection (开启/关闭, or 低/高/最高); clicking opens the list. Switching
            is allowed at any moment — a mid-turn choice is parked (clock icon) and
-           lands on the next turn. -->
+           lands on the next turn.
+           The brain glyph is the Button's own content (not a sibling): PrimeVue
+           text-button hover/pressed backgrounds only paint the button box, so a
+           glyph outside it stayed visually detached. Inside, the activation
+           surface covers the whole control and the glyph also follows `active`
+           (same colour rule as the mobile cycle button). -->
       <Button
         variant="text"
         size="small"
-        :label="triggerLabel"
-        icon="pi pi-angle-down"
-        icon-pos="right"
         :aria-label="t('thinkingToggle.a11y')"
-        @click="toggleMenu" />
+        @click="toggleMenu"
+        class="thinking-toggle-btn">
+        <i
+          class="hidden md:inline brain-icon text-sm mr-1"
+          :class="active ? 'text-theme-main' : 'text-gray-500 dark:text-gray-400'"
+          aria-hidden="true"></i>
+        <span class="text-sm">{{ triggerLabel }}</span>
+        <i class="pi pi-angle-down ml-1 text-xs"></i>
+      </Button>
     </div>
     <i
       v-if="pending"

@@ -51,8 +51,11 @@ export interface SessionActivationDeps {
   ensureSessionCharacter: (sid: string) => void;
   /** Refresh the "is this a branch child?" flag for a session. */
   refreshBranchLink: (sid: string) => void;
-  /** Fetch history + the running turn's snapshot in one round trip. */
-  syncHistory: (sid: string) => void;
+  /**
+   * Fetch history + the running turn's snapshot in one round trip. The page
+   * renders a chat skeleton while this promise is pending on an empty list.
+   */
+  syncHistory: (sid: string) => Promise<void> | void;
   /** Re-raise a still-pending approval card. */
   restorePendingHitl: (sid: string) => unknown;
   /** Initialize the session's shared stores (plan snapshot, TaskFlow board). */
@@ -111,6 +114,15 @@ export function useSessionActivation(deps: SessionActivationDeps) {
   let mySidLoaded = false;
 
   /**
+   * Whether this instance's history request is still in flight. The page only
+   * renders the chat skeleton for an EMPTY list, so a KeepAlive restore (which
+   * already holds its messages) never flashes one.
+   */
+  const isHistoryLoading = ref(false);
+  /** Guards against an older request settling after a newer one started. */
+  let historyLoadSeq = 0;
+
+  /**
    * Load history for the specified session for this instance (clears local state, then rebuilds).
    * Only called on new sessions / exception fallback paths.
    * @param sid
@@ -134,7 +146,12 @@ export function useSessionActivation(deps: SessionActivationDeps) {
     void deps.refreshBranchLink(sid);
     // One round trip: history + the running turn's snapshot. Frames arriving
     // during the request are held and flushed after the snapshot is applied.
-    void deps.syncHistory(sid);
+    const seq = ++historyLoadSeq;
+    isHistoryLoading.value = true;
+    void Promise.resolve(deps.syncHistory(sid)).finally(() => {
+      // A newer load may already own the flag; only the latest settles it.
+      if (seq === historyLoadSeq) isHistoryLoading.value = false;
+    });
     // Restore a possibly still-pending HITL interrupt card (session switch /
     // refresh / browser reopen / server restart).
     void deps.restorePendingHitl(sid);
@@ -209,5 +226,5 @@ export function useSessionActivation(deps: SessionActivationDeps) {
     void clearDraftSession(deps.mySid);
   };
 
-  return { isActive, handleAbortStreamOnDelete };
+  return { isActive, isHistoryLoading, handleAbortStreamOnDelete };
 }

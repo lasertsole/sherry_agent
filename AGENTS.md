@@ -716,9 +716,13 @@ A four-step tour (welcome → preset → core controls → ready) shown once per
 
 `createSessionFromPreset` (`persona-catalog.ts`) is the ONE session-creation orchestration the tour and `NewSessionPresetDialog.confirm()` share (apply preset → bind preset → character snapshot → placeholder meta → `session:created` → `localePath('/home/<sid>')`); the caller injects `ensureCharacter` (the page's helper) so the catalogue module never imports a component. Skip records the flag and opens the ordinary preset dialog (the previous first-run behavior); a failed Get started keeps the dialog open, shows the error and leaves the flag UNSET so the tour returns next boot. The dialog is not mask/Esc dismissable (no stray click can silently drop the user into an empty UI).
 
+## Desktop Window Frame (`TitleBar.vue` / `common/titlebar.ts`)
+
+The Tauri shell runs undecorated (`decorations:false` in `tauri.conf.json`, with start-dragging/minimize/maximize/close window permissions in `capabilities/default.json`). ONE `TitleBar.vue` is mounted in `layouts/default.vue` at `z-60`, height 36 px: its left edge is the sidebar width only on `/home` with the left sidebar expanded and the right sidebar not maximized, otherwise 0. The middle+right content gets a matching `padding-top` (persisted in `content-shell`), the left sidebar stays full height, the right sidebar's maximized overlay starts at `top:36px`, and the floating-window slot/clamp/anchors plus the input-only pill stay below the bar. The Web build renders no titlebar and uses zero inset. The close button calls the SAME Rust `CloseRequested` → `close_ack` → `CloseToTrayDialog` flow as the OS button; minimize/maximize use the Tauri window plugin.
+
 ## Composer Input Triggers (`inputBox.vue` / `use-input-trigger.ts`)
 
-The composer keeps its contenteditable + atomic-chip architecture. `$` opens the skill picker (`GET /skills`, filtered to `active !== false` and non-`subagent_only`), `/` opens the command picker (custom Markdown commands from `GET /commands?session_id=…` plus the existing command registry), and the `+` button opens the same two pickers or reveals the left sidebar's file tree. `use-input-trigger.ts` detects a trigger only at the start of the input or after whitespace (with `¥`/`￥` normalized to `$`), skips pasted `<pre>`/`<code>`, and filters by prefix/substring/description. A selected skill inserts a `skill-mention-chip`; `extractTextForSend` emits `$name` and the stable `## Skill References` prompt block tells the agent to `skill_view` it. A custom command with `argument-hint` collects its arguments in the panel, then inserts a `command-mention-chip` whose `data-command-body` carries the expanded template (`$ARGUMENTS` substituted); built-ins execute their registry handler and insert nothing. No shell expansion. Wiki: `wiki/input-triggers/`; tests: `use-input-trigger.test.ts`, the composer integration suite, and `tests/server/service/test_custom_commands_service.py`.
+The composer keeps its contenteditable + atomic-chip architecture. `$` opens the skill picker (`GET /skills`, filtered to `active !== false` and non-`subagent_only`), `/` opens the command picker (custom Markdown commands from `GET /commands?session_id=…` plus the existing command registry), and the `+` button opens ONE menu: image / audio / video upload (the old toolbar `MediaMenu` was removed, merged here), a generic OS file picker (hidden `<input type="file" multiple>`, files ride the existing base64 `selectedImages` pipeline), then the skill / command pickers. The left file tree is still reachable from the toolbar's folder button and from `@` mentions; the `+` menu no longer switches the sidebar. `use-input-trigger.ts` detects a trigger only at the start of the input or after whitespace (with `¥`/`￥` normalized to `$`), skips pasted `<pre>`/`<code>`, and filters by prefix/substring/description. A selected skill inserts a `skill-mention-chip`; `extractTextForSend` emits `$name` and the stable `## Skill References` prompt block tells the agent to `skill_view` it. A custom command with `argument-hint` collects its arguments in the panel, then inserts a `command-mention-chip` whose `data-command-body` carries the expanded template (`$ARGUMENTS` substituted); built-ins execute their registry handler and insert nothing. No shell expansion. Wiki: `wiki/input-triggers/`; tests: `use-input-trigger.test.ts`, the composer integration suite, and `tests/server/service/test_custom_commands_service.py`.
 
 ## Keyboard Shortcuts (`use-shortcuts.ts` / `client/app/plugins/shortcuts.ts` / `ShortcutSettingsSection.vue`)
 
@@ -729,7 +733,7 @@ One binding table (`SHORTCUT_BINDINGS`) declares every chord with its built-in d
 
 `ctrl` means the platform PRIMARY modifier: `comboFromEvent` folds Cmd into it, so one table serves macOS and Windows/Linux, and `formatCombo` renders ⌘⇧F vs Ctrl+Shift+F (the send button's tooltip is built from it, so it follows a rebind). Overrides persist in Dexie (`shortcuts` table, schema v5) as `{id, keys}` JSON; deleting the row restores the default.
 
-The UI is the **Shortcuts tab of Menu → System Config** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue` — the panel's footer/embedder logic is keyed by tab INDEX — and it saves on its own, like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "Conflicts with X, not saved") and the row stays in capture.
+The UI is the **Shortcuts tab of Menu → System Config** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue`; the panel now drives tabs by `TAB_ORDER` VALUE instead of hard-coded indices, so the memory-settings tab could move out to the memory panel, and it saves on its own like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "Conflicts with X, not saved") and the row stays in capture.
 
 Not migrated on purpose: component-local `@keydown` on list items / overlays (they are internal UI interactions, not user-rebindable commands) and `BrowserPanel`'s CDP key forwarding.
 
@@ -1018,7 +1022,7 @@ their label into a message). "Add to chat" travels the app-wide mitt bus
 (`chat:file-mention` with the session id) from the left sidebar to the chat page,
 which relays it to the composer it owns; the agent learns the convention from a
 stable `## File References` block in the system prompt. The sidebar's Working directory body stacks TWO collapsible sections —
-File tree and the read-only **Git Graph** (`GET /git/graph`,
+File tree and the read-only **Shadow Git Graph** (`GET /git/graph`,
 `server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
 bounds the page size, the served text and the git timeout): one
 `git log --all --date-order` page (newest first, `limit`/`skip`, one extra commit
@@ -1030,7 +1034,7 @@ repository (or a host without git) answers `available: false` with a reason
 instead of an error, so the panel renders its own empty state. `GitGraphPanel.vue`
 lays the commits into lanes and draws one SVG per row (merges and HEAD get their
 own node shapes), and it is the client's only consumer of that route. The two
-sidebar section headers (File tree / Git Graph) share one row.
+sidebar section headers (File tree / Shadow Git Graph) share one row.
 The panel is READ-ONLY: the row's context menu offers Copy hash / Copy subject
 (the reset / checkout routes and the branch switcher were removed — shadow
 checkpoints are an internal write snapshot, not a user-facing rollback surface),

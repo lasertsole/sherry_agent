@@ -2,16 +2,20 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_FLOATING_ANCHOR,
   FLOATING_ANCHORS,
+  FLOATING_COLLAPSED_PILL_OFFSET_PX,
   FLOATING_DRAG_CLICK_THRESHOLD_PX,
   FLOATING_MARGIN_PX,
   FLOATING_RESIZE_HEIGHT_MIN_PX,
   FLOATING_RESIZE_WIDTH_MAX_PX,
   FLOATING_RESIZE_WIDTH_MIN_PX,
   FLOATING_WIDTH_MAX_PX,
+  TITLEBAR_HEIGHT_PX,
   clampCollapsedHeight,
+  clampCollapsedPosition,
   clampFloatingPosition,
   clampFloatingSize,
   distributeSideExtra,
+  floatingSlotForViewport,
   isFloatingAvailable,
   parseFloatingAnchor,
   resolveFloatingPosition,
@@ -222,5 +226,67 @@ describe('distributeSideExtra', () => {
   it('keeps the margin constant', () => {
     expect(FLOATING_MARGIN_PX).toBe(16);
     expect(FLOATING_DRAG_CLICK_THRESHOLD_PX).toBe(4);
+  });
+});
+
+describe('floatingSlotForViewport', () => {
+  it('reserves the custom title bar at the top', () => {
+    expect(TITLEBAR_HEIGHT_PX).toBe(36);
+    expect(floatingSlotForViewport(1280, 720)).toEqual({ left: 0, top: 36, width: 1280, height: 684 });
+  });
+
+  it('uses the whole viewport when the Web build draws no bar', () => {
+    expect(floatingSlotForViewport(1280, 720, 0)).toEqual({ left: 0, top: 0, width: 1280, height: 720 });
+  });
+
+  it('never produces a negative box', () => {
+    expect(floatingSlotForViewport(0, 0)).toEqual({ left: 0, top: 0, width: 0, height: 0 });
+    expect(floatingSlotForViewport(800, 20, 36)).toEqual({ left: 0, top: 20, width: 800, height: 0 });
+  });
+});
+
+describe('titlebar clearance', () => {
+  const slot = floatingSlotForViewport(1280, 720);
+  const size = resolveFloatingSize(slot);
+
+  it('derives the size from the space below the bar', () => {
+    expect(size).toEqual({ width: 576, height: 534 });
+  });
+
+  it('keeps every top anchor a margin below the bar', () => {
+    expect(resolveFloatingPosition('top-left', slot, size).top).toBe(TITLEBAR_HEIGHT_PX + FLOATING_MARGIN_PX);
+    expect(resolveFloatingPosition('top-center', slot, size).top).toBe(52);
+    expect(resolveFloatingPosition('top-right', slot, size).top).toBe(52);
+  });
+
+  it('cannot be dragged over the bar', () => {
+    expect(clampFloatingPosition({ left: 0, top: -100 }, slot, size).top).toBe(TITLEBAR_HEIGHT_PX);
+  });
+
+  it('keeps the bottom anchors inside the viewport', () => {
+    expect(resolveFloatingPosition('bottom-left', slot, size).top + size.height).toBe(720 - FLOATING_MARGIN_PX);
+  });
+});
+
+describe('clampCollapsedPosition', () => {
+  it('leaves room for the pill above the input-only bar', () => {
+    const slot = floatingSlotForViewport(1280, 720);
+    const bar = { width: 576, height: 160 };
+    expect(FLOATING_COLLAPSED_PILL_OFFSET_PX).toBe(32);
+    expect(clampCollapsedPosition({ left: 100, top: 0 }, slot, bar)).toEqual({
+      left: 100,
+      top: TITLEBAR_HEIGHT_PX + FLOATING_COLLAPSED_PILL_OFFSET_PX
+    });
+  });
+
+  it('keeps a bar that already clears the pill where it is', () => {
+    const slot = floatingSlotForViewport(1280, 720);
+    const bar = { width: 576, height: 160 };
+    expect(clampCollapsedPosition({ left: 100, top: 500 }, slot, bar)).toEqual({ left: 100, top: 500 });
+  });
+
+  it('prefers a visible bar when the slot is too short for the pill', () => {
+    const slot = { left: 0, top: 36, width: 800, height: 170 };
+    expect(clampCollapsedPosition({ left: 0, top: 0 }, slot, { width: 576, height: 160 }).top).toBe(46);
   });
 });

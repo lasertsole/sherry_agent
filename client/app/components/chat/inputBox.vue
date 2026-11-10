@@ -19,8 +19,8 @@
       @keydown.stop="onComposerKeydown"></div>
 
     <div class="sendActions">
-      <!-- Discoverable entry for the hidden trigger characters: opens the same
-          skill/command pickers as `$` and `/`, or the sidebar file tree. -->
+      <!-- Discoverable entry for everything the composer can attach or insert:
+          the media/file pickers and the same skill/command pickers as `$` / `/`. -->
       <Button
         v-if="!disabled"
         icon="pi pi-plus"
@@ -30,9 +30,61 @@
         severity="secondary"
         :aria-label="t('chatInput.insertTrigger')"
         :title="t('chatInput.insertTrigger')"
-        @click="toggleInsertMenu" />
+        v-debounce:click.300="toggleInsertMenu" />
       <Popover ref="insertMenuRef">
         <div class="insert-menu">
+          <!-- Media uploads (merged from the toolbar's former MediaMenu + the
+               generic file attachment): one entry point for everything the + can
+               attach, above the `$` / `/` shortcut entries. Hidden on surfaces
+               without an attachment pipeline (the side chat keeps only the file
+               reference + trigger shortcuts). -->
+          <template v-if="mediaUploads">
+            <button
+              type="button"
+              class="insert-item"
+              :aria-label="t('chatInput.uploadImage')"
+              @click="uploadImageFromMenu">
+              <span
+                class="pi pi-image"
+                aria-hidden="true" />
+              <span>{{ t('chatInput.uploadImage') }}</span>
+            </button>
+            <button
+              type="button"
+              class="insert-item"
+              :aria-label="t('chatInput.uploadAudio')"
+              @click="uploadAudioFromMenu">
+              <span
+                class="pi pi-volume-up"
+                aria-hidden="true" />
+              <span>{{ t('chatInput.uploadAudio') }}</span>
+            </button>
+            <button
+              type="button"
+              class="insert-item"
+              :aria-label="t('chatInput.uploadVideo')"
+              @click="uploadVideoFromMenu">
+              <span
+                class="pi pi-video"
+                aria-hidden="true" />
+              <span>{{ t('chatInput.uploadVideo') }}</span>
+            </button>
+            <div
+              class="insert-menu-divider"
+              role="separator"></div>
+          </template>
+          <!-- Files: the OS picker (ZCode's hidden-input pattern), not the
+               left-sidebar tree. Typing `@` still opens the mention picker. -->
+          <button
+            type="button"
+            class="insert-item"
+            :aria-label="t('chatInput.uploadFile')"
+            @click="openFilesFromMenu">
+            <span
+              class="pi pi-paperclip"
+              aria-hidden="true" />
+            <span>{{ t('chatInput.uploadFile') }}</span>
+          </button>
           <button
             type="button"
             class="insert-item"
@@ -48,14 +100,6 @@
             <span class="pi pi-slash" />
             <span>{{ t('chatInput.commandShortcut') }}</span>
             <code>/</code>
-          </button>
-          <button
-            type="button"
-            class="insert-item"
-            @click="openFilesFromMenu">
-            <span class="pi pi-folder" />
-            <span>{{ t('chatInput.fileShortcut') }}</span>
-            <code>@</code>
           </button>
         </div>
       </Popover>
@@ -94,7 +138,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, watch, type ShallowRef } from 'vue';
+import { computed, nextTick, onMounted, watch, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
 // Type-only: the mention helpers themselves are auto-imported composable
@@ -110,7 +154,8 @@ const props = withDefaults(defineProps<Props>(), {
   sending: false,
   disabled: false,
   disabledText: '',
-  sessionId: ''
+  sessionId: '',
+  mediaUploads: true
 });
 
 interface Props {
@@ -121,6 +166,12 @@ interface Props {
   disabledText?: string;
   /** Current session, used for workspace-scoped custom commands. */
   sessionId?: string;
+  /**
+   * Whether the + menu offers the image / audio / video uploads. Off for
+   * surfaces without a pending-media tray (the side chat): the entries would
+   * emit into nothing.
+   */
+  mediaUploads?: boolean;
 }
 
 const emit = defineEmits<{
@@ -128,19 +179,27 @@ const emit = defineEmits<{
   (e: 'send', text: string): void;
   /** Stop the current AI reply generation */
   (e: 'stop'): void;
+  /** The + menu's upload entries: the page owns the hidden inputs and pickers. */
+  (e: 'uploadImage'): void;
+  (e: 'uploadAudio'): void;
+  (e: 'uploadVideo'): void;
+  /** Generic file attachment (the + menu's "add file" entry). */
+  (e: 'uploadFile'): void;
 }>();
 
 /** Input area DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
 
 /** Insert (+ button) popover, and the `$`/`/` candidate panel it can open. */
-const insertMenuRef = useTemplateRef<{ toggle?: (event: Event) => void; hide?: () => void }>('insertMenuRef');
+const insertMenuRef = useTemplateRef<{
+  toggle?: (event: Event, target?: HTMLElement) => void;
+  hide?: () => void;
+}>('insertMenuRef');
 const triggerPanelRef = useTemplateRef<{
   move: (delta: number) => void;
   selectActive: () => void;
   close: () => void;
 }>('triggerPanelRef');
-const ui = useUiStore();
 
 /** `$` / `/` picker state + insertion (the + menu opens the same two pickers). */
 const { triggerKind, triggerQuery, triggerAnchor, openTrigger, closeTrigger, syncTriggerFromCaret, onTriggerSelect } =
@@ -231,25 +290,51 @@ const { handleKeyArrowUp, handleKeyArrowDown, handleKeyEscape, recordQuestion, c
 });
 
 function toggleInsertMenu(event: Event): void {
-  insertMenuRef.value?.toggle?.(event);
+  // The click arrives through v-debounce, i.e. AFTER dispatch: `currentTarget`
+  // is already null, so pass the persistent `target` explicitly or PrimeVue
+  // would have nothing to anchor the popup to.
+  insertMenuRef.value?.toggle?.(event, (event.target as HTMLElement | null) ?? undefined);
 }
 
-function openSkillsFromMenu(): void {
+/**
+ * Close the + menu, then (once its dismiss animation/overlay is gone) open the
+ * matching picker. The ordering matters: opening the picker from inside the
+ * click that hides the Popover used to race the overlay, which swallowed the
+ * panel's first click — hide first, await one tick, then open.
+ */
+async function closeMenuAndOpenTrigger(kind: 'skill' | 'slash'): Promise<void> {
   insertMenuRef.value?.hide?.();
-  openTrigger('skill');
+  await nextTick();
+  openTrigger(kind);
 }
 
-function openCommandsFromMenu(): void {
+function uploadImageFromMenu(): void {
   insertMenuRef.value?.hide?.();
-  openTrigger('slash');
+  emit('uploadImage');
 }
 
-/** Files keep their existing left-sidebar tree; the + entry reveals it. */
+function uploadAudioFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  emit('uploadAudio');
+}
+
+function uploadVideoFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  emit('uploadVideo');
+}
+
+async function openSkillsFromMenu(): Promise<void> {
+  await closeMenuAndOpenTrigger('skill');
+}
+
+async function openCommandsFromMenu(): Promise<void> {
+  await closeMenuAndOpenTrigger('slash');
+}
+
+/** Files: open the OS file picker (ZCode's hidden-input pattern), not the sidebar tree. */
 function openFilesFromMenu(): void {
   insertMenuRef.value?.hide?.();
-  ui.sidebarBody = 'files';
-  ui.filesSectionOpen = true;
-  ui.sidebarCollapsed = false;
+  emit('uploadFile');
 }
 
 /** Input callback: strip contenteditable markup, keeping only plain text for validation
@@ -563,9 +648,22 @@ defineExpose({
 :global(.insert-menu .insert-item code) {
   margin-left: auto;
   border-radius: 0.25rem;
-  background: var(--p-surface-100, #f3f4f6);
+  /* Follow the item's own text colour instead of a fixed surface tint: the
+     surface-100 variable stayed light inside the teleported Popover body in dark
+     mode, which read as a white box next to the dark menu. */
+  background: color-mix(in srgb, currentColor 12%, transparent);
   padding: 0 0.3rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
+  /* Let the shortcut tag recede behind the entry's label. */
+  opacity: 0.7;
+}
+
+/* Separates the attachment group (image / audio / video / file) from the
+   trigger shortcuts ($ / /). */
+:global(.insert-menu .insert-menu-divider) {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--gray-light, #eef0f3);
 }
 </style>

@@ -7,8 +7,18 @@
  * feeds a rect in here; every anchor, clamp and size is derived from it, so the
  * floating position can be unit-tested without a browser.
  *
+ * The slot is the shell's USABLE content rect: on the desktop build it starts
+ * below the custom title bar (`floatingSlotForViewport` derives it), so every
+ * clamp, anchor and size below keeps the window clear of that bar without the
+ * geometry functions knowing about the chrome.
+ *
  * @module common/floating-window
  */
+
+import { TITLEBAR_HEIGHT } from './titlebar';
+
+/** The title bar height, re-exported under the name the geometry documents use. */
+export { TITLEBAR_HEIGHT as TITLEBAR_HEIGHT_PX };
 
 /** One of the nine snap positions a released float settles into. */
 export type FloatingAnchor =
@@ -66,6 +76,37 @@ export const DEFAULT_FLOATING_ANCHOR: FloatingAnchor = 'center';
 
 /** Gap kept between the float and the slot's edges. */
 export const FLOATING_MARGIN_PX = 16;
+
+/**
+ * How far the input-only bar's expand pill hangs above the bar (`-top-8`: a
+ * 28px pill plus a 4px gap). The collapsed bar's top is kept this far below the
+ * slot's top edge, so the pill never slides under the title bar.
+ */
+export const FLOATING_COLLAPSED_PILL_OFFSET_PX = 32;
+
+/**
+ * The slot a floating window lives in: the viewport minus the custom title bar.
+ *
+ * The title bar is `position: fixed` chrome above the shell; starting the slot
+ * at its bottom edge makes the existing clamps (`top >= slot.top`, size within
+ * `slot.height`) enforce the clearance everywhere — drag, resize, anchors and
+ * the input-only bar. The Web build draws no bar and passes `0`.
+ *
+ * @param viewportWidth Window width in px.
+ * @param viewportHeight Window height in px.
+ * @param titlebarHeight Height reserved at the top (0 in the Web build).
+ * @returns The usable content rect, in viewport coordinates.
+ */
+export function floatingSlotForViewport(
+  viewportWidth: number,
+  viewportHeight: number,
+  titlebarHeight: number = TITLEBAR_HEIGHT
+): FloatingRect {
+  const width = Math.max(0, Math.round(viewportWidth));
+  const height = Math.max(0, Math.round(viewportHeight));
+  const top = Math.max(0, Math.min(Math.round(titlebarHeight), height));
+  return { left: 0, top, width, height: height - top };
+}
 
 /** Preferred width as a share of the slot. */
 export const FLOATING_WIDTH_RATIO = 0.45;
@@ -196,6 +237,35 @@ export function clampFloatingPosition(
   return {
     left: Math.max(slot.left, Math.min(position.left, maxLeft)),
     top: Math.max(slot.top, Math.min(position.top, maxTop))
+  };
+}
+
+/**
+ * Keep the INPUT-ONLY bar inside the slot and clear of the title bar's bottom
+ * edge, leaving room for the expand pill that hangs above it. Used whenever the
+ * bar's top is chosen explicitly (a collapse keeps the composer's bottom, a
+ * persisted top anchor centers it), so the pill can never be hidden behind the
+ * fixed title bar. The slot stays the final bound: on a slot too short for the
+ * pill, a visible bar wins over the clearance.
+ *
+ * @param position Requested top-left corner of the bar.
+ * @param slot The shell's usable content rect.
+ * @param size The bar's size (width plus the measured composer height).
+ * @returns The bar's corner, with the pill's clearance applied when it fits.
+ */
+export function clampCollapsedPosition(
+  position: FloatingPosition,
+  slot: FloatingRect,
+  size: FloatingSize
+): FloatingPosition {
+  const clamped = clampFloatingPosition(position, slot, size);
+  const maxTop = slot.top + Math.max(0, slot.height - size.height);
+  const pillTop = slot.top + FLOATING_COLLAPSED_PILL_OFFSET_PX;
+  return {
+    left: clamped.left,
+    // The pill's clearance wins only while it still fits in the slot; a slot
+    // too short for it keeps the bar where the plain clamp put it.
+    top: clamped.top >= pillTop ? clamped.top : Math.min(pillTop, maxTop)
   };
 }
 

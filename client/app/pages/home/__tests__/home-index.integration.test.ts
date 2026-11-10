@@ -12,8 +12,10 @@ import {
   resolveFloatingSize,
   resolveFloatingPosition,
   resolveNearestFloatingAnchor,
-  clampFloatingPosition
+  clampFloatingPosition,
+  floatingSlotForViewport
 } from '@/common/floating-window';
+import { TITLEBAR_HEIGHT } from '@/common/titlebar';
 import type { SubagentRun } from '@/composables/bridge';
 
 // This mock is scoped to this file: only here does the mounted home page graph
@@ -890,6 +892,113 @@ describe('home/index.vue — floating conversation column', () => {
     } finally {
       right.restore();
       ui.restore();
+    }
+  });
+});
+
+describe('home/index.vue — title bar layout', () => {
+  beforeEach(() => {
+    const store = useChatFloatStore();
+    store.dock();
+    store.setAnchor('center');
+    store.setSize({ width: 0, height: 0 });
+    store.setCollapsed(false);
+  });
+
+  /**
+   * The toolbar's float/restore toggle (its title flips with the state).
+   * @param wrapper The mounted home shell.
+   * @returns The toggle button, if the viewport offers the float.
+   */
+  const floatButton = (wrapper: ReturnType<typeof mountHome>) =>
+    wrapper.findAll('.btn').find(b => ['浮动显示对话', '恢复对话栏'].includes(b.attributes('title') ?? ''));
+
+  it('reserves no top inset in the Web build (the browser owns the chrome)', () => {
+    const wrapper = mountHome();
+    // padding-top is always rendered as a number so the layout does not switch
+    // between "absent" and "36px" depending on the runtime.
+    expect(wrapper.get('[data-test="content-shell"]').attributes('style') ?? '').toContain('padding-top: 0px');
+    // The left column stays full height: no top padding on it.
+    expect(wrapper.get('[data-test="session-sidebar"]').attributes('style') ?? '').not.toContain('padding-top');
+    wrapper.unmount();
+  });
+
+  it('pushes the middle and right columns below the desktop title bar', () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      const wrapper = mountHome();
+      const shell = wrapper.get('[data-test="content-shell"]');
+      expect(shell.attributes('style') ?? '').toContain(`padding-top: ${TITLEBAR_HEIGHT}px`);
+
+      // The conversation and the right sidebar share the padded wrapper — the
+      // title bar spans exactly those two columns.
+      expect(shell.find('[data-test="chat-column"]').exists()).toBe(true);
+      expect(shell.find('aside').exists()).toBe(true);
+      // The left column is a full-height sibling, never padded.
+      expect(wrapper.get('[data-test="session-sidebar"]').attributes('style') ?? '').not.toContain('padding-top');
+      wrapper.unmount();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('starts the maximized right panel below the desktop title bar', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    const right = stubRightSidebar({ collapsed: false, width: 420, maximized: true });
+    try {
+      const wrapper = mountHome();
+      await nextTick();
+      expect(wrapper.get('aside').attributes('style') ?? '').toContain(`top: ${TITLEBAR_HEIGHT}px`);
+      wrapper.unmount();
+    } finally {
+      right.restore();
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('keeps the floating window (and its input-only pill) below the title bar', async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { value: 1440, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 900, configurable: true });
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      const wrapper = mountHome();
+      await floatButton(wrapper)!.trigger('click');
+      await nextTick();
+
+      // The float's slot starts at the title bar's bottom edge, so the anchor
+      // position and the size leave that strip free.
+      const slot = floatingSlotForViewport(1440, 900, TITLEBAR_HEIGHT);
+      const size = resolveFloatingSize(slot);
+      const position = resolveFloatingPosition('center', slot, size);
+      expect(position.top).toBeGreaterThanOrEqual(TITLEBAR_HEIGHT);
+      const style = wrapper.get('[data-test="chat-column"]').attributes('style') ?? '';
+      expect(style).toContain(`top: ${position.top}px`);
+      expect(style).toContain(`height: ${size.height}px`);
+      wrapper.unmount();
+
+      // A persisted input-only bar anchored to the top is pushed down far
+      // enough for its expand pill (which hangs 32px above the bar) to stay
+      // visible under the title bar.
+      const store = useChatFloatStore();
+      store.open();
+      store.setAnchor('top-center');
+      store.setCollapsed(true);
+      const collapsed = mountHome();
+      await nextTick();
+      const collapsedStyle = collapsed.get('[data-test="chat-column"]').attributes('style') ?? '';
+      const top = Number(/top: (\d+)px/.exec(collapsedStyle)?.[1]);
+      expect(top).toBeGreaterThanOrEqual(TITLEBAR_HEIGHT + 32);
+      expect(collapsed.find('[data-test="chat-float-expand"]').exists()).toBe(true);
+      collapsed.unmount();
+      store.dock();
+      store.setCollapsed(false);
+      store.setAnchor('center');
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: originalHeight, configurable: true });
     }
   });
 });
