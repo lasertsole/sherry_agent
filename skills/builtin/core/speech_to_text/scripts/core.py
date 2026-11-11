@@ -7,16 +7,22 @@ project_root: Path = current_file.parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-import os  # noqa: E402
-import subprocess  # noqa: E402
 import time  # noqa: E402
 
 import requests  # noqa: E402
 from loguru import logger  # noqa: E402
 from pydantic import validate_call  # noqa: E402
 
-from config import INTERPRETER_PATH, ROOT_DIR  # noqa: E402
+from config import APP_HOME  # noqa: E402
 from config.features import SKILLS_TOOLING  # noqa: E402
+from models.daemon.base import (  # noqa: E402
+    DaemonSpec,
+    is_ready,
+    kill,
+    pid_alive,
+    recorded_pid,
+    spawn,
+)
 
 # The persistent STT daemon holds the FunASR model in memory.
 DAEMON_HOST: str = SKILLS_TOOLING["speech_daemon_host"]
@@ -34,73 +40,46 @@ _HTTP_TIMEOUT: float = SKILLS_TOOLING["speech_http_timeout_seconds"]
 
 # Where ``main`` lives, so the daemon can be (re)spawned from anywhere.
 _IMPORT_FN = "skills.builtin.core.speech_to_text.scripts.server"
-# INTERPRETER_PATH is the interpreter actually running this process
-# (config/path.py) — it exists by definition on every platform, so
-# the old exists()-probe fallback (which pointed at a file that never existed
-# on Windows — venvs ship python.exe — nor on POSIX — bin/ layout) is gone.
-_INTERPRETER = Path(INTERPRETER_PATH).as_posix()
 
-_PID_PATH: Path = ROOT_DIR / ".stt_daemon.pid"
+# The pid file lives under APP_HOME (writable in a packaged desktop build; the
+# code root is read-only there). A checkout keeps the historical location.
+_STT_SPEC = DaemonSpec(
+    name="STT",
+    host=DAEMON_HOST,
+    port=DAEMON_PORT,
+    pid_path=APP_HOME / ".stt_daemon.pid",
+    import_fn=_IMPORT_FN,
+    ready_wait_s=_READY_WAIT,
+    liveness_timeout_s=_LIVENESS_TIMEOUT,
+)
+_PID_PATH: Path = _STT_SPEC.pid_path
 
 
 def _daemon_alive() -> bool:
     """Return True if the STT daemon is reachable."""
-    try:
-        r = requests.get(f"{_DAEMON_BASE}/healthy", timeout=_LIVENESS_TIMEOUT)
-        return r.status_code == 200 and r.json().get("ready") is True
-    except Exception:  # noqa: BLE001
-        return False
+    return is_ready(_STT_SPEC)
 
 
 def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return pid_alive(pid)
 
 
 def _recorded_daemon_pid() -> int | None:
-    if not _PID_PATH.exists():
-        return None
-    try:
-        return int(_PID_PATH.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
+    return recorded_pid(_STT_SPEC)
 
 
 def _spawn_daemon() -> None:
     """Start the detached STT daemon if it isn't already running.
 
-    Windows: ``DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`` keeps the daemon
-    alive after this subprocess exits, so model loading survives the terminal
-    tool's 30s timeout.
+    The detached-process flags and the interpreter selection live in
+    :mod:`models.daemon.base`, shared with the local model daemons.
     """
-    recorded = _recorded_daemon_pid()
-    if recorded is not None and _pid_alive(recorded):
-        logger.info(f"STT daemon already running (pid={recorded}).")
-        return
-    cmd: list[str] = [_INTERPRETER, "-c", f"from {_IMPORT_FN} import main; main()"]
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    try:
-        # Redirect output/stderr so no console window is spawned; DETACHED_PROCESS
-        # keeps the daemon alive after this subprocess exits, so model loading
-        # survives the terminal tool's 30s timeout.
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT_DIR),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-        )
-        _PID_PATH.write_text(str(proc.pid), encoding="utf-8")
-        logger.info(f"STT daemon spawning (pid={proc.pid}).")
-    except Exception as e:  # noqa: BLE001
-        logger.exception(f"STT daemon spawn failed: {e}")
+    spawn(_STT_SPEC)
+
+
+def _kill_daemon() -> None:
+    """Terminate the recorded STT daemon (public alias below)."""
+    kill(_STT_SPEC)
 
 
 # Public aliases for server-side reuse (server/service/audio_transcribe_service.py):
@@ -109,6 +88,7 @@ def _spawn_daemon() -> None:
 # detached-process semantics stay defined in exactly one place.
 daemon_alive = _daemon_alive
 spawn_daemon = _spawn_daemon
+kill_daemon = _kill_daemon
 DAEMON_BASE = _DAEMON_BASE
 READY_WAIT = _READY_WAIT
 HTTP_TIMEOUT = _HTTP_TIMEOUT

@@ -42,12 +42,13 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (89 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (90 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
 | `models/`                            | LLM/model wrappers (main, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
+| `models/daemon/`                     | Shared lifecycle for the local GGUF daemons (embed / reranker / local chat / STT): pid file, detached spawn, readiness, kill, idle watchdog                              | `models/daemon/base.py`                              |
 | `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
 | `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
 | `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
@@ -794,6 +795,66 @@ attempt surfaces the real error. An UNCONFIGURED mic stays clickable too — a
 disabled button cannot speak — so the click toasts `chatInput.voiceUnavailable`
 and no recording starts; the tooltip carries the same text. Insertion failures
 never touch the box's content; `chatInput.voice*` keys cover the four languages.
+
+## Local Model Daemons (`models/daemon/base.py`)
+
+The local GGUF models live in detached child processes, not in the orchestrator.
+`models/daemon/base.py` owns the ONE lifecycle the four daemons share:
+`DaemonSpec` (host/port/pid file/import target/budgets), `is_ready` (strict:
+`/healthy` must answer `{"ready": true}`), `spawn` (detached, pid file, log file,
+no duplicate when a recorded pid is alive), `wait_until_ready`, `ensure_ready`
+(returns `ReadyState.READY | WARMING | UNAVAILABLE`), `kill` (SIGTERM → SIGKILL,
+reaps its own child) and `IdleWatchdog` (the daemon exits itself after its idle
+window). The STT daemon was refactored onto it (same `.stt_daemon.pid` location
+in a checkout, now under `APP_HOME` so a packaged build can write it); embed,
+reranker and local chat are built on it.
+
+Spawn is packaging-aware: a checkout runs `python -c "from <module> import main;
+main()"`; a frozen build re-executes the packaged backend with
+`--sherry-daemon <module>` and `packaging/backend_entry.py` dispatches to that
+module's `main()` BEFORE booting the server (a daemon child must not initialise
+logging/event-loop patching/LangSmith). `--sherry-home` and `--sherry-desktop`
+are propagated so the child resolves the same writable home.
+
+- **Embed** (`models/embed_model/text/daemon.py`, port 9012,
+  `.embed_daemon.pid`): `GET /healthy`, `POST /embeddings {input: list[str]}`
+  → `{"data":[{"index","embedding"}]}`. One warm `Llama(embedding=True)`,
+  inference serialised by a lock. The client (`_LocalEmbeddingBackend`) keeps
+  the L2 normalisation, sends the same batches the call sites already build
+  (`memory_embeddings` 32/batch, the indexer 64/batch), retries once after a
+  daemon error (an idle exit is invisible), and falls back to the historical
+  in-process load/close only when no daemon process can be STARTED — a WARMING
+  daemon is a retryable error, never a reason to load a second copy.
+- **Reranker** (`models/reranker_model/daemon.py`, port 9013,
+  `.reranker_daemon.pid`): `POST /rerank|/filter|/predict`; one warm
+  `CrossEncoderGGUF`. `_LocalGgufBackend` sends the calls and keeps the
+  in-process loader for `RERANKER_DAEMON_ENABLED=false` / unavailable spawns.
+- **Local chat** (`models/LLMs/local_daemon/server.py`, port 9014,
+  `.llm_daemon.pid`): `POST /v1/chat/completions`, a thin wrapper over
+  `Llama.create_chat_completion`. The local path's tool calls and structured
+  output are PROMPT-driven (`LocalToolBinder` / instructor), so the bridge is a
+  client shim (`client.py`) implementing exactly
+  `create_chat_completion` + `create_chat_completion_openai_v1`, not a new
+  LangChain model. When the daemon cannot be started — or is still warming past
+  its budget — `_LocalAuxiliaryChatModel` falls back to in-process `Llama`.
+- Config is `LOCAL_DAEMONS` (`config/features/infra_side/local_daemons.py`);
+  every value has an env override (`EMBEDDING_DAEMON_PORT`,
+  `*_DAEMON_IDLE_TIMEOUT_S`, `AUXILIARY_LLM_N_CTX`, `*_DAEMON_ENABLED`, …).
+  `AUXILIARY_LLM_N_CTX` defaults to the historical 40 960; lowering it also caps
+  the local `max_tokens` at half the window so a smaller KV cache cannot be
+  paired with an oversized completion request.
+- Measured on this host (bge-m3 q8_0): daemon first call 3.8 s (spawn + load),
+  warm call 0.49 s vs 2.88 s in-process; main-process RSS during embedding
+  46.5→47.3 MB while the daemon held 1 045 MB; cosine similarity to the
+  in-process vectors 1.0. Reranker (bge-reranker-v2-m3 Q8_0): first call 32.8 s
+  (spawn + 606 MB GGUF load), warm rank 1.33 s for 4 documents vs 31.5 s
+  in-process (reload included), main RSS 46.6→46.9 MB / daemon 898 MB, scores
+  and order identical. Direction 3 (lazy heavy imports) was skipped by its
+  own kill criterion: none of `torch` / `transformers` / `cv2` / `mineru_vl_utils`
+  / `leidenalg` / `snkv` / `tree_sitter` / `gguf` / `llama_cpp` is in the boot
+  import set. The vision LLM daemon is NOT built: ITTT/VTTT weights are absent
+  in this deployment and the multimodal request path would need a second bridge.
+  Wiki: `wiki/local-model-daemons/`.
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 
@@ -2525,8 +2586,8 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config/features/agent_side/` | 59 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, delegation_pressure, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
-| `config/features/infra_side/` | 30 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 89 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/infra_side/` | 31 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, local_daemons, ...)                         |
+| `config/features/__init__.py` | Aggregator — all 90 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._; LangSmith moved to `.network` / `config/network_settings.py`)                                                                                                                                          |

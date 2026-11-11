@@ -522,3 +522,57 @@ class TestWebSearchBuilder:
         built = build_web_search_config({"WEB_SEARCH_DEFAULT_BACKEND": "google"})
 
         assert built["default_backend"] == "tavily"
+
+
+class TestLocalDaemonsBuilder:
+    """``LOCAL_DAEMONS`` is env-sourced; verify defaults and overrides.
+
+    Excluded from ``CASES`` for the same reason as ``GATEWAY`` / ``WEB_SEARCH``:
+    a developer's environment may legitimately override a port or budget, so the
+    contract is pinned through the injected-env builder instead of the process
+    snapshot.
+    """
+
+    def test_defaults_without_env(self) -> None:
+        built = fs.build_local_daemons({})
+
+        assert built["host"] == "127.0.0.1"
+        assert built["embed_port"] == 9012
+        assert built["reranker_port"] == 9013
+        assert built["auxiliary_port"] == 9014
+        assert built["embed_idle_timeout_s"] == 600.0
+        assert built["auxiliary_n_ctx"] == 40960
+        assert built["embed_daemon_enabled"] is True
+        assert built["auxiliary_daemon_enabled"] is True
+        assert built["max_batch_inputs"] == 256
+
+    def test_env_overrides(self) -> None:
+        built = fs.build_local_daemons(
+            {
+                "EMBEDDING_DAEMON_PORT": "19012",
+                "AUXILIARY_LLM_N_CTX": "8192",
+                "EMBEDDING_DAEMON_IDLE_TIMEOUT_S": "60",
+                "AUXILIARY_LLM_DAEMON_ENABLED": "false",
+            }
+        )
+
+        assert built["embed_port"] == 19012
+        assert built["auxiliary_n_ctx"] == 8192
+        assert built["embed_idle_timeout_s"] == 60.0
+        assert built["auxiliary_daemon_enabled"] is False
+
+    def test_invalid_values_fall_back_to_defaults(self) -> None:
+        built = fs.build_local_daemons(
+            {
+                "EMBEDDING_DAEMON_PORT": "not-a-port",
+                "AUXILIARY_LLM_N_CTX": "1024",
+                "EMBEDDING_DAEMON_IDLE_TIMEOUT_S": "1",
+            }
+        )
+
+        assert built["embed_port"] == 9012
+        assert built["auxiliary_n_ctx"] == 40960  # below the 2048 floor
+        assert built["embed_idle_timeout_s"] == 600.0  # below the 5 s floor
+
+    def test_instance_carries_every_declared_key(self) -> None:
+        assert set(fs.LOCAL_DAEMONS) == set(fs.LocalDaemonsConfig.__annotations__)
