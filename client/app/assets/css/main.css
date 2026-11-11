@@ -322,3 +322,33 @@ html.dark .shiki code span {
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+/* Markdown images: click/keyboard open the gallery lightbox, with a bounded
+   shimmer while loading and a muted fallback when the source is broken. */
+.markdown-image {
+  cursor: zoom-in;
+}
+.markdown-image:focus-visible {
+  outline: 2px solid var(--color-theme-main, #6366f1);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.markdown-image-loading {
+  min-width: 2rem;
+  min-height: 2rem;
+  background: linear-gradient(90deg, rgb(156 163 175 / 20%), rgb(156 163 175 / 45%), rgb(156 163 175 / 20%));
+  background-size: 200% 100%;
+  animation: markdown-image-shimmer 1.2s linear infinite;
+}
+.markdown-image-error {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+@keyframes markdown-image-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

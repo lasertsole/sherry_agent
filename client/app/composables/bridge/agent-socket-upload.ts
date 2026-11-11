@@ -8,7 +8,8 @@
  * @module bridge/agent-socket-upload
  */
 import type { ChatRequest } from './chat-types';
-import { KIND_LABEL, uploadBase64ToUrls, type UploadMediaKind } from './upload';
+import { KIND_LABEL, parseBase64Media, type UploadMediaKind } from './upload';
+import { uploadWithCache } from './upload-cache';
 
 /** A resolved media-URL set attached to one outgoing payload. */
 export interface MediaUrls {
@@ -31,16 +32,26 @@ export function requestHasMedia(request: ChatRequest): boolean {
 
 /**
  * Upload every media kind of a request and return the URL lists.
+ *
+ * Each base64 entry is decoded and routed through the chunked uploader with the
+ * short-TTL content-hash cache; a single-chunk payload stays on the whole-body
+ * endpoint inside `uploadChunked`.
  * @param request
+ * @param sessionId Session that owns the upload
  */
-export async function uploadRequestMedia(request: ChatRequest): Promise<MediaUrls> {
+export async function uploadRequestMedia(request: ChatRequest, sessionId: string): Promise<MediaUrls> {
   const upload = async (kind: UploadMediaKind, list?: string[]): Promise<string[]> => {
     if (!list || list.length === 0) return [];
-    try {
-      return await uploadBase64ToUrls(kind, list);
-    } catch (e) {
-      throw new Error(`${KIND_LABEL[kind]} upload failed: ${e}`, { cause: e });
+    const urls: string[] = [];
+    for (const base64 of list) {
+      const { bytes, contentType } = parseBase64Media(kind, base64);
+      try {
+        urls.push(await uploadWithCache(bytes, kind, sessionId, contentType));
+      } catch (e) {
+        throw new Error(`${KIND_LABEL[kind]} upload failed: ${e}`, { cause: e });
+      }
     }
+    return urls;
   };
   return {
     images: await upload('image', request.image_base64_list),

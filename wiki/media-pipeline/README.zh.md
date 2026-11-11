@@ -23,6 +23,7 @@
   - [存储布局与去重](#-存储布局与去重)
   - [服务与渲染](#-服务与渲染)
   - [压缩期复用](#-压缩期复用)
+- [分块上传：`/upload/chunk`](#-分块上传uploadchunk)
 - [配置参考](#-配置参考)
 - [测试](#-测试)
 - [限制](#-限制)
@@ -140,6 +141,12 @@ src/<session_id>/artifacts/
 
 压缩卸载内联媒体时，`media_offload` 先用解码后的字节与媒体族别调用 `find_artifact`。命中说明上传路径已存过这份内容，该块直接变成 `[evicted to: <artifact path>]` 指针，不再写第二份；未命中则保留旧的解码 + 写入路径（`SESSIONS_DIR/<session_id>/media/`），也覆盖音频、视频字节等非流水线媒体。
 
+## 📤 分块上传：`/upload/chunk`
+
+浏览器与 Tauri 外壳通过 `bridge/upload-chunked.ts` 发送附件。不超过 `CHUNK_SIZE`（512 KiB）的载荷继续走整包 `/images|/audio|/video/upload`；更大的载荷被切成顺序的 `POST /upload/chunk`（session/upload id、序号、总数、内容类型、原始分块体），最后调用一次 `POST /upload/complete`。
+
+服务端把分块暂存在 `TEMP_DIR/upload_chunks/<session>/<upload_id>`，校验 id 段、分块范围与单块大小（`413`），随后拼接、计算 SHA-256，并把 `<sha256[:16]><ext>` 写入整包路由使用的同一按类型目录。相同字节复用同一文件与 URL（静态挂载同时服务两条路径）；不完整上传返回 `400` 并保留暂存以便重试，完成的上传删除暂存目录。`bridge/upload-cache.ts` 对载荷做 SHA-256 并在 Dexie（`uploadCache`，schema v7）中缓存 URL，TTL 为 `read_cache_ttl_ms`（30 秒），窗口内重复发送不再上传；哈希/缓存失败开放，超过 `max_staged_bytes`（64 MiB）时跳过。
+
 ## ⚙️ 配置参考
 
 | 配置项 | 默认值 | 含义 |
@@ -156,6 +163,9 @@ src/<session_id>/artifacts/
 | `history_media_budget_bytes` | `78643200` | 保留的历史图片预算（75 MiB）。 |
 | `preserve_latest_user_media` | `true` | 保护最新真实用户消息的媒体。 |
 | `artifact_store_enabled` | `true` | 使用内容寻址存储；关闭则保留时间戳 `media/` 副本。 |
+| `chunk_size_bytes` | `524288` | 单个 `/upload/chunk` 请求体的最大字节数。 |
+| `max_staged_bytes` | `67108864` | 客户端缓存/哈希预算；更大的载荷跳过缓存直接上传。 |
+| `read_cache_ttl_ms` | `30000` | 已上传 URL 的客户端去重窗口。 |
 
 ## 🧪 测试
 
@@ -166,6 +176,7 @@ src/<session_id>/artifacts/
 - `tests/agent/tools/pub_base/test_artifact_store.py` 与 `tests/server/trigger/http/test_artifacts.py` — 去重、并发、URI 解析、服务、会话作用域。
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 复用与旧卸载路径。
 - `tests/agent/middlewares/test_media_pipeline_e2e.py` — 真实 agent 图：服务端压缩 → artifact 存储 + `/artifacts` → `read_file` 图片/PDF 块 → 历史预算投影。
+- `tests/server/trigger/http/test_upload_chunked.py` 与客户端 `upload-chunked` / `upload-cache` 套件 — 暂存、拼接、内容哈希去重、上限与短 TTL 缓存。
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 附件与 Markdown 引用中的 URI 解析。
 
 ## ⚠️ 限制

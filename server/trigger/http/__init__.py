@@ -5,6 +5,7 @@ import server.trigger.http.media
 import server.trigger.http.artifacts  # noqa: F401  (side-effect route registration)
 import server.trigger.http.workplace
 import server.trigger.http.image
+import server.trigger.http.upload_chunked  # noqa: F401  (side-effect route registration)
 import server.trigger.http.audio
 import server.trigger.http.video
 import server.trigger.http.skills

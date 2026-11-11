@@ -143,7 +143,8 @@
     "continueGeneration": "Continue generating",
     "editMessage": "Edit message",
     "editingMessage": "Editing a sent message — sending re-runs that turn",
-    "forkFromHere": "Branch a new session from this answer"
+    "forkFromHere": "Branch a new session from this answer",
+    "imageZoom": "Open image"
   },
   "chat": {
     "backgroundMessage": "Background task",

@@ -143,7 +143,8 @@
     "continueGeneration": "继续生成",
     "editMessage": "编辑消息",
     "editingMessage": "正在编辑已发送的消息；发送后将重跑该轮",
-    "forkFromHere": "从此回答分叉出新会话"
+    "forkFromHere": "从此回答分叉出新会话",
+    "imageZoom": "查看大图"
   },
   "chat": {
     "backgroundMessage": "后台任务",

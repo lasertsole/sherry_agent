@@ -23,6 +23,7 @@ Source of truth: `pub/func/media/image_compress.py`, `agent/middlewares/media_pi
   - [Store layout and dedupe](#-store-layout-and-dedupe)
   - [Serving and rendering](#-serving-and-rendering)
   - [Compression-time reuse](#-compression-time-reuse)
+- [Chunked Upload: `/upload/chunk`](#-chunked-upload-uploadchunk)
 - [Configuration Reference](#-configuration-reference)
 - [Testing](#-testing)
 - [Limitations](#-limitations)
@@ -140,6 +141,12 @@ The client resolves a `sherry-artifact://` entry through `/artifacts` in `use-ch
 
 When compression offloads inline media, `media_offload` first calls `find_artifact` with the decoded bytes and the media family. A hit means the upload path already stored the payload, so the block becomes an `[evicted to: <artifact path>]` pointer without a second write. A miss keeps the legacy decode-and-store route under `SESSIONS_DIR/<session_id>/media/`, which also covers non-pipeline media such as audio and video bytes.
 
+## 📤 Chunked Upload: `/upload/chunk`
+
+Browsers and the Tauri shell send attachments through `bridge/upload-chunked.ts`. A payload of at most `CHUNK_SIZE` (512 KiB) keeps the whole-body `/images|/audio|/video/upload` route; a larger one is split into sequential `POST /upload/chunk` calls (session/upload ids, index, total, content type, raw chunk body) followed by one `POST /upload/complete`.
+
+The server stages chunks under `TEMP_DIR/upload_chunks/<session>/<upload_id>`, validates the id segments, the chunk range and the per-chunk size (`413`), then concatenates, hashes with SHA-256, and writes `<sha256[:16]><ext>` into the same per-kind directory the whole-body route uses. Identical bytes reuse one file and URL (the static mount serves both routes), an incomplete upload is a `400` that keeps its staging for a retry, and a completed one removes the staging directory. `bridge/upload-cache.ts` hashes the payload and caches its URL in Dexie (`uploadCache`, schema v7) for `read_cache_ttl_ms` (30 s), so a repeated send inside that window does not upload again; hashing/caching is fail-open and skipped above `max_staged_bytes` (64 MiB).
+
 ## ⚙️ Configuration Reference
 
 | Setting | Default | Meaning |
@@ -156,6 +163,9 @@ When compression offloads inline media, `media_offload` first calls `find_artifa
 | `history_media_budget_bytes` | `78643200` | Retained history image budget (75 MiB). |
 | `preserve_latest_user_media` | `true` | Protect the latest real user message's media. |
 | `artifact_store_enabled` | `true` | Use the content-addressed store; off keeps timestamped `media/` copies. |
+| `chunk_size_bytes` | `524288` | Maximum bytes in one `/upload/chunk` body. |
+| `max_staged_bytes` | `67108864` | Client cache/hash budget; larger payloads upload without the cache. |
+| `read_cache_ttl_ms` | `30000` | Client dedupe window for an uploaded URL. |
 
 ## 🧪 Testing
 
@@ -166,6 +176,7 @@ When compression offloads inline media, `media_offload` first calls `find_artifa
 - `tests/agent/tools/pub_base/test_artifact_store.py` and `tests/server/trigger/http/test_artifacts.py` — dedupe, concurrency, URI parsing, serving, session scope.
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact reuse versus the legacy offload path.
 - `tests/agent/middlewares/test_media_pipeline_e2e.py` — real agent graph: server compression → artifact store + `/artifacts` → `read_file` image/PDF blocks → history budget projection.
+- `tests/server/trigger/http/test_upload_chunked.py` and the client `upload-chunked` / `upload-cache` suites — staging, assembly, content-hash dedupe, caps and the short-TTL cache.
 - `client/app/composables/__tests__/use-chat-media.test.ts` — URI resolution in attachments and markdown references.
 
 ## ⚠️ Limitations

@@ -23,6 +23,7 @@
   - [저장 레이아웃과 중복 제거](#-저장-레이아웃과-중복-제거)
   - [제공과 렌더링](#-제공과-렌더링)
   - [압축 시점 재사용](#-압축-시점-재사용)
+- [청크 업로드: `/upload/chunk`](#-청크-업로드-uploadchunk)
 - [설정 참고](#-설정-참고)
 - [테스트](#-테스트)
 - [한계](#-한계)
@@ -140,6 +141,12 @@ src/<session_id>/artifacts/
 
 압축이 인라인 미디어를 오프로드할 때 `media_offload`는 먼저 디코딩한 바이트와 미디어 계열로 `find_artifact`를 호출합니다. 히트하면 업로드 경로가 이미 저장했다는 뜻이므로 블록은 두 번째 쓰기 없이 `[evicted to: <artifact path>]` 포인터가 됩니다. 미스하면 기존 디코딩 + 쓰기 경로(`SESSIONS_DIR/<session_id>/media/`)를 유지하며, 오디오와 비디오 바이트 같은 파이프라인 밖 미디어도 포함합니다.
 
+## 📤 청크 업로드: `/upload/chunk`
+
+브라우저와 Tauri 셸은 `bridge/upload-chunked.ts`를 통해 첨부를 전송합니다. `CHUNK_SIZE`(512 KiB) 이하의 페이로드는 기존 전체 `/images|/audio|/video/upload` 경로를 쓰고, 더 큰 페이로드는 순차적인 `POST /upload/chunk`(session/upload id, index, total, content type, 원본 청크 본문)로 나뉘며 마지막에 `POST /upload/complete`를 한 번 호출합니다.
+
+서버는 청크를 `TEMP_DIR/upload_chunks/<session>/<upload_id>`에 스테이징하고 id 세그먼트, 청크 범위, 청크당 크기(`413`)를 검증한 뒤 연결하고 SHA-256을 계산해 `<sha256[:16]><ext>`를 전체 업로드 경로와 같은 종류별 디렉터리에 씁니다. 동일 바이트는 같은 파일과 URL을 재사용하며(정적 마운트가 두 경로를 모두 제공), 미완료 업로드는 `400`으로 스테이징을 남겨 재시도할 수 있고 완료된 업로드는 스테이징을 삭제합니다. `bridge/upload-cache.ts`는 페이로드를 SHA-256하고 URL을 Dexie(`uploadCache`, schema v7)에 `read_cache_ttl_ms`(30초) 동안 캐시하므로 그 창 안의 재전송은 다시 업로드하지 않습니다. 해시/캐시는 fail-open이며 `max_staged_bytes`(64 MiB)를 넘으면 건너뜁니다.
+
 ## ⚙️ 설정 참고
 
 | 설정 | 기본값 | 의미 |
@@ -156,6 +163,9 @@ src/<session_id>/artifacts/
 | `history_media_budget_bytes` | `78643200` | 유지되는 히스토리 이미지 예산(75 MiB). |
 | `preserve_latest_user_media` | `true` | 최신 실제 사용자 메시지의 미디어 보호. |
 | `artifact_store_enabled` | `true` | 내용 주소 기반 저장소 사용. 끄면 타임스탬프 `media/` 사본. |
+| `chunk_size_bytes` | `524288` | `/upload/chunk` 본문 하나의 최대 바이트. |
+| `max_staged_bytes` | `67108864` | 클라이언트 캐시/해시 예산. 초과하면 캐시 없이 업로드. |
+| `read_cache_ttl_ms` | `30000` | 업로드된 URL의 클라이언트 중복 제거 창. |
 
 ## 🧪 테스트
 
@@ -166,6 +176,7 @@ src/<session_id>/artifacts/
 - `tests/agent/tools/pub_base/test_artifact_store.py`와 `tests/server/trigger/http/test_artifacts.py` — 중복 제거, 동시성, URI 파싱, 제공, 세션 범위.
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 재사용과 기존 오프로드 경로.
 - `tests/agent/middlewares/test_media_pipeline_e2e.py` — 실제 agent 그래프: 서버 압축 → artifact 저장소 + `/artifacts` → `read_file` 이미지/PDF 블록 → 히스토리 예산 투영.
+- `tests/server/trigger/http/test_upload_chunked.py`와 클라이언트 `upload-chunked` / `upload-cache` 스위트 — 스테이징, 조립, 내용 해시 중복 제거, 상한, 짧은 TTL 캐시.
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 첨부와 Markdown 참조의 URI 해석.
 
 ## ⚠️ 한계

@@ -2184,6 +2184,38 @@ a scripted stub model drives the real `create_agent` graph through server
 compression → the artifact store and `GET /artifacts` → `read_file` image/PDF
 blocks → the history budget (fit, then a zero-budget drop), with no network.
 
+Chunked media upload (ZCode parity) is the browser/Tauri transport for
+attachments over one POST's practical size. `bridge/upload-chunked.ts` splits a
+payload larger than `CHUNK_SIZE` (512 KiB) into sequential
+`POST /upload/chunk?session_id&upload_id&chunk_index&total_chunks&filename&content_type`
+calls (raw chunk body, then one `POST /upload/complete`); a single-chunk payload
+keeps the whole-body `/images|/audio|/video/upload` route. The server
+(`server/trigger/http/upload_chunked.py`) stages chunks under
+`TEMP_DIR/upload_chunks/<session>/<upload_id>`, validates the session/upload-id
+segments and chunk range, rejects a chunk over `chunk_size_bytes` (413) or a
+final file over the per-kind cap, then concatenates, hashes, and writes
+`<sha256[:16]><ext>` into the SAME per-kind directory the whole-body route uses —
+identical bytes reuse one file and URL, and the existing static mounts serve it.
+An incomplete upload is a 400 with its staging left for a retry; a completed one
+removes the staging directory. `bridge/upload-cache.ts` hashes each payload with
+SHA-256 and keeps a 30 s Dexie `uploadCache` row (`schema v7`), so sending the
+same bytes twice reuses the first URL; hashing/caching is fail-open and skipped
+above `max_staged_bytes` (64 MiB). The socket passes the real session id to
+`uploadRequestMedia`, which decodes each base64 entry and routes it through
+`uploadWithCache`; `uploadBase64ToUrls` remains the whole-body fallback.
+
+Markdown images are a gallery: after sanitization `safeHtml.ts::markMarkdownImages`
+marks every `img` outside a link/button (class `markdown-image`, `data-act="image"`,
+`role=button`, `tabindex=0`, aria label, loading/error classes), and the
+delegated click/keyboard handler collects the `img.markdown-image` elements in
+the same `[data-message-id]` bubble and calls
+`useImagePreview.openGallery(items, startIndex)`. The existing
+`ImagePreviewOverlay` now renders previous/next buttons, ArrowLeft/Right,
+a `current / total` counter, and cycles its tab stops; `openPreview(src)` stays
+for single-image consumers (attachment thumbnails, Mermaid figures). Loading
+images carry `.markdown-image-loading` (shimmer in `assets/css/main.css`), a
+broken one gets `.markdown-image-error`. Alt text/`src` are untouched.
+
 ## Multimodal Capability Catalog (`config/model_capabilities.py`)
 
 The media pipeline's auto mode resolves each media family through one cache

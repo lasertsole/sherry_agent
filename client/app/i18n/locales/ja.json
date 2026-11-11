@@ -143,7 +143,8 @@
     "continueGeneration": "生成を続ける",
     "editMessage": "メッセージを編集",
     "editingMessage": "送信済みメッセージを編集中。送信するとそのターンを再実行します",
-    "forkFromHere": "この回答から新しいセッションを分岐"
+    "forkFromHere": "この回答から新しいセッションを分岐",
+    "imageZoom": "画像を開く"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",

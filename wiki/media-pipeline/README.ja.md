@@ -23,6 +23,7 @@
   - [保存レイアウトと重複排除](#-保存レイアウトと重複排除)
   - [配信と描画](#-配信と描画)
   - [圧縮時の再利用](#-圧縮時の再利用)
+- [チャンクアップロード: `/upload/chunk`](#-チャンクアップロード-uploadchunk)
 - [設定リファレンス](#-設定リファレンス)
 - [テスト](#-テスト)
 - [限界](#-限界)
@@ -140,6 +141,12 @@ src/<session_id>/artifacts/
 
 圧縮がインラインメディアをオフロードするとき、`media_offload` はまずデコードしたバイトとメディアファミリで `find_artifact` を呼びます。ヒットすればアップロード経路がすでに保存済みなので、ブロックは 2 回目の書き込みなしで `[evicted to: <artifact path>]` ポインタになります。ミスした場合は従来のデコード + 書き込み経路（`SESSIONS_DIR/<session_id>/media/`）を維持し、音声や動画バイトなどパイプライン外のメディアもカバーします。
 
+## 📤 チャンクアップロード: `/upload/chunk`
+
+ブラウザと Tauri シェルは `bridge/upload-chunked.ts` 経由で添付を送ります。`CHUNK_SIZE`（512 KiB）以下のペイロードは従来の一括 `/images|/audio|/video/upload` を使い、それより大きい場合は順次 `POST /upload/chunk`（session/upload id、index、total、content type、生のチャンク body）に分割し、最後に一度だけ `POST /upload/complete` を呼びます。
+
+サーバーはチャンクを `TEMP_DIR/upload_chunks/<session>/<upload_id>` にステージし、id セグメント・チャンク範囲・1 チャンクのサイズ（`413`）を検証してから連結し、SHA-256 を計算し、`<sha256[:16]><ext>` を一括ルートと同じ種別ディレクトリへ書き込みます。同一バイトは同じファイルと URL を再利用し（静的マウントが両経路を配信します）、未完了のアップロードは `400` でステージを残して再試行でき、完了したものはステージを削除します。`bridge/upload-cache.ts` はペイロードを SHA-256 し、URL を Dexie（`uploadCache`、schema v7）に `read_cache_ttl_ms`（30 秒）だけキャッシュするため、その窓内の再送は再アップロードしません。ハッシュ/キャッシュはフェイルオープンで、`max_staged_bytes`（64 MiB）を超えるとスキップします。
+
 ## ⚙️ 設定リファレンス
 
 | 設定 | 既定値 | 意味 |
@@ -156,6 +163,9 @@ src/<session_id>/artifacts/
 | `history_media_budget_bytes` | `78643200` | 保持する履歴画像の予算（75 MiB）。 |
 | `preserve_latest_user_media` | `true` | 最新の実ユーザーメッセージのメディアを保護。 |
 | `artifact_store_enabled` | `true` | 内容アドレス型ストアを使用。無効ならタイムスタンプ付き `media/` コピー。 |
+| `chunk_size_bytes` | `524288` | 1 つの `/upload/chunk` body の最大バイト数。 |
+| `max_staged_bytes` | `67108864` | クライアントのキャッシュ/ハッシュ予算。超えるとキャッシュせずアップロード。 |
+| `read_cache_ttl_ms` | `30000` | アップロード済み URL のクライアント重複排除窓。 |
 
 ## 🧪 テスト
 
@@ -166,6 +176,7 @@ src/<session_id>/artifacts/
 - `tests/agent/tools/pub_base/test_artifact_store.py` と `tests/server/trigger/http/test_artifacts.py` — 重複排除、並行性、URI 解析、配信、セッションスコープ。
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 再利用と従来のオフロード経路。
 - `tests/agent/middlewares/test_media_pipeline_e2e.py` — 実際の agent グラフ: サーバー圧縮 → artifact ストア + `/artifacts` → `read_file` の画像/PDF ブロック → 履歴予算の投影。
+- `tests/server/trigger/http/test_upload_chunked.py` とクライアントの `upload-chunked` / `upload-cache` スイート — ステージング、組み立て、内容ハッシュ重複排除、上限、短 TTL キャッシュ。
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 添付と Markdown 参照の URI 解決。
 
 ## ⚠️ 限界
