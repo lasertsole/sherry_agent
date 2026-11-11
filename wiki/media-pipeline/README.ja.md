@@ -165,6 +165,7 @@ src/<session_id>/artifacts/
 - `tests/agent/middlewares/media_pipeline/test_history_budget.py` — 全収容、新しい順の淘汰、最新ユーザー保護、リモート URL、全破棄。
 - `tests/agent/tools/pub_base/test_artifact_store.py` と `tests/server/trigger/http/test_artifacts.py` — 重複排除、並行性、URI 解析、配信、セッションスコープ。
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 再利用と従来のオフロード経路。
+- `tests/agent/middlewares/test_media_pipeline_e2e.py` — 実際の agent グラフ: サーバー圧縮 → artifact ストア + `/artifacts` → `read_file` の画像/PDF ブロック → 履歴予算の投影。
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 添付と Markdown 参照の URI 解決。
 
 ## ⚠️ 限界

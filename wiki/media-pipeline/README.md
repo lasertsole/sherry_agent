@@ -165,6 +165,7 @@ When compression offloads inline media, `media_offload` first calls `find_artifa
 - `tests/agent/middlewares/media_pipeline/test_history_budget.py` — fit, newest-first eviction, protected latest user, remote URLs, all-dropped.
 - `tests/agent/tools/pub_base/test_artifact_store.py` and `tests/server/trigger/http/test_artifacts.py` — dedupe, concurrency, URI parsing, serving, session scope.
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact reuse versus the legacy offload path.
+- `tests/agent/middlewares/test_media_pipeline_e2e.py` — real agent graph: server compression → artifact store + `/artifacts` → `read_file` image/PDF blocks → history budget projection.
 - `client/app/composables/__tests__/use-chat-media.test.ts` — URI resolution in attachments and markdown references.
 
 ## ⚠️ Limitations

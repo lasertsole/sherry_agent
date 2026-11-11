@@ -165,6 +165,7 @@ src/<session_id>/artifacts/
 - `tests/agent/middlewares/media_pipeline/test_history_budget.py` — 全部容纳、从新到旧淘汰、保护最新用户、远程 URL、全部丢弃。
 - `tests/agent/tools/pub_base/test_artifact_store.py` 与 `tests/server/trigger/http/test_artifacts.py` — 去重、并发、URI 解析、服务、会话作用域。
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 复用与旧卸载路径。
+- `tests/agent/middlewares/test_media_pipeline_e2e.py` — 真实 agent 图：服务端压缩 → artifact 存储 + `/artifacts` → `read_file` 图片/PDF 块 → 历史预算投影。
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 附件与 Markdown 引用中的 URI 解析。
 
 ## ⚠️ 限制

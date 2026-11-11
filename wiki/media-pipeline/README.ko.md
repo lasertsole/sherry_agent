@@ -165,6 +165,7 @@ src/<session_id>/artifacts/
 - `tests/agent/middlewares/media_pipeline/test_history_budget.py` — 전체 수용, 최신순 퇴출, 최신 사용자 보호, 원격 URL, 전체 폐기.
 - `tests/agent/tools/pub_base/test_artifact_store.py`와 `tests/server/trigger/http/test_artifacts.py` — 중복 제거, 동시성, URI 파싱, 제공, 세션 범위.
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 재사용과 기존 오프로드 경로.
+- `tests/agent/middlewares/test_media_pipeline_e2e.py` — 실제 agent 그래프: 서버 압축 → artifact 저장소 + `/artifacts` → `read_file` 이미지/PDF 블록 → 히스토리 예산 투영.
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 첨부와 Markdown 참조의 URI 해석.
 
 ## ⚠️ 한계
