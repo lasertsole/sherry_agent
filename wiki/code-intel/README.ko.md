@@ -31,7 +31,7 @@ Code Intel은 다섯 가지 검색 엔진으로 코드 이해 질문에 답하�
 | **키워드 검색** | 이 리터럴이나 정규식이 어디에 나타나는가——내용인가, 파일 이름인가? | `search_files` | 메인 에이전트 + `researcher` + `librarian` |
 | **Tree-sitter 심볼 인덱스** | 심볼은 어디에 정의되고 누가 호출하는가? | `explore`, `callers`, `callees`, `impact`, `path` | `CODE_INTEL_ROLES`(researcher / librarian / executor / general) |
 | **ast-grep** | 어떤 코드가 이 구조 형태를 가지며 어떻게 재작성하는가? | `ast_grep_search`, `ast_grep_rewrite` | 모든 서브에이전트 |
-| **LSP** | 타입 검사기는 이 위치에 대해 무엇을 아는가? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `CODE_INTEL_ROLES` |
+| **LSP** | 타입 검사기는 이 위치에 대해 무엇을 아는가? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_hover`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `CODE_INTEL_ROLES` |
 | **시맨틱 검색** | 이 개념을 구현한 코드는 무엇인가? | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 네 계층은 하나의 워크플로로 결합됩니다: `explore`가 심볼과 호출 경로를 찾고, `ast_grep_search`가 언어를 넘나들며 구조 패턴을 찾고, LSP 도구가 타입을 인식해 정의와 참조를 해석하며, `semantic_code_search`가 이름이 맞지 않을 때 개념으로 검색합니다. 네 계층 모두 자식 에이전트 조립 시점에 구성되어 주입됩니다.
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 설계 불변식
 
 1. **메인 에이전트는 이 도구들을 절대 보지 못합니다.** 어떤 code-intel 또는 LSP 빌더도 `_MAIN_TOOLS_BUILDERS`에 등록되지 않으며, 주입은 `_build_child_agent` 내부에서 역할 도구 정책 뒤에만 일어납니다.
-2. **도구 면은 역할로 제한됩니다.** tree-sitter 스위트와 8개 LSP 도구는 `CODE_INTEL_ROLES`(`researcher`, `librarian`, `executor`, `general`)에 전달됩니다. ast-grep은 핵심 구조 능력이므로 모든 기능 역할이 받습니다. 네 역할은 같은 도구 면을 공유하며 차이는 프롬프트뿐입니다. 읽기 전용 역할은 `lsp_rename`/`lsp_format`을 미리보기로 유지하고, 쓰기 역할은 명시적으로 적용할 수 있습니다(기본값은 미리보기).
+2. **도구 면은 역할로 제한됩니다.** tree-sitter 스위트와 9개 LSP 도구는 `CODE_INTEL_ROLES`(`researcher`, `librarian`, `executor`, `general`)에 전달됩니다. ast-grep은 핵심 구조 능력이므로 모든 기능 역할이 받습니다. 네 역할은 같은 도구 면을 공유하며 차이는 프롬프트뿐입니다. 읽기 전용 역할은 `lsp_rename`/`lsp_format`을 미리보기로 유지하고, 쓰기 역할은 명시적으로 적용할 수 있습니다(기본값은 미리보기).
 3. **fail-open이 계약입니다.** 없는 바이너리, 파싱할 수 없는 파일, 사용할 수 없는 모델, 타임아웃, 거부된 요청은 모두 실행 가능한 메시지가 담긴 JSON 페이로드를 반환합니다. 어떤 검색 실패도 자식 턴으로 예외를 던지지 않습니다.
 4. **모든 것이 구조적으로 유계입니다.** 파일 수, 파일당 바이트, 빌드 시간, 배치, 결과 수, 경로 수, 패턴 크기, 열린 파일 수에 상한이 있습니다. LSP 관리자는 LRU 동시성 상한과 유휴 회수를 추가합니다.
 5. **쓰기는 옵트인이며 포함 관계를 검증합니다.** `ast_grep_rewrite`는 `dry_run=false`가 아니면 미리보기만 하고, `lsp_rename`과 `lsp_format`은 적용 플래그 없이는 미리보기만 합니다. 모든 쓰기 경로는 디스크를 건드리기 전에 경로 탈출과 프로젝트 루트 포함 관계를 다시 검증합니다.
@@ -179,7 +179,7 @@ ast-grep은 검색 패턴을 정규식이 아니라 코드로 취급하므로 `$
 
 ## 🛰️ 제 3 계층: LSP 정밀 검색
 
-LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 1 기반과 0 기반 위치, 결과 포맷), `resolver.py`(바이너리 발견), `installer.py`(허용 목록 자동 설치), `fallback.py`(가용성에서 실행 가능 메시지로), `client.py`(stdio 기반 JSON-RPC), `manager.py`(프로세스 수명주기), `tools.py`(8개 도구). 도구는 1 기반 `line`과 `character`를 받아 내부에서 LSP 네이티브 0 기반 위치로 변환합니다.
+LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 1 기반과 0 기반 위치, 결과 포맷), `resolver.py`(바이너리 발견), `installer.py`(허용 목록 자동 설치), `fallback.py`(가용성에서 실행 가능 메시지로), `client.py`(stdio 기반 JSON-RPC), `manager.py`(프로세스 수명주기), `tools.py`(9개 도구). 도구는 1 기반 `line`과 `character`를 받아 내부에서 LSP 네이티브 0 기반 위치로 변환합니다.
 
 | 도구 | 용도 | 기본 동작 |
 |------|------|-----------|
@@ -187,8 +187,9 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | `lsp_find_references` | 심볼의 모든 참조 | 읽기 전용 |
 | `lsp_workspace_symbol` | 워크스페이스 심볼 퍼지 검색 | 읽기 전용, 결과 수 상한 |
 | `lsp_call_hierarchy` | 들어오는 호출자 또는 나가는 피호출자 | 읽기 전용 |
+| `lsp_hover` | 위치의 타입 시그니처 / 문서 | 읽기 전용. MarkupContent를 텍스트로 평탄화 |
 | `lsp_rename` | 워크스페이스 이름 변경 | `WorkspaceEdit` 미리보기; `dry_run=false`일 때만 적용 |
-| `lsp_diagnostics` | 파일의 오류와 경고 | 비동기 `publishDiagnostics` 알림을 기다리고 `timed_out` 보고 |
+| `lsp_diagnostics` | 파일의 오류와 경고 | 디스크에서 서버 뷰를 갱신하고 새 `publishDiagnostics` 세대를 기다리며(편집 동기화 자동), `timed_out` 보고 |
 | `lsp_format` | 전체 파일 또는 범위 포맷 | 미리보기; `write=true`일 때만 적용; 미지원이면 성공을 가장하지 않고 `supported=false` 보고 |
 | `lsp_status` | 설정된 모든 서버의 정직한 가용성 | 아무것도 시작하지 않음 |
 

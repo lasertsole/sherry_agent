@@ -31,7 +31,7 @@ Code Intel answers code-understanding questions with five retrieval engines, eac
 | **Keyword search** | Where does this literal or regex appear — in contents or in file names? | `search_files` | main agent + `researcher` + `librarian` |
 | **Tree-sitter symbol index** | Where is a symbol defined, and what calls it? | `explore`, `callers`, `callees`, `impact`, `path` | `CODE_INTEL_ROLES` (researcher / librarian / executor / general) |
 | **ast-grep** | What code has this structural shape, and how do I rewrite it? | `ast_grep_search`, `ast_grep_rewrite` | every subagent |
-| **LSP** | What does the type checker know about this position? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `CODE_INTEL_ROLES` |
+| **LSP** | What does the type checker know about this position? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_hover`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `CODE_INTEL_ROLES` |
 | **Semantic search** | Which code implements this concept? | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 The engines compose into one workflow: `explore` locates a symbol and its call paths, `ast_grep_search` finds structural patterns across languages, the LSP tools resolve definitions and references with type awareness, and `semantic_code_search` retrieves by concept when no name matches. All four are built and injected at child-agent assembly time.
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 Design Invariants
 
 1. **The main agent never sees these tools.** No code-intel or LSP builder is registered in `_MAIN_TOOLS_BUILDERS`; injection happens only inside `_build_child_agent`, after the role tool policy.
-2. **The tool faces are role-gated.** The tree-sitter suite and all eight LSP tools go to `CODE_INTEL_ROLES` (`researcher`, `librarian`, `executor`, `general`); ast-grep goes to every functional role because it is a core structural capability. The four roles share ONE tool face: the read-only roles are told to keep `lsp_rename`/`lsp_format` in preview, while the write roles may apply them (the defaults stay preview).
+2. **The tool faces are role-gated.** The tree-sitter suite and all nine LSP tools go to `CODE_INTEL_ROLES` (`researcher`, `librarian`, `executor`, `general`); ast-grep goes to every functional role because it is a core structural capability. The four roles share ONE tool face: the read-only roles are told to keep `lsp_rename`/`lsp_format` in preview, while the write roles may apply them (the defaults stay preview).
 3. **Fail-open is the contract.** A missing binary, an unparseable file, an unavailable model, a timeout, or a refused request returns a JSON payload with an actionable message; no retrieval failure raises into the child turn.
 4. **Everything is bounded by construction.** File counts, per-file bytes, build time, batches, result counts, path counts, pattern size, and opened files all have caps; the LSP manager adds an LRU concurrency limit and idle reaping.
 5. **Writes are opt-in and containment-checked.** `ast_grep_rewrite` previews unless `dry_run=false`; `lsp_rename` and `lsp_format` preview unless called with the apply flag; every write path re-validates traversal and project-root containment before touching disk.
@@ -202,7 +202,7 @@ Every path is screened before the subprocess runs: without an override the canon
 
 ## 🛰️ Layer 3: LSP Precise Retrieval
 
-The LSP layer is `agent/tools/code_intel/lsp/`: `protocol.py` (URIs, 1-based to 0-based positions, result formatting), `resolver.py` (binary discovery), `installer.py` (allow-listed auto-install), `fallback.py` (availability to actionable message), `client.py` (JSON-RPC over stdio), `manager.py` (process lifecycle), and `tools.py` (the eight tools). The tools take `line` and `character` as 1-based values and convert to LSP-native 0-based positions internally.
+The LSP layer is `agent/tools/code_intel/lsp/`: `protocol.py` (URIs, 1-based to 0-based positions, result formatting), `resolver.py` (binary discovery), `installer.py` (allow-listed auto-install), `fallback.py` (availability to actionable message), `client.py` (JSON-RPC over stdio), `manager.py` (process lifecycle), and `tools.py` (the nine tools). The tools take `line` and `character` as 1-based values and convert to LSP-native 0-based positions internally.
 
 | Tool | Purpose | Default behavior |
 |------|---------|------------------|
@@ -210,8 +210,9 @@ The LSP layer is `agent/tools/code_intel/lsp/`: `protocol.py` (URIs, 1-based to 
 | `lsp_find_references` | All references to a symbol | read-only |
 | `lsp_workspace_symbol` | Fuzzy workspace symbol search | read-only, result count capped |
 | `lsp_call_hierarchy` | Incoming callers or outgoing callees | read-only |
+| `lsp_hover` | Type signature / docs at a position | read-only; MarkupContent flattened to text |
 | `lsp_rename` | Workspace rename | previews a `WorkspaceEdit`; applies only with `dry_run=false` |
-| `lsp_diagnostics` | Errors and warnings for a file | waits for the asynchronous `publishDiagnostics` notification and reports `timed_out` |
+| `lsp_diagnostics` | Errors and warnings for a file | refreshes the server from disk, waits for a NEW `publishDiagnostics` generation (edit sync is automatic) and reports `timed_out` |
 | `lsp_format` | Whole-file or range formatting | previews; applies only with `write=true`; reports `supported=false` instead of faking success |
 | `lsp_status` | Honest availability of every configured server | starts nothing |
 

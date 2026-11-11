@@ -2407,14 +2407,31 @@ bar through `Page.frameNavigated` (a `chrome-error://` page keeps the URL the
 user asked for); the screencast stops when nobody watches a page.
 
 **Agent side** — the merged `browser` tool (action =
-navigate / snapshot / click / type / press / scroll / screenshot) lives in the
+navigate / snapshot / click / type / press / scroll / screenshot / console /
+network) lives in the
 `browser` catalogue group, is MAIN-AGENT-ONLY (`metadata["scope"] =
 "main_only"` — the subagent tool policy drops it unconditionally), and is taught
 by the `browser` playbook skill (`skills/builtin/core/browser/SKILL.md`,
-scriptless, hidden from the index while the feature is off). The seven verbs are
+scriptless, hidden from the index while the feature is off). The nine verbs are
 thin handlers over the same manager; the original `browser_*` classes remain
 internal handlers and are exposed only by `build_legacy_browser_tools()` for
-tests. Since the 2026-11-09 audit (H5) navigation and reads reuse the
+tests.
+
+**Passive debug capture** — with `SHERRY_BROWSER_DEBUG_CAPTURE=1` (default; part
+of the opt-in browser feature), every ordinary page enables `Runtime.enable` /
+`Network.enable` / `Log.enable` through `_BrowserDebugCaptureMixin`.
+`Runtime.consoleAPICalled`, `Runtime.exceptionThrown` (text + up to 10 stack
+frames) and `Log.entryAdded` land in per-page ring buffers
+(`debug_buffer_max`, 200); `Network.responseReceived` keeps only status >= 400
+and `Network.loadingFailed` resolves its URL through the `requestWillBeSent`
+map — headers, cookies and bodies are never read. A main-frame
+`Page.frameNavigated` and every explicit navigate / history move clear the
+buffers. `browser(action="console")` reads console output plus uncaught
+exceptions (level filter, optional exceptions), `browser(action="network")`
+reads failed requests (`min_status`, `include_failures`); with the switch off
+both answer a disabled notice instead of pretending the page was quiet.
+
+Since the 2026-11-09 audit (H5) navigation and reads reuse the
 `web_fetch` SSRF verdict: `agent/tools/browser/tools/_shared.py::validate_navigation_url`
 allows http(s) only, refuses local/private/metadata targets unless
 `SHERRY_BROWSER_ALLOW_LOCAL=1`, and resolves public names through
@@ -2624,8 +2641,8 @@ The tool name is `path`; the tool set is `scope=code_intel` and never joins
 
 `CODE_INTEL_ROLES` (`agent/tools/subagent/types/functional_role.py`) is the
 single source of the tool face and its prompt section: **researcher, librarian,
-executor and general** get the tree-sitter suite plus the eight LSP tools;
-reviewer and the main agent do not. The four share ONE injected set — the role
+executor and general** get the tree-sitter suite plus the nine LSP tools
+(`lsp_hover` is the addition); reviewer and the main agent do not. The four share ONE injected set — the role
 branch is prompt-only: `CODE_INTEL_WRITE_ROLES` (executor/general) may pass
 `dry_run=false` / `write=true` to apply a rename or formatting edit, while the
 read-only roles are told to stay in preview mode (the tool defaults remain
@@ -2634,6 +2651,41 @@ researcher for a heavy investigation; the single-hop spawn allow-list is
 unchanged because code-intel is local analysis and never spawns a child. The LSP
 manager's shared pool is `lsp_max_concurrent_servers = 3` to absorb the extra
 roles; `lsp_idle_shutdown_s` stays 300.
+
+**Edit-time consistency and auto-diagnostics (2026-11-12)** — `LSPClient`
+`sync_document` sends `didOpen` / `didChange` (FULL text) + `didSave`;
+`patch_file`, `write_file`, `lsp_format(write=true)` and direct-file
+`ast_grep_rewrite` call `agent/tools/pub_base/lsp_sync.py`, which pushes the new
+bytes only to an ALREADY-ACQUIRED server (`LspServerManager.peek`; no server is
+started, so LSP stays lazy). Identical content is a no-op, which also lets
+`lsp_diagnostics` return its cache without waiting instead of depending on the
+server republishing an unchanged file. `lsp_diagnostics` refreshes the server
+from disk and waits for a NEW publish generation
+(`diagnostics_generation` / `wait_diagnostics_since`), so an edit is never
+analyzed as the previous version. A process-level registry
+(`agent/tools/code_intel/lsp/diagnostics.py`) aggregates publishes per file,
+tracks delivery per SESSION, and resets delivery only when the diagnostic
+content actually changed; the `lsp_diagnostics` reminder source (priority 84,
+`transient`, error severity only, capped by files/errors, session-root scoped)
+injects the undelivered errors once per generation. The same edit path schedules
+a debounced background diagnostics pass (`AUTO_DIAGNOSTICS_*` in the LSP
+config) that appends an evidence row (`kind="lsp_diagnostics"`, `auto=true`);
+`taskflow_flow(action="finish")`'s regression gate replays those rows through
+the LSP client (not the shell allowlist): pass → `unmark`, fail → `broken`, no
+server/timeout → skipped. Robustness: a crashed server is restarted at most
+`lsp_max_restarts` (default 3) times before the tools degrade to
+tree-sitter/grep, and `-32801` ContentModified is retried with 500/1000/2000 ms
+backoff (`lsp_content_modified_max_retries` / `_backoff_s`).
+
+Kill-criteria decisions (2026-11-12): browser capture has no per-site opt-out —
+the browser feature is itself opt-in and `SHERRY_BROWSER_DEBUG_CAPTURE=0` is the
+global isolation switch; passive injection is already narrowed to error
+severity, the session's project root and files/error caps (narrow it to the
+current file only if noise appears); auto-diagnostics never starts a server at
+edit time, so there is no cold-start stall, and the finish replay covers a
+project whose server was reaped; a project with a false-positive-heavy checker
+turns the evidence rows off with `AUTO_DIAGNOSTICS_ENABLED=0` (the passive
+reminder keeps working). Wiki: `wiki/debug-loop/`.
 
 `skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index(repo_name,
 db_path)` turns a code_intel SQLite DB into a deterministic, zero-LLM wiki

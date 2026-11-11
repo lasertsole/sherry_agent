@@ -15,6 +15,7 @@ LSP_NAMES = {
     "lsp_find_references",
     "lsp_workspace_symbol",
     "lsp_call_hierarchy",
+    "lsp_hover",
     "lsp_rename",
     "lsp_diagnostics",
     "lsp_format",

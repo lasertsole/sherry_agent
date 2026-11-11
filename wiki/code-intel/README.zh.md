@@ -31,7 +31,7 @@ Code Intel 用五个检索引擎回答代码理解问题，每个引擎对应一
 | **关键词搜索** | 这个字面量或正则出现在哪里——内容里还是文件名里？ | `search_files` | 主代理 + `researcher` + `librarian` |
 | **Tree-sitter 符号索引** | 符号定义在哪里，谁在调用它？ | `explore`、`callers`、`callees`、`impact`, `path` | `CODE_INTEL_ROLES`（researcher / librarian / executor / general） |
 | **ast-grep** | 哪些代码具有该结构形态，如何重写？ | `ast_grep_search`、`ast_grep_rewrite` | 所有子代理 |
-| **LSP** | 类型检查器对这个位置了解什么？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `CODE_INTEL_ROLES` |
+| **LSP** | 类型检查器对这个位置了解什么？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_hover`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `CODE_INTEL_ROLES` |
 | **语义搜索** | 哪个代码实现了这个概念？ | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 四个引擎组合成一条工作流：`explore` 定位符号及其调用路径，`ast_grep_search` 跨语言查找结构模式，LSP 工具以类型感知方式解析定义与引用，`semantic_code_search` 在名称无法匹配时按概念检索。四层都在子代理解析组装时构建并注入。
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 设计不变量
 
 1. **主智能体永远看不到这些工具。** 任何 code-intel 或 LSP 构建器都不注册进 `_MAIN_TOOLS_BUILDERS`；注入只发生在 `_build_child_agent` 内部、角色工具策略之后。
-2. **工具面按角色开放。** tree-sitter 套件与全部八个 LSP 工具给 `CODE_INTEL_ROLES`（`researcher`、`librarian`、`executor`、`general`）；ast-grep 属于核心结构能力，因此所有功能角色都能拿到。四个角色共享同一套工具，区别仅在提示词：只读角色保持 `lsp_rename`/`lsp_format` 预览，写角色可以显式应用（默认仍是预览）。
+2. **工具面按角色开放。** tree-sitter 套件与全部九个 LSP 工具给 `CODE_INTEL_ROLES`（`researcher`、`librarian`、`executor`、`general`）；ast-grep 属于核心结构能力，因此所有功能角色都能拿到。四个角色共享同一套工具，区别仅在提示词：只读角色保持 `lsp_rename`/`lsp_format` 预览，写角色可以显式应用（默认仍是预览）。
 3. **fail-open 是契约。** 缺失的二进制、无法解析的文件、不可用的模型、超时或被拒绝的请求，都返回带可执行提示的 JSON 载荷；任何检索失败都不会把异常抛进子代理回合。
 4. **一切都有上界。** 文件数、单文件字节数、构建时长、批次、结果数、路径数、模式大小与打开文件数都有上限；LSP 管理器另有 LRU 并发上限与空闲回收。
 5. **写入默认关闭并做容器校验。** `ast_grep_rewrite` 除非 `dry_run=false` 否则只预览；`lsp_rename` 与 `lsp_format` 除非传入应用标志否则只预览；每条写入路径在落盘前都重新校验路径穿越与项目根包含关系。
@@ -176,7 +176,7 @@ ast-grep 把搜索模式当作代码而非正则，因此 `$NAME` 匹配一个 A
 
 ## 🛰️ 第 3 层：LSP 精确检索
 
-LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 基位置、结果格式化）、`resolver.py`（二进制发现）、`installer.py`（白名单自动安装）、`fallback.py`（可用性到可执行消息）、`client.py`（基于 stdio 的 JSON-RPC）、`manager.py`（进程生命周期）与 `tools.py`（八个工具）。工具以 1 基的 `line` 与 `character` 为输入，内部转换为 LSP 原生的 0 基位置。
+LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 基位置、结果格式化）、`resolver.py`（二进制发现）、`installer.py`（白名单自动安装）、`fallback.py`（可用性到可执行消息）、`client.py`（基于 stdio 的 JSON-RPC）、`manager.py`（进程生命周期）与 `tools.py`（九个工具）。工具以 1 基的 `line` 与 `character` 为输入，内部转换为 LSP 原生的 0 基位置。
 
 | 工具 | 用途 | 默认行为 |
 |------|------|----------|
@@ -184,8 +184,9 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | `lsp_find_references` | 符号的全部引用 | 只读 |
 | `lsp_workspace_symbol` | 模糊工作区符号搜索 | 只读，结果数有上限 |
 | `lsp_call_hierarchy` | 传入调用者或传出被调用者 | 只读 |
+| `lsp_hover` | 位置处的类型签名 / 文档 | 只读；MarkupContent 拍平为文本 |
 | `lsp_rename` | 工作区重命名 | 预览 `WorkspaceEdit`；仅当 `dry_run=false` 时应用 |
-| `lsp_diagnostics` | 文件的错误与警告 | 等待异步 `publishDiagnostics` 通知并报告 `timed_out` |
+| `lsp_diagnostics` | 文件的错误与警告 | 从磁盘刷新 server 视图，等待新的 `publishDiagnostics` 代次（编辑同步自动完成）并报告 `timed_out` |
 | `lsp_format` | 整文件或区间格式化 | 预览；仅当 `write=true` 时应用；不支持时报告 `supported=false` 而非假装成功 |
 | `lsp_status` | 每个已配置服务器的诚实可用性 | 不启动任何进程 |
 

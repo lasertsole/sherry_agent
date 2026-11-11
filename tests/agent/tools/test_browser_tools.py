@@ -113,6 +113,65 @@ class _FakeManager:
         self.last_page = page_id
         return {"page": "p1", "url": self.evaluate_url, "result": "42", "truncated": False}
 
+    def console_events(self, session_id, page=None, *, level="all", limit=100):
+        self.last_page = page
+        self.console_query = {"level": level, "limit": limit}
+        return {
+            "page": "p1",
+            "url": "https://fake.test",
+            "title": "Fake",
+            "session_id": session_id,
+            "enabled": True,
+            "buffered": 2,
+            "events": [
+                {
+                    "kind": "exception",
+                    "level": "error",
+                    "text": "ReferenceError: boom",
+                    "url": "app.js",
+                    "line": 3,
+                    "column": 1,
+                    "stack": [{"function": "f", "url": "app.js", "line": 2, "column": 1}],
+                },
+                {"kind": "console", "level": "info", "text": "hi"},
+            ],
+        }
+
+    def network_events(
+        self, session_id, page=None, *, min_status=400, include_failures=True, limit=100
+    ):
+        self.last_page = page
+        self.network_query = {
+            "min_status": min_status,
+            "include_failures": include_failures,
+            "limit": limit,
+        }
+        return {
+            "page": "p1",
+            "url": "https://fake.test",
+            "title": "Fake",
+            "session_id": session_id,
+            "enabled": True,
+            "buffered": 2,
+            "requests": [
+                {
+                    "kind": "response",
+                    "url": "https://fake.test/api",
+                    "method": "GET",
+                    "status": 404,
+                    "resource_type": "Fetch",
+                },
+                {
+                    "kind": "failure",
+                    "url": "https://fake.test/post",
+                    "method": "POST",
+                    "error": "net::ERR_CONNECTION_REFUSED",
+                    "blocked_reason": "",
+                    "canceled": False,
+                },
+            ],
+        }
+
 
 class _FailingManager(_FakeManager):
     """Raises the exact error classes the guard must translate."""
@@ -320,6 +379,49 @@ def test_action_specific_validation_returns_a_correction_hint(enabled, bridge, a
     result = asyncio.run(_invoke(_tool("browser"), **args))
     assert result.startswith("Error:")
     assert needle in result
+
+
+def test_console_reads_exceptions_with_the_stack(enabled, bridge):
+    result = asyncio.run(_invoke(_tool("browser"), action="console", level="error", limit=5))
+
+    assert "[error] ReferenceError: boom (app.js:3:1)" in result
+    assert "at f (app.js:2:1)" in result
+    assert bridge.console_query == {"level": "error", "limit": 5}
+
+
+def test_console_can_omit_exceptions(enabled, bridge):
+    result = asyncio.run(_invoke(_tool("browser"), action="console", include_exceptions=False))
+
+    assert "ReferenceError: boom" not in result
+    assert "[info] hi" in result
+
+
+def test_network_reports_status_and_failed_requests(enabled, bridge):
+    result = asyncio.run(_invoke(_tool("browser"), action="network", min_status=400))
+
+    assert "[404] GET https://fake.test/api (Fetch)" in result
+    assert "[failed] POST https://fake.test/post — net::ERR_CONNECTION_REFUSED" in result
+    assert bridge.network_query["min_status"] == 400
+
+
+def test_capture_disabled_is_a_readable_notice(enabled, bridge, monkeypatch):
+    monkeypatch.setattr(
+        bridge,
+        "console_events",
+        lambda *a, **k: {
+            "page": "p1",
+            "url": "https://fake.test",
+            "title": "Fake",
+            "session_id": _SESSION,
+            "enabled": False,
+            "events": [],
+            "buffered": 0,
+        },
+    )
+
+    result = asyncio.run(_invoke(_tool("browser"), action="console"))
+
+    assert "capture is disabled" in result
 
 
 def test_click_accepts_ref_or_both_coordinates(enabled, bridge):

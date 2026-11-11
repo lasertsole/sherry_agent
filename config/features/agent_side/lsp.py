@@ -7,7 +7,21 @@ language server is a **heavy resident subprocess** (basedpyright/rust-analyzer a
 hundreds of MB), so the manager must bound concurrency and idle lifetime.
 """
 
+import os
+from collections.abc import Mapping
 from typing import TypedDict
+
+from config.features._env import _env_int
+
+
+def _env_float(name: str, default: float, env: Mapping[str, str]) -> float:
+    raw = env.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return default
 
 
 class LspServerSpec(TypedDict):
@@ -63,6 +77,16 @@ class LspConfig(TypedDict):
     lsp_max_results: int
     lsp_max_opened_files: int
     lsp_max_file_bytes: int
+    # ── edit sync, passive diagnostics and auto-diagnostics ──
+    lsp_max_restarts: int
+    lsp_content_modified_max_retries: int
+    lsp_content_modified_backoff_s: float
+    lsp_auto_diagnostics_enabled: bool
+    lsp_auto_diagnostics_max_files: int
+    lsp_auto_diagnostics_timeout_s: float
+    lsp_auto_diagnostics_debounce_s: float
+    lsp_diagnostics_inject_max_files: int
+    lsp_diagnostics_inject_max_errors: int
 
 
 LSP: LspConfig = {
@@ -254,4 +278,28 @@ LSP: LspConfig = {
     "lsp_max_results": 50,
     "lsp_max_opened_files": 32,
     "lsp_max_file_bytes": 1_000_000,
+    # ── edit sync, passive diagnostics and auto-diagnostics ──
+    # A crashed server is restarted on the next acquire, but not forever: after
+    # this many consecutive crashes the manager refuses and the tool degrades
+    # to tree-sitter / grep (fail-open).
+    "lsp_max_restarts": _env_int("LSP_MAX_RESTARTS", 3, os.environ),
+    # rust-analyzer answers -32801 while it reindexes; one edit can trigger a
+    # burst, so the client backs off and retries instead of failing the tool.
+    "lsp_content_modified_max_retries": _env_int("LSP_CONTENT_MODIFIED_MAX_RETRIES", 3, os.environ),
+    "lsp_content_modified_backoff_s": _env_float("LSP_CONTENT_MODIFIED_BACKOFF_S", 0.5, os.environ),
+    # After an edit, the ALREADY-ACQUIRED server gets didChange/didSave and a
+    # background diagnostics pass writes one evidence row. No server is started
+    # for this: the lazy acquisition contract stays intact.
+    "lsp_auto_diagnostics_enabled": bool(_env_int("AUTO_DIAGNOSTICS_ENABLED", 1, os.environ)),
+    "lsp_auto_diagnostics_max_files": _env_int("AUTO_DIAGNOSTICS_MAX_FILES", 20, os.environ),
+    "lsp_auto_diagnostics_timeout_s": _env_float("AUTO_DIAGNOSTICS_TIMEOUT_S", 5.0, os.environ),
+    "lsp_auto_diagnostics_debounce_s": _env_float("AUTO_DIAGNOSTICS_DEBOUNCE_S", 0.4, os.environ),
+    # Passive injection caps: the reminder layer carries only error-severity
+    # diagnostics, newest first, bounded by files and total entries.
+    "lsp_diagnostics_inject_max_files": _env_int(
+        "LSP_DIAGNOSTICS_INJECT_MAX_FILES", 10, os.environ
+    ),
+    "lsp_diagnostics_inject_max_errors": _env_int(
+        "LSP_DIAGNOSTICS_INJECT_MAX_ERRORS", 20, os.environ
+    ),
 }

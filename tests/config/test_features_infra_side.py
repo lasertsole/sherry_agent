@@ -364,6 +364,11 @@ class TestBrowserAgentBuilder:
     def test_browser_keys_match_annotations(self) -> None:
         assert set(fs.BROWSER_AGENT) == set(fs.BrowserAgentConfig.__annotations__)
 
+    def test_debug_capture_defaults_on_and_is_env_switchable(self) -> None:
+        assert _build_browser_agent({})["debug_capture"] == 1
+        assert _build_browser_agent({})["debug_buffer_max"] == 200
+        assert _build_browser_agent({"SHERRY_BROWSER_DEBUG_CAPTURE": "0"})["debug_capture"] == 0
+
 
 class TestCollectionFieldTypes:
     """Map / frozenset / tuple / list fields keep their declared container type."""

@@ -255,9 +255,11 @@ def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str
             "jump/refs via the language server (1-based line/character)\n"
             "- `lsp_workspace_symbol` — fuzzy workspace symbol search\n"
             "- `lsp_call_hierarchy` — callers (incoming) / callees (outgoing) of a symbol\n"
+            "- `lsp_hover` — type signature / documentation at a position\n"
             + rename_line
             + "- `lsp_diagnostics` — errors/warnings for a file (waits for the async "
-            "publishDiagnostics notification)\n"
+            "publishDiagnostics notification; your writes are synced to a running "
+            "server automatically and new errors arrive as a system reminder)\n"
             + format_line
             + "- `lsp_status` — honest availability of every configured language server "
             "(available / not_installed); starts nothing\n"

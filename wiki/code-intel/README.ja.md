@@ -31,7 +31,7 @@ Code Intel は 5 つの検索エンジンでコード理解の問いに答えま
 | **キーワード検索** | このリテラルや正規表現はどこに出るか——内容か、ファイル名か？ | `search_files` | メインエージェント + `researcher` + `librarian` |
 | **Tree-sitter シンボル索引** | シンボルはどこで定義され、誰が呼ぶか？ | `explore`、`callers`、`callees`、`impact`, `path` | `CODE_INTEL_ROLES`（researcher / librarian / executor / general） |
 | **ast-grep** | どのコードがこの構造形を持ち、どう書き換えるか？ | `ast_grep_search`、`ast_grep_rewrite` | すべてのサブエージェント |
-| **LSP** | 型チェッカーはこの位置について何を知るか？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `CODE_INTEL_ROLES` |
+| **LSP** | 型チェッカーはこの位置について何を知るか？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_hover`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `CODE_INTEL_ROLES` |
 | **セマンティック検索** | この概念を実装するのはどのコードか？ | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 4 層は 1 つのワークフローとして組み合わさります：`explore` がシンボルと呼び出し経路を特定し、`ast_grep_search` が言語横断で構造パターンを探し、LSP ツールが型を意識して定義と参照を解決し、`semantic_code_search` が名前で一致しないときに概念で検索します。4 層すべては子エージェントの組み立て時に構築・注入されます。
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 設計不変条件
 
 1. **メインエージェントはこれらのツールを決して見ません。** code-intel と LSP のビルダーは `_MAIN_TOOLS_BUILDERS` に登録されません。注入は `_build_child_agent` の内部、ロールツールポリシーの後だけで行われます。
-2. **ツール面はロールで制御されます。** tree-sitter スイートと 8 つの LSP ツールは `CODE_INTEL_ROLES`（`researcher`、`librarian`、`executor`、`general`）に渡されます。ast-grep は中核的な構造能力のため、すべての機能ロールが利用できます。4 ロールは同じツール面を共有し、違いはプロンプトだけです。読み取り専用ロールは `lsp_rename`/`lsp_format` をプレビューのままにし、書き込みロールは明示的に適用できます（既定はプレビュー）。
+2. **ツール面はロールで制御されます。** tree-sitter スイートと 9 つの LSP ツールは `CODE_INTEL_ROLES`（`researcher`、`librarian`、`executor`、`general`）に渡されます。ast-grep は中核的な構造能力のため、すべての機能ロールが利用できます。4 ロールは同じツール面を共有し、違いはプロンプトだけです。読み取り専用ロールは `lsp_rename`/`lsp_format` をプレビューのままにし、書き込みロールは明示的に適用できます（既定はプレビュー）。
 3. **fail-open が契約です。** バイナリ欠如、解析不能なファイル、利用不能なモデル、タイムアウト、拒否された要求はすべて実行可能なメッセージ付きの JSON ペイロードを返します。検索の失敗が子エージェントのターンに例外を投げることはありません。
 4. **すべてが構造的に有界です。** ファイル数、ファイルあたりのバイト数、構築時間、バッチ、結果数、パス数、パターンサイズ、開くファイル数に上限があります。LSP マネージャはさらに LRU 同時実行上限とアイドル回収を課します。
 5. **書き込みはオプトインで、封じ込めを検証します。** `ast_grep_rewrite` は `dry_run=false` でない限りプレビューし、`lsp_rename` と `lsp_format` は適用フラグなしではプレビューだけです。すべての書き込み経路はディスクに触れる前にトラバーサルとプロジェクトルート内包を再検証します。
@@ -179,7 +179,7 @@ ast-grep は検索パターンを正規表現ではなくコードとして扱�
 
 ## 🛰️ 第 3 層：LSP 精密検索
 
-LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI、1 始まりと 0 始まりの位置、結果整形）、`resolver.py`（バイナリ発見）、`installer.py`（許可リストによる自動インストール）、`fallback.py`（可用性から実行可能メッセージへ）、`client.py`（stdio 上の JSON-RPC）、`manager.py`（プロセスライフサイクル）、`tools.py`（8 つのツール）。ツールは 1 始まりの `line` と `character` を受け取り、内部で LSP ネイティブの 0 始まり位置に変換します。
+LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI、1 始まりと 0 始まりの位置、結果整形）、`resolver.py`（バイナリ発見）、`installer.py`（許可リストによる自動インストール）、`fallback.py`（可用性から実行可能メッセージへ）、`client.py`（stdio 上の JSON-RPC）、`manager.py`（プロセスライフサイクル）、`tools.py`（9 つのツール）。ツールは 1 始まりの `line` と `character` を受け取り、内部で LSP ネイティブの 0 始まり位置に変換します。
 
 | ツール | 目的 | 既定の動作 |
 |--------|------|------------|
@@ -187,8 +187,9 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | `lsp_find_references` | シンボルへのすべての参照 | 読み取り専用 |
 | `lsp_workspace_symbol` | ワークスペースシンボルのファジー検索 | 読み取り専用、結果数に上限 |
 | `lsp_call_hierarchy` | 呼び出し元（incoming）と呼び出し先（outgoing） | 読み取り専用 |
+| `lsp_hover` | 位置の型シグネチャ / ドキュメント | 読み取り専用。MarkupContent をテキスト化 |
 | `lsp_rename` | ワークスペース全体のリネーム | `WorkspaceEdit` をプレビュー。`dry_run=false` のときだけ適用 |
-| `lsp_diagnostics` | ファイルのエラーと警告 | 非同期の `publishDiagnostics` 通知を待ち、`timed_out` を報告 |
+| `lsp_diagnostics` | ファイルのエラーと警告 | ディスクからサーバーを更新し、新しい `publishDiagnostics` 世代を待ち（編集同期は自動）、`timed_out` を報告 |
 | `lsp_format` | ファイル全体または範囲の整形 | プレビュー。`write=true` のときだけ適用。未対応時は成功を装わず `supported=false` を報告 |
 | `lsp_status` | 設定済みすべてのサーバーの正直な可用性 | 何も起動しない |
 

@@ -1,8 +1,9 @@
 """LangChain tool wrappers for LSP precise retrieval — CODE_INTEL_ROLES only.
 
-The eight tools (``lsp_goto_definition`` / ``lsp_find_references`` /
-``lsp_workspace_symbol`` / ``lsp_call_hierarchy`` / ``lsp_rename`` /
-``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are never registered in
+The nine tools (``lsp_goto_definition`` / ``lsp_find_references`` /
+``lsp_workspace_symbol`` / ``lsp_call_hierarchy`` / ``lsp_hover`` /
+``lsp_rename`` / ``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are
+never registered in
 ``_MAIN_TOOLS_BUILDERS``; ``agent/tools/subagent/spawn/core.py`` injects them into
 a child agent only when its functional role is in ``CODE_INTEL_ROLES``
 (researcher / librarian / executor / general). The tools default to preview mode
@@ -35,7 +36,7 @@ from config.features import LSP
 
 from .client import LSPClient
 from .fallback import LspAvailability, build_fallback_message, check_lsp_availability
-from .manager import get_manager
+from .manager import get_manager, lsp_server_cwd
 from .protocol import (
     detect_language,
     format_diagnostic,
@@ -62,8 +63,8 @@ def _override_root() -> Path | None:
 
 
 def _lsp_cwd() -> str:
-    override = _override_root()
-    return str(override) if override is not None else str(Path.cwd().resolve())
+    """The acquisition key every LSP tool shares (``SHERRY_LSP_ROOT`` or cwd)."""
+    return lsp_server_cwd()
 
 
 def _resolve_file(raw: str, root: Path | None = None) -> tuple[Path | None, str | None]:
@@ -172,6 +173,14 @@ class GotoDefinitionInput(BaseModel):
     character: int = Field(description="1-based column of the symbol.")
 
 
+class HoverInput(BaseModel):
+    """Input for ``lsp_hover``."""
+
+    file_path: str = Field(description="File containing the symbol.")
+    line: int = Field(description="1-based line number of the symbol.")
+    character: int = Field(description="1-based column of the symbol.")
+
+
 class FindReferencesInput(BaseModel):
     """Input for ``lsp_find_references``."""
 
@@ -273,6 +282,67 @@ class LspGotoDefinitionTool(_LspTool):
             return self._json({"error": error, "available": True})
         locations = _as_locations(result)
         return self._json({"definitions": locations, "count": len(locations)})
+
+
+def _hover_text(contents: object) -> str:
+    """Flatten LSP ``Hover.contents`` (MarkupContent / MarkedString / list)."""
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, dict):
+        value = contents.get("value")
+        return str(value) if value is not None else ""
+    if isinstance(contents, list):
+        parts = [_hover_text(item) for item in contents]
+        return "\n\n".join(part for part in parts if part)
+    return ""
+
+
+class LspHoverTool(_LspTool):
+    """Read the type signature / documentation of a symbol."""
+
+    name: str = "lsp_hover"
+    description: str = (
+        "Get the language server's hover information for a symbol: its type "
+        "signature and documentation. line/character are 1-based. Fail-open: a "
+        "missing server returns an install hint instead of raising. "
+        'Example: lsp_hover("agent/core.py", 42, 5)'
+    )
+    args_schema: type[BaseModel] = HoverInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, file_path: str, line: int, character: int) -> str:
+        resolved, error = _resolve_file(file_path, self._session_root())
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert resolved is not None
+        language, error = self._resolve_language("", str(resolved))
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert language is not None
+
+        availability, message = check_lsp_availability(language, _lsp_cwd())
+        if availability != "available":
+            return self._unavailable(language, availability, message)
+        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        if client is None:
+            return self._unavailable(language, "not_installed", error)
+
+        open_error = self._open(client, str(resolved))
+        if open_error is not None:
+            return self._json({"error": open_error, "available": True})
+        params = client.position_params(str(resolved), line, character)
+        result, error = self._result(client, "textDocument/hover", params)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        if not isinstance(result, dict):
+            return self._json({"contents": "", "range": None, "available": True})
+        return self._json(
+            {
+                "contents": _hover_text(result.get("contents")),
+                "range": format_range(result.get("range")),
+                "available": True,
+            }
+        )
 
 
 class LspFindReferencesTool(_LspTool):
@@ -515,9 +585,15 @@ class LspDiagnosticsTool(_LspTool):
         if open_error is not None:
             return self._json({"error": open_error, "available": True})
         uri = path_to_uri(str(resolved))
+        cached_before = client.cached_diagnostics(uri)
+        generation = client.diagnostics_generation(uri)
+        sync_error, changed = client.refresh_from_disk(str(resolved))
+        if sync_error is not None:
+            return self._json({"error": sync_error, "available": True})
         window = timeout_s if timeout_s is not None else LSP["lsp_diagnostics_timeout_s"]
-        client.wait_diagnostics(uri, window)
-        cached = client.cached_diagnostics(uri)
+        waited = changed or cached_before is None or client.diagnostics_pending(uri)
+        published = client.wait_diagnostics_since(uri, generation, window) if waited else None
+        cached = published if published is not None else client.cached_diagnostics(uri)
         raw = cached or []
         diagnostics = [item for d in raw if (item := format_diagnostic(d)) is not None]
         summary = {"error": 0, "warning": 0, "information": 0, "hint": 0, "unknown": 0}
@@ -528,7 +604,7 @@ class LspDiagnosticsTool(_LspTool):
                 "diagnostics": diagnostics,
                 "count": len(diagnostics),
                 "summary": summary,
-                "timed_out": cached is None,
+                "timed_out": waited and published is None,
             }
         )
 
@@ -625,6 +701,14 @@ class LspFormatTool(_LspTool):
         if error is not None:
             payload["error"] = error
             return self._json(payload)
+        # The server still holds the pre-format text; push the written file so
+        # the next diagnostics pass analyzes what is actually on disk.
+        try:
+            from agent.tools.pub_base.lsp_sync import sync_edited_path
+
+            sync_edited_path(str(resolved), self._session_id)
+        except Exception:  # noqa: BLE001 - advisory only
+            logger.debug("LSP edit sync skipped", exc_info=True)
         payload.update({"applied": True, "applied_edits": count, "file": str(resolved)})
         return self._json(payload)
 
@@ -774,13 +858,14 @@ def _format_calls(calls: Any, direction: str) -> list[dict]:
 
 
 def build_lsp_tools(session_id: str) -> list[BaseTool]:
-    """Build the eight RESEARCHER-only LSP tools (never raise; fail-open)."""
+    """Build the nine CODE_INTEL_ROLES LSP tools (never raise; fail-open)."""
     try:
         return [
             LspGotoDefinitionTool(session_id=session_id),
             LspFindReferencesTool(session_id=session_id),
             LspWorkspaceSymbolTool(session_id=session_id),
             LspCallHierarchyTool(session_id=session_id),
+            LspHoverTool(session_id=session_id),
             LspRenameTool(session_id=session_id),
             LspDiagnosticsTool(session_id=session_id),
             LspFormatTool(session_id=session_id),

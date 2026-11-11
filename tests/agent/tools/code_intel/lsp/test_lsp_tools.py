@@ -32,6 +32,13 @@ class TestHappyPath:
         assert payload["count"] == 1
         assert payload["definitions"][0]["range"]["start_line"] == 1
 
+    def test_hover_returns_the_signature(self, point_to_fake, fixture_repo: Path) -> None:
+        point_to_fake("python")
+        payload = json.loads(_tools()["lsp_hover"]._run(str(fixture_repo / "m.py"), 1, 5))
+        assert "def helper" in payload["contents"]
+        assert payload["range"]["start_line"] == 1
+        assert payload["available"] is True
+
     def test_find_references(self, point_to_fake, fixture_repo: Path) -> None:
         point_to_fake("python")
         payload = json.loads(_tools()["lsp_find_references"]._run(str(fixture_repo / "m.py"), 1, 5))
@@ -132,13 +139,14 @@ class TestFailOpen:
 
 
 class TestToolSurface:
-    def test_builder_returns_eight_researcher_tools(self) -> None:
+    def test_builder_returns_nine_code_intel_tools(self) -> None:
         tools = build_lsp_tools("sess")
         assert [tool.name for tool in tools] == [
             "lsp_goto_definition",
             "lsp_find_references",
             "lsp_workspace_symbol",
             "lsp_call_hierarchy",
+            "lsp_hover",
             "lsp_rename",
             "lsp_diagnostics",
             "lsp_format",

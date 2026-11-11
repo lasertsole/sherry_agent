@@ -112,6 +112,22 @@ class TestDiagnostics:
         assert payload["diagnostics"][0]["message"] == "fake diagnostic"
         assert payload["summary"]["error"] == 1
 
+    def test_edit_sync_updates_the_server_view(self, point_to_fake, fixture_repo: Path) -> None:
+        from agent.tools.pub_base.lsp_sync import sync_edited_path
+
+        point_to_fake("python")
+        target = fixture_repo / "m.py"
+        tools = _tools()
+        first = json.loads(tools["lsp_diagnostics"]._run(str(target)))
+        assert first["count"] == 1
+
+        target.write_text("broken\n", encoding="utf-8")
+        assert sync_edited_path(str(target), "") is True
+
+        second = json.loads(tools["lsp_diagnostics"]._run(str(target)))
+        messages = [item["message"] for item in second["diagnostics"]]
+        assert "changed content analyzed" in messages
+
     def test_timeout_window_reports_honestly(
         self, point_to_fake, fixture_repo: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
