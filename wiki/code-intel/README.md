@@ -29,10 +29,10 @@ Code Intel answers code-understanding questions with five retrieval engines, eac
 | Layer | Question it answers | Tools | Gate |
 |-------|--------------------|-------|------|
 | **Keyword search** | Where does this literal or regex appear — in contents or in file names? | `search_files` | main agent + `researcher` + `librarian` |
-| **Tree-sitter symbol index** | Where is a symbol defined, and what calls it? | `explore`, `callers`, `callees`, `impact`, `path` | `researcher` + `librarian` |
+| **Tree-sitter symbol index** | Where is a symbol defined, and what calls it? | `explore`, `callers`, `callees`, `impact`, `path` | `CODE_INTEL_ROLES` (researcher / librarian / executor / general) |
 | **ast-grep** | What code has this structural shape, and how do I rewrite it? | `ast_grep_search`, `ast_grep_rewrite` | every subagent |
-| **LSP** | What does the type checker know about this position? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `researcher` + `librarian` |
-| **Semantic search** | Which code implements this concept? | `semantic_code_search` | `researcher` + `librarian` |
+| **LSP** | What does the type checker know about this position? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `CODE_INTEL_ROLES` |
+| **Semantic search** | Which code implements this concept? | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 The engines compose into one workflow: `explore` locates a symbol and its call paths, `ast_grep_search` finds structural patterns across languages, the LSP tools resolve definitions and references with type awareness, and `semantic_code_search` retrieves by concept when no name matches. All four are built and injected at child-agent assembly time.
 
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 Design Invariants
 
 1. **The main agent never sees these tools.** No code-intel or LSP builder is registered in `_MAIN_TOOLS_BUILDERS`; injection happens only inside `_build_child_agent`, after the role tool policy.
-2. **The tool faces are role-gated.** The tree-sitter suite and all eight LSP tools go to `CODE_INTEL_ROLES` (`researcher`, `librarian`); ast-grep goes to every functional role because it is a core structural capability.
+2. **The tool faces are role-gated.** The tree-sitter suite and all eight LSP tools go to `CODE_INTEL_ROLES` (`researcher`, `librarian`, `executor`, `general`); ast-grep goes to every functional role because it is a core structural capability. The four roles share ONE tool face: the read-only roles are told to keep `lsp_rename`/`lsp_format` in preview, while the write roles may apply them (the defaults stay preview).
 3. **Fail-open is the contract.** A missing binary, an unparseable file, an unavailable model, a timeout, or a refused request returns a JSON payload with an actionable message; no retrieval failure raises into the child turn.
 4. **Everything is bounded by construction.** File counts, per-file bytes, build time, batches, result counts, path counts, pattern size, and opened files all have caps; the LSP manager adds an LRU concurrency limit and idle reaping.
 5. **Writes are opt-in and containment-checked.** `ast_grep_rewrite` previews unless `dry_run=false`; `lsp_rename` and `lsp_format` preview unless called with the apply flag; every write path re-validates traversal and project-root containment before touching disk.
@@ -217,7 +217,7 @@ The LSP layer is `agent/tools/code_intel/lsp/`: `protocol.py` (URIs, 1-based to 
 
 Discovery mirrors the ast-grep tiers with a marker-gated twist: an explicit absolute path, then repo-local bin directories trusted only when the matching marker file exists beside them (`pyproject.toml` to `.venv/bin`, `package.json` to `node_modules/.bin`, `Cargo.toml` to `target/debug`, `go.mod` to `bin`, walking up to the repository root), then the `~/.sherry/runtime/lsp` placement, then `PATH`, then Homebrew. Resolution is cached per `(cwd, command, platform)`.
 
-A language server is a heavy resident subprocess, so the process-level manager bounds it: servers start lazily on the first request for a `(language, cwd)`, at most `lsp_max_concurrent_servers` (2) live at once with least-recently-used eviction, an idle sweeper reaps servers unused for `lsp_idle_shutdown_s` (300 s), and `shutdown_all` runs from an `atexit` hook — a client never leaves an orphan. Each client frames JSON-RPC with `Content-Length`, dispatches responses on a reader thread, answers server-to-client requests with an empty result, bounds every wait by a timeout, caps opened files at 32 (closing the oldest), and refuses files over 1 MB.
+A language server is a heavy resident subprocess, so the process-level manager bounds it: servers start lazily on the first request for a `(language, cwd)`, at most `lsp_max_concurrent_servers` (3) live at once with least-recently-used eviction, an idle sweeper reaps servers unused for `lsp_idle_shutdown_s` (300 s), and `shutdown_all` runs from an `atexit` hook — a client never leaves an orphan. Each client frames JSON-RPC with `Content-Length`, dispatches responses on a reader thread, answers server-to-client requests with an empty result, bounds every wait by a timeout, caps opened files at 32 (closing the oldest), and refuses files over 1 MB.
 
 Availability is a three-state report: `available`, `not_installed` (configured but no binary passed discovery — an install hint and the local-install command are returned), or `not_configured` (language not in `lsp_enabled_languages`). Every unavailable path returns the tool name, the install hint, and a fallback to `explore` or `terminal` (rg/grep). Auto-install is off by default (`lsp_auto_install=False`); when enabled it executes only the allow-listed command for the requested language, with a 60 s timeout and a scrubbed environment.
 
@@ -237,9 +237,11 @@ Search self-heals the index, embeds the query, ranks every stored chunk by pure-
 |-----------------|-------------------|-----------|----------|
 | `researcher` | yes | yes | yes |
 | `librarian` | yes | yes | yes |
-| `general` | no | no | yes |
-| `executor` | no | no | yes |
+| `general` | yes | yes | yes |
+| `executor` | yes | yes | yes |
 | `reviewer` | no | no | yes |
+
+The four eligible roles share the same injected tools; the difference is prompt-only. `CODE_INTEL_WRITE_ROLES` (`executor`, `general`) may pass `dry_run=false` / `write=true` to apply a rename or formatting edit; `researcher` / `librarian` are told never to. Lightweight lookups should be done directly by a write role; a heavy multi-step investigation still belongs in a spawned `researcher`. The single-hop spawn allow-list is untouched because code-intel tools are local analysis and never spawn a child.
 
 The main agent is outside this table entirely: the builders are never added to `_MAIN_TOOLS_BUILDERS`, and the isolation tests assert that `build_lsp_tools` is absent from that list and from the `agent.tools` namespace. The `librarian` definition at `agent/tools/subagent/roles/definitions/librarian/AGENTS.md` documents the intended external-repo workflow — clone with `terminal`, then index and search with `explore` and `semantic_code_search`, and answer with permalinks. `search_files` is the exception to that gating: it is a main tool (it is in `_MAIN_TOOLS_BUILDERS`) and `researcher` / `librarian` name it in their whitelists, so keyword retrieval is the one search surface the main agent shares with the code-intel roles. The two-axis role model itself (depth role × functional role) is documented in the [Subagent Design page](../subagent/README.md), and each role's tool list in the [Subagent System README](../../agent/tools/subagent/README.md).
 
@@ -250,9 +252,9 @@ The main agent is outside this table entirely: the builders are never added to `
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | max 5000 files, 1 MB per file, 60 s build budget, batch 100, explore 10 symbols and 8000 chars, call depth 3, fuzzy score 0.3 |
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | model `jina-embeddings-v2-base-code` (ONNX, 768d), `enabled` auto/on/off, top-K 5 (max 20), candidate pool 40, batch 16, 1000 chunks per build, 60 per file, 2000 chars per chunk |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | pinned `0.43.0`, 50 matches, 16 KiB pattern, 30 s run timeout, 64 paths, 60 s provision timeout, 5 s version-probe timeout |
-| `LSP` | `config/features/agent_side/lsp.py` | request 10 s, start 15 s, diagnostics 15 s, 2 concurrent servers, 300 s idle shutdown, 50 results, 32 opened files, 1 MB per file, auto-install off |
+| `LSP` | `config/features/agent_side/lsp.py` | request 10 s, start 15 s, diagnostics 15 s, 3 concurrent servers, 300 s idle shutdown, 50 results, 32 opened files, 1 MB per file, auto-install off |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime dir, 5 s version-probe timeout, 5 s / 5 s reap graces; the scan budget and match cap live in `TOOLS_TIMEOUTS` |
-| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` and `librarian` |
+| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`, `librarian`, `executor`, `general` (`CODE_INTEL_WRITE_ROLES` = `executor`, `general`) |
 
 The index database follows the SESSION's project directory: a spawn indexes into `<project_root>/.sherry/codeintel/index.db` (`agent/tools/code_intel/roots.py::index_db_for_root`), so alternating between projects no longer rebuilds one shared index (the stored paths are project-relative and collide across roots). The shared `CODE_INTEL_DIR / "index.db"` (`CODE_INTEL_DIR = APP_HOME / ".codeintel"` in `config/path.py`) stays the fallback for a call with no project root, `code_intel_index_db_path` pins one explicitly, and `SHERRY_CODE_INTEL_DB` overrides the path at call time (as does `SHERRY_CODE_INTEL_ROOT` for the root).
 

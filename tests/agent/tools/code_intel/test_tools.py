@@ -119,7 +119,7 @@ def test_tool_names_and_scope_metadata(tools: list) -> None:
         "semantic_code_search",
     ]
     for tool in tools:
-        assert tool.metadata["scope"] == "researcher_only"
+        assert tool.metadata["scope"] == "code_intel"
         assert tool.description
 
 

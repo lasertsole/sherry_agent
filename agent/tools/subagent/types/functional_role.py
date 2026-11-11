@@ -28,8 +28,25 @@ class FunctionalRole(StrEnum):
 #: Roles that get the tree-sitter code-intel suite and the eight LSP tools.
 #: Both spawn/core.py injection and spawn/system_prompt.py guidance read this
 #: single set, so the tool face and its prompt section cannot drift apart.
+#: EXECUTOR/GENERAL (write roles) get the same tools so lightweight lookups do
+#: not need a researcher round-trip; only the PROMPT differs — read-only roles
+#: are told to stay in preview mode, write roles may apply rename/format. The
+#: single-hop spawn allow-list is untouched (these are local analysis tools and
+#: never spawn a child).
 CODE_INTEL_ROLES: frozenset[FunctionalRole] = frozenset(
-    {FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN}
+    {
+        FunctionalRole.RESEARCHER,
+        FunctionalRole.LIBRARIAN,
+        FunctionalRole.EXECUTOR,
+        FunctionalRole.GENERAL,
+    }
+)
+
+#: CODE_INTEL_ROLES that are WRITE-capable. The shared tool face is identical,
+#: but the prompt lets these roles APPLY ``lsp_rename`` / ``lsp_format`` while
+#: read-only roles stay in preview mode.
+CODE_INTEL_WRITE_ROLES: frozenset[FunctionalRole] = frozenset(
+    {FunctionalRole.EXECUTOR, FunctionalRole.GENERAL}
 )
 
 #: Roles that get the Programmatic Tool Calling ``execute_code`` tool. EXECUTOR
@@ -56,11 +73,11 @@ PTC_ROLES: frozenset[FunctionalRole] = frozenset({FunctionalRole.EXECUTOR})
 #:    fails the invariant instead of opening an escalation path.
 #:
 #: The one deliberate deviation from "child tools ⊆ parent tools": an
-#: executor's researcher/librarian children DO carry read-only extras the
-#: executor lacks (``search_files``, ``web_search``, code-intel, LSP). That
-#: is the point — read-only research before writing — and containment exists
-#: to stop WRITE escalation, not read-only information access. Researcher and
-#: librarian are mutually spawnable for the same reason.
+#: executor's researcher/librarian children carry read-only tools the executor
+#: also has (code-intel/LSP are now shared; ``search_files``/``web_search``
+#: remain child-only). Containment exists to stop WRITE escalation, not
+#: read-only information access. Researcher and librarian are mutually
+#: spawnable for the same reason.
 SPAWN_ALLOWED_CHILD_ROLES: dict[FunctionalRole, frozenset[FunctionalRole]] = {
     FunctionalRole.EXECUTOR: frozenset(
         {

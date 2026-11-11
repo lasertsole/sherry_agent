@@ -247,10 +247,11 @@ def _assemble_child_tools(
 
     filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
 
-    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher + librarian):
-    # they are injected here, after the role policy, and never added to
-    # _MAIN_TOOLS_BUILDERS, so the main agent and every other functional role
-    # cannot see them.
+    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher, librarian
+    # and the write roles executor/general): they are injected here, after the
+    # role policy, and never added to _MAIN_TOOLS_BUILDERS, so the main agent
+    # and the remaining roles (reviewer) cannot see them. The read-only/write
+    # distinction lives in the role prompt, not in the injected tool set.
     final_tools = list(filtered_tools)
     if functional_role in CODE_INTEL_ROLES:
         from agent.tools.code_intel import build_code_intel_tools

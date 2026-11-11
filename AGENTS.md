@@ -2558,8 +2558,21 @@ independent implementation; `impact()` is untouched (C2) and still returns its
 `importers_of`, `inherits_from`, `subclasses_of`, `mixins_of`, `mixins_in_by`,
 `god_nodes` (pure SQL degree) and `communities` / `community_of` (networkx
 Louvain on demand with a connected-components fallback when networkx is absent).
-The tool name is `path`; the tool set is still `scope=researcher_only` and never
-joins `_MAIN_TOOLS_BUILDERS` (C5).
+The tool name is `path`; the tool set is `scope=code_intel` and never joins
+`_MAIN_TOOLS_BUILDERS` (C5).
+
+`CODE_INTEL_ROLES` (`agent/tools/subagent/types/functional_role.py`) is the
+single source of the tool face and its prompt section: **researcher, librarian,
+executor and general** get the tree-sitter suite plus the eight LSP tools;
+reviewer and the main agent do not. The four share ONE injected set — the role
+branch is prompt-only: `CODE_INTEL_WRITE_ROLES` (executor/general) may pass
+`dry_run=false` / `write=true` to apply a rename or formatting edit, while the
+read-only roles are told to stay in preview mode (the tool defaults remain
+preview). A write role does lightweight lookups directly and still spawns a
+researcher for a heavy investigation; the single-hop spawn allow-list is
+unchanged because code-intel is local analysis and never spawns a child. The LSP
+manager's shared pool is `lsp_max_concurrent_servers = 3` to absorb the extra
+roles; `lsp_idle_shutdown_s` stays 300.
 
 `skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index(repo_name,
 db_path)` turns a code_intel SQLite DB into a deterministic, zero-LLM wiki

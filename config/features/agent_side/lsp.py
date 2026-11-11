@@ -249,7 +249,7 @@ LSP: LspConfig = {
     },
     # ── resource bounds ──
     "lsp_runtime_dir": "",  # empty → ~/.sherry/runtime/lsp/<slug>
-    "lsp_max_concurrent_servers": 2,
+    "lsp_max_concurrent_servers": 3,
     "lsp_idle_shutdown_s": 300.0,
     "lsp_max_results": 50,
     "lsp_max_opened_files": 32,

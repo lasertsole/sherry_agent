@@ -29,10 +29,10 @@ Code Intel은 다섯 가지 검색 엔진으로 코드 이해 질문에 답하�
 | 계층 | 답하는 질문 | 도구 | 개방 범위 |
 |------|-------------|------|-----------|
 | **키워드 검색** | 이 리터럴이나 정규식이 어디에 나타나는가——내용인가, 파일 이름인가? | `search_files` | 메인 에이전트 + `researcher` + `librarian` |
-| **Tree-sitter 심볼 인덱스** | 심볼은 어디에 정의되고 누가 호출하는가? | `explore`, `callers`, `callees`, `impact`, `path` | `researcher` + `librarian` |
+| **Tree-sitter 심볼 인덱스** | 심볼은 어디에 정의되고 누가 호출하는가? | `explore`, `callers`, `callees`, `impact`, `path` | `CODE_INTEL_ROLES`(researcher / librarian / executor / general) |
 | **ast-grep** | 어떤 코드가 이 구조 형태를 가지며 어떻게 재작성하는가? | `ast_grep_search`, `ast_grep_rewrite` | 모든 서브에이전트 |
-| **LSP** | 타입 검사기는 이 위치에 대해 무엇을 아는가? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `researcher` + `librarian` |
-| **시맨틱 검색** | 이 개념을 구현한 코드는 무엇인가? | `semantic_code_search` | `researcher` + `librarian` |
+| **LSP** | 타입 검사기는 이 위치에 대해 무엇을 아는가? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `CODE_INTEL_ROLES` |
+| **시맨틱 검색** | 이 개념을 구현한 코드는 무엇인가? | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 네 계층은 하나의 워크플로로 결합됩니다: `explore`가 심볼과 호출 경로를 찾고, `ast_grep_search`가 언어를 넘나들며 구조 패턴을 찾고, LSP 도구가 타입을 인식해 정의와 참조를 해석하며, `semantic_code_search`가 이름이 맞지 않을 때 개념으로 검색합니다. 네 계층 모두 자식 에이전트 조립 시점에 구성되어 주입됩니다.
 
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 설계 불변식
 
 1. **메인 에이전트는 이 도구들을 절대 보지 못합니다.** 어떤 code-intel 또는 LSP 빌더도 `_MAIN_TOOLS_BUILDERS`에 등록되지 않으며, 주입은 `_build_child_agent` 내부에서 역할 도구 정책 뒤에만 일어납니다.
-2. **도구 면은 역할로 제한됩니다.** tree-sitter 스위트와 8개 LSP 도구는 `CODE_INTEL_ROLES`(`researcher`, `librarian`)에만 전달됩니다. ast-grep은 핵심 구조 능력이므로 모든 기능 역할이 받습니다.
+2. **도구 면은 역할로 제한됩니다.** tree-sitter 스위트와 8개 LSP 도구는 `CODE_INTEL_ROLES`(`researcher`, `librarian`, `executor`, `general`)에 전달됩니다. ast-grep은 핵심 구조 능력이므로 모든 기능 역할이 받습니다. 네 역할은 같은 도구 면을 공유하며 차이는 프롬프트뿐입니다. 읽기 전용 역할은 `lsp_rename`/`lsp_format`을 미리보기로 유지하고, 쓰기 역할은 명시적으로 적용할 수 있습니다(기본값은 미리보기).
 3. **fail-open이 계약입니다.** 없는 바이너리, 파싱할 수 없는 파일, 사용할 수 없는 모델, 타임아웃, 거부된 요청은 모두 실행 가능한 메시지가 담긴 JSON 페이로드를 반환합니다. 어떤 검색 실패도 자식 턴으로 예외를 던지지 않습니다.
 4. **모든 것이 구조적으로 유계입니다.** 파일 수, 파일당 바이트, 빌드 시간, 배치, 결과 수, 경로 수, 패턴 크기, 열린 파일 수에 상한이 있습니다. LSP 관리자는 LRU 동시성 상한과 유휴 회수를 추가합니다.
 5. **쓰기는 옵트인이며 포함 관계를 검증합니다.** `ast_grep_rewrite`는 `dry_run=false`가 아니면 미리보기만 하고, `lsp_rename`과 `lsp_format`은 적용 플래그 없이는 미리보기만 합니다. 모든 쓰기 경로는 디스크를 건드리기 전에 경로 탈출과 프로젝트 루트 포함 관계를 다시 검증합니다.
@@ -194,7 +194,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 
 발견 순서는 ast-grep 계층과 같지만 marker 게이트가 더해집니다: 명시적 절대 경로, 그다음 같은 계층에 대응 marker 파일이 있을 때만 신뢰하는 저장소 로컬 bin 디렉터리(`pyproject.toml`은 `.venv/bin`, `package.json`은 `node_modules/.bin`, `Cargo.toml`은 `target/debug`, `go.mod`는 `bin`, 저장소 루트까지 상향 순회), 그다음 `~/.sherry/runtime/lsp` 배치, 그다음 `PATH`, 마지막으로 Homebrew. 해석 결과는 `(cwd, command, platform)` 단위로 캐시됩니다.
 
-언어 서버는 무거운 상주 서브프로세스이므로 프로세스 단위 관리자가 제약합니다: 서버는 `(language, cwd)`에 대한 첫 요청에서 지연 시작하고, 동시에 살아 있는 수는 최대 `lsp_max_concurrent_servers`(2)개이며 초과 시 가장 오래 사용되지 않은 것을 내보냅니다. 유휴 스위퍼는 `lsp_idle_shutdown_s`(300초)를 넘겨 사용되지 않은 서버를 회수하고, `shutdown_all`은 `atexit` 훅에서 실행됩니다——클라이언트가 고아 프로세스를 남기는 일은 없습니다. 각 클라이언트는 `Content-Length`로 JSON-RPC를 프레이밍하고, 리더 스레드에서 응답을 분배하고, 서버→클라이언트 요청에 빈 결과로 답하고, 모든 대기를 타임아웃으로 유계하며, 열린 파일을 32개로 제한하고(가장 오래된 것 닫기), 1 MB 초과 파일을 거부합니다.
+언어 서버는 무거운 상주 서브프로세스이므로 프로세스 단위 관리자가 제약합니다: 서버는 `(language, cwd)`에 대한 첫 요청에서 지연 시작하고, 동시에 살아 있는 수는 최대 `lsp_max_concurrent_servers`(3)개이며 초과 시 가장 오래 사용되지 않은 것을 내보냅니다. 유휴 스위퍼는 `lsp_idle_shutdown_s`(300초)를 넘겨 사용되지 않은 서버를 회수하고, `shutdown_all`은 `atexit` 훅에서 실행됩니다——클라이언트가 고아 프로세스를 남기는 일은 없습니다. 각 클라이언트는 `Content-Length`로 JSON-RPC를 프레이밍하고, 리더 스레드에서 응답을 분배하고, 서버→클라이언트 요청에 빈 결과로 답하고, 모든 대기를 타임아웃으로 유계하며, 열린 파일을 32개로 제한하고(가장 오래된 것 닫기), 1 MB 초과 파일을 거부합니다.
 
 가용성은 3상태로 보고됩니다: `available`, `not_installed`(설정되었지만 발견을 통과한 바이너리가 없음——설치 힌트와 로컬 설치 명령 반환), `not_configured`(언어가 `lsp_enabled_languages`에 없음). 사용할 수 없는 모든 경로는 도구 이름, 설치 힌트, 그리고 `explore` 또는 `terminal`(rg/grep)로의 폴백을 반환합니다. 자동 설치는 기본적으로 꺼져 있고(`lsp_auto_install=False`), 켜져도 대상 언어의 허용 목록 명령만 60초 타임아웃과 세척된 환경으로 실행합니다.
 
@@ -214,9 +214,11 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 |-----------|--------------------|----------|----------|
 | `researcher` | 있음 | 있음 | 있음 |
 | `librarian` | 있음 | 있음 | 있음 |
-| `general` | 없음 | 없음 | 있음 |
-| `executor` | 없음 | 없음 | 있음 |
+| `general` | 있음 | 있음 | 있음 |
+| `executor` | 있음 | 있음 | 있음 |
 | `reviewer` | 없음 | 없음 | 있음 |
+
+네 대상 역할은 동일한 도구를 주입받고 차이는 프롬프트뿐입니다. `CODE_INTEL_WRITE_ROLES`(`executor`, `general`)는 `dry_run=false` / `write=true`를 전달해 이름 변경이나 포맷을 적용할 수 있습니다. `researcher` / `librarian`은 절대 적용하지 않도록 지시됩니다. 가벼운 조회는 쓰기 역할이 직접 하고, 무거운 다단계 조사는 spawn한 `researcher`에 맡깁니다. 단일 홉 spawn allow-list는 그대로입니다(code-intel은 로컬 분석이며 자식을 spawn하지 않음).
 
 메인 에이전트는 이 표 밖에 전혀 있습니다: 빌더는 `_MAIN_TOOLS_BUILDERS`에 결코 추가되지 않으며, 격리 테스트가 `build_lsp_tools`의 부재를 그 목록과 `agent.tools` 네임스페이스 양쪽에서 주장합니다. `agent/tools/subagent/roles/definitions/librarian/AGENTS.md`의 `librarian` 정의는 의도된 외부 저장소 워크플로——`terminal`로 클론하고, `explore`와 `semantic_code_search`로 인덱싱·검색하고, 영구 링크로 답하기——를 기록합니다. `search_files` 는 그 게이트의 예외입니다: 메인 도구(`_MAIN_TOOLS_BUILDERS` 에 포함)이고 `researcher` / `librarian` 이 허용 목록에서 이름을 올렸으므로, 키워드 검색은 메인 에이전트가 code-intel 역할과 공유하는 유일한 검색 면입니다. 두 축 역할 모델 자체(깊이 역할 × 기능 역할)는 [서브에이전트 설계 페이지](../subagent/README.ko.md)에, 역할별 도구 목록은 [서브에이전트 시스템 README](../../agent/tools/subagent/README.ko.md)에 있습니다.
 
@@ -227,9 +229,9 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | 최대 5000 파일, 파일당 1 MB, 빌드 예산 60초, 배치 100, explore 10 심볼과 8000자, 호출 깊이 3, 퍼지 점수 0.3 |
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 모델 `jina-embeddings-v2-base-code`(ONNX, 768d), `enabled` auto/on/off, top-K 5(최대 20), 후보 풀 40, 배치 16, 빌드당 1000 청크, 파일당 60, 청크당 2000자 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 고정 `0.43.0`, 50 일치, 16 KiB 패턴, 30초 실행 타임아웃, 64 경로, 60초 프로비저닝 타임아웃, 5초 버전 프로브 |
-| `LSP` | `config/features/agent_side/lsp.py` | 요청 10초, 시작 15초, 진단 15초, 동시 서버 2, 유휴 종료 300초, 50 결과, 열린 파일 32, 파일당 1 MB, 자동 설치 꺼짐 |
+| `LSP` | `config/features/agent_side/lsp.py` | 요청 10초, 시작 15초, 진단 15초, 동시 서버 3, 유휴 종료 300초, 50 결과, 열린 파일 32, 파일당 1 MB, 자동 설치 꺼짐 |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime 디렉터리, 5초 버전 프로브, 5초 / 5초 회수 유예. 스캔 예산과 매치 상한은 `TOOLS_TIMEOUTS` |
-| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`와 `librarian` |
+| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`, `librarian`, `executor`, `general`(`CODE_INTEL_WRITE_ROLES` = `executor`, `general`) |
 
 인덱스 데이터베이스는 **세션의 프로젝트 디렉터리**를 따릅니다: spawn 시 `<project_root>/.sherry/codeintel/index.db`에 인덱싱하므로(`agent/tools/code_intel/roots.py::index_db_for_root`), 프로젝트를 번갈아 써도 하나의 공유 인덱스를 다시 만들지 않습니다(저장되는 경로는 프로젝트 상대 경로라 루트를 넘나들면 충돌합니다). 프로젝트 루트가 없는 호출은 공유 `CODE_INTEL_DIR / "index.db"`(`config/path.py`의 `CODE_INTEL_DIR = APP_HOME / ".codeintel"`)로 폴백하고, `code_intel_index_db_path`가 명시적으로 고정하며, `SHERRY_CODE_INTEL_DB`가 호출 시 경로를 덮어씁니다(`SHERRY_CODE_INTEL_ROOT`는 루트를 덮어씀).
 
@@ -268,7 +270,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 - **임베딩 배치는 모델을 다시 로드합니다.** 각 `embed_documents` 호출이 백엔드를 로드하므로(로컬 GGUF 로더는 배치마다 호출됨) 배치는 로드 시간과 최대 메모리의 절충입니다. 빌드당·파일당 상한이 이를 유계로 유지합니다.
 - **리랭커 미설정은 순위 품질 손실일 뿐입니다.** 없으면 결과는 코사인 순서로 남고 페이로드가 `reranked=false`를 알리며, 있어도 실패하면 같은 코사인 순서로 폴백합니다.
 - **ast-grep의 첫 사용은 바이너리를 다운로드합니다.** 프로비저닝 경로는 60초 타임아웃으로 유계되고 체크섬 불일치면 설치를 거부합니다. 오프라인이거나 자산이 없는 플랫폼에서는 설치 힌트를 대신 반환합니다.
-- **LSP 서버는 무겁습니다.** 관리자는 동시 2개로 제한하고 300초 유휴 후 회수하며 가장 오래 사용되지 않은 서버를 내보냅니다. 어떤 언어의 첫 요청은 서버 시작 비용을 지불하고, 서버가 창 안에 아무것도 발행하지 않으면 `lsp_diagnostics`가 `timed_out`을 반환할 수 있습니다.
+- **LSP 서버는 무겁습니다.** 관리자는 동시 3개로 제한하고 300초 유휴 후 회수하며 가장 오래 사용되지 않은 서버를 내보냅니다. 어떤 언어의 첫 요청은 서버 시작 비용을 지불하고, 서버가 창 안에 아무것도 발행하지 않으면 `lsp_diagnostics`가 `timed_out`을 반환할 수 있습니다.
 - **이 호스트의 LSP 커버리지는 부분적입니다.** 발견 가능한 것은 `python`과 `typescript`뿐입니다. `rust`는 해석되지만 툴체인 구성 요소 없이는 시작할 수 없고, 나머지 7개 언어는 설치가 필요합니다. 자동 설치는 기본적으로 꺼져 있어 서버 부재가 패키지 관리자 실행을 유발하지 않습니다.
 - **librarian의 도구 면은 `read_file` / `terminal` / `web_search`에 code-intel 제품군을 더한 것입니다.** 여기에는 `search_files`가 포함되지 않습니다 —— 해당 빌더가 `_MAIN_TOOLS_BUILDERS`에 없으므로, 외부 저장소 키워드 검색은 `terminal`(rg/grep)과 `explore`로 수행합니다.
 - **쓰기는 설계상 2단계입니다.** `ast_grep_rewrite`, `lsp_rename`, `lsp_format`은 명시적으로 요청받았을 때만 씁니다. 미리보기가 안전한 기본이며, 적용된 편집도 포함 검사를 받습니다.

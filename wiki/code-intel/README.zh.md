@@ -29,10 +29,10 @@ Code Intel 用五个检索引擎回答代码理解问题，每个引擎对应一
 | 层 | 回答的问题 | 工具 | 开放范围 |
 |----|-----------|------|----------|
 | **关键词搜索** | 这个字面量或正则出现在哪里——内容里还是文件名里？ | `search_files` | 主代理 + `researcher` + `librarian` |
-| **Tree-sitter 符号索引** | 符号定义在哪里，谁在调用它？ | `explore`、`callers`、`callees`、`impact`, `path` | `researcher` + `librarian` |
+| **Tree-sitter 符号索引** | 符号定义在哪里，谁在调用它？ | `explore`、`callers`、`callees`、`impact`, `path` | `CODE_INTEL_ROLES`（researcher / librarian / executor / general） |
 | **ast-grep** | 哪些代码具有该结构形态，如何重写？ | `ast_grep_search`、`ast_grep_rewrite` | 所有子代理 |
-| **LSP** | 类型检查器对这个位置了解什么？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `researcher` + `librarian` |
-| **语义搜索** | 哪个代码实现了这个概念？ | `semantic_code_search` | `researcher` + `librarian` |
+| **LSP** | 类型检查器对这个位置了解什么？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `CODE_INTEL_ROLES` |
+| **语义搜索** | 哪个代码实现了这个概念？ | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 四个引擎组合成一条工作流：`explore` 定位符号及其调用路径，`ast_grep_search` 跨语言查找结构模式，LSP 工具以类型感知方式解析定义与引用，`semantic_code_search` 在名称无法匹配时按概念检索。四层都在子代理解析组装时构建并注入。
 
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 设计不变量
 
 1. **主智能体永远看不到这些工具。** 任何 code-intel 或 LSP 构建器都不注册进 `_MAIN_TOOLS_BUILDERS`；注入只发生在 `_build_child_agent` 内部、角色工具策略之后。
-2. **工具面按角色开放。** tree-sitter 套件与全部八个 LSP 工具只给 `CODE_INTEL_ROLES`（`researcher`、`librarian`）；ast-grep 属于核心结构能力，因此所有功能角色都能拿到。
+2. **工具面按角色开放。** tree-sitter 套件与全部八个 LSP 工具给 `CODE_INTEL_ROLES`（`researcher`、`librarian`、`executor`、`general`）；ast-grep 属于核心结构能力，因此所有功能角色都能拿到。四个角色共享同一套工具，区别仅在提示词：只读角色保持 `lsp_rename`/`lsp_format` 预览，写角色可以显式应用（默认仍是预览）。
 3. **fail-open 是契约。** 缺失的二进制、无法解析的文件、不可用的模型、超时或被拒绝的请求，都返回带可执行提示的 JSON 载荷；任何检索失败都不会把异常抛进子代理回合。
 4. **一切都有上界。** 文件数、单文件字节数、构建时长、批次、结果数、路径数、模式大小与打开文件数都有上限；LSP 管理器另有 LRU 并发上限与空闲回收。
 5. **写入默认关闭并做容器校验。** `ast_grep_rewrite` 除非 `dry_run=false` 否则只预览；`lsp_rename` 与 `lsp_format` 除非传入应用标志否则只预览；每条写入路径在落盘前都重新校验路径穿越与项目根包含关系。
@@ -191,7 +191,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 
 发现顺序与 ast-grep 各层一致，但加入 marker 门控：显式绝对路径；仅当同级存在对应 marker 文件时才信任的仓库本地 bin 目录（`pyproject.toml` 对应 `.venv/bin`、`package.json` 对应 `node_modules/.bin`、`Cargo.toml` 对应 `target/debug`、`go.mod` 对应 `bin`，逐级向上到仓库根）；然后是 `~/.sherry/runtime/lsp`；再是 `PATH`；最后是 Homebrew。解析结果按 `(cwd, command, platform)` 缓存。
 
-语言服务器是重型常驻子进程，因此进程级管理器对其施加约束：服务器在首次请求某个 `(language, cwd)` 时惰性启动，同时存活的最多 `lsp_max_concurrent_servers`（2）个，超出时淘汰最久未使用者；空闲清扫线程回收超过 `lsp_idle_shutdown_s`（300 秒）未使用的服务器；`shutdown_all` 由 `atexit` 钩子执行——客户端绝不留下孤儿进程。每个客户端用 `Content-Length` 分帧 JSON-RPC，在读线程上分发响应，对服务器到客户端的请求回以空结果，所有等待都有超时，打开文件上限 32（关闭最旧者），并拒绝超过 1 MB 的文件。
+语言服务器是重型常驻子进程，因此进程级管理器对其施加约束：服务器在首次请求某个 `(language, cwd)` 时惰性启动，同时存活的最多 `lsp_max_concurrent_servers`（3）个，超出时淘汰最久未使用者；空闲清扫线程回收超过 `lsp_idle_shutdown_s`（300 秒）未使用的服务器；`shutdown_all` 由 `atexit` 钩子执行——客户端绝不留下孤儿进程。每个客户端用 `Content-Length` 分帧 JSON-RPC，在读线程上分发响应，对服务器到客户端的请求回以空结果，所有等待都有超时，打开文件上限 32（关闭最旧者），并拒绝超过 1 MB 的文件。
 
 可用性是三态报告：`available`、`not_installed`（已配置但没有二进制通过发现——返回安装提示与本地安装命令）、`not_configured`（语言不在 `lsp_enabled_languages` 中）。每条不可用路径都会返回工具名、安装提示，以及回退到 `explore` 或 `terminal`（rg/grep）的建议。自动安装默认关闭（`lsp_auto_install=False`）；启用后也只执行目标语言的白名单命令，并受 60 秒超时与擦洗环境约束。
 
@@ -211,9 +211,11 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 |----------|------------------|----------|----------|
 | `researcher` | 有 | 有 | 有 |
 | `librarian` | 有 | 有 | 有 |
-| `general` | 无 | 无 | 有 |
-| `executor` | 无 | 无 | 有 |
+| `general` | 有 | 有 | 有 |
+| `executor` | 有 | 有 | 有 |
 | `reviewer` | 无 | 无 | 有 |
+
+四个有资格的角色注入完全相同的工具，区别只在提示词。`CODE_INTEL_WRITE_ROLES`（`executor`、`general`）可以传 `dry_run=false` / `write=true` 应用重命名或格式化；`researcher` / `librarian` 被要求永不应用。写角色应直接做轻量检索，重调查仍交给 spawn 的 `researcher`。单跳 spawn allow-list 不变，因为 code-intel 是本地分析工具、不会 spawn 子代。
 
 主智能体完全在这张表之外：构建器从不加入 `_MAIN_TOOLS_BUILDERS`，隔离测试断言 `build_lsp_tools` 既不在该列表中，也不在 `agent.tools` 命名空间里。`agent/tools/subagent/roles/definitions/librarian/AGENTS.md` 中的 `librarian` 定义记录了预期的外部仓库工作流——用 `terminal` 克隆，然后用 `explore` 与 `semantic_code_search` 建索引并检索，最后以永久链接作答。`search_files` 是那套门控的例外：它是主工具（在 `_MAIN_TOOLS_BUILDERS` 里），而 `researcher` / `librarian` 在各自白名单中点名了它，因此关键词检索是主代理与 code-intel 角色共享的唯一检索面。两轴角色模型本身（深度角色 × 功能角色）见[子代理设计页](../subagent/README.zh.md)，各角色的工具清单见[子代理系统 README](../../agent/tools/subagent/README.zh.md)。
 
@@ -224,9 +226,9 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | 最多 5000 文件、单文件 1 MB、构建预算 60 秒、批次 100、explore 10 符号与 8000 字符、调用深度 3、模糊分数 0.3 |
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 模型 `jina-embeddings-v2-base-code`（ONNX，768d）、`enabled` auto/on/off、top-K 5（最大 20）、候选池 40、批次 16、单次构建 1000 分块、每文件 60 分块、每分块 2000 字符 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 锁定 `0.43.0`、50 条匹配、16 KiB 模式、30 秒运行超时、64 路径、60 秒预置超时、5 秒版本探测超时 |
-| `LSP` | `config/features/agent_side/lsp.py` | 请求 10 秒、启动 15 秒、诊断 15 秒、并发服务器 2、空闲关停 300 秒、50 条结果、打开文件 32、单文件 1 MB、自动安装关闭 |
+| `LSP` | `config/features/agent_side/lsp.py` | 请求 10 秒、启动 15 秒、诊断 15 秒、并发服务器 3、空闲关停 300 秒、50 条结果、打开文件 32、单文件 1 MB、自动安装关闭 |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime 目录、5 s 版本探针超时、5 s / 5 s 回收宽限；扫描预算与匹配上限在 `TOOLS_TIMEOUTS` |
-| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` 与 `librarian` |
+| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`、`librarian`、`executor`、`general`（`CODE_INTEL_WRITE_ROLES` = `executor`、`general`） |
 
 索引数据库跟随**会话的项目目录**：spawn 时索引写入 `<project_root>/.sherry/codeintel/index.db`（`agent/tools/code_intel/roots.py::index_db_for_root`），因此在多个项目间交替使用不再重建同一个共享索引（索引里存的是项目相对路径，跨根会互相冲突）。无项目根时回退到共享的 `CODE_INTEL_DIR / "index.db"`（`config/path.py` 定义 `CODE_INTEL_DIR = APP_HOME / ".codeintel"`），`code_intel_index_db_path` 可显式固定一份，`SHERRY_CODE_INTEL_DB` 在调用时覆盖数据库路径（`SHERRY_CODE_INTEL_ROOT` 覆盖根）。
 

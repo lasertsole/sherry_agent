@@ -5,8 +5,9 @@ The eight tools (``lsp_goto_definition`` / ``lsp_find_references`` /
 ``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are never registered in
 ``_MAIN_TOOLS_BUILDERS``; ``agent/tools/subagent/spawn/core.py`` injects them into
 a child agent only when its functional role is in ``CODE_INTEL_ROLES``
-(researcher / librarian). Both roles are read-only, so the prompt keeps
-``lsp_rename`` / ``lsp_format`` in preview mode.
+(researcher / librarian / executor / general). The tools default to preview mode
+for ``lsp_rename`` / ``lsp_format``; the role prompt lets the write roles apply
+them while the read-only roles stay in preview.
 
 Every tool is **fail-open**: before any request it checks server availability via
 :mod:`fallback`, and a missing server / failed start / timed-out request degrades
@@ -48,7 +49,7 @@ from .protocol import (
     to_position,
 )
 
-_SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
+_SCOPE_METADATA: dict[str, Any] = {"scope": "code_intel", "idempotent": True}
 _ROOT_ENV_KEY = "SHERRY_LSP_ROOT"
 
 

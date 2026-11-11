@@ -116,19 +116,22 @@ class TestLibrarianGetsCodeIntel:
         assert "read_file" in names
 
 
-class TestOtherRolesHaveNoCodeIntel:
-    def test_executor_child_has_no_code_intel(self, _wiring: dict) -> None:
+class TestWriteRolesGetCodeIntel:
+    @pytest.mark.parametrize("role_name", ["executor", "general"])
+    def test_write_role_child_gets_code_intel(self, _wiring: dict, role_name: str) -> None:
         _build(
             tools=[_StubTool("read_file"), _StubTool("write_file")],
             tool_allow=["read_file", "write_file", "terminal", "python_repl"],
             tool_deny=[],
-            functional_role=_role("executor"),
+            functional_role=_role(role_name),
             model_tier="auxiliary",
         )
         names = _tool_names(_wiring)
-        assert not (CODE_INTEL_NAMES & names)
-        assert not (SEMANTIC_NAMES & names)
+        assert CODE_INTEL_NAMES <= names
+        assert SEMANTIC_NAMES <= names
 
+
+class TestOtherRolesHaveNoCodeIntel:
     def test_reviewer_child_has_no_code_intel(self, _wiring: dict) -> None:
         _build(
             tools=[_StubTool("read_file"), _StubTool("terminal")],
@@ -136,17 +139,6 @@ class TestOtherRolesHaveNoCodeIntel:
             tool_deny=[],
             functional_role=_role("reviewer"),
             model_tier="auxiliary",
-        )
-        names = _tool_names(_wiring)
-        assert not (CODE_INTEL_NAMES & names)
-        assert not (SEMANTIC_NAMES & names)
-
-    def test_general_child_has_no_code_intel(self, _wiring: dict) -> None:
-        _build(
-            tools=[_StubTool("read_file"), _StubTool("terminal")],
-            tool_allow=[],
-            tool_deny=[],
-            functional_role=_role("general"),
         )
         names = _tool_names(_wiring)
         assert not (CODE_INTEL_NAMES & names)

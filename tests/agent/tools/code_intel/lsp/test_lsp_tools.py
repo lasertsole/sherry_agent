@@ -144,4 +144,4 @@ class TestToolSurface:
             "lsp_format",
             "lsp_status",
         ]
-        assert all(tool.metadata["scope"] == "researcher_only" for tool in tools)
+        assert all(tool.metadata["scope"] == "code_intel" for tool in tools)

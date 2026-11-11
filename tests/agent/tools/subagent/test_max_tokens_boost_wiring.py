@@ -120,8 +120,9 @@ def test_child_agent_drops_main_only_planning_tools(_wiring):
         )
     )
 
-    assert [t.name for t in _wiring["tools"]] == [
-        "read_file",
-        "ast_grep_search",
-        "ast_grep_rewrite",
-    ]
+    names = {t.name for t in _wiring["tools"]}
+    assert "read_file" in names
+    assert {"ast_grep_search", "ast_grep_rewrite"} <= names
+    # A general child now carries the shared code-intel surface too.
+    assert {"explore", "lsp_goto_definition"} <= names
+    assert not ({"taskflow_flow", "todowrite", "knowledge"} & names)

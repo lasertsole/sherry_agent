@@ -29,10 +29,10 @@ Code Intel は 5 つの検索エンジンでコード理解の問いに答えま
 | 層 | 答える問い | ツール | 開放範囲 |
 |----|------------|--------|----------|
 | **キーワード検索** | このリテラルや正規表現はどこに出るか——内容か、ファイル名か？ | `search_files` | メインエージェント + `researcher` + `librarian` |
-| **Tree-sitter シンボル索引** | シンボルはどこで定義され、誰が呼ぶか？ | `explore`、`callers`、`callees`、`impact`, `path` | `researcher` + `librarian` |
+| **Tree-sitter シンボル索引** | シンボルはどこで定義され、誰が呼ぶか？ | `explore`、`callers`、`callees`、`impact`, `path` | `CODE_INTEL_ROLES`（researcher / librarian / executor / general） |
 | **ast-grep** | どのコードがこの構造形を持ち、どう書き換えるか？ | `ast_grep_search`、`ast_grep_rewrite` | すべてのサブエージェント |
-| **LSP** | 型チェッカーはこの位置について何を知るか？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `researcher` + `librarian` |
-| **セマンティック検索** | この概念を実装するのはどのコードか？ | `semantic_code_search` | `researcher` + `librarian` |
+| **LSP** | 型チェッカーはこの位置について何を知るか？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `CODE_INTEL_ROLES` |
+| **セマンティック検索** | この概念を実装するのはどのコードか？ | `semantic_code_search` | `CODE_INTEL_ROLES` |
 
 4 層は 1 つのワークフローとして組み合わさります：`explore` がシンボルと呼び出し経路を特定し、`ast_grep_search` が言語横断で構造パターンを探し、LSP ツールが型を意識して定義と参照を解決し、`semantic_code_search` が名前で一致しないときに概念で検索します。4 層すべては子エージェントの組み立て時に構築・注入されます。
 
@@ -47,7 +47,7 @@ child agent assembly (spawn/core.py)
 ## 🧱 設計不変条件
 
 1. **メインエージェントはこれらのツールを決して見ません。** code-intel と LSP のビルダーは `_MAIN_TOOLS_BUILDERS` に登録されません。注入は `_build_child_agent` の内部、ロールツールポリシーの後だけで行われます。
-2. **ツール面はロールで制御されます。** tree-sitter スイートと 8 つの LSP ツールは `CODE_INTEL_ROLES`（`researcher`、`librarian`）にのみ渡されます。ast-grep は中核的な構造能力のため、すべての機能ロールが利用できます。
+2. **ツール面はロールで制御されます。** tree-sitter スイートと 8 つの LSP ツールは `CODE_INTEL_ROLES`（`researcher`、`librarian`、`executor`、`general`）に渡されます。ast-grep は中核的な構造能力のため、すべての機能ロールが利用できます。4 ロールは同じツール面を共有し、違いはプロンプトだけです。読み取り専用ロールは `lsp_rename`/`lsp_format` をプレビューのままにし、書き込みロールは明示的に適用できます（既定はプレビュー）。
 3. **fail-open が契約です。** バイナリ欠如、解析不能なファイル、利用不能なモデル、タイムアウト、拒否された要求はすべて実行可能なメッセージ付きの JSON ペイロードを返します。検索の失敗が子エージェントのターンに例外を投げることはありません。
 4. **すべてが構造的に有界です。** ファイル数、ファイルあたりのバイト数、構築時間、バッチ、結果数、パス数、パターンサイズ、開くファイル数に上限があります。LSP マネージャはさらに LRU 同時実行上限とアイドル回収を課します。
 5. **書き込みはオプトインで、封じ込めを検証します。** `ast_grep_rewrite` は `dry_run=false` でない限りプレビューし、`lsp_rename` と `lsp_format` は適用フラグなしではプレビューだけです。すべての書き込み経路はディスクに触れる前にトラバーサルとプロジェクトルート内包を再検証します。
@@ -194,7 +194,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 
 発見手順は ast-grep の各層に対応しますが、marker によるゲートが加わります：明示的な絶対パス。次に、同じ階層に対応する marker ファイルが存在するときだけ信頼されるリポジトリローカルの bin ディレクトリ（`pyproject.toml` → `.venv/bin`、`package.json` → `node_modules/.bin`、`Cargo.toml` → `target/debug`、`go.mod` → `bin`、リポジトリルートまで上方走査）。次に `~/.sherry/runtime/lsp` の配置、`PATH`、Homebrew の順です。解決結果は `(cwd, command, platform)` 単位でキャッシュされます。
 
-言語サーバーは重量級の常駐サブプロセスなので、プロセス単位のマネージャが制約します：サーバーは `(language, cwd)` への最初の要求で遅延起動し、同時に生きるのは最大 `lsp_max_concurrent_servers`（2）個で、超えるときは最も長く使われていないものを追い出します。アイドルスイーパーは `lsp_idle_shutdown_s`（300 秒）を超えて未使用のサーバーを回収し、`shutdown_all` は `atexit` フックから実行されます——クライアントが孤児プロセスを残すことはありません。各クライアントは `Content-Length` で JSON-RPC をフレーム化し、リーダースレッドで応答を振り分け、サーバーからクライアントへの要求には空の結果を返し、すべての待機をタイムアウトで有界し、開くファイルを 32 に制限し（最も古いものを閉じる）、1 MB 超のファイルを拒否します。
+言語サーバーは重量級の常駐サブプロセスなので、プロセス単位のマネージャが制約します：サーバーは `(language, cwd)` への最初の要求で遅延起動し、同時に生きるのは最大 `lsp_max_concurrent_servers`（3）個で、超えるときは最も長く使われていないものを追い出します。アイドルスイーパーは `lsp_idle_shutdown_s`（300 秒）を超えて未使用のサーバーを回収し、`shutdown_all` は `atexit` フックから実行されます——クライアントが孤児プロセスを残すことはありません。各クライアントは `Content-Length` で JSON-RPC をフレーム化し、リーダースレッドで応答を振り分け、サーバーからクライアントへの要求には空の結果を返し、すべての待機をタイムアウトで有界し、開くファイルを 32 に制限し（最も古いものを閉じる）、1 MB 超のファイルを拒否します。
 
 可用性は 3 状態で報告されます：`available`、`not_installed`（設定済みだが発見を通過するバイナリがない——インストールヒントとローカルインストールコマンドを返す）、`not_configured`（言語が `lsp_enabled_languages` にない）。利用不能な経路はすべてツール名、インストールヒント、そして `explore` または `terminal`（rg/grep）へのフォールバックを返します。自動インストールは既定で無効（`lsp_auto_install=False`）で、有効時も対象言語の許可リスト済みコマンドだけを 60 秒のタイムアウトと洗浄済み環境で実行します。
 
@@ -214,9 +214,11 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 |------------|----------------------|------------|----------|
 | `researcher` | あり | あり | あり |
 | `librarian` | あり | あり | あり |
-| `general` | なし | なし | あり |
-| `executor` | なし | なし | あり |
+| `general` | あり | あり | あり |
+| `executor` | あり | あり | あり |
 | `reviewer` | なし | なし | あり |
+
+4 つの対象ロールは同じツールを注入され、違いはプロンプトだけです。`CODE_INTEL_WRITE_ROLES`（`executor`、`general`）は `dry_run=false` / `write=true` を渡してリネームや整形を適用できます。`researcher` / `librarian` は決して適用しないよう指示されます。軽い検索は書き込みロールが直接行い、重い多段調査は spawn した `researcher` に任せます。単一ホップの spawn allow-list は変わりません（code-intel はローカル分析で子を spawn しないため）。
 
 メインエージェントはこの表の外にあります：ビルダーは `_MAIN_TOOLS_BUILDERS` に決して追加されず、分離テストが `build_lsp_tools` の不在をそのリストと `agent.tools` 名前空間の両方で主張します。`agent/tools/subagent/roles/definitions/librarian/AGENTS.md` の `librarian` 定義は想定される外部リポジトリのワークフロー——`terminal` でクローンし、`explore` と `semantic_code_search` で索引化・検索し、パーマリンクで答える——を記録しています。`search_files` はそのゲートの例外です：メインのツール（`_MAIN_TOOLS_BUILDERS` に含まれます）であり、`researcher` / `librarian` が許可リストで名指ししているため、キーワード検索はメインエージェントが code-intel の役割と共有する唯一の検索面です。二軸ロールモデル自体（深さロール × 機能ロール）は[サブエージェント設計ページ](../subagent/README.ja.md)に、ロール別のツール一覧は[サブエージェントシステム README](../../agent/tools/subagent/README.ja.md)にあります。
 
@@ -227,9 +229,9 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | 最大 5000 ファイル、1 ファイル 1 MB、構築予算 60 秒、バッチ 100、explore 10 シンボルと 8000 文字、呼び出し深さ 3、ファジースコア 0.3 |
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | モデル `jina-embeddings-v2-base-code`（ONNX、768d）、`enabled` auto/on/off、top-K 5（最大 20）、候補プール 40、バッチ 16、1 構築 1000 チャンク、1 ファイル 60、1 チャンク 2000 文字 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 固定 `0.43.0`、50 一致、16 KiB パターン、30 秒実行タイムアウト、64 パス、60 秒プロビジョニングタイムアウト、5 秒バージョンプローブ |
-| `LSP` | `config/features/agent_side/lsp.py` | 要求 10 秒、起動 15 秒、診断 15 秒、同時サーバー 2、アイドル停止 300 秒、50 結果、開くファイル 32、1 ファイル 1 MB、自動インストール無効 |
+| `LSP` | `config/features/agent_side/lsp.py` | 要求 10 秒、起動 15 秒、診断 15 秒、同時サーバー 3、アイドル停止 300 秒、50 結果、開くファイル 32、1 ファイル 1 MB、自動インストール無効 |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime ディレクトリ、5 s のバージョンプローブ、5 s / 5 s の回収猶予。スキャン予算とマッチ上限は `TOOLS_TIMEOUTS` |
-| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` と `librarian` |
+| `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`、`librarian`、`executor`、`general`（`CODE_INTEL_WRITE_ROLES` = `executor`、`general`） |
 
 インデックスのデータベースは**セッションのプロジェクトディレクトリ**に従います：spawn 時は `<project_root>/.sherry/codeintel/index.db` に索引します（`agent/tools/code_intel/roots.py::index_db_for_root`）。プロジェクトを交互に使っても共有インデックスを再構築しません（保存されるパスはプロジェクト相対で、ルートをまたぐと衝突します）。プロジェクトルートが無い呼び出しは共有の `CODE_INTEL_DIR / "index.db"`（`config/path.py` の `CODE_INTEL_DIR = APP_HOME / ".codeintel"`）にフォールバックし、`code_intel_index_db_path` で明示的に固定でき、`SHERRY_CODE_INTEL_DB` が呼び出し時にパスを上書きします（`SHERRY_CODE_INTEL_ROOT` はルートを上書き）。
 
@@ -268,7 +270,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 - **埋め込みバッチはモデルを再ロードします。** 各 `embed_documents` 呼び出しがバックエンドをロードする（ローカル GGUF ローダーはバッチごとに呼ばれる）ため、バッチはロード時間とピークメモリのトレードオフです。1 構築と 1 ファイルの上限がこれを有界に保ちます。
 - **リランカー未設定は順位品質の低下だけです。** なければ結果はコサイン順のままでペイロードは `reranked=false` を示し、あっても失敗時は同じくコサイン順にフォールバックします。
 - **ast-grep の初回使用はバイナリをダウンロードします。** プロビジョニング経路は 60 秒のタイムアウトで有界され、チェックサム不一致ならインストールを拒否します。オフラインやアセットのないプラットフォームではインストールヒントを返します。
-- **LSP サーバーは重量級です。** マネージャは同時 2 に制限し、300 秒のアイドル後に回収し、最も長く使われていないサーバーを追い出します。ある言語の最初の要求はサーバー起動コストを払い、サーバーがウィンドウ内に何も発行しなければ `lsp_diagnostics` は `timed_out` を返すことがあります。
+- **LSP サーバーは重量級です。** マネージャは同時 3 に制限し、300 秒のアイドル後に回収し、最も長く使われていないサーバーを追い出します。ある言語の最初の要求はサーバー起動コストを払い、サーバーがウィンドウ内に何も発行しなければ `lsp_diagnostics` は `timed_out` を返すことがあります。
 - **本ホストの LSP カバレッジは部分的です。** 発見できるのは `python` と `typescript` だけです。`rust` は解決できますがツールチェーン部品なしでは起動できず、残る 7 言語はインストールが必要です。自動インストールは既定で無効なので、サーバー欠如がパッケージマネージャ実行を引き起こすことはありません。
 - **librarian のツール面は `read_file` / `terminal` / `web_search` と code-intel スイートです。** ここに `search_files` は含まれません —— そのビルダーは `_MAIN_TOOLS_BUILDERS` にないため、外部リポジトリのキーワード検索は `terminal`（rg/grep）と `explore` で行います。
 - **書き込みは設計上 2 段階です。** `ast_grep_rewrite`、`lsp_rename`、`lsp_format` は明示的に要求されたときだけ書き込みます。プレビューが安全な既定であり、適用された編集も封じ込め検証を受けます。
