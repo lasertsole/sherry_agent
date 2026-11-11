@@ -232,6 +232,101 @@ def test_client_rejects_a_malformed_completion(monkeypatch):
         chat.create_chat_completion(messages=[{"role": "user", "content": "hi"}])
 
 
+def test_vision_client_targets_the_vision_daemon(monkeypatch):
+    from config.features import LOCAL_DAEMONS
+
+    seen: dict = {}
+
+    def _ensure(spec, **kwargs):
+        seen["spec"] = spec
+        seen["env"] = kwargs.get("extra_env")
+        return ReadyState.READY
+
+    monkeypatch.setattr(client_module, "ensure_ready", _ensure)
+    monkeypatch.setattr(
+        client_module,
+        "request_json",
+        lambda *_a, **_k: {
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}]
+        },
+    )
+    chat = client_module.build_daemon_chat_client(
+        model_path="/fake/model.gguf",
+        mmproj_path="/fake/mmproj.gguf",
+        n_ctx=2048,
+        vision=True,
+    )
+
+    chat.create_chat_completion(messages=[{"role": "user", "content": "describe"}])
+
+    assert seen["spec"].port == LOCAL_DAEMONS["vision_port"]
+    assert seen["env"]["SHERRY_LOCAL_LLM_MMPROJ_PATH"] == "/fake/mmproj.gguf"
+    assert seen["env"]["SHERRY_LOCAL_LLM_MODEL_PATH"] == "/fake/model.gguf"
+    # The shared server binds the ROLE's port; both chat daemons run the same
+    # module, so the child must be told which one it is.
+    assert seen["env"]["SHERRY_LOCAL_LLM_DAEMON_PORT"] == str(LOCAL_DAEMONS["vision_port"])
+
+
+def test_vision_daemon_loads_the_chat_handler(monkeypatch):
+    import sys
+    import types
+
+    calls: dict = {}
+
+    class _FakeHandler:
+        def __init__(self, clip_model_path, verbose):
+            calls["clip_model_path"] = clip_model_path
+
+    class _FakeLlama:
+        def __init__(self, **kwargs):
+            calls.update(kwargs)
+
+    llama_stub = types.ModuleType("llama_cpp")
+    fmt_stub = types.ModuleType("llama_cpp.llama_chat_format")
+    llama_stub.Llama = _FakeLlama
+    fmt_stub.Qwen25VLChatHandler = _FakeHandler
+    llama_stub.llama_chat_format = fmt_stub
+    monkeypatch.setitem(sys.modules, "llama_cpp", llama_stub)
+    monkeypatch.setitem(sys.modules, "llama_cpp.llama_chat_format", fmt_stub)
+    monkeypatch.setenv("SHERRY_LOCAL_LLM_MODEL_PATH", "/fake/model.gguf")
+    monkeypatch.setenv("SHERRY_LOCAL_LLM_MMPROJ_PATH", "/fake/mmproj.gguf")
+    monkeypatch.setenv("SHERRY_LOCAL_LLM_N_CTX", "2048")
+    monkeypatch.setattr(server, "_model", None)
+
+    server._get_model()
+
+    assert calls["clip_model_path"] == "/fake/mmproj.gguf"
+    assert calls["n_batch"] == 2048 and calls["n_ubatch"] == 2048
+    assert calls["chat_handler"] is not None
+
+
+def test_multimodal_base_uses_the_vision_daemon(monkeypatch):
+    from config.features import LOCAL_DAEMONS
+    from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
+
+    class _MM(LocalMultimodalLlamaChatBase):
+        def _resolve_model_path(self) -> str:
+            return "/fake/model.gguf"
+
+        def _resolve_mmproj_path(self) -> str:
+            return "/fake/mmproj.gguf"
+
+    built: dict = {}
+
+    def _build(**kwargs):
+        built["client"] = _FakeDaemonClient(**kwargs)
+        return built["client"]
+
+    monkeypatch.setitem(LOCAL_DAEMONS, "vision_daemon_enabled", True)
+    monkeypatch.setattr("models.LLMs.local_daemon.client.build_daemon_chat_client", _build)
+    model = _MM(model_path="/fake/model.gguf", mmproj_path="/fake/mmproj.gguf")
+
+    assert model._ensure_client() is built["client"]
+    assert built["client"].kwargs["vision"] is True
+    assert built["client"].kwargs["mmproj_path"] == "/fake/mmproj.gguf"
+    model._release_client()
+
+
 def test_available_is_false_when_the_daemon_cannot_start(monkeypatch):
     chat = _client()
     state, _calls = _wire(monkeypatch, [])

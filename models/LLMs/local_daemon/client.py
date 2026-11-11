@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -40,6 +41,16 @@ _DAEMON = DaemonSpec(
     liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],
 )
 _DAEMON_LOG = LOG_DIR / "daemons" / "local_chat.log"
+_VISION_DAEMON = DaemonSpec(
+    name="local vision",
+    host=LOCAL_DAEMONS["host"],
+    port=LOCAL_DAEMONS["vision_port"],
+    pid_path=APP_HOME / ".vision_daemon.pid",
+    import_fn="models.LLMs.local_daemon.server",
+    ready_wait_s=LOCAL_DAEMONS["vision_ready_wait_s"],
+    liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],
+)
+_VISION_DAEMON_LOG = LOG_DIR / "daemons" / "local_vision.log"
 
 #: Params forwarded from ``create_chat_completion_openai_v1`` (the ones the
 #: local structured-output path can produce); instructor's own control kwargs
@@ -76,11 +87,29 @@ class DaemonChatClient:
         n_ctx: int,
         n_gpu_layers: int = -1,
         verbose: bool = False,
+        mmproj_path: str = "",
+        daemon: DaemonSpec | None = None,
+        log_path: Path | None = None,
+        http_timeout_s: float | None = None,
+        idle_timeout_s: float | None = None,
     ) -> None:
         self._model_path = model_path
         self._n_ctx = int(n_ctx)
         self._n_gpu_layers = int(n_gpu_layers)
         self._verbose = bool(verbose)
+        self._mmproj_path = str(mmproj_path or "")
+        self._daemon = daemon or _DAEMON
+        self._log_path = log_path or _DAEMON_LOG
+        self._http_timeout_s = float(
+            http_timeout_s
+            if http_timeout_s is not None
+            else LOCAL_DAEMONS["auxiliary_http_timeout_s"]
+        )
+        self._idle_timeout_s = float(
+            idle_timeout_s
+            if idle_timeout_s is not None
+            else LOCAL_DAEMONS["auxiliary_idle_timeout_s"]
+        )
         self._ready = False
 
     # ---- lifecycle ---------------------------------------------------
@@ -88,18 +117,23 @@ class DaemonChatClient:
     def _ensure(self) -> None:
         if self._ready:
             return
+        extra_env = {
+            "SHERRY_LOCAL_LLM_MODEL_PATH": self._model_path,
+            "SHERRY_LOCAL_LLM_N_CTX": str(self._n_ctx),
+            "SHERRY_LOCAL_LLM_N_GPU_LAYERS": str(self._n_gpu_layers),
+            "SHERRY_LOCAL_LLM_VERBOSE": "1" if self._verbose else "0",
+        }
+        extra_env["SHERRY_LOCAL_LLM_DAEMON_PORT"] = str(self._daemon.port)
+        extra_env["SHERRY_LOCAL_LLM_DAEMON_IDLE_TIMEOUT_S"] = str(self._idle_timeout_s)
+        if self._mmproj_path:
+            extra_env["SHERRY_LOCAL_LLM_MMPROJ_PATH"] = self._mmproj_path
         state = ensure_ready(
-            _DAEMON,
-            extra_env={
-                "SHERRY_LOCAL_LLM_MODEL_PATH": self._model_path,
-                "SHERRY_LOCAL_LLM_N_CTX": str(self._n_ctx),
-                "SHERRY_LOCAL_LLM_N_GPU_LAYERS": str(self._n_gpu_layers),
-                "SHERRY_LOCAL_LLM_VERBOSE": "1" if self._verbose else "0",
-            },
-            log_path=_DAEMON_LOG,
+            self._daemon,
+            extra_env=extra_env,
+            log_path=self._log_path,
         )
         if state is not ReadyState.READY:
-            raise DaemonError(f"local chat daemon is {state.value}")
+            raise DaemonError(f"{self._daemon.name} daemon is {state.value}")
         self._ready = True
 
     def available(self) -> bool:
@@ -107,7 +141,7 @@ class DaemonChatClient:
         try:
             self._ensure()
         except Exception as error:  # noqa: BLE001 - fallback is the contract here
-            logger.warning("local chat daemon unavailable: {}", error)
+            logger.warning("{} daemon unavailable: {}", self._daemon.name, error)
             return False
         return True
 
@@ -120,20 +154,20 @@ class DaemonChatClient:
         self._ensure()
         try:
             body = request_json(
-                _DAEMON,
+                self._daemon,
                 "/v1/chat/completions",
                 payload,
-                timeout_s=LOCAL_DAEMONS["auxiliary_http_timeout_s"],
+                timeout_s=self._http_timeout_s,
             )
         except DaemonError:
             # A daemon that idled out between calls is retried once.
             self._ready = False
             self._ensure()
             body = request_json(
-                _DAEMON,
+                self._daemon,
                 "/v1/chat/completions",
                 payload,
-                timeout_s=LOCAL_DAEMONS["auxiliary_http_timeout_s"],
+                timeout_s=self._http_timeout_s,
             )
         if not isinstance(body, dict) or not body.get("choices"):
             raise DaemonError("local chat daemon returned a malformed completion")
@@ -164,13 +198,33 @@ class DaemonChatClient:
 
 
 def build_daemon_chat_client(
-    *, model_path: str, n_ctx: int, n_gpu_layers: int = -1, verbose: bool = False
+    *,
+    model_path: str,
+    n_ctx: int,
+    n_gpu_layers: int = -1,
+    verbose: bool = False,
+    mmproj_path: str = "",
+    vision: bool = False,
 ) -> DaemonChatClient:
+    """Build a client for the text (auxiliary) or the vision chat daemon."""
     return DaemonChatClient(
         model_path=model_path,
         n_ctx=n_ctx,
         n_gpu_layers=n_gpu_layers,
         verbose=verbose,
+        mmproj_path=mmproj_path,
+        daemon=_VISION_DAEMON if vision else _DAEMON,
+        log_path=_VISION_DAEMON_LOG if vision else _DAEMON_LOG,
+        http_timeout_s=(
+            LOCAL_DAEMONS["vision_http_timeout_s"]
+            if vision
+            else LOCAL_DAEMONS["auxiliary_http_timeout_s"]
+        ),
+        idle_timeout_s=(
+            LOCAL_DAEMONS["vision_idle_timeout_s"]
+            if vision
+            else LOCAL_DAEMONS["auxiliary_idle_timeout_s"]
+        ),
     )
 
 

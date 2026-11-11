@@ -26,19 +26,24 @@ class LocalDaemonsConfig(TypedDict):
     embed_port: int
     reranker_port: int
     auxiliary_port: int
+    vision_port: int
     liveness_timeout_s: float
     embed_ready_wait_s: float
     reranker_ready_wait_s: float
     auxiliary_ready_wait_s: float
+    vision_ready_wait_s: float
     embed_http_timeout_s: float
     reranker_http_timeout_s: float
     auxiliary_http_timeout_s: float
+    vision_http_timeout_s: float
     embed_idle_timeout_s: float
     reranker_idle_timeout_s: float
     auxiliary_idle_timeout_s: float
+    vision_idle_timeout_s: float
     embed_daemon_enabled: bool
     reranker_daemon_enabled: bool
     auxiliary_daemon_enabled: bool
+    vision_daemon_enabled: bool
     # Auxiliary chat context window. 40 960 is the historical in-process value;
     # the KV cache scales linearly with it, so a deployment that measured a
     # smaller input distribution can lower it without touching the code.
@@ -85,6 +90,8 @@ def build_local_daemons(env: Mapping[str, str] | None = None) -> LocalDaemonsCon
         "embed_port": _int_env(source, "EMBEDDING_DAEMON_PORT", 9012, minimum=1),
         "reranker_port": _int_env(source, "RERANKER_DAEMON_PORT", 9013, minimum=1),
         "auxiliary_port": _int_env(source, "AUXILIARY_LLM_DAEMON_PORT", 9014, minimum=1),
+        # ITTT/VTTT share the vision daemon (same Qwen2.5-VL weights + mmproj).
+        "vision_port": _int_env(source, "VISION_LLM_DAEMON_PORT", 9015, minimum=1),
         "liveness_timeout_s": _float_env(source, "LOCAL_DAEMON_LIVENESS_TIMEOUT_S", 1.0),
         # bge-m3 hot loads in ~1.3 s; a cold page cache adds disk I/O.
         "embed_ready_wait_s": _float_env(source, "EMBEDDING_DAEMON_READY_WAIT_S", 20.0),
@@ -92,11 +99,14 @@ def build_local_daemons(env: Mapping[str, str] | None = None) -> LocalDaemonsCon
         "reranker_ready_wait_s": _float_env(source, "RERANKER_DAEMON_READY_WAIT_S", 60.0),
         # A 9B Q4 chat model needs minutes to map/allocate on a cold start.
         "auxiliary_ready_wait_s": _float_env(source, "AUXILIARY_LLM_DAEMON_READY_WAIT_S", 300.0),
+        # A 3B multimodal model + mmproj needs a long cold start.
+        "vision_ready_wait_s": _float_env(source, "VISION_LLM_DAEMON_READY_WAIT_S", 300.0),
         "embed_http_timeout_s": _float_env(source, "EMBEDDING_DAEMON_HTTP_TIMEOUT_S", 120.0),
         "reranker_http_timeout_s": _float_env(source, "RERANKER_DAEMON_HTTP_TIMEOUT_S", 120.0),
         "auxiliary_http_timeout_s": _float_env(
             source, "AUXILIARY_LLM_DAEMON_HTTP_TIMEOUT_S", 600.0
         ),
+        "vision_http_timeout_s": _float_env(source, "VISION_LLM_DAEMON_HTTP_TIMEOUT_S", 600.0),
         "embed_idle_timeout_s": _float_env(
             source, "EMBEDDING_DAEMON_IDLE_TIMEOUT_S", 600.0, minimum=5.0
         ),
@@ -106,9 +116,13 @@ def build_local_daemons(env: Mapping[str, str] | None = None) -> LocalDaemonsCon
         "auxiliary_idle_timeout_s": _float_env(
             source, "AUXILIARY_LLM_DAEMON_IDLE_TIMEOUT_S", 600.0, minimum=5.0
         ),
+        "vision_idle_timeout_s": _float_env(
+            source, "VISION_LLM_DAEMON_IDLE_TIMEOUT_S", 600.0, minimum=5.0
+        ),
         "embed_daemon_enabled": _bool_env(source, "EMBEDDING_DAEMON_ENABLED", True),
         "reranker_daemon_enabled": _bool_env(source, "RERANKER_DAEMON_ENABLED", True),
         "auxiliary_daemon_enabled": _bool_env(source, "AUXILIARY_LLM_DAEMON_ENABLED", True),
+        "vision_daemon_enabled": _bool_env(source, "VISION_LLM_DAEMON_ENABLED", True),
         "auxiliary_n_ctx": _int_env(source, "AUXILIARY_LLM_N_CTX", 40960, minimum=2048),
         "max_batch_inputs": _int_env(source, "LOCAL_DAEMON_MAX_BATCH_INPUTS", 256, minimum=1),
     }

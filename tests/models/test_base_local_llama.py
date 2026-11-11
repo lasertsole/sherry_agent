@@ -147,6 +147,9 @@ class TestBaseClass:
 class TestMultimodalBase:
     def test_multimodal_client_uses_chat_handler(self, monkeypatch):
         """ITTT/VTTT share the Qwen25VLChatHandler _ensure_client."""
+        from config.features import LOCAL_DAEMONS
+
+        monkeypatch.setitem(LOCAL_DAEMONS, "vision_daemon_enabled", False)
 
         calls = {}
 

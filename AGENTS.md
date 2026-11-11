@@ -48,7 +48,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
 | `models/`                            | LLM/model wrappers (main, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
-| `models/daemon/`                     | Shared lifecycle for the local GGUF daemons (embed / reranker / local chat / STT): pid file, detached spawn, readiness, kill, idle watchdog                              | `models/daemon/base.py`                              |
+| `models/daemon/`                     | Shared lifecycle for the local GGUF daemons (embed / reranker / local chat / vision / STT): pid file, detached spawn, readiness, kill, idle watchdog                      | `models/daemon/base.py`                              |
 | `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
 | `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
 | `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
@@ -837,9 +837,17 @@ are propagated so the child resolves the same writable home.
   `create_chat_completion` + `create_chat_completion_openai_v1`, not a new
   LangChain model. When the daemon cannot be started — or is still warming past
   its budget — `_LocalAuxiliaryChatModel` falls back to in-process `Llama`.
+- **Vision chat** (same server, port 9015, `.vision_daemon.pid`): the daemon
+  reads `SHERRY_LOCAL_LLM_MMPROJ_PATH` and adds `Qwen25VLChatHandler` with
+  `n_batch = n_ubatch = n_ctx`, exactly mirroring the in-process
+  `LocalMultimodalLlamaChatBase`. ITTT/VTTT resolve the same Qwen2.5-VL
+  weights + mmproj, so both share the one vision daemon; a second distinct
+  vision model would need its own port. The base tries the daemon first and
+  falls back to the historical in-process client on an unavailable spawn.
 - Config is `LOCAL_DAEMONS` (`config/features/infra_side/local_daemons.py`);
   every value has an env override (`EMBEDDING_DAEMON_PORT`,
-  `*_DAEMON_IDLE_TIMEOUT_S`, `AUXILIARY_LLM_N_CTX`, `*_DAEMON_ENABLED`, …).
+  `*_DAEMON_IDLE_TIMEOUT_S`, `AUXILIARY_LLM_N_CTX`, `VISION_LLM_DAEMON_*`,
+  `*_DAEMON_ENABLED`, …).
   `AUXILIARY_LLM_N_CTX` defaults to the historical 40 960; lowering it also caps
   the local `max_tokens` at half the window so a smaller KV cache cannot be
   paired with an oversized completion request.
@@ -849,12 +857,20 @@ are propagated so the child resolves the same writable home.
   in-process vectors 1.0. Reranker (bge-reranker-v2-m3 Q8_0): first call 32.8 s
   (spawn + 606 MB GGUF load), warm rank 1.33 s for 4 documents vs 31.5 s
   in-process (reload included), main RSS 46.6→46.9 MB / daemon 898 MB, scores
-  and order identical. Direction 3 (lazy heavy imports) was skipped by its
-  own kill criterion: none of `torch` / `transformers` / `cv2` / `mineru_vl_utils`
-  / `leidenalg` / `snkv` / `tree_sitter` / `gguf` / `llama_cpp` is in the boot
-  import set. The vision LLM daemon is NOT built: ITTT/VTTT weights are absent
-  in this deployment and the multimodal request path would need a second bridge.
-  Wiki: `wiki/local-model-daemons/`.
+  and order identical. Local chat (Qwen2.5-0.5B-Instruct Q4, a real GGUF used
+  to validate the bridge): first invoke 3.33 s (spawn + load), warm 0.77 s,
+  main RSS 65.3→65.9 MB while the daemon held 600 MB, tool call and structured
+  output both worked; loading the same model in-process added 538 MB to the
+  main process. Vision (Qwen2.5-VL-3B Q4 + mmproj, 96 px red square): first
+  invoke 13.61 s (CPU image encode + prompt), warm 7.44 s, main RSS
+  67.3→20.2 MB while the port-9015 daemon held 3 571 MB; the answer was `Red`
+  (correct). ITTT/VTTT share that daemon's weights. Direction 3 (lazy heavy imports) was skipped by its MEASURED
+  kill criterion: the full boot import chain contains none of `torch` /
+  `transformers` / `cv2` / `mineru_vl_utils` / `leidenalg` / `snkv` /
+  `tree_sitter` / `gguf` / `llama_cpp`; importing them alone costs ~490 MB /
+  5.9 s (`torch`) and ~41 MB / 9.9 s (`transformers`), so they are already
+  where the optimization wants them. `tests/perf/test_boot_import_set.py`
+  guards the absent set. Wiki: `wiki/local-model-daemons/`.
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 

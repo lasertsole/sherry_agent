@@ -211,12 +211,17 @@ def spawn(
 
 
 def wait_until_ready(spec: DaemonSpec, timeout_s: float | None = None) -> bool:
-    """Poll ``/healthy`` until ready or the budget expires."""
+    """Poll ``/healthy`` until ready, the budget expires, or the process dies."""
     budget = spec.ready_wait_s if timeout_s is None else timeout_s
     deadline = time.monotonic() + max(0.0, budget)
     while True:
         if is_ready(spec):
             return True
+        pid = recorded_pid(spec)
+        if pid is not None and not pid_alive(pid):
+            # A model that crashes during load (missing weights, bad file)
+            # must not make every caller wait the full cold-start budget.
+            return False
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.25)

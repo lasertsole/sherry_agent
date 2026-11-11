@@ -49,6 +49,7 @@
 | Embed | 9012 | `.embed_daemon.pid` | `GET /healthy`, `POST /embeddings` |
 | Reranker | 9013 | `.reranker_daemon.pid` | `GET /healthy`, `POST /rerank`, `/filter`, `/predict` |
 | 로컬 Chat | 9014 | `.llm_daemon.pid` | `GET /healthy`, `POST /v1/chat/completions` |
+| 비전 Chat | 9015 | `.vision_daemon.pid` | `GET /healthy`, `POST /v1/chat/completions` (mmproj) |
 | STT (리팩터 완료) | 9011 | `.stt_daemon.pid` | `GET /healthy`, `POST /transcribe` |
 
 pid 파일과 daemon 로그는 `APP_HOME`(패키지 빌드에서는 쓰기 가능한 앱 데이터 루트, 소스 체크아웃에서는 저장소 루트)에 있으며, 읽기 전용 코드 트리에는 쓰지 않습니다. 모든 daemon은 `127.0.0.1`에만 바인딩하고 JSON, 인증 없이 응답합니다. 기존 STT daemon과 같은 로컬 캐시이며 네트워크 서비스가 아닙니다.
@@ -63,7 +64,7 @@ pid 파일과 daemon 로그는 `APP_HOME`(패키지 빌드에서는 쓰기 가�
 
 **Reranker** (`models/reranker_model/__init__.py`). `rank`, `filter`, `predict`가 각각 하나의 엔드포인트에 대응합니다. `predict_scores`는 쌍마다 왕복하지 않고 쌍 전체를 한 요청으로 보냅니다. `RERANKER_MODEL_LOCAL=false`이면 클라우드 백엔드는 전혀 바뀌지 않습니다.
 
-**로컬 Chat** (`models/LLMs/auxiliary_llm/core.py`). 로컬 GGUF 경로는 네이티브 tool call을 **사용하지 않습니다**: `LocalToolBinder`가 JSON 지시를 주입하고 `LocalStructuredOutput`이 instructor로 `create_chat_completion_openai_v1`을 감쌉니다. 따라서 daemon은 llama-cpp 자체의 `create_chat_completion` 형태를 노출하고, `models/LLMs/local_daemon/client.py`는 그 두 메서드만 구현하는 작은 shim입니다. `create_chat_completion_openai_v1`은 응답을 OpenAI `ChatCompletion`으로 검증하고(instructor가 요구하는 id/object/created/model 보완) instructor의 제어 인자는 네트워크로 보내지 않습니다. daemon을 시작할 수 없거나 예산을 넘겨도 warm이 아니면 `_LocalAuxiliaryChatModel`은 인프로세스 `Llama`로 폴백합니다 — 기능 우선, 격리는 그다음.
+**로컬 Chat과 비전** (`models/LLMs/auxiliary_llm/core.py` / `models/LLMs/base_local_llama.py`). 로컬 GGUF 경로는 네이티브 tool call을 **사용하지 않습니다**: `LocalToolBinder`가 JSON 지시를 주입하고 `LocalStructuredOutput`이 instructor로 `create_chat_completion_openai_v1`을 감쌉니다. 따라서 daemon은 llama-cpp 자체의 `create_chat_completion` 형태를 노출하고, `models/LLMs/local_daemon/client.py`는 그 두 메서드만 구현하는 작은 shim입니다. `create_chat_completion_openai_v1`은 응답을 OpenAI `ChatCompletion`으로 검증하고(instructor가 요구하는 id/object/created/model 보완) instructor의 제어 인자는 네트워크로 보내지 않습니다. daemon을 시작할 수 없거나 예산을 넘겨도 warm이 아니면 `_LocalAuxiliaryChatModel`은 인프로세스 `Llama`로 폴백합니다 — 기능 우선, 격리는 그다음. 멀티모달 베이스는 같은 클라이언트를 포트 9015 daemon에 사용하며, `image_url` 블록은 llama-cpp의 Qwen2.5-VL handler로 그대로 전달됩니다.
 
 ## 🛟 실패 동작과 스위치
 
@@ -71,11 +72,11 @@ pid 파일과 daemon 로그는 `APP_HOME`(패키지 빌드에서는 쓰기 가�
 | :--- | :--- |
 | 호출 사이에 daemon이 유휴 종료 | 클라이언트가 한 번 재시도, `ensure_ready`가 다시 spawn |
 | daemon이 warm 중(모델 로드 중) | `WARMING`; embed/reranker는 재시도 가능한 오류, 로컬 chat은 인프로세스 폴백 |
-| daemon을 전혀 시작할 수 없음 | `UNAVAILABLE`; embed/reranker는 해당 프로세스의 남은 기간 동안 기존 인프로세스 로더 사용, 로컬 chat은 인프로세스 `Llama` |
+| daemon을 전혀 시작할 수 없음 | `UNAVAILABLE`; embed/reranker는 해당 프로세스의 남은 기간 동안 기존 인프로세스 로더 사용, 로컬/비전 chat은 인프로세스 `Llama` |
 | 요청 중 daemon 크래시 | 해당 요청은 실패; 기억 검색은 cosine 순서를 유지하고 인덱스 구축은 오류를 기록 |
 | 기능 비활성화 | `EMBEDDING_DAEMON_ENABLED=false`, `RERANKER_DAEMON_ENABLED=false`, `AUXILIARY_LLM_DAEMON_ENABLED=false`로 daemon 없는 기존 경로 복귀 |
 
-모든 설정은 `LOCAL_DAEMONS`(`config/features/infra_side/local_daemons.py`)에 있고 환경 변수로 덮어쓸 수 있습니다: 포트(`*_DAEMON_PORT`), 준비 예산(`*_READY_WAIT_S`), 유휴 창(`*_DAEMON_IDLE_TIMEOUT_S`), 요청 타임아웃(`*_HTTP_TIMEOUT_S`), `AUXILIARY_LLM_N_CTX`. `auxiliary_n_ctx`의 기본값은 기존 40 960입니다. 낮추면 로컬 `max_tokens`도 창의 절반으로 제한되어 작은 KV cache와 과대한 완성 요청이 결합되지 않습니다.
+모든 설정은 `LOCAL_DAEMONS`(`config/features/infra_side/local_daemons.py`)에 있고 환경 변수로 덮어쓸 수 있습니다: 포트(`*_DAEMON_PORT`), 준비 예산(`*_READY_WAIT_S`), 유휴 창(`*_DAEMON_IDLE_TIMEOUT_S`), 요청 타임아웃(`*_HTTP_TIMEOUT_S`), `AUXILIARY_LLM_N_CTX`, `VISION_LLM_DAEMON_*`. `auxiliary_n_ctx`의 기본값은 기존 40 960입니다. 낮추면 로컬 `max_tokens`도 창의 절반으로 제한되어 작은 KV cache와 과대한 완성 요청이 결합되지 않습니다.
 
 ## 📏 실측 베이스라인 (2026-11-11, 이 호스트)
 
@@ -93,17 +94,26 @@ pid 파일과 daemon 로그는 `APP_HOME`(패키지 빌드에서는 쓰기 가�
 | Reranker 핫 랭크 (문서 4개) | 1.33초 (인프로세스는 호출마다 약 31.5초, 재로드 포함) |
 | rerank 중 메인 프로세스 RSS | 46.6 → 46.9 MB; daemon 898.4 MB |
 | Reranker 점수/순서 (daemon vs 인프로세스) | 완전 동일 |
+| 로컬 Chat 첫 호출 (Qwen2.5-0.5B-Instruct Q4, spawn + 로드) | 3.33초 |
+| 로컬 Chat 핫 호출 | 0.77초 |
+| 로컬 Chat 중 메인 프로세스 RSS | 65.3 → 65.9 MB; daemon 600.4 MB |
+| 로컬 Chat tool call + 구조화 출력 | `add(a=2,b=2)` 파싱; `Answer(answer='Paris')` |
+| 같은 모델을 인프로세스로 로드 | 메인 프로세스 피크 +537.9 MB |
+| 비전 첫 호출 (Qwen2.5-VL-3B Q4 + mmproj, 96 px 이미지) | 13.61초 (CPU: 이미지 인코딩 + prompt) |
+| 비전 핫 호출 | 7.44초 |
+| 비전 중 메인 프로세스 RSS | 67.3 → 20.2 MB (피크 68.2); daemon 3 571 MB |
+| 비전 응답 | `Red` (정답), 포트 9015 |
 
-**"무거운 의존성 지연 로드" 방향은 자체 Kill criteria로 건너뛰었습니다:** 후보 의존성 중 어느 것도 부팅 import 집합에 없으므로 옮겨도 달라지는 것이 없습니다. 부팅 비용은 `openai` / `langchain` / `langgraph`와 로깅·설정 부트에서 오며, 모든 라우트가 필요로 합니다.
+**"무거운 의존성 지연 로드" 방향은 실측된 Kill criteria로 건너뛰었습니다:** 전체 부팅 import 체인(모듈 부트 + agent core + curator/cron + trigger + services)은 `torch` / `transformers` / `cv2` / `mineru_vl_utils` / `leidenalg` / `snkv` / `tree_sitter` / `gguf` / `llama_cpp` 중 어느 것도 로드하지 않습니다. 의존성 자체는 작지 않아 단독 import에 `torch` 약 490 MB / 5.9초, `transformers` 약 41 MB / 9.9초가 들고 나머지는 기본 환경에 없습니다. 즉 이미 최적화가 원하는 위치(각 기능 함수 내부)에 있습니다. `tests/perf/test_boot_import_set.py`가 하나라도 부팅 집합에 다시 들어오면 실패합니다. 남은 부팅 비용은 `openai` / `langchain` / `langgraph`와 로깅·설정 부트에서 오며, 모든 라우트가 필요로 합니다. (`PIL`은 미디어 압축 모듈을 통해 부팅 시 import되지만 실측 약 49 ms이고 RSS 피크 증가가 측정되지 않아 변경할 가치가 없습니다.)
 
-**범위 참고.** 비전 모델(ITTT/VTTT)은 daemon화하지 **않았습니다**: 이 배포에는 GGUF/mmproj 가중치가 없고, 멀티모달 메시지 경로에는 두 번째 브리지 형태가 필요합니다. 로컬 보조 chat이 유일한 대상 채팅 패밀리입니다. 안전 검토는 여전히 보조 클라이언트를 공유합니다. 긴 생성 뒤에 대기한 검토 호출은 20초 fail-open 예산에 도달할 수 있으며, 이는 현재와 같은 결과입니다.
+**비전 동형.** ITTT/VTTT는 **같은** 로컬 chat daemon(포트 9015)을 지납니다: daemon은 `SHERRY_LOCAL_LLM_MMPROJ_PATH`를 읽어 `Qwen25VLChatHandler`를 추가하고 `n_batch = n_ubatch = n_ctx`로 인프로세스 `LocalMultimodalLlamaChatBase`를 정확히 모방합니다. 두 패밀리는 같은 Qwen2.5-VL 가중치 + mmproj를 해석하므로 하나의 비전 daemon을 공유합니다. 다른 비전 모델은 별도 포트가 필요합니다. `LocalMultimodalLlamaChatBase`는 daemon을 먼저 시도하고 시작할 수 없으면 인프로세스 클라이언트로 폴백합니다. 안전 검토는 여전히 보조 클라이언트를 공유합니다. 긴 생성 뒤에 대기한 검토 호출은 20초 fail-open 예산에 도달할 수 있으며, 이는 현재와 같은 결과입니다.
 
 ## 🧪 테스트
 
 - `tests/models/daemon/test_base.py` — pid 파일, 준비 3상태, spawn 명령(소스 vs 동결), atexit, kill/회수, 요청 디코딩, 유휴 watchdog.
 - `tests/models/embed_model/text/test_embed_daemon.py` — 가짜 모델 위의 실제 loopback server: 순서, 배치, 검증, health; 클라이언트: 페이로드, 재시도, warming, 폴백, 정규화.
 - `tests/models/reranker_model/test_daemon.py` — rank/filter/predict 와이어 형태, 검증, 클라이언트 재시도와 폴백.
-- `tests/models/LLMs/local_daemon/test_local_daemon.py` — llama-cpp 인자 전달, instructor 호환 `ChatCompletion`, 보조 모델 daemon/폴백 배선, `n_ctx`/`max_tokens` 클램프.
+- `tests/models/LLMs/local_daemon/test_local_daemon.py` — llama-cpp 인자 전달, instructor 호환 `ChatCompletion`, 보조 모델 daemon/폴백 배선, `n_ctx`/`max_tokens` 클램프, 비전 daemon(mmproj handler, 포트 9015)과 그 폴백.
 - `tests/packaging/test_backend_entry.py` — `--sherry-daemon` 파싱과 분기.
 - `tests/skills/builtin/core/speech_to_text/test_stt_daemon_pid.py` — STT 리팩터 후에도 공유 라이프사이클 위에서 같은 pid 계약.
 - `tests/config/test_features_infra_side.py` — `LOCAL_DAEMONS` 기본값, 환경 덮어쓰기, 잘못된 값의 폴백.

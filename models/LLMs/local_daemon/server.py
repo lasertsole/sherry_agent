@@ -29,7 +29,12 @@ from config.features import LOCAL_DAEMONS
 from models.daemon.base import IdleWatchdog, send_json
 
 HOST: str = LOCAL_DAEMONS["host"]
-PORT: int = LOCAL_DAEMONS["auxiliary_port"]
+# The child is one ROLE of the shared server (text chat on 9014, vision on
+# 9015); the client passes its spec's port, falling back to the auxiliary one.
+try:
+    PORT: int = int(os.environ.get("SHERRY_LOCAL_LLM_DAEMON_PORT", ""))
+except ValueError:
+    PORT = int(LOCAL_DAEMONS["auxiliary_port"])
 _HEALTHY_PATH = "/healthy"
 _CHAT_PATH = "/v1/chat/completions"
 _MAX_BODY_BYTES = 64 * 1024 * 1024
@@ -72,6 +77,10 @@ def _model_path() -> str:
     return path
 
 
+def _mmproj_path() -> str:
+    return os.environ.get("SHERRY_LOCAL_LLM_MMPROJ_PATH", "").strip()
+
+
 def _n_ctx() -> int:
     raw = os.environ.get("SHERRY_LOCAL_LLM_N_CTX", "").strip()
     try:
@@ -97,13 +106,27 @@ def _get_model() -> Any:
         if _model is None:
             from llama_cpp import Llama
 
-            logger.info("Local chat daemon loading {} …", _model_path())
-            _model = Llama(
-                model_path=_model_path(),
-                n_ctx=_n_ctx(),
-                n_gpu_layers=_n_gpu_layers(),
-                verbose=False,
+            mmproj = _mmproj_path()
+            logger.info(
+                "Local chat daemon loading {}{} …",
+                _model_path(),
+                " (vision mmproj)" if mmproj else "",
             )
+            kwargs: dict[str, Any] = {
+                "model_path": _model_path(),
+                "n_ctx": _n_ctx(),
+                "n_gpu_layers": _n_gpu_layers(),
+                "verbose": False,
+            }
+            if mmproj:
+                # The multimodal in-process path uses Qwen25VLChatHandler and
+                # sizes both batches to the context; mirror it exactly here.
+                from llama_cpp.llama_chat_format import Qwen25VLChatHandler
+
+                kwargs["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj, verbose=False)
+                kwargs["n_batch"] = kwargs["n_ctx"]
+                kwargs["n_ubatch"] = kwargs["n_ctx"]
+            _model = Llama(**kwargs)
             logger.info("Local chat daemon model ready.")
     return _model
 
@@ -159,10 +182,22 @@ class _Handler(BaseHTTPRequestHandler):
             send_json(self, 500, {"error": str(error)[:400]})
 
 
+def _idle_timeout_s() -> float:
+    try:
+        return float(
+            os.environ.get(
+                "SHERRY_LOCAL_LLM_DAEMON_IDLE_TIMEOUT_S",
+                str(LOCAL_DAEMONS["auxiliary_idle_timeout_s"]),
+            )
+        )
+    except ValueError:
+        return float(LOCAL_DAEMONS["auxiliary_idle_timeout_s"])
+
+
 def main() -> None:
     threading.Thread(target=_get_model, daemon=True).start()
     watchdog = IdleWatchdog(
-        float(LOCAL_DAEMONS["auxiliary_idle_timeout_s"]),
+        _idle_timeout_s(),
         lambda: os._exit(0),
     )
     _Handler.watchdog = watchdog
