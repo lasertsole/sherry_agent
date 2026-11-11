@@ -143,9 +143,11 @@ src/<session_id>/artifacts/
 
 ## 📤 チャンクアップロード: `/upload/chunk`
 
-ブラウザと Tauri シェルは `bridge/upload-chunked.ts` 経由で添付を送ります。`CHUNK_SIZE`（512 KiB）以下のペイロードは従来の一括 `/images|/audio|/video/upload` を使い、それより大きい場合は順次 `POST /upload/chunk`（session/upload id、index、total、content type、生のチャンク body）に分割し、最後に一度だけ `POST /upload/complete` を呼びます。
+ブラウザと Tauri シェルは `bridge/upload-chunked.ts` 経由で添付を送ります。`CHUNK_SIZE`（512 KiB）以下は従来の一括 `/images|/audio|/video/upload` を使います。それより大きい場合は `POST /upload/begin`（session、filename、content type、`total_chunks`、`total_bytes`）でセッションを開き、各チャンクを `POST /upload/chunk?upload_id&chunk_index` で送り、最後に `POST /upload/complete?upload_id` を呼びます。
 
-サーバーはチャンクを `TEMP_DIR/upload_chunks/<session>/<upload_id>` にステージし、id セグメント・チャンク範囲・1 チャンクのサイズ（`413`）を検証してから連結し、SHA-256 を計算し、`<sha256[:16]><ext>` を一括ルートと同じ種別ディレクトリへ書き込みます。同一バイトは同じファイルと URL を再利用し（静的マウントが両経路を配信します）、未完了のアップロードは `400` でステージを残して再試行でき、完了したものはステージを削除します。`bridge/upload-cache.ts` はペイロードを SHA-256 し、URL を Dexie（`uploadCache`、schema v7）に `read_cache_ttl_ms`（30 秒）だけキャッシュするため、その窓内の再送は再アップロードしません。ハッシュ/キャッシュはフェイルオープンで、`max_staged_bytes`（64 MiB）を超えるとスキップします。
+1 ファイル内のチャンクは厳密に順序どおりです。サーバーは欠番（`code=chunkGap`）と再送（`code=chunkConflict`）を拒否し、ZCode と同じ制約になります。並列性はファイル間で、`uploadMultipleFiles` が `runPool` で最大 `max_concurrent_files`（8）レーンを走らせ、各レーン内は順序どおりです。`GET /upload/status` は連続して受信したチャンク数を返し `resumeUpload` が再開でき、`POST /upload/abort` はステージを破棄します。
+
+サーバーは `TEMP_DIR/upload_chunks/<upload_id>/` に `meta.json` とチャンクを置きます。`begin` は種別ごとのバイト上限とチャンク数/バイト数の整合性を検証し、`complete` が連結・SHA-256・`<sha256[:16]><ext>` の書き込みを行います。同一バイトは同じファイルと URL を再利用し、完了したアップロードはステージを削除、未完了は `400` でチャンクを残します。`bridge/upload-cache.ts` はペイロードを SHA-256 し、Dexie `uploadCache`（schema v7、実行中の upload id と status を含む）に `read_cache_ttl_ms`（30 秒）保持するため、その窓内の再送は再アップロードしません。キャッシュはフェイルオープンです。
 
 ## ⚙️ 設定リファレンス
 
@@ -164,7 +166,7 @@ src/<session_id>/artifacts/
 | `preserve_latest_user_media` | `true` | 最新の実ユーザーメッセージのメディアを保護。 |
 | `artifact_store_enabled` | `true` | 内容アドレス型ストアを使用。無効ならタイムスタンプ付き `media/` コピー。 |
 | `chunk_size_bytes` | `524288` | 1 つの `/upload/chunk` body の最大バイト数。 |
-| `max_staged_bytes` | `67108864` | クライアントのキャッシュ/ハッシュ予算。超えるとキャッシュせずアップロード。 |
+| `max_concurrent_files` | `8` | 1 回の複数添付送信で並行するファイルレーン数。 |
 | `read_cache_ttl_ms` | `30000` | アップロード済み URL のクライアント重複排除窓。 |
 
 ## 🧪 テスト

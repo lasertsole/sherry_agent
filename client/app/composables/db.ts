@@ -432,7 +432,7 @@ class HistoryDb extends Dexie {
     // version(7): recent uploads, keyed by content hash for the short-TTL
     // dedupe cache. Additive bump — rows are disposable by design.
     this.version(7).stores({
-      uploadCache: '++id, sha256, url, session_id, created_at'
+      uploadCache: '++id, sha256, url, session_id, created_at, upload_id, file_name, total_chunks, status'
     });
   }
 }
@@ -450,6 +450,11 @@ export interface UploadCacheRow {
   url: string;
   session_id: string;
   created_at: number;
+  /** Server-side upload session, present while a chunked upload runs. */
+  upload_id?: string;
+  file_name?: string;
+  total_chunks?: number;
+  status?: 'uploading' | 'completed' | 'failed';
 }
 
 /**

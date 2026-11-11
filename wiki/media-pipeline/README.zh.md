@@ -143,9 +143,11 @@ src/<session_id>/artifacts/
 
 ## 📤 分块上传：`/upload/chunk`
 
-浏览器与 Tauri 外壳通过 `bridge/upload-chunked.ts` 发送附件。不超过 `CHUNK_SIZE`（512 KiB）的载荷继续走整包 `/images|/audio|/video/upload`；更大的载荷被切成顺序的 `POST /upload/chunk`（session/upload id、序号、总数、内容类型、原始分块体），最后调用一次 `POST /upload/complete`。
+浏览器与 Tauri 外壳通过 `bridge/upload-chunked.ts` 发送附件。不超过 `CHUNK_SIZE`（512 KiB）的载荷继续走整包 `/images|/audio|/video/upload`。更大的载荷先用 `POST /upload/begin`（session、文件名、内容类型、`total_chunks`、`total_bytes`）开启会话，再把每个分块以 `POST /upload/chunk?upload_id&chunk_index` 发送，最后调用 `POST /upload/complete?upload_id`。
 
-服务端把分块暂存在 `TEMP_DIR/upload_chunks/<session>/<upload_id>`，校验 id 段、分块范围与单块大小（`413`），随后拼接、计算 SHA-256，并把 `<sha256[:16]><ext>` 写入整包路由使用的同一按类型目录。相同字节复用同一文件与 URL（静态挂载同时服务两条路径）；不完整上传返回 `400` 并保留暂存以便重试，完成的上传删除暂存目录。`bridge/upload-cache.ts` 对载荷做 SHA-256 并在 Dexie（`uploadCache`，schema v7）中缓存 URL，TTL 为 `read_cache_ttl_ms`（30 秒），窗口内重复发送不再上传；哈希/缓存失败开放，超过 `max_staged_bytes`（64 MiB）时跳过。
+单个文件的分块严格顺序：服务端拒绝跳号（`code=chunkGap`）与重发（`code=chunkConflict`），与 ZCode 一致。并行发生在文件之间——`uploadMultipleFiles` 通过 `runPool` 最多同时运行 `max_concurrent_files`（8）条车道，每条车道内部仍是顺序分块。`GET /upload/status` 返回连续已收分块数供 `resumeUpload` 续传，`POST /upload/abort` 删除暂存目录。
+
+服务端把分块暂存在 `TEMP_DIR/upload_chunks/<upload_id>/` 并写入 `meta.json`；`begin` 校验按类型的字节上限以及分块数与字节数的匹配，`complete` 拼接、计算 SHA-256，并把 `<sha256[:16]><ext>` 写入整包路由使用的同一按类型目录。相同字节复用同一文件与 URL；完成的上传删除暂存，不完整的上传返回 `400` 并保留分块以便续传。`bridge/upload-cache.ts` 对载荷做 SHA-256，并在 Dexie `uploadCache`（schema v7，含活动 upload id 与状态）中保留 `read_cache_ttl_ms`（30 秒），窗口内重复发送不再上传；缓存失败开放。
 
 ## ⚙️ 配置参考
 
@@ -164,7 +166,7 @@ src/<session_id>/artifacts/
 | `preserve_latest_user_media` | `true` | 保护最新真实用户消息的媒体。 |
 | `artifact_store_enabled` | `true` | 使用内容寻址存储；关闭则保留时间戳 `media/` 副本。 |
 | `chunk_size_bytes` | `524288` | 单个 `/upload/chunk` 请求体的最大字节数。 |
-| `max_staged_bytes` | `67108864` | 客户端缓存/哈希预算；更大的载荷跳过缓存直接上传。 |
+| `max_concurrent_files` | `8` | 单次多附件发送的并行文件车道数。 |
 | `read_cache_ttl_ms` | `30000` | 已上传 URL 的客户端去重窗口。 |
 
 ## 🧪 测试

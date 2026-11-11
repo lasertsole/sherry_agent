@@ -2185,24 +2185,29 @@ compression → the artifact store and `GET /artifacts` → `read_file` image/PD
 blocks → the history budget (fit, then a zero-budget drop), with no network.
 
 Chunked media upload (ZCode parity) is the browser/Tauri transport for
-attachments over one POST's practical size. `bridge/upload-chunked.ts` splits a
-payload larger than `CHUNK_SIZE` (512 KiB) into sequential
-`POST /upload/chunk?session_id&upload_id&chunk_index&total_chunks&filename&content_type`
-calls (raw chunk body, then one `POST /upload/complete`); a single-chunk payload
-keeps the whole-body `/images|/audio|/video/upload` route. The server
-(`server/trigger/http/upload_chunked.py`) stages chunks under
-`TEMP_DIR/upload_chunks/<session>/<upload_id>`, validates the session/upload-id
-segments and chunk range, rejects a chunk over `chunk_size_bytes` (413) or a
-final file over the per-kind cap, then concatenates, hashes, and writes
-`<sha256[:16]><ext>` into the SAME per-kind directory the whole-body route uses —
-identical bytes reuse one file and URL, and the existing static mounts serve it.
-An incomplete upload is a 400 with its staging left for a retry; a completed one
-removes the staging directory. `bridge/upload-cache.ts` hashes each payload with
-SHA-256 and keeps a 30 s Dexie `uploadCache` row (`schema v7`), so sending the
-same bytes twice reuses the first URL; hashing/caching is fail-open and skipped
-above `max_staged_bytes` (64 MiB). The socket passes the real session id to
-`uploadRequestMedia`, which decodes each base64 entry and routes it through
-`uploadWithCache`; `uploadBase64ToUrls` remains the whole-body fallback.
+attachments over one POST's practical size. `bridge/upload-chunked.ts` opens a
+session with `POST /upload/begin?session_id&filename&content_type&total_chunks&total_bytes`,
+then posts every chunk as `POST /upload/chunk?upload_id&chunk_index` and finishes
+with `POST /upload/complete?upload_id`; a single-chunk payload keeps the
+whole-body `/images|/audio|/video/upload` route. Chunks for ONE file are sent
+strictly in order — the server (`server/trigger/http/upload_chunked.py`) rejects
+a gap (`code=chunkGap`) or a replay (`code=chunkConflict`), so file-level
+parallelism lives in `uploadMultipleFiles`/`runPool` (up to
+`max_concurrent_files`, 8 lanes), never inside one file. `GET /upload/status`
+returns the contiguous received count for `resumeUpload`; `POST /upload/abort`
+discards the staging directory. Staging lives in
+`TEMP_DIR/upload_chunks/<upload_id>/` with a `meta.json` (session, filename,
+content type, totals); `begin` validates the declared size against the per-kind
+cap and the chunk count against `ceil(total_bytes/chunk_size)`, `complete`
+concatenates, hashes, and writes `<sha256[:16]><ext>` into the SAME per-kind
+directory the whole-body route uses — identical bytes reuse one file and URL.
+`bridge/upload-cache.ts` hashes each payload with SHA-256 and keeps a 30 s Dexie
+`uploadCache` row (`schema v7`, including the live `upload_id`/status so a
+refresh can resume), so sending the same bytes twice reuses the first URL;
+caching is fail-open. The socket passes the real session id to
+`uploadRequestMedia`, which decodes each base64 entry and routes the whole list
+through `uploadMultipleWithCache`; `uploadBase64ToUrls` remains the whole-body
+fallback.
 
 Markdown images are a gallery: after sanitization `safeHtml.ts::markMarkdownImages`
 marks every `img` outside a link/button (class `markdown-image`, `data-act="image"`,

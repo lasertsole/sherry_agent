@@ -143,9 +143,11 @@ src/<session_id>/artifacts/
 
 ## 📤 청크 업로드: `/upload/chunk`
 
-브라우저와 Tauri 셸은 `bridge/upload-chunked.ts`를 통해 첨부를 전송합니다. `CHUNK_SIZE`(512 KiB) 이하의 페이로드는 기존 전체 `/images|/audio|/video/upload` 경로를 쓰고, 더 큰 페이로드는 순차적인 `POST /upload/chunk`(session/upload id, index, total, content type, 원본 청크 본문)로 나뉘며 마지막에 `POST /upload/complete`를 한 번 호출합니다.
+브라우저와 Tauri 셸은 `bridge/upload-chunked.ts`를 통해 첨부를 전송합니다. `CHUNK_SIZE`(512 KiB) 이하는 기존 전체 `/images|/audio|/video/upload` 경로를 씁니다. 더 큰 페이로드는 `POST /upload/begin`(session, filename, content type, `total_chunks`, `total_bytes`)으로 세션을 열고 각 청크를 `POST /upload/chunk?upload_id&chunk_index`로 보낸 뒤 `POST /upload/complete?upload_id`로 마칩니다.
 
-서버는 청크를 `TEMP_DIR/upload_chunks/<session>/<upload_id>`에 스테이징하고 id 세그먼트, 청크 범위, 청크당 크기(`413`)를 검증한 뒤 연결하고 SHA-256을 계산해 `<sha256[:16]><ext>`를 전체 업로드 경로와 같은 종류별 디렉터리에 씁니다. 동일 바이트는 같은 파일과 URL을 재사용하며(정적 마운트가 두 경로를 모두 제공), 미완료 업로드는 `400`으로 스테이징을 남겨 재시도할 수 있고 완료된 업로드는 스테이징을 삭제합니다. `bridge/upload-cache.ts`는 페이로드를 SHA-256하고 URL을 Dexie(`uploadCache`, schema v7)에 `read_cache_ttl_ms`(30초) 동안 캐시하므로 그 창 안의 재전송은 다시 업로드하지 않습니다. 해시/캐시는 fail-open이며 `max_staged_bytes`(64 MiB)를 넘으면 건너뜁니다.
+한 파일의 청크는 엄격히 순서대로입니다. 서버는 건너뛴 인덱스(`code=chunkGap`)와 재전송(`code=chunkConflict`)을 거부해 ZCode와 같은 제약을 갖습니다. 병렬성은 파일 사이에 있으며 `uploadMultipleFiles`가 `runPool`로 최대 `max_concurrent_files`(8) 레인을 실행하고 각 레인은 순차 청크를 유지합니다. `GET /upload/status`는 연속 수신 청크 수를 반환해 `resumeUpload`가 이어갈 수 있고, `POST /upload/abort`는 스테이징을 삭제합니다.
+
+서버는 `TEMP_DIR/upload_chunks/<upload_id>/`에 `meta.json`과 청크를 둡니다. `begin`은 종류별 바이트 상한과 청크 수/바이트 수 일치를 검증하고, `complete`가 연결·SHA-256·`<sha256[:16]><ext>` 쓰기를 수행합니다. 동일 바이트는 같은 파일과 URL을 재사용하고 완료된 업로드는 스테이징을 삭제하며 미완료는 `400`으로 청크를 남깁니다. `bridge/upload-cache.ts`는 페이로드를 SHA-256하고 Dexie `uploadCache`(schema v7, 진행 중 upload id/status 포함)에 `read_cache_ttl_ms`(30초) 동안 보관하므로 그 창 안의 재전송은 다시 업로드하지 않습니다. 캐시는 fail-open입니다.
 
 ## ⚙️ 설정 참고
 
@@ -164,7 +166,7 @@ src/<session_id>/artifacts/
 | `preserve_latest_user_media` | `true` | 최신 실제 사용자 메시지의 미디어 보호. |
 | `artifact_store_enabled` | `true` | 내용 주소 기반 저장소 사용. 끄면 타임스탬프 `media/` 사본. |
 | `chunk_size_bytes` | `524288` | `/upload/chunk` 본문 하나의 최대 바이트. |
-| `max_staged_bytes` | `67108864` | 클라이언트 캐시/해시 예산. 초과하면 캐시 없이 업로드. |
+| `max_concurrent_files` | `8` | 한 번의 다중 첨부 전송에서 병렬 파일 레인 수. |
 | `read_cache_ttl_ms` | `30000` | 업로드된 URL의 클라이언트 중복 제거 창. |
 
 ## 🧪 테스트

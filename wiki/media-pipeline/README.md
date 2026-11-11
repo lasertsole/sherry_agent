@@ -143,9 +143,11 @@ When compression offloads inline media, `media_offload` first calls `find_artifa
 
 ## 📤 Chunked Upload: `/upload/chunk`
 
-Browsers and the Tauri shell send attachments through `bridge/upload-chunked.ts`. A payload of at most `CHUNK_SIZE` (512 KiB) keeps the whole-body `/images|/audio|/video/upload` route; a larger one is split into sequential `POST /upload/chunk` calls (session/upload ids, index, total, content type, raw chunk body) followed by one `POST /upload/complete`.
+Browsers and the Tauri shell send attachments through `bridge/upload-chunked.ts`. A payload of at most `CHUNK_SIZE` (512 KiB) keeps the whole-body `/images|/audio|/video/upload` route. A larger one opens a session with `POST /upload/begin` (session, filename, content type, `total_chunks`, `total_bytes`), posts every chunk as `POST /upload/chunk?upload_id&chunk_index`, and finishes with `POST /upload/complete?upload_id`.
 
-The server stages chunks under `TEMP_DIR/upload_chunks/<session>/<upload_id>`, validates the id segments, the chunk range and the per-chunk size (`413`), then concatenates, hashes with SHA-256, and writes `<sha256[:16]><ext>` into the same per-kind directory the whole-body route uses. Identical bytes reuse one file and URL (the static mount serves both routes), an incomplete upload is a `400` that keeps its staging for a retry, and a completed one removes the staging directory. `bridge/upload-cache.ts` hashes the payload and caches its URL in Dexie (`uploadCache`, schema v7) for `read_cache_ttl_ms` (30 s), so a repeated send inside that window does not upload again; hashing/caching is fail-open and skipped above `max_staged_bytes` (64 MiB).
+Chunks for ONE file are strictly sequential: the server rejects a skipped index (`code=chunkGap`) and a replayed one (`code=chunkConflict`), mirroring ZCode. Parallelism is between files — `uploadMultipleFiles` runs up to `max_concurrent_files` (8) lanes through `runPool`, each lane keeping its own sequential chunk stream. `GET /upload/status` reports the contiguous received count for `resumeUpload`, and `POST /upload/abort` discards the staging directory.
+
+The server stages chunks under `TEMP_DIR/upload_chunks/<upload_id>/` with a `meta.json`; `begin` validates the per-kind byte cap and the chunk-count/byte-size agreement, then `complete` concatenates, hashes with SHA-256 and writes `<sha256[:16]><ext>` into the same per-kind directory the whole-body route uses. Identical bytes reuse one file and URL, a completed upload removes its staging, and an incomplete one answers `400` while keeping the chunks for a resume. `bridge/upload-cache.ts` hashes the payload and keeps a Dexie `uploadCache` row (`schema v7`, including the live upload id and status) for `read_cache_ttl_ms` (30 s), so a repeated send inside that window does not upload again; caching is fail-open.
 
 ## ⚙️ Configuration Reference
 
@@ -164,7 +166,7 @@ The server stages chunks under `TEMP_DIR/upload_chunks/<session>/<upload_id>`, v
 | `preserve_latest_user_media` | `true` | Protect the latest real user message's media. |
 | `artifact_store_enabled` | `true` | Use the content-addressed store; off keeps timestamped `media/` copies. |
 | `chunk_size_bytes` | `524288` | Maximum bytes in one `/upload/chunk` body. |
-| `max_staged_bytes` | `67108864` | Client cache/hash budget; larger payloads upload without the cache. |
+| `max_concurrent_files` | `8` | Parallel file lanes for one multi-attachment send. |
 | `read_cache_ttl_ms` | `30000` | Client dedupe window for an uploaded URL. |
 
 ## 🧪 Testing
