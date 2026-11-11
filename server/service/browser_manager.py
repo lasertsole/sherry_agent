@@ -426,7 +426,22 @@ class _BrowserDebugCaptureMixin(_BrowserManagerBase):
     """
 
     def _debug_capture_enabled(self) -> bool:
-        return bool(self.config.get("debug_capture", 1))
+        """Live switch: sherry.jsonc App Config, with the env as an override.
+
+        Read per call (the file is tiny) so the 应用配置 entry applies without a
+        restart; an explicit ``SHERRY_BROWSER_DEBUG_CAPTURE`` still wins for a
+        single launch. The built-in config value is only the last-resort
+        fallback (tests / a broken settings file).
+        """
+        raw = os.environ.get("SHERRY_BROWSER_DEBUG_CAPTURE", "").strip().lower()
+        if raw:
+            return raw not in ("0", "false", "no", "off")
+        try:
+            from config.sherry_settings import get_sherry_setting
+
+            return bool(get_sherry_setting("browser.debug_capture"))
+        except Exception:  # noqa: BLE001 - a broken config must not kill capture
+            return bool(self.config.get("debug_capture", 1))
 
     def _debug_limit(self) -> int:
         return max(1, int(self.config.get("debug_buffer_max", 200)))

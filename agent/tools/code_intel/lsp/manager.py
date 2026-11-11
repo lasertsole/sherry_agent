@@ -55,13 +55,21 @@ class LspServerManager:
 
     # ── public API ───────────────────────────────────────────────────────────
 
-    def acquire(self, language: str, cwd: str, binary_path: str) -> tuple[LSPClient | None, str]:
+    def acquire(
+        self,
+        language: str,
+        cwd: str,
+        binary_path: str,
+        spec: dict | None = None,
+    ) -> tuple[LSPClient | None, str]:
         """Return a started client for ``(language, cwd)``, starting one if needed.
 
-        On failure returns ``(None, error_message)``; the caller degrades to the
-        fallback message.
+        ``spec`` is the merged (builtin + skill + project) server declaration;
+        ``None`` keeps the historical builtin lookup. On failure returns
+        ``(None, error_message)``; the caller degrades to the fallback message.
         """
-        spec = LSP["lsp_supported_servers"].get(language)
+        if spec is None:
+            spec = LSP["lsp_supported_servers"].get(language)
         if spec is None:
             return None, f"no LSP server is configured for language '{language}'"
 

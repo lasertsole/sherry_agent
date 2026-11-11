@@ -112,6 +112,14 @@
     // ]
   },
 
+  // Browser debug capture: the agent's live browser page records console
+  // output, uncaught JS exceptions and failed requests (status >= 400 /
+  // loadingFailed). The browser feature itself is opt-in; this switch only
+  // controls the passive CDP domains. Read live — no restart needed.
+  "browser": {
+    "debug_capture": true
+  },
+
   // Restart-recovery effect queue (runtime/effects/ + server/service/effects/).
   // OFF by default: the existing boot sweepers and synchronous delivery paths
   // stay in charge. shadow_mode records intents while the original path still

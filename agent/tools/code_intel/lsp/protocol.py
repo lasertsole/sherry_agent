@@ -45,25 +45,31 @@ def uri_to_path(uri: str) -> str:
     return unquote(parsed.path)
 
 
-def detect_language(file_path: str) -> str | None:
-    """Map a file path to an LSP language via the configured extensions."""
+def detect_language(file_path: str, servers: dict[str, dict] | None = None) -> str | None:
+    """Map a file path to an LSP language via the configured extensions.
+
+    ``servers`` is the merged (builtin + skill + project) table; ``None`` keeps
+    the historical builtin-only view.
+    """
     suffix = Path(file_path).suffix.lower()
     if not suffix:
         return None
-    for language, spec in LSP["lsp_supported_servers"].items():
-        if suffix in spec["extensions"]:
+    table = servers if servers is not None else LSP["lsp_supported_servers"]
+    for language, spec in table.items():
+        if suffix in spec.get("extensions", []):
             return language
     return None
 
 
-def language_id(language: str) -> str:
+def language_id(language: str, servers: dict[str, dict] | None = None) -> str:
     """Return the LSP ``languageId`` for a configured language key.
 
     The config key is a server-selection handle (``bash``), while the protocol
     expects the canonical identifier (``shellscript``). Unknown languages fall
     through as-is.
     """
-    spec = LSP["lsp_supported_servers"].get(language)
+    table = servers if servers is not None else LSP["lsp_supported_servers"]
+    spec = table.get(language)
     if spec:
         explicit = spec.get("language_id")
         if explicit:

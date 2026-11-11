@@ -2433,8 +2433,9 @@ thin handlers over the same manager; the original `browser_*` classes remain
 internal handlers and are exposed only by `build_legacy_browser_tools()` for
 tests.
 
-**Passive debug capture** — with `SHERRY_BROWSER_DEBUG_CAPTURE=1` (default; part
-of the opt-in browser feature), every ordinary page enables `Runtime.enable` /
+**Passive debug capture** — controlled live by the App Config key
+`browser.debug_capture` (系统配置 → 应用配置; `SHERRY_BROWSER_DEBUG_CAPTURE`
+overrides it for one launch), every ordinary page enables `Runtime.enable` /
 `Network.enable` / `Log.enable` through `_BrowserDebugCaptureMixin`.
 `Runtime.consoleAPICalled`, `Runtime.exceptionThrown` (text + up to 10 stack
 frames) and `Log.entryAdded` land in per-page ring buffers
@@ -2692,6 +2693,27 @@ server/timeout → skipped. Robustness: a crashed server is restarted at most
 `lsp_max_restarts` (default 3) times before the tools degrade to
 tree-sitter/grep, and `-32801` ContentModified is retried with 500/1000/2000 ms
 backoff (`lsp_content_modified_max_retries` / `_backoff_s`).
+
+**LSP configuration layers (2026-11-12).** The server table is a three-layer
+merge (`agent/tools/code_intel/lsp/config_merge.py`): builtin
+`LSP["lsp_supported_servers"]` → skill `<skill_dir>/lsp.json` (only under a
+`SKILL.md` in builtin/auto/plugins) → project `<project>/.sherry/lsp.json`,
+precedence left-to-right with WHOLE-spec replacement. `effective_lsp_servers(root)`
+returns `servers` + `sources` + the merged `enable` list + validation errors;
+reads are mtime-cached. Every declaration is validated (bare executable
+`command[0]`, shell-free argv, dot-prefixed extensions, bounded sizes/items);
+the binary is still chosen only by the five-tier resolver, so a declaration
+cannot inject an arbitrary path. The LSP tools acquire servers in the session's
+PROJECT root (not the process cwd), which is the same key `pub_base/lsp_sync.py`
+and the finish-time diagnostics replay use. The HTTP face
+(`server/trigger/http/lsp_config.py` + `server/service/lsp_config_service.py`)
+serves GET `/lsp/config`, GET/PUT/POST `/lsp/config/project` (POST = uploaded
+JSON text), DELETE `/lsp/config/project/language` and POST `/lsp/config/test`
+(a one-shot real `initialize` probe). The frontend is 系统配置 → LSP / 代码智能
+(`LspConfigSection.vue`): a read-only builtin/skill table with installed state,
+an editable project table, add/delete, `lsp.json` upload, and per-server test.
+`config_merge` never starts a server; the tab's test button does, bounded by
+the LSP start timeout and shut down immediately.
 
 Kill-criteria decisions (2026-11-12): browser capture has no per-site opt-out —
 the browser feature is itself opt-in and `SHERRY_BROWSER_DEBUG_CAPTURE=0` is the

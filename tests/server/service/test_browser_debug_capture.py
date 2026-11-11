@@ -258,14 +258,28 @@ def test_network_events_filters():
     ]
 
 
-def test_capture_disabled_reports_not_enabled():
-    manager = _manager(debug_capture=0)
+def test_capture_disabled_reports_not_enabled(monkeypatch):
+    # The LIVE switch is sherry.jsonc's browser.debug_capture, with the env as
+    # an override; the manager config value is only the last-resort fallback.
+    monkeypatch.setenv("SHERRY_BROWSER_DEBUG_CAPTURE", "0")
+    manager = _manager()
     _page(manager)
 
     outcome = manager.console_events("sess")
 
     assert outcome["enabled"] is False
     assert outcome["events"] == []
+
+
+def test_the_app_config_switch_is_read_live(monkeypatch):
+    manager = _manager()
+
+    monkeypatch.delenv("SHERRY_BROWSER_DEBUG_CAPTURE", raising=False)
+    monkeypatch.setattr("config.sherry_settings.get_sherry_setting", lambda _key: False)
+    assert manager._debug_capture_enabled() is False
+
+    monkeypatch.setattr("config.sherry_settings.get_sherry_setting", lambda _key: True)
+    assert manager._debug_capture_enabled() is True
 
 
 def test_enable_debug_capture_calls_the_three_domains_once():

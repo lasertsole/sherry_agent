@@ -127,6 +127,10 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # sherry.jsonc stays complete; the per-event hook LISTS are read by
     # ``load_sherry_hooks`` (they are lists of objects, not scalars).
     "hooks.enabled": False,
+    # Browser debug capture (系统配置 → 应用配置): console / uncaught exceptions /
+    # failed requests for the agent's live browser page. The browser feature is
+    # itself opt-in; this switch only controls the passive CDP domains.
+    "browser.debug_capture": True,
     # Restart-recovery effect queue (runtime/effects/). OFF by default: an
     # untouched install keeps the existing boot sweepers. ``shadow_mode``
     # records intents while the original path still runs (observation only);
@@ -167,6 +171,7 @@ _BOOL_KEYS = frozenset(
         "safety_filter.enabled",
         "heartbeat.enabled",
         "hooks.enabled",
+        "browser.debug_capture",
         "curator.enabled",
         "curator.consolidate",
         "curator.prune_builtins",

@@ -397,6 +397,13 @@
           :header="t('config.tabs.desktop')">
           <DesktopSettingsSection />
         </TabPanel>
+        <!-- LSP / code intelligence: the three declaration layers and the
+             project-level lsp.json editor/upload (session-scoped). -->
+        <TabPanel
+          value="lsp"
+          :header="t('config.tabs.lsp')">
+          <LspConfigSection />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -452,6 +459,7 @@ import I18nPanel from './I18nPanel.vue';
 import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
 import DesktopSettingsSection from './DesktopSettingsSection.vue';
 import SafetyFilterPanel from './SafetyFilterPanel.vue';
+import LspConfigSection from './LspConfigSection.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
@@ -489,11 +497,11 @@ const emits = defineEmits<{ saved: [] }>();
  * every behaviour below (footer, lazy loads, dirty state, reset) keys off the
  * value — adding or moving a tab can never silently re-target them.
  */
-const TAB_ORDER = ['background', 'env', 'sherry', 'i18n', 'shortcuts', 'safetyFilter', 'desktop'] as const;
+const TAB_ORDER = ['background', 'env', 'sherry', 'i18n', 'shortcuts', 'safetyFilter', 'desktop', 'lsp'] as const;
 type ConfigTab = (typeof TAB_ORDER)[number];
 
 /** Tabs that save on their own (no shared footer). */
-const FOOTERLESS_TABS: readonly ConfigTab[] = ['env', 'i18n', 'shortcuts', 'safetyFilter', 'desktop'];
+const FOOTERLESS_TABS: readonly ConfigTab[] = ['env', 'i18n', 'shortcuts', 'safetyFilter', 'desktop', 'lsp'];
 
 const activeTabValue = ref<ConfigTab>('background');
 const activeTab = computed<number>({
@@ -764,7 +772,8 @@ const SHERRY_ENTRY_SLUGS: Record<string, string> = {
   'curator.archive_after_days': 'curatorArchiveAfterDays',
   'curator.consolidate': 'curatorConsolidate',
   'curator.prune_builtins': 'curatorPruneBuiltins',
-  'hooks.enabled': 'hooksEnabled'
+  'hooks.enabled': 'hooksEnabled',
+  'browser.debug_capture': 'browserDebugCapture'
 };
 
 /**
@@ -1153,6 +1162,7 @@ onBeforeUnmount(onHide);
         "user": "用户信息",
         "env": "模型配置",
         "sherry": "应用配置",
+        "lsp": "LSP / 代码智能",
         "i18n": "国际化",
         "shortcuts": "快捷键",
         "safetyFilter": "直播安全",
@@ -1277,6 +1287,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "生命周期 Hook 总开关",
             "hint": "允许运行 sherry.jsonc 里配置的钩子命令；钩子会执行本机命令，默认关闭。"
+          },
+          "browserDebugCapture": {
+            "label": "浏览器调试捕获",
+            "hint": "让 agent 的浏览器页面记录 console、未捕获 JS 异常与失败请求（状态 ≥400 或 loadingFailed）。浏览器功能本身需先开启；此开关只控制被动捕获，保存后即时生效。"
           }
         },
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
@@ -1459,6 +1473,7 @@ onBeforeUnmount(onHide);
         "user": "User Profile",
         "env": "Model Config",
         "sherry": "App Config",
+        "lsp": "LSP / Code Intelligence",
         "i18n": "Language",
         "shortcuts": "Shortcuts",
         "safetyFilter": "Live safety",
@@ -1598,6 +1613,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "Lifecycle hooks master switch",
             "hint": "Allow the hook commands configured in sherry.jsonc to run. Hooks execute local commands, so this is off by default."
+          },
+          "browserDebugCapture": {
+            "label": "Browser debug capture",
+            "hint": "Record console output, uncaught JS exceptions and failed requests (status ≥ 400 or loadingFailed) on the agent's live browser page. The browser feature itself is opt-in; this switch only controls passive capture and applies live."
           }
         },
         "loadError": "Failed to load app config. Please check the backend service.",
@@ -1780,6 +1799,7 @@ onBeforeUnmount(onHide);
         "user": "ユーザー情報",
         "env": "モデル設定",
         "sherry": "アプリ設定",
+        "lsp": "LSP / コードインテリジェンス",
         "i18n": "国際化",
         "shortcuts": "ショートカット",
         "safetyFilter": "ライブ安全",
@@ -1919,6 +1939,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "ライフサイクル フックの総合スイッチ",
             "hint": "sherry.jsonc に設定したフック コマンドの実行を許可します。ローカルでコマンドを実行するため既定はオフです。"
+          },
+          "browserDebugCapture": {
+            "label": "ブラウザデバッグ捕捉",
+            "hint": "エージェントのブラウザページで console、未捕捉 JS 例外、失敗リクエスト（status 400 以上 / loadingFailed）を記録します。ブラウザ機能自体はオプトインで、このスイッチは受動捕捉だけを制御し、即時反映されます。"
           }
         },
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
@@ -2101,6 +2125,7 @@ onBeforeUnmount(onHide);
         "user": "사용자 정보",
         "env": "모델 설정",
         "sherry": "앱 설정",
+        "lsp": "LSP / 코드 인텔리전스",
         "i18n": "국제화",
         "shortcuts": "단축키",
         "safetyFilter": "라이브 안전",
@@ -2234,6 +2259,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "생애주기 Hook 총 스위치",
             "hint": "sherry.jsonc 에 설정한 훅 명령 실행을 허용합니다. 로컬 명령을 실행하므로 기본은 꺼짐입니다."
+          },
+          "browserDebugCapture": {
+            "label": "브라우저 디버그 캡처",
+            "hint": "에이전트의 브라우저 페이지에서 console, 잡히지 않은 JS 예외, 실패 요청(status 400 이상 / loadingFailed)을 기록합니다. 브라우저 기능 자체는 옵트인이며, 이 스위치는 수동 캡처만 제어하고 즉시 적용됩니다."
           }
         },
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",

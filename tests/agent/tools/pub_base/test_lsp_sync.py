@@ -54,7 +54,7 @@ def _file(tmp_path: Path) -> Path:
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, client: _FakeClient | None) -> None:
-    monkeypatch.setattr(lsp_sync, "_client_for", lambda _path: ("python", client))
+    monkeypatch.setattr(lsp_sync, "_client_for", lambda _path, _sid="": ("python", client))
 
 
 def test_sync_edited_file_pushes_and_schedules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

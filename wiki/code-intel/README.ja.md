@@ -195,6 +195,12 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 
 発見手順は ast-grep の各層に対応しますが、marker によるゲートが加わります：明示的な絶対パス。次に、同じ階層に対応する marker ファイルが存在するときだけ信頼されるリポジトリローカルの bin ディレクトリ（`pyproject.toml` → `.venv/bin`、`package.json` → `node_modules/.bin`、`Cargo.toml` → `target/debug`、`go.mod` → `bin`、リポジトリルートまで上方走査）。次に `~/.sherry/runtime/lsp` の配置、`PATH`、Homebrew の順です。解決結果は `(cwd, command, platform)` 単位でキャッシュされます。
 
+### 設定レイヤーと管理タブ
+
+server テーブルはクエリごとに 3 層から組み立てられます：組み込み `LSP["lsp_supported_servers"]`、スキル層 `<skill>/lsp.json`（builtin/auto/plugins の `SKILL.md` と同じ階層のみ）、プロジェクト層 `<project>/.sherry/lsp.json`。優先順位はプロジェクト > スキル > 組み込みで、spec 全体を置き換えます。読み込みは mtime キャッシュ付きです。各宣言は検証され（`command[0]` は裸の実行ファイル名、引数に shell メタ文字なし、拡張子はドット始まり、サイズ上限あり）、実際のバイナリは上記の 5 層の探索で決まります——宣言が任意のパスを注入することはできません。ツールは**セッションのプロジェクトルート**で server を acquire するため、適用されるのは呼び出したセッションのプロジェクトファイルです。
+
+`GET /lsp/config` はマージ済みビュー（各言語の `source` と `installed`）を返し、`GET|PUT|POST /lsp/config/project` はプロジェクト層の読み取り/置換/アップロード（`POST` はファイルのテキスト）、`DELETE /lsp/config/project/language` は 1 エントリの削除、`POST /lsp/config/test` はバイナリ解決と実際の `initialize` ハンドシェイクを行います。システム設定 → LSP / コードインテリジェンス（`LspConfigSection.vue`）は読み取り専用の組み込み/スキル表、編集可能なプロジェクト表（追加/削除）、`lsp.json` アップロード、server ごとのテストボタンを表示します。
+
 言語サーバーは重量級の常駐サブプロセスなので、プロセス単位のマネージャが制約します：サーバーは `(language, cwd)` への最初の要求で遅延起動し、同時に生きるのは最大 `lsp_max_concurrent_servers`（3）個で、超えるときは最も長く使われていないものを追い出します。アイドルスイーパーは `lsp_idle_shutdown_s`（300 秒）を超えて未使用のサーバーを回収し、`shutdown_all` は `atexit` フックから実行されます——クライアントが孤児プロセスを残すことはありません。各クライアントは `Content-Length` で JSON-RPC をフレーム化し、リーダースレッドで応答を振り分け、サーバーからクライアントへの要求には空の結果を返し、すべての待機をタイムアウトで有界し、開くファイルを 32 に制限し（最も古いものを閉じる）、1 MB 超のファイルを拒否します。
 
 可用性は 3 状態で報告されます：`available`、`not_installed`（設定済みだが発見を通過するバイナリがない——インストールヒントとローカルインストールコマンドを返す）、`not_configured`（言語が `lsp_enabled_languages` にない）。利用不能な経路はすべてツール名、インストールヒント、そして `explore` または `terminal`（rg/grep）へのフォールバックを返します。自動インストールは既定で無効（`lsp_auto_install=False`）で、有効時も対象言語の許可リスト済みコマンドだけを 60 秒のタイムアウトと洗浄済み環境で実行します。

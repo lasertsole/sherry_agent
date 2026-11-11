@@ -46,6 +46,9 @@ SAMPLE = """// app settings
   "hooks": {
     "enabled": false
   },
+  "browser": {
+    "debug_capture": true
+  },
   "effects": {
     "enabled": false,
     "shadow_mode": false,

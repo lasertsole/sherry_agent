@@ -33,10 +33,12 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from config.features import LSP
+from config.path import resolve_default_project_dir
 
 from .client import LSPClient
+from .config_merge import LspConfigView, effective_lsp_servers
 from .fallback import LspAvailability, build_fallback_message, check_lsp_availability
-from .manager import get_manager, lsp_server_cwd
+from .manager import get_manager
 from .protocol import (
     detect_language,
     format_diagnostic,
@@ -60,11 +62,6 @@ _ROOT_ENV_KEY = "SHERRY_LSP_ROOT"
 def _override_root() -> Path | None:
     raw = os.environ.get(_ROOT_ENV_KEY, "").strip()
     return Path(raw).expanduser().resolve() if raw else None
-
-
-def _lsp_cwd() -> str:
-    """The acquisition key every LSP tool shares (``SHERRY_LSP_ROOT`` or cwd)."""
-    return lsp_server_cwd()
 
 
 def _resolve_file(raw: str, root: Path | None = None) -> tuple[Path | None, str | None]:
@@ -141,13 +138,28 @@ class _LspTool(BaseTool):
             }
         )
 
-    def _resolve_language(self, language: str, file_path: str) -> tuple[str | None, str | None]:
+    def _resolve_language(
+        self,
+        language: str,
+        file_path: str,
+        servers: dict[str, dict] | None = None,
+    ) -> tuple[str | None, str | None]:
         """Resolve (language, cwd) from an explicit language or a file path."""
         if not language and file_path:
-            language = detect_language(file_path) or ""
+            language = detect_language(file_path, servers) or ""
         if not language:
             return None, "could not determine the language; pass a supported file_path"
         return language, None
+
+    def _effective_config(self) -> tuple[LspConfigView, str]:
+        """The session's merged server table + the cwd its servers run in.
+
+        A bound session's project root is the acquisition key, so its
+        ``.sherry/lsp.json`` overrides apply to the tools it calls; an unbound
+        session falls back to the process default (the historical behaviour).
+        """
+        root = _override_root() or self._session_root() or resolve_default_project_dir()
+        return effective_lsp_servers(root), str(root)
 
     def _open(self, client: LSPClient, file_path: str | None) -> str | None:
         if not file_path:
@@ -261,15 +273,20 @@ class LspGotoDefinitionTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -315,15 +332,20 @@ class LspHoverTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -362,15 +384,20 @@ class LspFindReferencesTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -405,15 +432,22 @@ class LspWorkspaceSymbolTool(_LspTool):
             resolved, error = _resolve_file(file_path, self._session_root())
             if error is not None:
                 return self._json({"error": error, "available": True})
-        language, error = self._resolve_language(language, str(resolved) if resolved else "")
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language(
+            language, str(resolved) if resolved else "", servers_view.servers
+        )
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -449,7 +483,8 @@ class LspCallHierarchyTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
@@ -460,10 +495,14 @@ class LspCallHierarchyTool(_LspTool):
                 {"error": "direction must be 'incoming' or 'outgoing'", "available": True}
             )
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -512,15 +551,20 @@ class LspRenameTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -569,15 +613,20 @@ class LspDiagnosticsTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -637,15 +686,20 @@ class LspFormatTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -728,18 +782,20 @@ class LspStatusTool(_LspTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self) -> str:
-        cwd = _lsp_cwd()
+        view, cwd = self._effective_config()
         active = get_manager().stats()
         active_languages = {entry["language"] for entry in active if entry.get("alive")}
         servers: list[dict] = []
         summary = {"available": 0, "not_installed": 0, "not_configured": 0}
-        for language, spec in LSP["lsp_supported_servers"].items():
-            availability, message = check_lsp_availability(language, cwd)
+        for language, spec in view.servers.items():
+            availability, message = check_lsp_availability(
+                language, cwd, view.servers, view.enabled
+            )
             summary[availability] = summary.get(availability, 0) + 1
             entry: dict[str, Any] = {
                 "language": language,
                 "server": spec["command"][0],
-                "language_id": language_id(language),
+                "language_id": language_id(language, view.servers),
                 "status": availability,
                 "active": language in active_languages,
             }

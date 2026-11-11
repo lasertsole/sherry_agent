@@ -20,6 +20,7 @@ ledger failure only logs. The edit itself already succeeded.
 from __future__ import annotations
 
 import atexit
+import os
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -27,15 +28,18 @@ from pathlib import Path
 
 from loguru import logger
 
-from agent.tools.code_intel.lsp.manager import get_manager, lsp_server_cwd
+from agent.tools.code_intel.lsp.config_merge import effective_lsp_servers
+from agent.tools.code_intel.lsp.manager import get_manager
 from agent.tools.code_intel.lsp.protocol import (
     detect_language,
     format_diagnostic,
     path_to_uri,
 )
 from config.features import LSP
+from config.path import resolve_default_project_dir
 
 from .evidence_ledger import EvidenceLedger, normalize_evidence_path
+from .path_utils import session_workspace_root
 
 __all__ = [
     "schedule_auto_diagnostics",
@@ -53,12 +57,21 @@ _SESSION_FILES: dict[str, dict[str, None]] = defaultdict(dict)
 _STOP = threading.Event()
 
 
-def _client_for(file_path: str):
+def _lsp_root(session_id: str = "") -> Path:
+    """The session's project root (the same acquisition key the tools use)."""
+    override = os.environ.get("SHERRY_LSP_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return session_workspace_root(session_id) or resolve_default_project_dir()
+
+
+def _client_for(file_path: str, session_id: str = ""):
     """The live client that owns *file_path*'s language, or ``(language, None)``."""
-    language = detect_language(file_path)
+    root = _lsp_root(session_id)
+    language = detect_language(file_path, effective_lsp_servers(root).servers)
     if not language:
         return None, None
-    return language, get_manager().peek(language, lsp_server_cwd())
+    return language, get_manager().peek(language, str(root))
 
 
 def sync_edited_file(file_path: str, content: str, session_id: str = "") -> bool:
@@ -68,7 +81,7 @@ def sync_edited_file(file_path: str, content: str, session_id: str = "") -> bool
     never raises.
     """
     try:
-        _language, client = _client_for(file_path)
+        _language, client = _client_for(file_path, session_id)
         if client is None:
             return False
         client.sync_document(file_path, content)
@@ -87,7 +100,7 @@ def sync_edited_path(file_path: str, session_id: str = "") -> bool:
     project without a running language server pays nothing.
     """
     try:
-        _language, client = _client_for(file_path)
+        _language, client = _client_for(file_path, session_id)
         if client is None:
             return False
         raw = Path(file_path).read_bytes()
@@ -141,7 +154,7 @@ def _submit(file_path: str, session_id: str) -> None:
 def _run_once(file_path: str, session_id: str) -> None:
     """One diagnostics pass -> one evidence row (no row when nothing published)."""
     try:
-        _language, client = _client_for(file_path)
+        _language, client = _client_for(file_path, session_id)
         if client is None:
             return
         try:

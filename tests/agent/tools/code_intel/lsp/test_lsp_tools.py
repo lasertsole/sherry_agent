@@ -153,3 +153,62 @@ class TestToolSurface:
             "lsp_status",
         ]
         assert all(tool.metadata["scope"] == "code_intel" for tool in tools)
+
+
+class TestProjectLayer:
+    def test_a_project_language_reaches_lsp_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        (tmp_path / ".sherry").mkdir()
+        (tmp_path / ".sherry" / "lsp.json").write_text(
+            json.dumps(
+                {
+                    "servers": {
+                        "elixir": {
+                            "command": ["elixir-ls"],
+                            "extensions": [".ex"],
+                            "language_id": "elixir",
+                        }
+                    },
+                    "enable": ["elixir"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("SHERRY_LSP_ROOT", str(tmp_path))
+
+        payload = json.loads(_tools()["lsp_status"]._run())
+
+        by_language = {server["language"]: server for server in payload["servers"]}
+        assert by_language["elixir"]["status"] in ("not_installed", "available")
+
+    def test_diagnostics_detects_a_project_extension(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        (tmp_path / ".sherry").mkdir()
+        (tmp_path / ".sherry" / "lsp.json").write_text(
+            json.dumps(
+                {
+                    "servers": {
+                        "elixir": {
+                            "command": ["elixir-ls"],
+                            "extensions": [".ex"],
+                            "language_id": "elixir",
+                        }
+                    },
+                    "enable": ["elixir"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "app.ex").write_text("defmodule App do\nend\n", encoding="utf-8")
+        monkeypatch.setenv("SHERRY_LSP_ROOT", str(tmp_path))
+
+        payload = json.loads(_tools()["lsp_diagnostics"]._run("app.ex"))
+
+        assert payload["available"] is False
+        assert "elixir" in payload["error"]

@@ -192,6 +192,12 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 
 发现顺序与 ast-grep 各层一致，但加入 marker 门控：显式绝对路径；仅当同级存在对应 marker 文件时才信任的仓库本地 bin 目录（`pyproject.toml` 对应 `.venv/bin`、`package.json` 对应 `node_modules/.bin`、`Cargo.toml` 对应 `target/debug`、`go.mod` 对应 `bin`，逐级向上到仓库根）；然后是 `~/.sherry/runtime/lsp`；再是 `PATH`；最后是 Homebrew。解析结果按 `(cwd, command, platform)` 缓存。
 
+### 配置分层与管理页
+
+server 表在每次查询时由三层合并：内置 `LSP["lsp_supported_servers"]`、技能级 `<skill>/lsp.json`（仅在 builtin/auto/plugins 下与 `SKILL.md` 同级）、项目级 `<project>/.sherry/lsp.json`。优先级为项目 > 技能 > 内置，整条 spec 替换；读取带 mtime 缓存。每个声明都会校验（`command[0]` 必须是裸可执行名、参数无 shell 元字符、扩展名以点开头、尺寸有上限），实际二进制仍由上面的五层发现决定——声明不能注入任意路径。工具在**会话的项目根目录** acquire server，因此生效的是调用它的那个会话的项目文件。
+
+`GET /lsp/config` 返回合并视图（每语言带 `source` 与 `installed`）；`GET|PUT|POST /lsp/config/project` 读取/替换/上传（`POST` 接收文件文本）项目层；`DELETE /lsp/config/project/language` 删除一个项目条目；`POST /lsp/config/test` 解析二进制并完成一次真实 `initialize` 握手。系统配置 → LSP / 代码智能（`LspConfigSection.vue`）展示只读的内置/技能表、可编辑的项目表（增删）、`lsp.json` 上传与逐条测试按钮。
+
 语言服务器是重型常驻子进程，因此进程级管理器对其施加约束：服务器在首次请求某个 `(language, cwd)` 时惰性启动，同时存活的最多 `lsp_max_concurrent_servers`（3）个，超出时淘汰最久未使用者；空闲清扫线程回收超过 `lsp_idle_shutdown_s`（300 秒）未使用的服务器；`shutdown_all` 由 `atexit` 钩子执行——客户端绝不留下孤儿进程。每个客户端用 `Content-Length` 分帧 JSON-RPC，在读线程上分发响应，对服务器到客户端的请求回以空结果，所有等待都有超时，打开文件上限 32（关闭最旧者），并拒绝超过 1 MB 的文件。
 
 可用性是三态报告：`available`、`not_installed`（已配置但没有二进制通过发现——返回安装提示与本地安装命令）、`not_configured`（语言不在 `lsp_enabled_languages` 中）。每条不可用路径都会返回工具名、安装提示，以及回退到 `explore` 或 `terminal`（rg/grep）的建议。自动安装默认关闭（`lsp_auto_install=False`）；启用后也只执行目标语言的白名单命令，并受 60 秒超时与擦洗环境约束。

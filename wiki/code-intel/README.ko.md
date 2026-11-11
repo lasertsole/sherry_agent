@@ -195,6 +195,12 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 
 발견 순서는 ast-grep 계층과 같지만 marker 게이트가 더해집니다: 명시적 절대 경로, 그다음 같은 계층에 대응 marker 파일이 있을 때만 신뢰하는 저장소 로컬 bin 디렉터리(`pyproject.toml`은 `.venv/bin`, `package.json`은 `node_modules/.bin`, `Cargo.toml`은 `target/debug`, `go.mod`는 `bin`, 저장소 루트까지 상향 순회), 그다음 `~/.sherry/runtime/lsp` 배치, 그다음 `PATH`, 마지막으로 Homebrew. 해석 결과는 `(cwd, command, platform)` 단위로 캐시됩니다.
 
+### 설정 계층과 관리 탭
+
+server 테이블은 쿼리마다 세 계층에서 조립됩니다: 내장 `LSP["lsp_supported_servers"]`, 스킬 계층 `<skill>/lsp.json`(builtin/auto/plugins의 `SKILL.md` 옆에만), 프로젝트 계층 `<project>/.sherry/lsp.json`. 우선순위는 프로젝트 > 스킬 > 내장이며 spec 전체를 교체합니다. 읽기는 mtime 캐시를 사용합니다. 모든 선언은 검증되고(`command[0]`은 맨 실행 파일 이름, 인수에 셸 메타문자 없음, 확장자는 점으로 시작, 크기 상한) 실제 바이너리는 위의 5단계 탐색이 결정합니다 — 선언이 임의 경로를 주입할 수 없습니다. 도구는 **세션의 프로젝트 루트**에서 server를 acquire하므로 적용되는 파일은 호출한 세션의 프로젝트 파일입니다.
+
+`GET /lsp/config`는 병합 뷰(각 언어의 `source`와 `installed`)를 반환하고, `GET|PUT|POST /lsp/config/project`는 프로젝트 계층의 읽기/교체/업로드(`POST`는 파일 텍스트), `DELETE /lsp/config/project/language`는 항목 하나 삭제, `POST /lsp/config/test`는 바이너리 해석과 실제 `initialize` 핸드셰이크를 수행합니다. 시스템 설정 → LSP / 코드 인텔리전스(`LspConfigSection.vue`)는 읽기 전용 내장/스킬 표, 편집 가능한 프로젝트 표(추가/삭제), `lsp.json` 업로드, server별 테스트 버튼을 보여 줍니다.
+
 언어 서버는 무거운 상주 서브프로세스이므로 프로세스 단위 관리자가 제약합니다: 서버는 `(language, cwd)`에 대한 첫 요청에서 지연 시작하고, 동시에 살아 있는 수는 최대 `lsp_max_concurrent_servers`(3)개이며 초과 시 가장 오래 사용되지 않은 것을 내보냅니다. 유휴 스위퍼는 `lsp_idle_shutdown_s`(300초)를 넘겨 사용되지 않은 서버를 회수하고, `shutdown_all`은 `atexit` 훅에서 실행됩니다——클라이언트가 고아 프로세스를 남기는 일은 없습니다. 각 클라이언트는 `Content-Length`로 JSON-RPC를 프레이밍하고, 리더 스레드에서 응답을 분배하고, 서버→클라이언트 요청에 빈 결과로 답하고, 모든 대기를 타임아웃으로 유계하며, 열린 파일을 32개로 제한하고(가장 오래된 것 닫기), 1 MB 초과 파일을 거부합니다.
 
 가용성은 3상태로 보고됩니다: `available`, `not_installed`(설정되었지만 발견을 통과한 바이너리가 없음——설치 힌트와 로컬 설치 명령 반환), `not_configured`(언어가 `lsp_enabled_languages`에 없음). 사용할 수 없는 모든 경로는 도구 이름, 설치 힌트, 그리고 `explore` 또는 `terminal`(rg/grep)로의 폴백을 반환합니다. 자동 설치는 기본적으로 꺼져 있고(`lsp_auto_install=False`), 켜져도 대상 언어의 허용 목록 명령만 60초 타임아웃과 세척된 환경으로 실행합니다.

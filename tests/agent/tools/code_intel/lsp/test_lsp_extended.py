@@ -176,7 +176,9 @@ class TestFormat:
 
 class TestStatus:
     def test_reports_every_language_honestly(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(fallback, "resolve_lsp_server", lambda language, cwd=None: "/bin/true")
+        monkeypatch.setattr(
+            fallback, "resolve_lsp_server", lambda language, cwd=None, servers=None: "/bin/true"
+        )
         payload = json.loads(_tools()["lsp_status"]._run())
         assert payload["count"] == len(LSP["lsp_supported_servers"])
         by_language = {server["language"]: server for server in payload["servers"]}
@@ -186,7 +188,9 @@ class TestStatus:
         assert payload["active_servers"] == []
 
     def test_missing_binaries_are_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(fallback, "resolve_lsp_server", lambda language, cwd=None: None)
+        monkeypatch.setattr(
+            fallback, "resolve_lsp_server", lambda language, cwd=None, servers=None: None
+        )
         payload = json.loads(_tools()["lsp_status"]._run())
         by_language = {server["language"]: server for server in payload["servers"]}
         for language in ("cpp", "java", "ruby", "bash", "vue", "yaml"):
@@ -199,7 +203,9 @@ class TestStatus:
             "lsp_enabled_languages",
             [language for language in LSP["lsp_enabled_languages"] if language != "cpp"],
         )
-        monkeypatch.setattr(fallback, "resolve_lsp_server", lambda language, cwd=None: "/bin/true")
+        monkeypatch.setattr(
+            fallback, "resolve_lsp_server", lambda language, cwd=None, servers=None: "/bin/true"
+        )
         payload = json.loads(_tools()["lsp_status"]._run())
         by_language = {server["language"]: server for server in payload["servers"]}
         assert by_language["cpp"]["status"] == "not_configured"
