@@ -357,7 +357,6 @@
     },
     "tabs": {
       "role": "캐릭터 설정",
-      "agents": "운영 지침",
       "soul": "인격·영혼",
       "user": "사용자 정보",
       "env": "모델 설정",
@@ -379,8 +378,7 @@
     "persona": {
       "preset": {
         "builtinPureName": "순수",
-        "builtinCompanionName": "감정 동반",
-        "defaultName": "전체",
+        "defaultName": "橘雪莉",
         "defaultBadge": "기본",
         "builtinBadge": "내장",
         "savePreset": "프리셋 저장",
@@ -596,7 +594,6 @@
       "memoryAgent": "Agent 장기 기억 메모 (workspace/memory/MEMORY.md)",
       "memoryUser": "사용자 장기 기억 정보 (workspace/memory/USER.md)",
       "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
-      "agents": "Agent의 운영 지침과 안전 경계",
       "soul": "Agent 인격, 어조, 성격",
       "user": "사용자 정보 및 선호도"
     },

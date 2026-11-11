@@ -105,7 +105,7 @@
         <div class="relative min-w-0 flex-1">
           <div
             ref="tabsViewport"
-            class="flex h-full min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide"
+            class="flex h-full min-w-0 items-center gap-1 overflow-x-auto"
             :data-overflowing="isOverflowing ? 'true' : 'false'"
             data-test="tabs-viewport">
             <button
@@ -615,3 +615,22 @@ onBeforeUnmount(() => {
   }
 }
 </i18n>
+
+<style scoped>
+/* The tab strip scrolls horizontally when the panel is narrow; keep a thin,
+   unobtrusive scrollbar so the off-screen tabs stay reachable. */
+[data-test='tabs-viewport'] {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.4) transparent;
+}
+[data-test='tabs-viewport']::-webkit-scrollbar {
+  height: 4px;
+}
+[data-test='tabs-viewport']::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.4);
+  border-radius: 2px;
+}
+[data-test='tabs-viewport']::-webkit-scrollbar-track {
+  background: transparent;
+}
+</style>

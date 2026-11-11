@@ -609,7 +609,6 @@ onMounted(() => {
       },
       "tabs": {
         "role": "角色配置",
-        "agents": "运行守则",
         "soul": "人格灵魂",
         "user": "用户信息",
         "env": "模型配置",
@@ -631,8 +630,7 @@ onMounted(() => {
       "persona": {
         "preset": {
           "builtinPureName": "纯净",
-          "builtinCompanionName": "情感陪伴",
-          "defaultName": "全量",
+          "defaultName": "橘雪莉",
           "defaultBadge": "默认",
           "builtinBadge": "内置",
           "savePreset": "保存预设",
@@ -780,7 +778,6 @@ onMounted(() => {
         "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
         "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）",
         "role": "AI 与用户各自的扮演角色（名字与头像）",
-        "agents": "Agent 的运行守则与安全边界",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
       },
@@ -836,7 +833,6 @@ onMounted(() => {
       },
       "tabs": {
         "role": "Character Setup",
-        "agents": "Operating Instructions",
         "soul": "Soul",
         "user": "User Profile",
         "env": "Model Config",
@@ -858,8 +854,7 @@ onMounted(() => {
       "persona": {
         "preset": {
           "builtinPureName": "Pure",
-          "builtinCompanionName": "Companion",
-          "defaultName": "Full",
+          "defaultName": "橘雪莉",
           "defaultBadge": "Default",
           "builtinBadge": "Built-in",
           "savePreset": "Save Preset",
@@ -1007,7 +1002,6 @@ onMounted(() => {
         "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
         "memoryUser": "User long-term memory info (workspace/memory/USER.md)",
         "role": "Who the AI and the user each play (names and avatars)",
-        "agents": "The agent's operating instructions and safety boundaries",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
       },
@@ -1063,7 +1057,6 @@ onMounted(() => {
       },
       "tabs": {
         "role": "キャラクター設定",
-        "agents": "操作指示",
         "soul": "人格・魂",
         "user": "ユーザー情報",
         "env": "モデル設定",
@@ -1085,8 +1078,7 @@ onMounted(() => {
       "persona": {
         "preset": {
           "builtinPureName": "純粋",
-          "builtinCompanionName": "寄り添い",
-          "defaultName": "フル",
+          "defaultName": "橘雪莉",
           "defaultBadge": "デフォルト",
           "builtinBadge": "内蔵",
           "savePreset": "プリセット保存",
@@ -1234,7 +1226,6 @@ onMounted(() => {
         "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
         "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）",
         "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
-        "agents": "Agent の操作指示と安全境界",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
       },
@@ -1290,7 +1281,6 @@ onMounted(() => {
       },
       "tabs": {
         "role": "캐릭터 설정",
-        "agents": "운영 지침",
         "soul": "인격·영혼",
         "user": "사용자 정보",
         "env": "모델 설정",
@@ -1312,8 +1302,7 @@ onMounted(() => {
       "persona": {
         "preset": {
           "builtinPureName": "순수",
-          "builtinCompanionName": "감정 동반",
-          "defaultName": "전체",
+          "defaultName": "橘雪莉",
           "defaultBadge": "기본",
           "builtinBadge": "내장",
           "savePreset": "프리셋 저장",
@@ -1461,7 +1450,6 @@ onMounted(() => {
         "memoryAgent": "Agent 장기 기억 메모 (workspace/memory/MEMORY.md)",
         "memoryUser": "사용자 장기 기억 정보 (workspace/memory/USER.md)",
         "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
-        "agents": "Agent의 운영 지침과 안전 경계",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
       },

@@ -357,7 +357,6 @@
     },
     "tabs": {
       "role": "角色配置",
-      "agents": "运行守则",
       "soul": "人格灵魂",
       "user": "用户信息",
       "env": "模型配置",
@@ -379,8 +378,7 @@
     "persona": {
       "preset": {
         "builtinPureName": "纯净",
-        "builtinCompanionName": "情感陪伴",
-        "defaultName": "全量",
+        "defaultName": "橘雪莉",
         "defaultBadge": "默认",
         "builtinBadge": "内置",
         "savePreset": "保存预设",
@@ -596,7 +594,6 @@
       "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
       "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）",
       "role": "AI 与用户各自的扮演角色（名字与头像）",
-      "agents": "Agent 的运行守则与安全边界",
       "soul": "Agent人格、语气、性格",
       "user": "用户信息和偏好"
     },

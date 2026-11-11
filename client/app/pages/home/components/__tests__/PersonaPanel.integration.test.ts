@@ -212,9 +212,9 @@ describe('PersonaPanel role tab', () => {
     const wrapper = await mountPanel();
 
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    // Role first, the three persona files, then the agent-config tabs
-    // (Agent models / Skills) the preset also carries.
-    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '代理模型', '技能']);
+    // Role first, the two editable persona files, then the agent-config tabs
+    // (Agent models / Skills) the preset also carries. AGENTS.md is not a tab.
+    expect(headers).toEqual(['角色配置', '人格灵魂', '用户信息', '代理模型', '技能']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {
@@ -228,7 +228,8 @@ describe('PersonaPanel role tab', () => {
     expect(bridge.writeSystemPrompt).toHaveBeenCalledTimes(1);
     const payload = bridge.writeSystemPrompt.mock.calls[0]![0] as Record<string, string>;
     expect(payload['ROLE.md']).toBe('# ROLE.md\n\n你将扮演小樱。\n用户将扮演小明。\n');
-    expect(payload['AGENTS.md']).toBe(AGENTS);
+    // Only the editable persona files are written; AGENTS.md cannot be edited.
+    expect(payload).not.toHaveProperty('AGENTS.md');
     expect(payload['SOUL.md']).toBe(SOUL);
     expect(payload['USER.md']).toBe(USER);
 
@@ -273,26 +274,25 @@ describe('PersonaPanel role tab', () => {
     expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeDefined();
   });
 
-  it('lists the three built-ins in catalogue order', async () => {
+  it('lists the two built-ins in catalogue order', async () => {
     const wrapper = await mountPanel();
 
     const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
-    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual([
-      'builtin-pure',
-      'builtin-companion',
-      'builtin-sherry'
-    ]);
+    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual(['builtin-pure', 'builtin-sherry']);
     // Non-deletable: the virtual rows never carry a delete button.
     for (const row of builtinRows) expect(row.findAll('button')).toHaveLength(0);
   });
 
-  it('loads the full template for the 全量 built-in', async () => {
+  it('loads the full template for the 橘雪莉 built-in', async () => {
     const wrapper = await mountPanel();
     await wrapper.get('[data-test="builtin-sherry"]').trigger('click');
     await flushPromises();
 
     const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
-    expect(textareas).toEqual(['TPL-AGENTS', 'TPL-SOUL', 'TPL-USER']);
+    // SOUL + USER tabs; the built-in ships no user profile.
+    expect(textareas).toEqual(['TPL-SOUL', '']);
+    // AGENTS.md is not exposed as an editable tab.
+    expect(wrapper.text()).not.toContain('运行守则');
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
   });
 
@@ -303,93 +303,16 @@ describe('PersonaPanel role tab', () => {
     await wrapper.get('[data-test="builtin-pure"]').trigger('click');
     await flushPromises();
 
-    // Nobody named and NO persona content — the operating rules included.
+    // Nobody named and NO persona content.
     const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
-    expect(textareas).toEqual(['', '', '']);
+    expect(textareas).toEqual(['', '']);
+    // The operating rules are still written by the preset, just not displayed.
+    expect(bridge.readSystemPromptTemplate).toHaveBeenCalled();
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
     expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
     // The tool / middleware tabs are gone: neither is configurable.
     expect(wrapper.find('[data-test="agent-tools-tab"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="agent-middlewares-tab"]').exists()).toBe(false);
-  });
-
-  it('loads 情感陪伴 with the orchestration groups off and the optional switch off', async () => {
-    vi.stubGlobal('useAgentConfigStore', () => makeCatalogStore());
-    // A 运行守则 ("Operating Instructions") template shaped like the shipped ones, task doctrine included.
-    bridge.readSystemPromptTemplate.mockResolvedValue({
-      'AGENTS.md': [
-        '# AGENTS.md',
-        '',
-        '## 运行守则',
-        '- **任务分配**：先规划。',
-        '',
-        '## 边界',
-        '- **隐私保护**：尊重隐私。',
-        '',
-        '## 任务管理与编排（CRITICAL）',
-        '你是 ORCHESTRATOR，绝非实现者。',
-        ''
-      ].join('\n'),
-      'SOUL.md': 'TPL-SOUL',
-      'USER.md': 'TPL-USER'
-    });
-    const wrapper = await mountPanel();
-
-    await wrapper.get('[data-test="builtin-companion"]').trigger('click');
-    await flushPromises();
-
-    // The role-play persona is loaded, with the task doctrine stripped out…
-    const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
-    expect(textareas[0]).toContain('## 边界');
-    expect(textareas[0]).toContain('隐私保护');
-    expect(textareas[0]).not.toContain('任务管理与编排');
-    expect(textareas[0]).not.toContain('任务分配');
-    expect(textareas[0]).not.toContain('ORCHESTRATOR');
-    expect(textareas.slice(1)).toEqual(['TPL-SOUL', 'TPL-USER']);
-    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
-  });
-
-  it('carries the main-agent model through save, select and apply', async () => {
-    vi.stubGlobal('useAgentConfigStore', () => makeWideCatalogStore());
-    const profile = {
-      id: 'p1',
-      label: '测试档案',
-      params: { MAIN_LLM_NAME: 'glm-4.6', MAIN_LLM_PROVIDER: 'zhipu', MAIN_LLM_API_KEY: 'k' }
-    };
-    vi.stubGlobal('useLlmProfilesStore', () =>
-      reactive({
-        listFor: () => [profile],
-        byId: (_group: string, id: string | null) => (id === 'p1' ? profile : undefined),
-        toSessionProfile: () => ({
-          id: 'p1',
-          label: '测试档案',
-          provider: 'zhipu',
-          model: 'glm-4.6',
-          api_key: 'k'
-        }),
-        toSubagentProfile: () => ({
-          id: 'p1',
-          label: '测试档案',
-          provider: 'zhipu',
-          model: 'glm-4.6',
-          api_key: 'k',
-          max_output_tokens: '8192'
-        })
-      })
-    );
-    const wrapper = await mountPanel();
-
-    // Pick a profile on the Main agent sub-tab, then save: the preset stores it.
-    await wrapper.get('[data-test="agent-main-model"]').setValue('p1');
-    await flushPromises();
-    await buttonByText(wrapper, '保存预设').trigger('click');
-    await flushPromises();
-    await wrapper.get('.dlg input').setValue('带模型预设');
-    await buttonByText(wrapper, '保存').trigger('click');
-    await flushPromises();
-
-    const stored = db.createPersonaPreset.mock.calls[0]!;
-    expect(stored[4]).toEqual({ id: 'p1', label: '测试档案', provider: 'zhipu', model: 'glm-4.6', api_key: 'k' });
   });
 
   it('saves the role config with the preset and restores it on selection', async () => {
@@ -406,7 +329,7 @@ describe('PersonaPanel role tab', () => {
     const [name, content, character] = db.createPersonaPreset.mock.calls[0]!;
     expect(name).toBe('我的预设');
     // The preset stores the edited files; ROLE.md is recomposed on apply.
-    expect(content).toEqual({ 'AGENTS.md': AGENTS, 'SOUL.md': SOUL, 'USER.md': USER });
+    expect(content).toEqual({ 'SOUL.md': SOUL, 'USER.md': USER });
     expect(character).toEqual({
       aiName: '小樱',
       aiAvatar: '/avatar/assistant.jpg',

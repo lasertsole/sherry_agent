@@ -4,6 +4,7 @@ from server.service import (
     read_system_prompt_file,
     write_system_prompt_file,
     update_system_prompt_file,
+    write_preset_system_prompt_file,
     read_system_prompt_template,
 )
 
@@ -61,3 +62,20 @@ async def update_system_prompt_file_handler(request):
     )
     update_system_prompt_file(file_to_content)
     logger.info(f"System prompt updated: file_count={file_count}")
+
+
+@app.put("/system_prompt/preset")
+async def write_preset_system_prompt_handler(request):
+    """Write a built-in preset's full persona payload (AGENTS.md included).
+
+    The ordinary ``PUT /system_prompt`` refuses AGENTS.md; this creation-only
+    route is how a new preset seeds its Operating Instructions.
+    """
+    request_json = request.json()
+    file_to_content: dict[str, str] = request_json.get("file_to_content", {})
+    logger.info(
+        "Writing preset system prompt: file_count={}, files={}",
+        len(file_to_content),
+        list(file_to_content.keys()),
+    )
+    write_preset_system_prompt_file(file_to_content)

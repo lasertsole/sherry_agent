@@ -718,7 +718,7 @@ A four-step tour (welcome → preset → core controls → ready) shown once per
 
 ## Desktop Window Frame (`TitleBar.vue` / `common/titlebar.ts`)
 
-The Tauri shell runs undecorated (`decorations:false` in `tauri.conf.json`, with start-dragging/minimize/maximize/close window permissions in `capabilities/default.json`). ONE `TitleBar.vue` is mounted in `layouts/default.vue` at `z-60`, height 36 px: its left edge is the sidebar width only on `/home` with the left sidebar expanded and the right sidebar not maximized, otherwise 0. The middle+right content gets a matching `padding-top` (persisted in `content-shell`), the left sidebar stays full height, the right sidebar's maximized overlay starts at `top:36px`, and the floating-window slot/clamp/anchors plus the input-only pill stay below the bar. The Web build renders no titlebar and uses zero inset. The close button calls the SAME Rust `CloseRequested` → `close_ack` → `CloseToTrayDialog` flow as the OS button; minimize/maximize use the Tauri window plugin.
+The Tauri shell runs undecorated (`decorations:false` in `tauri.conf.json`, with start-dragging/minimize/maximize/close window permissions in `capabilities/default.json`). ONE `TitleBar.vue` is mounted in `layouts/default.vue` at `z-60`, height 36 px: its left edge is the sidebar width only on `/home` with the left sidebar expanded and the right sidebar not maximized, otherwise 0. The middle+right content gets a matching `padding-top` (persisted in `content-shell`), the left sidebar stays full height, the right sidebar's maximized overlay starts at `top:36px`, and the floating-window slot/clamp/anchors plus the input-only pill stay below the bar. The Web build renders no titlebar and uses zero inset. The drag region is EMPTY (no title text). On Windows/Linux the three controls render inline 10x10 SVG glyphs (line / square / two overlapping squares / X) with `stroke="currentColor"`, matching the OS titlebar; macOS keeps the PrimeIcons traffic-light path. The close button calls the SAME Rust `CloseRequested` → `close_ack` → `CloseToTrayDialog` flow as the OS button; minimize/maximize use the Tauri window plugin.
 
 ## Composer Input Triggers (`inputBox.vue` / `use-input-trigger.ts`)
 
@@ -1721,24 +1721,21 @@ live switches.
 - **The agent-config tabs split into sub-tabs** where the catalogue has two natures: Tools =
   Built-in / MCP (`group === 'mcp'`), Skills = Built-in / Third-party (`builtin` flag), Agent model = Main agent /
   Sub-agent. The pills are a VIEW filter — the preset's draft stays whole, and the count (selected n/m) spans the whole catalogue.
-- **Three built-in presets**, in display order — the whole spectrum
-  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): Pure (nobody named, every
-  persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
-  off), Emotional companion (the full role-play
-  persona with the Tasks & Planning / Sub-agent tool groups off, every optional middleware off, the
-  required chain plus every skill outside the coding work-flow set
-  (`COMPANION_EXCLUDED_SKILLS`), the
-  task-orchestration sections stripped out of Operating Rules — `stripTaskSections`, a per-language
-  heading/label filter pinned by a test that reads the four shipped templates — and the
-  couple-relationship line stripped out of SOUL — `stripRelationshipLines` plus
-  `COMPANION_DROPPED_RELATIONSHIP_MARKERS`, the same per-language-template pin, so a companion
-  session keeps the persona's warmth without the shipped templates' romantic pairing) and Full (the
-  DEFAULT — the same full persona with everything on and every skill in the index).
-  Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
-  (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
-  throws instead of silently applying every tool. The `sherry` id names Full (the label
-  changed; sessions already bound to it keep the stored name), and its shipped character is
-  still Sherry.
+- **Two built-in presets**, in display order
+  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): **Pure** (the full Operating
+  Rules, a blank SOUL/USER/ROLE, nobody named) and **橘雪莉** (the DEFAULT — the same rules plus
+  SOUL and the shipped character). Both return `{}` from `builtinAgentConfig`, so they share every
+  skill, tool and middleware; the ONLY differences are SOUL and the character block. Neither ships
+  a USER profile. The `sherry` id is unchanged (sessions already bound keep it); only its label
+  became 橘雪莉. The old Emotional-companion preset, its strip helpers (`stripTaskSections`,
+  `stripRelationshipLines`, `COMPANION_*`) and `builtinSkills` are gone.
+- **AGENTS.md is not user-editable.** The persona panel's 运行守则 tab and the preset preview's
+  AGENTS tab are removed; `EDITABLE_SYSTEM_FILE_NAMES` is the community set
+  (`COMMUNITY_SYSTEM_FILE_NAMES` = SOUL/USER/ROLE), so the ordinary `PUT|PATCH /system_prompt`
+  refuses AGENTS.md. `GET /system_prompt` still returns it (template loading needs it), and only
+  preset creation writes it, through the creation-only `PUT /system_prompt/preset`
+  (`write_preset_system_prompt_file`, backed by `_PresetFileStore`); `createSessionFromPreset`
+  routes an AGENTS-bearing payload there and an ordinary apply through the community write.
 
 ## User Login (`server/service/auth_service.py`)
 
@@ -1888,14 +1885,30 @@ The shell is one flex row — left session column, conversation, right sidebar �
   floor — so a tab's width never follows its title (Whiteboard and Browser 2 are the
   same width) and a crowded strip narrows ALL tabs equally before anything
   scrolls. Only when N tabs at their 60px floor no longer fit
-  (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with the
-  scrollbar hidden and a gradient fade mask (`tabs-mask-left/right`, anchored
-  to the wrapper so they do not scroll with the content) marking the cut-off
-  side. The title fades at its right edge with a `mask-image` instead of an
+  (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with a THIN
+  VISIBLE horizontal scrollbar (4px, so the off-screen tabs stay reachable) and
+  a gradient fade mask (`tabs-mask-left/right`, anchored to the wrapper so they
+  do not scroll with the content) marking the cut-off side. The title fades at its right edge with a `mask-image` instead of an
   ellipsis (the span is the tab's flexible item, so the close button's width is
   already excluded — no per-state offset), and the close X is always in the
   layout but only fully opaque on the ACTIVE tab (idle tabs show it on hover),
   so hovering never shifts the title.
+
+- **Narrow-height panels own one vertical scroll**: `SkillsPanel.vue` keeps the
+  flex chain intact (`h-full min-h-0` root → `flex-1 min-h-0` content wrapper →
+  split `flex-1 min-h-0` → each column `min-h-0` + `overflow-y-auto`). The root
+  scrolls HORIZONTALLY only (`overflow-x-auto overflow-y-hidden`; the 520px
+  `min-w` floor), and the old `max-height: 72vh` caps are gone — a viewport-relative
+  cap could exceed a short panel and create the second scrollbar.
+- **The history skeleton has a 200ms grace** (`use-session-activation.ts`): a
+  new session's empty history resolves immediately and must not flash a
+  skeleton, so `isHistoryLoading` is armed by a 200ms timer that a fast
+  `syncHistory` clears; a slower switch still shows it.
+- **Dark theme is neutral**: Aura 4.5's dark `surface` scale carries a warm/red
+  tint, so `NoirPreset` overrides `colorScheme.dark.surface` with the Tailwind
+  zinc scale and `surface.0 = #0a0a0a`, and `html.dark` sets
+  `background-color: #0a0a0a`. The shell and every teleported overlay (Dialog /
+  Menu / Popover) therefore share a neutral near-black background.
 
 The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the Menu button. The interface language lives in the Menu's FIRST entry, System Config, as its LAST tab (Internationalization): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
 

@@ -261,7 +261,6 @@ const agentStore = useAgentConfigStore();
  * header (the same `config.tabs.*` labels the preset panel uses).
  */
 const PREVIEW_FILES: ReadonlyArray<{ file: string; tabKey: string }> = [
-  { file: 'AGENTS.md', tabKey: 'agents' },
   { file: 'SOUL.md', tabKey: 'soul' },
   { file: 'USER.md', tabKey: 'user' }
 ];
@@ -443,7 +442,7 @@ const loadBinding = async () => {
     // The catalogue backs both the agent tabs and a built-in preset's agent
     // block (Pure / Companion derive theirs from it); loading is idempotent.
     await agentStore.loadCatalog();
-    payload.value = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
+    payload.value = await loadPresetPayload(entry, locale.value, t);
   } catch (e) {
     logUtil.e('[SessionPresetPanel] Failed to load the preset content:', e);
     payload.value = null;

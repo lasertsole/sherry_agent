@@ -165,20 +165,25 @@ class TestServiceWiring:
 
         assert (tmp_path / name).read_text(encoding="utf-8") == "content"
 
-    def test_workplace_writes_agents_md(self, tmp_path, monkeypatch):
-        """AGENTS.md is editable through the /system_prompt API again (the persona
-        panel's 运行守则 tab; restored 2026-10-05). The anti-injection guards stay
-        agent-side — memory writes and scanned tool output still refuse this pattern."""
+    def test_workplace_refuses_agents_md_on_the_editor_api(self, tmp_path, monkeypatch):
+        """AGENTS.md is not user-editable; only the preset-creation write accepts it.
+
+        The persona panel no longer exposes the 运行守则 tab, so the ordinary
+        PUT/PATCH routes must refuse the core file while creation can still seed it.
+        """
         from server.service import workplace as workplace_service
 
         monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
         monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
 
-        workplace_service.write_system_prompt_file({"AGENTS.md": "# AGENTS.md\nrules\n"})
-        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "# AGENTS.md\nrules\n"
+        with pytest.raises(ValueError, match="Invalid file name: AGENTS.md"):
+            workplace_service.write_system_prompt_file({"AGENTS.md": "# AGENTS.md\nrules\n"})
+        with pytest.raises(ValueError, match="Invalid file name: AGENTS.md"):
+            workplace_service.update_system_prompt_file({"AGENTS.md": "# AGENTS.md\nnew\n"})
+        assert not (tmp_path / "AGENTS.md").exists()
 
-        workplace_service.update_system_prompt_file({"AGENTS.md": "# AGENTS.md\nnew\n"})
-        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "# AGENTS.md\nnew\n"
+        workplace_service.write_preset_system_prompt_file({"AGENTS.md": "# AGENTS.md\nrules\n"})
+        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "# AGENTS.md\nrules\n"
         assert "AGENTS.md" in workplace_service.read_system_prompt_file()
 
     def test_workplace_accepts_the_full_agents_template(self, tmp_path, monkeypatch):
@@ -192,7 +197,7 @@ class TestServiceWiring:
         monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
         monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
 
-        workplace_service.write_system_prompt_file({"AGENTS.md": template})
+        workplace_service.write_preset_system_prompt_file({"AGENTS.md": template})
 
         assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == template
 

@@ -357,7 +357,6 @@
     },
     "tabs": {
       "role": "Character Setup",
-      "agents": "Operating Instructions",
       "soul": "Soul",
       "user": "User Profile",
       "env": "Model Config",
@@ -379,8 +378,7 @@
     "persona": {
       "preset": {
         "builtinPureName": "Pure",
-        "builtinCompanionName": "Companion",
-        "defaultName": "Full",
+        "defaultName": "橘雪莉",
         "defaultBadge": "Default",
         "builtinBadge": "Built-in",
         "savePreset": "Save Preset",
@@ -596,7 +594,6 @@
       "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
       "memoryUser": "User long-term memory info (workspace/memory/USER.md)",
       "role": "Who the AI and the user each play (names and avatars)",
-      "agents": "The agent's operating instructions and safety boundaries",
       "soul": "Agent personality, tone, character",
       "user": "User info and preferences"
     },

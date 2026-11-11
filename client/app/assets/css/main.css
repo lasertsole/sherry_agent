@@ -72,6 +72,9 @@
   html.dark {
     /* Text color variable for dark mode */
     --theme-text: #ffffff; /* Similar to text-white */
+    /* Explicit neutral background: the shell must not inherit a themed
+       (warm-tinted) surface from the PrimeVue preset. */
+    background-color: #0a0a0a;
   }
 
   a {
