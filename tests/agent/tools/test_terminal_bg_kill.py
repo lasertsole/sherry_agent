@@ -200,7 +200,8 @@ class TestWatcherAfterKill:
         content = pushed[0]["content"]
         assert content["status"] == "killed"
         assert content["reason"] == "killed"
-        assert turned and "stopped by user" in turned[0]
+        assert turned and "<status>killed</status>" in turned[0]
+        assert "was stopped" in turned[0]
         assert "FAILED" not in turned[0]
 
     @pytest.mark.asyncio

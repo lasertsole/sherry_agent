@@ -57,6 +57,45 @@ class BackgroundTask:
         }
 
 
+def _normalize_status(status: str) -> str:
+    """ZCode's ``QTr``: every stop-shaped state reports ``killed``."""
+    if status in ("killed", "cancelled", "timed_out", "stopped"):
+        return "killed"
+    if status == "completed":
+        return "completed"
+    return "failed"
+
+
+def _build_task_notification(task: BackgroundTask) -> str:
+    """The ``<task-notification>`` XML injected as the background-task auto-turn.
+
+    Mirrors ZCode's format: the status is normalized, the summary names the
+    command and (for a normal exit) the exit code, and no instruction or
+    restart prompt is added — whether the agent asks to restart is emergent
+    model behaviour.
+    """
+    status = _normalize_status(task.status)
+    command = task.command or "Bash background command"
+    if status == "killed":
+        summary = f'Background command "{command}" was stopped'
+    elif status == "completed":
+        code = f" (exit code {task.exit_code})" if task.exit_code is not None else ""
+        summary = f'Background command "{command}" completed{code}'
+    else:
+        code = f" with exit code {task.exit_code}" if task.exit_code is not None else ""
+        summary = f'Background command "{command}" failed{code}'
+    lines = [
+        "<task-notification>",
+        f"<task-id>{task.task_id}</task-id>",
+    ]
+    if task.output_path:
+        lines.append(f"<output-file>{task.output_path}</output-file>")
+    lines.append(f"<status>{status}</status>")
+    lines.append(f"<summary>{summary}</summary>")
+    lines.append("</task-notification>")
+    return "\n".join(lines)
+
+
 class BackgroundTaskRegistry:
     """The registry + the watcher ledger (one instance, ``background_registry``)."""
 
@@ -265,18 +304,10 @@ class BackgroundTaskRegistry:
             if trigger is None:
                 return  # evals / tests: no server owns the trigger
             session_key = f"agent:main:session:{task.session_id}"
-            if task.status == "killed":
-                headline = "Background task stopped by user"
-            else:
-                headline = f"Background task {'exited' if task.exit_code == 0 else 'FAILED'}"
             await trigger(
                 session_key,
                 HumanMessage(
-                    content=(
-                        f"[{headline}] {task.task_id} "
-                        f"(command: {task.command}) exited with code {task.exit_code}. "
-                        f"Read its output with terminal_bg(action='output', task_id='{task.task_id}')."
-                    ),
+                    content=_build_task_notification(task),
                     metadata={"origin": "background_task", "internal": True},
                 ),
             )
