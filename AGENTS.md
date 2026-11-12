@@ -1880,7 +1880,10 @@ even looked at. The per-boot token is re-fetched by the CLIENT before every
 socket (re)connect (`requestApi.refreshGatewayToken`, called from
 `ws-ticket.ts::prepareWsTicket`), so a page that survives a backend restart
 heals within one reconnect cycle instead of replaying a dead token until a
-manual reload. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
+manual reload. The token is NOT a global response header: only the
+`/auth/token` bootstrap returns it (body + one-shot `token` header); ordinary
+responses carry no credential, so an unrelated fetch cannot hand a same-origin
+script the token (2026-11-09 audit M3). `server/trigger/cors.py::cors_origin_echo` (an `after_request`
 handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 
