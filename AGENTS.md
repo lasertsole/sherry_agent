@@ -1883,7 +1883,12 @@ heals within one reconnect cycle instead of replaying a dead token until a
 manual reload. The token is NOT a global response header: only the
 `/auth/token` bootstrap returns it (body + one-shot `token` header); ordinary
 responses carry no credential, so an unrelated fetch cannot hand a same-origin
-script the token (2026-11-09 audit M3). `server/trigger/cors.py::cors_origin_echo` (an `after_request`
+script the token (2026-11-09 audit M3). The Origin allowlist defaults to the
+Tauri webview origins ONLY; the Nuxt dev-server origins are an explicit
+`SHERRY_ALLOWED_ORIGINS` opt-in (start.sh and the Tauri checkout auto-start
+export them), so a local page or compromised dev server on :3000 cannot fetch
+`/auth/token` or call the API in a packaged install (audit M4).
+`server/trigger/cors.py::cors_origin_echo` (an `after_request`
 handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 

@@ -27,13 +27,21 @@ class GatewayConfig(TypedDict):
     csp: str
 
 
-#: Default allowlist: Tauri webview origins (per platform) + the Nuxt dev
-#: server on its loopback forms. Override with ``SHERRY_ALLOWED_ORIGINS``
-#: (comma-separated), e.g. when the frontend runs on another host/port.
+#: Default allowlist: the Tauri webview origins ONLY. The Nuxt dev server
+#: origins are deliberately NOT defaults (2026-11-09 audit M4): a local page or
+#: a compromised dev server on :3000 could otherwise read the gateway token
+#: from /auth/token and drive the API. Development launchers (`start.sh` and
+#: the Tauri checkout auto-start) export ``SHERRY_ALLOWED_ORIGINS`` with the
+#: dev origins; a deployment that needs another origin sets the same variable.
 DEFAULT_ALLOWED_ORIGINS: tuple[str, ...] = (
     "tauri://localhost",  # macOS / Linux webview
     "http://tauri.localhost",  # Windows webview
     "https://tauri.localhost",
+)
+
+#: The dev-server origins a development launcher may add explicitly. Kept in
+#: one place so `start.sh` / the Rust auto-start and the docs cannot drift.
+DEV_ALLOWED_ORIGINS: tuple[str, ...] = (
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://[::1]:3000",

@@ -299,6 +299,21 @@ class TestGatewayBuilder:
         built = _build_gateway({})
         assert (built["api_host"], built["api_port"]) == ("127.0.0.1", 8080)
 
+    def test_default_origins_are_tauri_only(self) -> None:
+        built = _build_gateway({})
+
+        assert "tauri://localhost" in built["allowed_origins"]
+        # Dev-server origins are opt-in (audit M4): a packaged backend must not
+        # let a local page on :3000 fetch /auth/token.
+        assert not any(":3000" in origin for origin in built["allowed_origins"])
+
+    def test_dev_origins_are_an_explicit_override(self) -> None:
+        built = _build_gateway(
+            {"SHERRY_ALLOWED_ORIGINS": "tauri://localhost,http://localhost:3000"}
+        )
+
+        assert built["allowed_origins"] == ["tauri://localhost", "http://localhost:3000"]
+
     def test_auth_env_injection(self) -> None:
         built = build_auth(
             {
