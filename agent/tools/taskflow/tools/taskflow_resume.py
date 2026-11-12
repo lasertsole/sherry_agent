@@ -114,11 +114,13 @@ async def taskflow_resume(
       result text.
 
     ``step_outcome`` lets the caller state how the run ended
-    (``success``/``failure``/``partial``/``skipped``), which outranks the
-    gates: ``failure`` marks the step ``failed`` and skips the judge,
-    ``skipped`` marks it ``skipped`` (its dependents cascade ``skipped``), and
-    ``success``/``partial`` are recorded on the result while the gates still
-    run. A ``failed`` step never unlocks its dependents.
+    (``success``/``failure``/``partial``/``skipped``/``blocked``), which
+    outranks the gates: ``failure`` marks the step ``failed`` and skips the
+    judge, ``blocked`` leaves it ``blocked`` with the partial result readable
+    (its dependents stay blocked), ``skipped`` marks it ``skipped`` (its
+    dependents cascade ``skipped``), and ``success``/``partial`` are recorded
+    on the result while the gates still run. A ``failed`` step never unlocks
+    its dependents.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -279,6 +281,16 @@ async def taskflow_resume(
                 fail_reason=f"step_outcome=failure: {(result or '')[:200]}",
             )
             outcome_text = "\n  outcome: failed (declared by the caller)"
+        elif declared_outcome == StepOutcome.BLOCKED.value:
+            # The run did work but completion was never proven (budget/time
+            # exhausted). Keep the partial result readable and the dependents
+            # blocked; the agent can retry, replan, or cancel the flow.
+            set_step_status(
+                step,
+                StepStatus.BLOCKED,
+                block_reason=f"step_outcome=blocked: {(result or '')[:200]}",
+            )
+            outcome_text = "\n  outcome: blocked (declared by the caller)"
         elif declared_outcome == StepOutcome.SKIPPED.value:
             set_step_status(step, StepStatus.SKIPPED, skip_reason="step_outcome=skipped")
             outcome_text = "\n  outcome: skipped (declared by the caller)"

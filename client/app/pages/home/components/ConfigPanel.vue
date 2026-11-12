@@ -260,6 +260,11 @@
             <!-- Optional CUDA pack (packing-plan E1): Tauri desktop only, and
                  only where the shell detected an NVIDIA driver. -->
             <CudaPackCard />
+
+            <!-- Learned structured-output fallbacks: read/clear only, so a
+                 provider that later accepts the default strategy can be
+                 retried without editing the persisted JSON by hand. -->
+            <ModelCapsSection />
           </div>
         </TabPanel>
 
@@ -454,6 +459,7 @@ import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import CudaPackCard from './CudaPackCard.vue';
+import ModelCapsSection from './ModelCapsSection.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import I18nPanel from './I18nPanel.vue';
 import ShortcutSettingsSection from './ShortcutSettingsSection.vue';

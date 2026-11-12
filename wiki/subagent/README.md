@@ -117,7 +117,12 @@ Two stateful decisions are explicit objects (2026-11-09 design audit):
   `thinking_off`, `local_validation_fatal`). The spawn path resolves the
   persisted integer once with `strategy_for()` and reads flags; the integer
   stays the on-disk compatibility format, but no call site compares
-  `level >= 1/2`.
+  `level >= 1/2`. The persisted entry also carries `escalated_at` and
+  `reprobe_count`: `get_level` decays one rung after 24 h → 48 h → 7 d,
+  `confirm_level` commits the decayed rung once a spawn succeeds at it, and a
+  transient 429 / rate-limit / timeout / connection error never degrades a
+  model. Menu → System Config → Model Config lists and clears the learned
+  labels through `GET|DELETE /sherry-config/model-caps`.
 - **Completion delivery** transitions through one table
   (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`). Every `mark_delivery_*`
   helper calls `transition_delivery()`, so `DELIVERED` and `DISCARDED` are

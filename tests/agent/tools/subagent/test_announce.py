@@ -81,6 +81,25 @@ class TestCompactStatsLine:
         assert "ok=1" in line
         assert "errors=1" in line
         assert "timeouts=1" in line
+        assert "budget_exhausted" not in line
+
+    def test_budget_exhausted_is_counted_separately(self):
+        runs = [
+            SubagentRunRecord(
+                run_id="r1",
+                child_session_key="c1",
+                requester_session_key="p",
+                task="t",
+                execution=ExecutionState(
+                    outcome=RunOutcome(status=RunOutcomeStatus.BUDGET_EXHAUSTED)
+                ),
+            )
+        ]
+
+        line = build_compact_announce_stats_line(runs)
+
+        assert "total=1" in line
+        assert "budget_exhausted=1" in line
 
 
 class TestDispatch:

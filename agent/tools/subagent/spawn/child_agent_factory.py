@@ -31,10 +31,27 @@ _STRUCTURED_OUTPUT_REJECTION_MARKERS = (
     "structured output",
 )
 
+#: Transient provider/transport failures must never degrade a model: a 429 or a
+#: reset connection that happens to mention ``response_format`` is not a
+#: capability rejection, and persisting a degradation for it costs every later
+#: spawn.
+_TRANSIENT_EXCLUSION_MARKERS = (
+    "429",
+    "rate_limit",
+    "rate limit",
+    "too many requests",
+    "timeout",
+    "timed out",
+    "connection",
+    "temporarily",
+)
+
 
 def _is_structured_output_rejection(exc: BaseException) -> bool:
     """True when ``exc`` looks like a provider rejecting the JSON strategy."""
     text = f"{type(exc).__name__}: {exc}".lower()
+    if any(marker in text for marker in _TRANSIENT_EXCLUSION_MARKERS):
+        return False
     return any(marker in text for marker in _STRUCTURED_OUTPUT_REJECTION_MARKERS)
 
 

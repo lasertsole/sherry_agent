@@ -222,6 +222,8 @@ blocked → ready → dispatched → done
 
 > `done`은 "결과가 주입되었고 그 단계에 설정된 품질 게이트를 모두 통과했다"는 뜻입니다. **기대가 아무것도 설정되지 않은** 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 예전 의미인 "결과가 주입됨"으로 퇴화하므로, 호출자가 `step_outcome="failure"`를 선언하지 않으면 실패한 자식도 `done`이 될 수 있습니다. 각 게이트가 무엇을 하는지 포함한 전체 규칙은 [판정 게이트](../gates/README.ko.md)에 있습니다.
 
+> CompletionJudge 예산 소진(자식의 goal loop가 `goal_max_turns`를 다 써도 `DONE`이 아닌 경우)은 `step_outcome="blocked"`로 보고되며, `failure`도 `OK`도 아닙니다. 자식이 실제로 작업했으므로 단계는 부분 결과를 읽을 수 있는 상태로 유지되고, 의존 단계는 `blocked`로 남아 에이전트가 재시도·재계획·취소를 선택할 수 있습니다. `failed`는 확정적 실패나 복구 불가능한 schema 불일치에만 사용됩니다.
+
 >
 
 > `failed`·`skipped`·`cancelled`는 모두 의존 단계를 언락하지 않습니다. `failed` 의존성은 의존 단계를 `blocked`로 남기고(실패를 조용히 건너뛰면 안 됩니다), `skipped`/`cancelled` 의존성은 `skipped`를 의존 단계로 전파해 죽은 가지가 그 자리에서 정리되게 합니다.
@@ -274,7 +276,7 @@ blocked → ready → dispatched → done
 
 | `schema_validated`  | `true` / `false` / `null` (schema 미설정) — Tier 1 판정 결과.                 |
 
-| `step_outcome`      | 호출자가 선언했을 때 기록 (`success` / `failure` / `partial` / `skipped`).    |
+| `step_outcome`      | 호출자가 선언했을 때 기록 (`success` / `failure` / `partial` / `skipped` / `blocked`).    |
 
 
 

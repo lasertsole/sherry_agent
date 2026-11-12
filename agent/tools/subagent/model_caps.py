@@ -35,15 +35,24 @@ __all__ = [
     "DEFAULT_LEVEL",
     "MAX_LEVEL",
     "StructuredOutputStrategy",
+    "clear_all",
     "clear_cache",
+    "clear_entry",
+    "confirm_level",
     "escalate",
     "get_level",
     "level_label",
+    "list_entries",
     "strategy_for",
 ]
 
 DEFAULT_LEVEL = 0
 MAX_LEVEL = 2
+
+#: Re-probe backoff: after a degradation, the default rung is retried after
+#: 24 h; a failed retry pushes the next attempt to 48 h, then one week. The
+#: value is the age of ``escalated_at`` that lets ``get_level`` decay one rung.
+_REPROBE_BACKOFF: tuple[float, ...] = (86_400.0, 172_800.0, 604_800.0)
 
 
 @dataclass(frozen=True)
@@ -128,9 +137,22 @@ def _load_locked() -> dict[str, dict[str, Any]]:
             "level": max(DEFAULT_LEVEL, min(MAX_LEVEL, level)),
             "reason": str(entry.get("reason") or "")[:300],
             "updated_at": str(entry.get("updated_at") or ""),
+            "escalated_at": str(entry.get("escalated_at") or ""),
+            "reprobe_count": _non_negative_int(entry.get("reprobe_count")),
         }
     _cache = floor
     return _cache
+
+
+def _non_negative_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 def _save_locked(entries: dict[str, dict[str, Any]]) -> None:
@@ -144,35 +166,199 @@ def _save_locked(entries: dict[str, dict[str, Any]]) -> None:
         logger.debug("subagent model caps: write failed (fail-open): {}", exc)
 
 
+def _effective_level(entry: dict[str, Any], now: datetime) -> int:
+    """The level a new spawn should use, applying the re-probe decay.
+
+    Persistence is untouched here: a decayed rung is only committed by
+    :func:`confirm_level` after a spawn actually succeeds at it. An entry
+    written before ``escalated_at`` existed is treated as long overdue, so the
+    next spawn re-probes the default rung once instead of staying degraded
+    forever.
+    """
+    level = int(entry.get("level", DEFAULT_LEVEL))
+    if level <= DEFAULT_LEVEL:
+        return level
+    escalated_at = str(entry.get("escalated_at") or "")
+    if not escalated_at:
+        return max(DEFAULT_LEVEL, level - 1)
+    try:
+        stamp = datetime.fromisoformat(escalated_at)
+    except (TypeError, ValueError):
+        return max(DEFAULT_LEVEL, level - 1)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    count = _non_negative_int(entry.get("reprobe_count"))
+    interval = _REPROBE_BACKOFF[min(count, len(_REPROBE_BACKOFF) - 1)]
+    try:
+        age = (now - stamp).total_seconds()
+    except (OverflowError, ValueError):
+        return max(DEFAULT_LEVEL, level - 1)
+    if age > interval:
+        return max(DEFAULT_LEVEL, level - 1)
+    return level
+
+
 def get_level(provider: str | None, model: str | None) -> int:
-    """The persisted strategy level for one ``(provider, model)``."""
+    """The strategy level for the NEXT spawn of ``(provider, model)``.
+
+    Decays one rung once the re-probe interval has passed (see
+    :data:`_REPROBE_BACKOFF`); a spawn that then succeeds commits the lower
+    level through :func:`confirm_level`.
+    """
     with _lock:
         entry = _load_locked().get(_key(provider, model))
-    return int(entry["level"]) if entry else DEFAULT_LEVEL
+    if not entry:
+        return DEFAULT_LEVEL
+    return _effective_level(entry, datetime.now(UTC))
 
 
 def escalate(provider: str | None, model: str | None, level: int, reason: str = "") -> int:
-    """Raise the label to ``level`` (monotonic) and persist; returns the level."""
+    """Raise the label to ``level`` and persist; returns the persisted level.
+
+    Monotonic upward. Re-reaching the SAME rung after a decay refreshes
+    ``escalated_at`` and advances ``reprobe_count``, so a provider that keeps
+    rejecting the default rung is not re-probed on every spawn (24 h → 48 h →
+    7 d).
+    """
     target = max(DEFAULT_LEVEL, min(MAX_LEVEL, int(level)))
+    key = _key(provider, model)
+    now = datetime.now(UTC)
+    with _lock:
+        entries = _load_locked()
+        entry = entries.get(key, {})
+        current = int(entry.get("level", DEFAULT_LEVEL))
+        if target > current:
+            entries[key] = {
+                "level": target,
+                "reason": (reason or "")[:300],
+                "updated_at": now.isoformat(timespec="seconds"),
+                "escalated_at": now.isoformat(timespec="seconds"),
+                "reprobe_count": 0,
+            }
+            _save_locked(entries)
+            degraded = True
+        elif target == current and current > DEFAULT_LEVEL:
+            # The same degraded rung was rejected again after a decay: push the
+            # next re-probe out instead of restarting the 24 h clock.
+            entries[key] = {
+                "level": current,
+                "reason": (reason or entry.get("reason") or "")[:300],
+                "updated_at": now.isoformat(timespec="seconds"),
+                "escalated_at": now.isoformat(timespec="seconds"),
+                "reprobe_count": min(
+                    _non_negative_int(entry.get("reprobe_count")) + 1,
+                    len(_REPROBE_BACKOFF) - 1,
+                ),
+            }
+            _save_locked(entries)
+            degraded = False
+        else:
+            return current
+    if degraded:
+        logger.warning(
+            "subagent model caps: {} degraded to level {} ({})",
+            key,
+            target,
+            (reason or "")[:160],
+        )
+    else:
+        logger.debug(
+            "subagent model caps: {} still rejects level {}; next re-probe backed off",
+            key,
+            max(DEFAULT_LEVEL, current - 1),
+        )
+    return target if degraded else current
+
+
+def confirm_level(provider: str | None, model: str | None, level_used: int) -> None:
+    """Commit a decayed level after a spawn succeeded at it.
+
+    Called once per successful spawn. If the spawn ran BELOW the persisted
+    level (the decay path), the lower level becomes the new truth. Landing on
+    the default rung clears the entry's decay state; landing on an intermediate
+    rung restarts its clock and advances the backoff. A spawn at the persisted
+    level is a no-op — otherwise steady use would prevent the periodic re-probe.
+    """
+    used = max(DEFAULT_LEVEL, min(MAX_LEVEL, int(level_used)))
+    key = _key(provider, model)
+    now = datetime.now(UTC)
+    with _lock:
+        entries = _load_locked()
+        entry = entries.get(key)
+        if entry is None:
+            return
+        persisted = int(entry.get("level", DEFAULT_LEVEL))
+        if used >= persisted:
+            return
+        count = _non_negative_int(entry.get("reprobe_count"))
+        entries[key] = {
+            "level": used,
+            "reason": str(entry.get("reason") or ""),
+            "updated_at": now.isoformat(timespec="seconds"),
+            "escalated_at": ("" if used <= DEFAULT_LEVEL else now.isoformat(timespec="seconds")),
+            "reprobe_count": (
+                0 if used <= DEFAULT_LEVEL else min(count + 1, len(_REPROBE_BACKOFF) - 1)
+            ),
+        }
+        _save_locked(entries)
+
+
+def list_entries() -> list[dict[str, Any]]:
+    """Every persisted degradation, with the level the next spawn would use.
+
+    A level-0 row is kept on disk after a confirmed re-probe (it preserves the
+    last reason and backoff counter) but is not a degradation any more, so the
+    panel does not list it.
+    """
+    now = datetime.now(UTC)
+    with _lock:
+        entries = dict(_load_locked())
+    result: list[dict[str, Any]] = []
+    for key in sorted(entries):
+        entry = entries[key]
+        level = int(entry.get("level", DEFAULT_LEVEL))
+        if level <= DEFAULT_LEVEL:
+            continue
+        provider, _, model = key.partition("/")
+        result.append(
+            {
+                "provider": provider,
+                "model": model,
+                "level": level,
+                "effective_level": _effective_level(entry, now),
+                "reason": str(entry.get("reason") or ""),
+                "updated_at": str(entry.get("updated_at") or ""),
+                "escalated_at": str(entry.get("escalated_at") or ""),
+                "reprobe_count": _non_negative_int(entry.get("reprobe_count")),
+            }
+        )
+    return result
+
+
+def clear_entry(provider: str | None, model: str | None) -> bool:
+    """Forget one model's degradation (the next spawn starts at level 0)."""
     key = _key(provider, model)
     with _lock:
         entries = _load_locked()
-        current = int(entries.get(key, {}).get("level", DEFAULT_LEVEL))
-        if target <= current:
-            return current
-        entries[key] = {
-            "level": target,
-            "reason": (reason or "")[:300],
-            "updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        }
+        if key not in entries:
+            return False
+        del entries[key]
         _save_locked(entries)
-    logger.warning(
-        "subagent model caps: {} degraded to level {} ({})",
-        key,
-        target,
-        (reason or "")[:160],
-    )
-    return target
+    logger.info("subagent model caps: cleared {}", key)
+    return True
+
+
+def clear_all() -> int:
+    """Forget every degradation; returns how many entries were removed."""
+    with _lock:
+        entries = _load_locked()
+        count = len(entries)
+        if count:
+            entries.clear()
+            _save_locked(entries)
+    if count:
+        logger.info("subagent model caps: cleared all {} entries", count)
+    return count
 
 
 def level_label(level: int) -> str:

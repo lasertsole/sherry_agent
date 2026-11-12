@@ -96,10 +96,11 @@ def mark_evidence_stale(file_path: str, session_id: str) -> None:
     The edit is first accumulated in the session's ``changed_paths`` (so the
     next verification snapshots it into ``modified_files``), then the writer's
     own session is marked. When cross-session propagation is enabled, every
-    OTHER session whose evidence covers the path — command substring for a
-    legacy row, exact ``modified_files`` membership for a B' row — gets its own
-    stale row, so their collectors and the TaskFlow finish gate see that the
-    verification may no longer hold.
+    OTHER session whose ``modified_files`` snapshot covers the path (exact or
+    directory prefix) gets its own stale row, so their collectors and the
+    TaskFlow finish gate see that the verification may no longer hold. A legacy
+    row with no snapshot is not broadcast: its command text is not evidence that
+    the file was part of that session's work.
     """
     try:
         EvidenceLedger.record_file_edit(file_path, session_id)

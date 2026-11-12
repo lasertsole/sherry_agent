@@ -222,6 +222,8 @@ blocked → ready → dispatched → done
 
 > `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来どおり「結果が注入された」に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子でも `done` になり得ます。 各ゲートが何をするかを含む完全な規則は[判定ゲート](../gates/README.ja.md)にあります。
 
+> CompletionJudge の予算切れ（子の goal loop が `goal_max_turns` を使い切っても `DONE` にならない場合）は `step_outcome="blocked"` として報告され、`failure` でも `OK` でもありません。子は実際に作業しているため、ステップは部分結果を読める状態で保持され、依存側は `blocked` のまま残り、エージェントが再試行・再計画・キャンセルを選べます。`failed` は確定的な失敗または修復不能な schema 不一致に限定されます。
+
 >
 
 > `failed`・`skipped`・`cancelled` はいずれも依存側をアンロックしません。`failed` の依存は依存側を `blocked` のまま残し（失敗を黙って飛ばしてはいけない）、`skipped`/`cancelled` の依存は `skipped` を依存側へ連鎖させ、死んだ枝をその場で決着させてフローを永遠に待たせません。
@@ -274,7 +276,7 @@ blocked → ready → dispatched → done
 
 | `schema_validated`  | `true` / `false` / `null`（schema 未設定）——Tier 1 の判定結果。               |
 
-| `step_outcome`      | 呼び出し側が宣言した場合に記録（`success` / `failure` / `partial` / `skipped`）。 |
+| `step_outcome`      | 呼び出し側が宣言した場合に記録（`success` / `failure` / `partial` / `skipped` / `blocked`）。 |
 
 
 

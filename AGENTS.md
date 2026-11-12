@@ -343,10 +343,20 @@ User message → Robyn WS → agent.core.built_agent() graph
       `bind_tools`, which returns the inner model; tools are bound strict
       because OpenAI's auto-parse path demands it), keeps the schema in its
       prompt, and the local validation FAILS the run on a shape miss — and, if
-      that also errors, level 2 adds thinking OFF. The rung is PERSISTED per
-      `(provider, model)` in `src/data/subagent_model_caps.json`, so a model
-      that already degraded is never probed again (the runner retries from a
-      clean checkpoint thread under ONE shared wall-clock budget)
+      that already errors, level 2 adds thinking OFF. The rung is PERSISTED per
+      `(provider, model)` in `src/data/subagent_model_caps.json` with
+      `escalated_at` + `reprobe_count`; `get_level` decays one rung once the
+      backoff interval (24 h → 48 h → 7 d) passes, `confirm_level` commits the
+      lower level after a successful spawn (a spawn at the persisted level is a
+      no-op, so steady use cannot pin a degradation), and re-reaching the same
+      rung refreshes the clock instead of restarting it. TRANSIENT errors
+      (429/rate-limit/timeout/connection) never degrade a model even when their
+      text mentions `response_format`. The learned labels are visible and
+      clearable in 系统配置 → 模型配置 (GET/DELETE
+      `/sherry-config/model-caps`, `server/service/model_caps_service.py`), so a
+      provider that later accepts the default strategy can be retried without
+      editing the JSON by hand. The runner retries from a clean checkpoint
+      thread under ONE shared wall-clock budget)
     · StepJudge — step_judge.py, on taskflow_step(action="resume") for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
@@ -357,15 +367,25 @@ User message → Robyn WS → agent.core.built_agent() graph
       a caller passes); continue injects a follow-up turn. The judge's FIRST
       call is skipped when the opening turn produced a result AND the child
       session's ledger shows a passing, non-stale row — the ledger already
-      carries the verdict a simple spawn would otherwise pay a model call for
+      carries the verdict a simple spawn would otherwise pay a model call for.
+      Exhausting `goal_max_turns` WITHOUT a DONE verdict is
+      `RunOutcomeStatus.BUDGET_EXHAUSTED` (never `OK`): the child did work but
+      never proved completion, so delivery declares `step_outcome="blocked"`,
+      the step keeps its partial result and its dependents stay blocked (the
+      agent may retry, replan, or cancel). TIMEOUT/KILLED still declare
+      `failure`.
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
       stale events in SQLite (WAL; lazy retention + session/boot purge); each
       session accumulates edited paths in `verification_state` (project-relative
       normalization; capped 200, not reset per verification) and every verification snapshots them into
       `modified_files`; a write also broadcasts a `scope="cross_session"` stale
-      row to every OTHER session whose evidence command names the path OR whose
-      `modified_files` contains it (gated by EVIDENCE_CROSS_SESSION_STALENESS;
-      the writer's own session is marked separately); at taskflow_flow(action="finish") the regression gate replays the flow's
+      row to every OTHER session whose `modified_files` snapshot contains the
+      path EXACTLY or as a directory prefix (gated by
+      EVIDENCE_CROSS_SESSION_STALENESS; the writer's own session is marked
+      separately). A row whose command names the path as a `shlex` token also
+      matches (legacy rows included); a mere substring does not, so `a.py`
+      cannot stale `bla.py`. At taskflow_flow(action="finish") the
+      regression gate replays the flow's
       passed verification commands once (allowlisted, no shell, capped) and
       writes broken / unmark events, so a cross-file regression is confirmed
       while a false-positive stale is cleared — a rewriting formatter cannot be

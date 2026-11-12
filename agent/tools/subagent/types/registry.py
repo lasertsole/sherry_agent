@@ -40,6 +40,9 @@ class RunOutcomeStatus(StrEnum):
     ERROR = "error"
     TIMEOUT = "timeout"
     KILLED = "killed"
+    #: The goal loop ran out of turns without the judge declaring DONE. Not OK:
+    #: the step is blocked (its partial result is preserved) rather than done.
+    BUDGET_EXHAUSTED = "budget_exhausted"
     UNKNOWN = "unknown"
 
 

@@ -222,6 +222,8 @@ blocked → ready → dispatched → done
 
 > `done` 表示"结果已注入，且该步骤配置的质量门全部通过"——在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义"已注入结果"，因此调用方不声明 `step_outcome="failure"` 时，失败的子代理仍可能落到 `done`。 完整规则与每道门各自的作用见[判断门](../gates/README.zh.md)。
 
+> CompletionJudge 预算耗尽（子代理的 goal loop 用满 `goal_max_turns` 仍未得到 `DONE`）会报告 `step_outcome="blocked"`，而不是 `failure` 或 `OK`：子代理确实做了工作，因此步骤保留可读的部分结果，依赖者保持 `blocked`，由 Agent 决定重试、重规划还是取消。`failed` 仍只用于确定性失败或无法修复的 schema 不匹配。
+
 >
 
 > `failed`、`skipped`、`cancelled` 都不会解锁依赖者：`failed` 的依赖会让依赖者保持 `blocked`（失败不能被静默跳过），而 `skipped`/`cancelled` 的依赖会把 `skipped` 级联给依赖者，让死分支就地结束而不是让整个流永远等待。
@@ -274,7 +276,7 @@ blocked → ready → dispatched → done
 
 | `schema_validated`  | `true` / `false` / `null`（未配置 schema）——Tier 1 的判定结论。               |
 
-| `step_outcome`      | 调用方声明时记录（`success` / `failure` / `partial` / `skipped`）。           |
+| `step_outcome`      | 调用方声明时记录（`success` / `failure` / `partial` / `skipped` / `blocked`）。           |
 
 
 

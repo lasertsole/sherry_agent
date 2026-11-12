@@ -119,6 +119,11 @@
   `thinking_off`, `local_validation_fatal`)입니다. spawn 경로는 저장된 정수를
   `strategy_for()`로 한 번 해석한 뒤 플래그를 읽습니다. 정수는 디스크 호환
   형식으로 남지만, 호출 지점은 더 이상 `level >= 1/2`를 비교하지 않습니다.
+  저장 항목은 `escalated_at`과 `reprobe_count`도 보관하며, `get_level`은
+  24시간 → 48시간 → 7일 후 한 단계 내립니다. `confirm_level`은 spawn이 그 하위
+  레벨에서 성공했을 때 확정하고, 일시적인 429 / 레이트 리밋 / 타임아웃 / 연결
+  오류는 강등을 유발하지 않습니다. 시스템 설정 → 모델 설정에서
+  `GET|DELETE /sherry-config/model-caps`로 목록을 보고 지울 수 있습니다.
 - **완료 전달**은 단일 전환 표
   (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`)를 통과합니다. 모든
   `mark_delivery_*`가 `transition_delivery()`를 호출하므로 `DELIVERED`와

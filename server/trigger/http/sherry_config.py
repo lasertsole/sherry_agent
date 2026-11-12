@@ -1,6 +1,9 @@
 from loguru import logger
 from server.trigger.core import app
 from server.service import (
+    clear_all_model_caps,
+    clear_model_cap,
+    read_model_caps,
     read_sherry_config,
     read_sherry_list,
     write_sherry_config,
@@ -64,7 +67,7 @@ async def read_sherry_list_handler(request, path_params):
     try:
         return {"key": list_key, "values": read_sherry_list(list_key)}
     except ValueError as e:
-        return {"success": False, "message": str(e)}, 400
+        return {"success": False, "message": str(e)}, {}, 400
 
 
 @app.put("/sherry-config/list/:list_key")
@@ -89,3 +92,57 @@ async def write_sherry_list_handler(request, path_params):
         return {"success": False, "message": str(e)}
     logger.info(f"Sherry list setting {list_key} updated: {len(written)} entries")
     return {"key": list_key, "values": written}
+
+
+@app.get("/sherry-config/model-caps")
+async def read_model_caps_handler(request):
+    """List the persisted structured-output degradations.
+
+    Returns ``{"entries": [{provider, model, level, effective_level, reason,
+    escalated_at, updated_at, reprobe_count}]}``. ``level`` is what is stored;
+    ``effective_level`` is what the next spawn would use after the re-probe
+    decay. The list is empty when no model has degraded.
+    """
+    try:
+        return {"entries": read_model_caps()}
+    except Exception as e:  # noqa: BLE001 - a read failure is a structured error
+        logger.warning("Reading model caps failed: {}", e)
+        return {"success": False, "message": str(e)}, {}, 500
+
+
+@app.delete("/sherry-config/model-caps")
+async def clear_model_caps_handler(request):
+    """Clear one degradation (``?provider=&model=``) or every one (no query).
+
+    Model names may contain ``/``; this query form is the one the client uses
+    for them. The path form below is kept for a simple provider/model pair.
+    """
+    provider = str(request.query_params.get("provider", "") or "").strip()
+    model = str(request.query_params.get("model", "") or "").strip()
+    if provider or model:
+        if not provider or not model:
+            return (
+                {
+                    "success": False,
+                    "message": "provider and model are required together",
+                },
+                {},
+                400,
+            )
+        deleted = 1 if clear_model_cap(provider, model) else 0
+    else:
+        deleted = clear_all_model_caps()
+    logger.info(f"Cleared model caps: {deleted} entry/entries")
+    return {"success": True, "deleted": deleted}
+
+
+@app.delete("/sherry-config/model-caps/:provider/:model")
+async def clear_model_cap_handler(request, path_params):
+    """Clear one degradation by path segments (slash-free model names)."""
+    provider = str(path_params.get("provider") or "").strip()
+    model = str(path_params.get("model") or "").strip()
+    if not provider or not model:
+        return {"success": False, "message": "provider and model are required"}, {}, 400
+    deleted = 1 if clear_model_cap(provider, model) else 0
+    logger.info(f"Cleared model cap {provider}/{model}: {deleted}")
+    return {"success": True, "deleted": deleted}

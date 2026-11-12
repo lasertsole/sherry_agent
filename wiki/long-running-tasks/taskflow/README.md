@@ -222,6 +222,8 @@ blocked → ready → dispatched → done
 
 > `done` means "a result was injected and the step's configured gates passed" — with **no** expectation configured (`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`) it degrades to the older meaning: "a result was injected", so a failed child can still land `done` unless the caller reports `step_outcome="failure"`. The full rule, with what each gate does about it, is in [Judgement Gates](../gates/README.md).
 
+> A completion-judge budget exhaustion (the child's goal loop spent `goal_max_turns` turns without a `DONE` verdict) is reported as `step_outcome="blocked"`, not `failure` and not `OK`: the child did work, so the step keeps its partial result readable and its dependents stay `blocked` for the agent to retry, replan, or cancel. `failed` remains reserved for a definitive failure or an unrepairable schema miss.
+
 >
 
 > `failed`, `skipped` and `cancelled` never unlock dependents: a `failed` dependency leaves its dependents `blocked` (a failure must not be silently skipped over), and a `skipped`/`cancelled` dependency cascades `skipped` into its dependents so a dead branch settles instead of parking the flow forever.
@@ -274,7 +276,7 @@ Actual fields (`taskflow_step(action="resume")` records them on the result entry
 
 | `schema_validated`  | `true` / `false` / `null` (no schema configured) — the Tier 1 verdict.        |
 
-| `step_outcome`      | The caller's declaration when given (`success` / `failure` / `partial` / `skipped`). |
+| `step_outcome`      | The caller's declaration when given (`success` / `failure` / `partial` / `skipped` / `blocked`). |
 
 
 

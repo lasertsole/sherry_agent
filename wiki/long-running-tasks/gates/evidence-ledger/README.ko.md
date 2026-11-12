@@ -28,14 +28,14 @@ terminal / python_repl 이 명령을 실행
                  │
                  └─ 읽기 시점: collect_evidence_summary()
                       ├─ evidence 행이 [stale]이 되는 것은, 더 나중의 stale 이벤트의 file_path 가
-                      │   해당 행의 command 의 부분문자열인 경우
+                      │   해당 행의 modified_files와 일치(정확값 또는 디렉터리 접두사)하거나 command의 경로 토큰과 일치하는 경우
                       ├─ 방향이 중요: evidence 이전의 stale = 신선(재검증됨)
                       └─ 반환: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
 **Changed-path 스냅샷(B').** `write_file` / `patch_file`은 `EvidenceLedger.record_file_edit()`도 호출해 해당 세션에서 편집한 경로를 누적합니다(중복 제거, 상한 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200. **검증마다 리셋하지 않으므로** 같은 편집 뒤의 lint와 test가 같은 스냅샷을 공유합니다). 기록 시 세션의 project root 기준으로 정규화합니다: `./a.py`, `a/../a.py`, root 내부 절대 경로는 모두 `a.py`가 되고, root 외부 절대 경로는 절대 경로로 남습니다. 검증 명령을 기록할 때 현재 목록이 evidence 행의 `modified_files`로 복사됩니다. 이후 그중 어떤 파일에 쓰더라도 명령이 그 파일을 지목하지 않았어도 evidence가 무효화됩니다.
 
-**크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 `modified_files`에 편집 경로가 포함된 것, command가 실제 경로 토큰으로 지목한 것, 또는 레거시 행의 command가 포함한 것을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
+**크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 `modified_files`가 편집 경로를 포함하는 것(정확값 또는 디렉터리 접두사) 또는 command가 경로 토큰으로 지목하는 것(`shlex` 단어, 레거시 행 포함)을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. 순수 부분 문자열은 일치하지 않으므로 `a.py`가 `bla.py`를 stale로 만들지 않습니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
 
 **Finish 시 재검증.** `taskflow_flow(action="finish")`의 Gate C는 먼저 `regression_gate.reverify_flow_evidence()`를 호출합니다: flow 각 세션의 passed 명령을 중복 제거해 한 번씩 재실행하며(allowlist 실행 파일, 셸 없음, `max_reverify_commands` 및 명령별 타임아웃), 작업 디렉터리는 flow의 프로젝트 루트입니다. 성공하면 stale/broken이었던 명령에 `unmark`를 추가하고, 실패하면 `broken`을 추가합니다. 이 경로는 변경된 소스 파일을 stale 행이 지목하지 않아도 A의 테스트 명령을 다시 실행하므로 크로스 파일 import 파괴를 잡을 수 있는 유일한 경로입니다. 단계는 `file_deps`를 선언할 수 있으며, 다른 단계의 쓰기가 그중 하나에 닿으면 `prioritized_sessions()`가 해당 단계의 명령을 `max_reverify_commands` 상한 앞으로 옮깁니다(`file_deps_mode="prioritize"`, 기본). 선택형 `file_deps_mode="filter"`는 선언이 적중한 세션만 재실행합니다 — 더 저렴하지만 선언되지 않은 단계의 파괴를 놓칠 수 있습니다.
 
@@ -94,7 +94,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 
 ### 2. 파일 편집 — stale 이벤트
 
-`write_file`과 `patch_file`은 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`로 데코레이트됩니다. 데코레이터는 `finally` 블록에서 실행되므로, **모든** 결과(성공, 에러 문자열, 예외 발생)가 `{"event": "stale", "file_path": "..."}` 행을 추가하고 `EvidenceLedger.record_file_edit()`를 호출합니다. 크로스 세션 스위치가 켜져 있으면 같은 호출이 evidence가 해당 경로를 포함하는(`modified_files` 적중 또는 레거시 command 부분문자열) 다른 각 세션에도 stale 행을 추가합니다.
+`write_file`과 `patch_file`은 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`로 데코레이트됩니다. 데코레이터는 `finally` 블록에서 실행되므로, **모든** 결과(성공, 에러 문자열, 예외 발생)가 `{"event": "stale", "file_path": "..."}` 행을 추가하고 `EvidenceLedger.record_file_edit()`를 호출합니다. 크로스 세션 스위치가 켜져 있으면 같은 호출이 `modified_files`가 해당 경로를 포함하는(정확값 또는 디렉터리 접두사) 또는 command가 경로 토큰으로 지목하는 다른 각 세션에도 stale 행을 추가합니다.
 
 ### 3. 서브에이전트 워크스페이스 머지 — stale 이벤트
 
@@ -142,7 +142,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 
 유효하지 않음은**읽기 측에서 도출**되며, 플래그로 저장되지 않습니다. 규칙:
 
-> evidence 행이 stale인 것은, **더 나중의** stale 이벤트(추가 순서에서 인덱스가 더 큼)가 지목한 `file_path`가 해당 행의 `modified_files` 집합에 포함되거나, command가 실제 경로 토큰으로 지목하는 경우. `modified_files`가 없는 레거시 행은 원래 command 부분문자열 규칙으로 폴백합니다.
+> evidence 행이 stale인 것은, **더 나중의** stale 이벤트(추가 순서에서 인덱스가 더 큼)가 지목한 `file_path`가 해당 행의 `modified_files` 집합에 포함되거나, 그중 한 파일의 디렉터리 접두사이거나, command가 실제 경로 토큰으로 지목하는 경우. `modified_files`가 없는 레거시 행은 같은 토큰 단위 command 매치를 사용합니다 — 부분 문자열이 아닙니다.
 
 ```python
 def derive_evidence_state(records, index):
@@ -168,7 +168,7 @@ def derive_evidence_state(records, index):
 핵심 세부사항:
 
 - **방향이 중요:** **더 나중의** stale 이벤트만이 **더 이전의** evidence 행을 무효화합니다. evidence 이전의 stale 이벤트는 파일이 편집된 후 재검증되었음을 의미합니다 — 검증은 신선합니다.
-- **새 행은 정확한 집합:** `file_path in modified_files`, 또는 command의 실제 경로 토큰. 명령이 지목하지 않은 소스 파일(`pytest tests/test_beta.py` + `alpha.py` 쓰기)과 A가 쓰지 않은 테스트 파일을 잡고, 기존 부분문자열 오탐(`feature.py` vs `test_feature.py`)을 피합니다.
+- **새 행은 정확한 집합:** `file_path in modified_files`, modified 파일의 디렉터리 접두사, 또는 command의 실제 경로 토큰. 명령이 지목하지 않은 소스 파일(`pytest tests/test_beta.py` + `alpha.py` 쓰기)과 A가 쓰지 않은 테스트 파일을 잡고, 기존 부분문자열 오탐(`feature.py` vs `test_feature.py`)을 피합니다.
 - **레거시 행 폴백:** `file_path in command`. B' 이전 행은 원래 동작을 유지합니다.
 - **경로 정규화:** 누적 경로와 stale 이벤트 모두 writer 세션의 project root 기준으로 정규화합니다(`./`, `..`, root 내부 절대 → project-relative, root 외부 절대는 절대 유지). 문자열 정규화이며 심볼릭 링크를 해석하지 않고, 서로 다른 session root는 통합하지 않습니다.
 - **세션 그룹:** `SessionEvidenceLedger.list_records()`는 `session_id`로 필터링하고, 도출은 한 세션의 행 순서 안에서만 비교합니다. 따라서 크로스 세션 무효화는 영향을 받는 세션 자신의 그룹에 **기록되며**(세션당 한 행), writer의 그룹에 남지 않습니다.

@@ -33,13 +33,22 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
     return EvidenceLedger
 
 
-def _evidence(session: str, command: str = f"pytest {PATH}") -> None:
-    EvidenceLedger.for_session(session).append(kind="test", command=command, status="passed")
+def _evidence(
+    session: str,
+    command: str = f"pytest {PATH}",
+    modified_files: list[str] | None = None,
+) -> None:
+    EvidenceLedger.for_session(session).append(
+        kind="test",
+        command=command,
+        status="passed",
+        modified_files=[PATH] if modified_files is None else modified_files,
+    )
 
 
 def test_a_write_marks_another_sessions_matching_evidence_stale():
     _evidence("session-a")
-    _evidence("session-b", "pytest tests/test_b.py")
+    _evidence("session-b", "pytest tests/test_b.py", modified_files=["tests/test_b.py"])
 
     mark_evidence_stale(PATH, "session-b")
 
@@ -57,6 +66,47 @@ def test_a_write_marks_another_sessions_matching_evidence_stale():
     writer_rows = EvidenceLedger.read_for_session("session-b")
     assert [row.get("event") for row in writer_rows] == [None, "stale"]
     assert "scope" not in writer_rows[-1]
+
+
+def test_a_command_substring_is_not_a_match():
+    """``a.py`` must not invalidate a session whose files merely contain it."""
+    _evidence("session-a", "pytest bla.py", modified_files=["bla.py"])
+
+    mark_evidence_stale("a.py", "session-b")
+
+    assert "[stale]" not in (collect_evidence_summary(session_key="session-a") or "")
+
+
+def test_a_legacy_row_matches_only_a_command_token():
+    _evidence("session-a", f"pytest {PATH}", modified_files=[])
+
+    mark_evidence_stale(PATH, "session-b")
+
+    assert "[stale]" in (collect_evidence_summary(session_key="session-a") or "")
+
+
+def test_a_legacy_row_ignores_a_command_substring():
+    _evidence("session-a", "pytest bla.py", modified_files=[])
+
+    mark_evidence_stale("a.py", "session-b")
+
+    assert "[stale]" not in (collect_evidence_summary(session_key="session-a") or "")
+
+
+def test_the_modified_files_snapshot_matches_even_with_an_unrelated_command():
+    _evidence("session-a", "true", modified_files=["src/a.py"])
+
+    mark_evidence_stale("src/a.py", "session-b")
+
+    assert "[stale]" in (collect_evidence_summary(session_key="session-a") or "")
+
+
+def test_a_directory_write_covers_nested_modified_files():
+    _evidence("session-a", "true", modified_files=["src/foo/bar.py"])
+
+    mark_evidence_stale("src/foo", "session-b")
+
+    assert "[stale]" in (collect_evidence_summary(session_key="session-a") or "")
 
 
 def test_unrelated_writes_do_not_mark_other_sessions():

@@ -32,6 +32,11 @@ from .sherry_config import (
     write_sherry_list as write_sherry_list,
     write_sherry_config as write_sherry_config,
 )
+from .model_caps_service import (
+    clear_all_model_caps as clear_all_model_caps,
+    clear_model_cap as clear_model_cap,
+    read_model_caps as read_model_caps,
+)
 from .models_config import (
     read_models_config as read_models_config,
     write_models_config as write_models_config,

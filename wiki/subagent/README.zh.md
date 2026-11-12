@@ -118,7 +118,11 @@
   `StructuredOutputStrategy`（`level`、`label`、`sends_json_mode`、
   `thinking_off`、`local_validation_fatal`）。spawn 路径用 `strategy_for()`
   解析一次持久化整数，然后读标志位；整数仍是磁盘上的兼容格式，但调用点不再
-  比较 `level >= 1/2`。
+  比较 `level >= 1/2`。持久化条目还带 `escalated_at` 与
+  `reprobe_count`：`get_level` 在 24 小时 → 48 小时 → 7 天后回退一级，
+  `confirm_level` 在 spawn 成功使用回退级别后固化它，瞬时 429 / 限流 / 超时 /
+  连接错误不会触发降级。系统配置 → 模型配置 通过
+  `GET|DELETE /sherry-config/model-caps` 查看和清除这些标签。
 - **完成投递**走单一转换表
   （`registry/delivery_state.py::_ALLOWED_TRANSITIONS`）。所有
   `mark_delivery_*` 都经过 `transition_delivery()`，因此 `DELIVERED` 与

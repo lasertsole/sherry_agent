@@ -118,7 +118,12 @@
   `StructuredOutputStrategy`(`level`、`label`、`sends_json_mode`、
   `thinking_off`、`local_validation_fatal`)。spawn 経路は永続化された整数を
   `strategy_for()` で一度解決し、フラグを読みます。整数はディスク上の互換形式
-  のままですが、呼び出し側は `level >= 1/2` を比較しません。
+  のままですが、呼び出し側は `level >= 1/2` を比較しません。永続化エントリは
+  `escalated_at` と `reprobe_count` も保持し、`get_level` は 24 時間 → 48 時間
+  → 7 日で 1 段階戻します。`confirm_level` は spawn がその下位レベルで成功した
+  時点で確定し、一時的な 429 / レート制限 / タイムアウト / 接続エラーでは降格
+  しません。システム設定 → モデル設定から
+  `GET|DELETE /sherry-config/model-caps` で一覧表示・消去できます。
 - **完了配信**は単一の遷移表
   (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`)を通ります。すべての
   `mark_delivery_*` は `transition_delivery()` を呼ぶため、`DELIVERED` と

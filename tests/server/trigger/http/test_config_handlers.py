@@ -19,8 +19,9 @@ pytestmark = [pytest.mark.unit]
 
 
 class _Request:
-    def __init__(self, payload: dict | None = None) -> None:
+    def __init__(self, payload: dict | None = None, query: dict | None = None) -> None:
         self._payload = payload or {}
+        self.query_params = query or {}
 
     def json(self) -> dict:
         return self._payload
@@ -108,3 +109,71 @@ def test_sherry_config_write_is_a_structured_503(monkeypatch):
     monkeypatch.setattr(sherry_config, "write_sherry_config", _missing)
 
     _assert_503(_run(sherry_config.write_sherry_config_handler(_Request({"changes": {}}))))
+
+
+def test_model_caps_read_returns_the_persisted_entries(monkeypatch):
+    monkeypatch.setattr(
+        sherry_config,
+        "read_model_caps",
+        lambda: [
+            {
+                "provider": "deepseek",
+                "model": "deepseek-flash",
+                "level": 1,
+                "effective_level": 1,
+            }
+        ],
+    )
+
+    response = _run(sherry_config.read_model_caps_handler(_Request()))
+
+    assert response.status_code == 200
+    assert json.loads(response.description)["entries"][0]["model"] == "deepseek-flash"
+
+
+def test_model_caps_clear_one_uses_the_query_pair(monkeypatch):
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        sherry_config,
+        "clear_model_cap",
+        lambda provider, model: calls.append((provider, model)) or True,
+    )
+
+    response = _run(
+        sherry_config.clear_model_caps_handler(
+            _Request(query={"provider": "deepseek", "model": "deepseek/flash"})
+        )
+    )
+
+    assert response.status_code == 200
+    assert json.loads(response.description) == {"success": True, "deleted": 1}
+    assert calls == [("deepseek", "deepseek/flash")]
+
+
+def test_model_caps_clear_requires_both_query_segments(monkeypatch):
+    response = _run(
+        sherry_config.clear_model_caps_handler(_Request(query={"provider": "deepseek"}))
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.description)["success"] is False
+
+
+def test_model_caps_clear_all_without_a_query(monkeypatch):
+    monkeypatch.setattr(sherry_config, "clear_all_model_caps", lambda: 3)
+
+    response = _run(sherry_config.clear_model_caps_handler(_Request()))
+
+    assert response.status_code == 200
+    assert json.loads(response.description) == {"success": True, "deleted": 3}
+
+
+def test_model_caps_clear_one_by_path_segments(monkeypatch):
+    monkeypatch.setattr(sherry_config, "clear_model_cap", lambda provider, model: False)
+
+    response = _run(
+        sherry_config.clear_model_cap_handler(_Request(), {"provider": "zhipu", "model": "glm-4.6"})
+    )
+
+    assert response.status_code == 200
+    assert json.loads(response.description) == {"success": True, "deleted": 0}

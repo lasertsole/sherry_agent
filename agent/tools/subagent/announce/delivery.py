@@ -493,13 +493,17 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
         # A run that timed out or was killed did NOT do the step's work, so the
         # step must fail rather than be marked done with an empty/short result:
         # a DONE step unlocks its dependents, and they would build on nothing.
+        # A budget-exhausted goal loop DID do work but never proved it complete:
+        # block the step (partial result preserved, dependents stay blocked) so
+        # the agent can read the partial output, retry, or replan.
         outcome_status = getattr(getattr(run, "execution", None), "outcome", None)
         outcome_status = getattr(outcome_status, "status", None)
-        declared_outcome = (
-            "failure"
-            if outcome_status in (RunOutcomeStatus.TIMEOUT, RunOutcomeStatus.KILLED)
-            else None
-        )
+        if outcome_status in (RunOutcomeStatus.TIMEOUT, RunOutcomeStatus.KILLED):
+            declared_outcome = "failure"
+        elif outcome_status == RunOutcomeStatus.BUDGET_EXHAUSTED:
+            declared_outcome = "blocked"
+        else:
+            declared_outcome = None
         answer = await taskflow_resume.coroutine(  # type: ignore[attr-defined]
             flow_id=flow_id,
             child_session_key=run.child_session_key,

@@ -508,7 +508,7 @@ async def _run_goal_loop(
             return result_text, None
         if turns_used >= goal_max_turns:
             return result_text, RunOutcome(
-                status=RunOutcomeStatus.OK,
+                status=RunOutcomeStatus.BUDGET_EXHAUSTED,
                 error="goal_loop_budget_exhausted",
             )
         if not judge_result.continuation_prompt.strip():
@@ -696,6 +696,12 @@ async def _execute_subagent_scoped(
                     continue
                 raise
             break
+
+        # The model accepted this rung: if get_level had decayed it, commit the
+        # lower level now (a spawn at the persisted level is a no-op, so steady
+        # use cannot pin a degradation forever).
+        if output_schema is not None:
+            model_caps.confirm_level(*identity, strategy_level)
 
         # Extract the last substantive assistant text as the result text.
         # The last message in the returned state is frequently an AIMessage with
