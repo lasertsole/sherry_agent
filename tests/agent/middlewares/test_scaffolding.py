@@ -185,6 +185,28 @@ class TestActualChainCompliance:
         with pytest.raises(ScaffoldingViolationError, match="MediaBudgetProjection"):
             validate_required_middleware(child, chain="subagent", entries=_SUBAGENT_REQUIRED)
 
+    def test_context_eviction_is_required_in_both_chains(self):
+        from agent.middlewares.context_eviction import ContextEvictionMiddleware
+
+        main = [
+            mw
+            for mw in _build_middlewares(
+                fallback_chain=None,
+                auxiliary_llm=None,
+                main_llm_context_window=_CONTEXT_WINDOW,
+                compression_trigger_ratio=0.8,
+            )
+            if not isinstance(mw, ContextEvictionMiddleware)
+        ]
+        with pytest.raises(ScaffoldingViolationError, match="ContextEviction"):
+            validate_required_middleware(main, chain="main", entries=_MAIN_REQUIRED)
+
+        child = [
+            mw for mw in _real_subagent_chain() if not isinstance(mw, ContextEvictionMiddleware)
+        ]
+        with pytest.raises(ScaffoldingViolationError, match="ContextEviction"):
+            validate_required_middleware(child, chain="subagent", entries=_SUBAGENT_REQUIRED)
+
     @pytest.mark.parametrize(
         ("role", "expected"),
         [
@@ -267,7 +289,6 @@ class TestRoleAgnosticDesign:
         expected_main_only = {
             "HumanInTheLoop",
             "MessagePersistenceMiddleware",
-            "ContextEvictionMiddleware",
             "PathGuard",
             "LLMRetryMiddleware",
             # Required for the main agent only: a child's transcript has no

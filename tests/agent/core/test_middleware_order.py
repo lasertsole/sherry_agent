@@ -55,9 +55,10 @@ EXPECTED_ORDER = [
 ]
 
 #: Child-chain order (``_build_child_middlewares``). Leaner by design — no
-#: HITL / eviction / persistence / path guard / LLM retry / task layer (see the
-#: builder's docstring) — and ``InvalidToolCallRepairMiddleware`` is LAST there
-#: too, mirroring the main chain's innermost-wrap position.
+#: HITL / persistence / path guard / LLM retry / task layer; the eviction
+#: middleware is present in its trimmed tool-result mode — and
+#: ``InvalidToolCallRepairMiddleware`` is LAST there too, mirroring the main
+#: chain's innermost-wrap position.
 SUBAGENT_EXPECTED_ORDER = [
     "Summarization",
     "IterationBudget",
@@ -65,6 +66,7 @@ SUBAGENT_EXPECTED_ORDER = [
     "ToolGuardrails",
     "ToolResourceLockMiddleware",
     "MediaBudgetProjectionMiddleware",
+    "ContextEvictionMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
     "ToolCallNormalize",

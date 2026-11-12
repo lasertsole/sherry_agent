@@ -160,7 +160,14 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     before_model tags only an oversized trailing USER HumanMessage
   │     (`is_user_message`: `metadata.origin == "user"`; reminders, notices and
   │     every other injected carrier are never tagged) and wrap_model_call
-  │     truncates only the model view)
+  │     truncates only the model view. The CHILD chain registers the same
+  │     middleware in its trimmed mode (`human_eviction=False,
+  │     evict_to_file=False`): the same 20 000-char tool-result threshold and
+  │     `read_file` slice, but the preview is built IN MEMORY with no file
+  │     pointer — a subagent cannot self-approve the external read an evicted
+  │     path would require — and human messages are untouched. A main-chain
+  │     offload failure ALSO falls back to that in-memory clip (M12), so an
+  │     oversized payload never reaches state raw)
   │    ThinkingControl: per-session thinking control (client switch / level
   │     picker → PUT /sessions/thinking → state register); swaps request.model
   │     for the variant built by build_main_llm(thinking=... / level=...) when

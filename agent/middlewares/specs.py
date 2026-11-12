@@ -362,18 +362,25 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         main=ProfileBinding(11, lambda _ctx: UserHooksMiddleware()),
     ),
     # Registered directly after ToolGuardrails, i.e. OUTER relative to PathGuard
-    # / HITL / MessagePersistenceMiddleware in the wrap chain.
+    # / HITL / MessagePersistenceMiddleware in the wrap chain. The child chain
+    # uses the SAME class in its trimmed mode: the 20k tool-result net and the
+    # read_file slice, but no human-message eviction and no evicted-file pointer
+    # (a subagent cannot self-approve the external read it would require).
     MiddlewareSpec(
         name="ContextEvictionMiddleware",
         cls=ContextEvictionMiddleware,
         main=ProfileBinding(12, lambda _ctx: ContextEvictionMiddleware()),
-        required_in=frozenset({MAIN}),
+        child=ProfileBinding(
+            6,
+            lambda _ctx: ContextEvictionMiddleware(human_eviction=False, evict_to_file=False),
+        ),
+        required_in=_BOTH,
     ),
     MiddlewareSpec(
         name="ToolCallNormalize",
         cls=ToolCallNormalize,
         main=ProfileBinding(13, lambda _ctx: ToolCallNormalize()),
-        child=ProfileBinding(8, lambda _ctx: ToolCallNormalize()),
+        child=ProfileBinding(9, lambda _ctx: ToolCallNormalize()),
         required_in=_BOTH,
     ),
     MiddlewareSpec(
@@ -418,7 +425,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         name="OutputRepetitionGuard",
         cls=OutputRepetitionGuard,
         main=ProfileBinding(20, lambda _ctx: OutputRepetitionGuard()),
-        child=ProfileBinding(6, lambda _ctx: OutputRepetitionGuard()),
+        child=ProfileBinding(7, lambda _ctx: OutputRepetitionGuard()),
         required_in=_BOTH,
     ),
     # Children also run via ``ainvoke``: the non-streaming path means no
@@ -427,7 +434,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         name="MaxTokensBoostMiddleware",
         cls=MaxTokensBoostMiddleware,
         main=ProfileBinding(21, lambda _ctx: MaxTokensBoostMiddleware()),
-        child=ProfileBinding(7, lambda _ctx: MaxTokensBoostMiddleware()),
+        child=ProfileBinding(8, lambda _ctx: MaxTokensBoostMiddleware()),
         required_in=_BOTH,
     ),
     # Per-session thinking toggle: swaps the per-call model for the thinking
@@ -442,7 +449,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         name="HeartbeatStaleness",
         cls=HeartbeatStaleness,
         main=ProfileBinding(23, lambda _ctx: HeartbeatStaleness()),
-        child=ProfileBinding(9, lambda _ctx: HeartbeatStaleness()),
+        child=ProfileBinding(10, lambda _ctx: HeartbeatStaleness()),
         required_in=_BOTH,
     ),
     MiddlewareSpec(
@@ -492,7 +499,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         name="InvalidToolCallRepairMiddleware",
         cls=InvalidToolCallRepairMiddleware,
         main=ProfileBinding(29, lambda _ctx: InvalidToolCallRepairMiddleware()),
-        child=ProfileBinding(10, lambda _ctx: InvalidToolCallRepairMiddleware()),
+        child=ProfileBinding(11, lambda _ctx: InvalidToolCallRepairMiddleware()),
         required_in=_BOTH,
     ),
     # Main-agent-only soft delegation pressure, appended when its feature flag

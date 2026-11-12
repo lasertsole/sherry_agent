@@ -43,8 +43,14 @@ model boundary never writes a second row for the same logical message.
 Session deletion: eviction files live under ``SESSIONS_DIR/{session_id}/`` and
 are removed by ``clear_session``'s folder rmtree.
 
-Subagent sessions do not register this middleware (same as message
-persistence): child transcripts keep their full tool results.
+The child pipeline registers the SAME class in a trimmed mode
+(``human_eviction=False, evict_to_file=False``): tool results over the same
+threshold are hard-clipped in memory (no evicted-file pointer — a subagent
+cannot self-approve the external read one would require), ``read_file`` keeps
+its 4 000-char slice, and human-message eviction is off because a child's task
+and continuation messages are not user turns. A failed main-chain offload also
+falls back to that in-memory clip, so an oversized payload never reaches state
+raw.
 """
 
 from __future__ import annotations
@@ -77,6 +83,7 @@ from pub.func.message.eviction import (
     evict_human_message,
     evict_tool_result,
     get_eviction_dir,
+    hard_clip_tool_result,
     load_evicted,
     slice_read_file_result,
 )
@@ -166,9 +173,28 @@ class ContextEvictionMiddleware(AgentMiddleware):
     view only.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        human_eviction: bool | None = None,
+        evict_to_file: bool = True,
+    ) -> None:
+        """Build the middleware for the main or the child pipeline.
+
+        ``human_eviction`` defaults to the global P1-9 switch; the child
+        pipeline passes ``False`` (its task/continuation messages are not user
+        turns). ``evict_to_file=False`` is the child tool-result mode: the
+        same threshold applies, but the preview is built in memory because a
+        subagent cannot self-approve the external read an evicted-file pointer
+        would require.
+        """
         self._enabled = TOOL_RESULT_EVICTION["enabled"]
-        self._human_enabled = TOOL_RESULT_EVICTION["human_evict_enabled"]
+        self._human_enabled = (
+            TOOL_RESULT_EVICTION["human_evict_enabled"]
+            if human_eviction is None
+            else bool(human_eviction)
+        )
+        self._evict_to_file = bool(evict_to_file)
         self._wrap_enabled = UNTRUSTED_OUTPUT["enabled"]
         self._wrap_advisory = UNTRUSTED_OUTPUT["advisory"]
         self._redact_enabled = REDACTION["tool_output_enabled"]
@@ -352,19 +378,38 @@ class ContextEvictionMiddleware(AgentMiddleware):
                     session_id,
                 )
                 return self._cover_with_watermark(session_id, result, sliced)
-            evicted = evict_tool_result(result, session_id)
-            if evicted is None:
+            if self._evict_to_file:
+                evicted = evict_tool_result(result, session_id)
+                if evicted is not None:
+                    logger.debug(
+                        "ContextEviction: evicted tool result name={} ({} -> {} chars) session={}",
+                        name,
+                        len(str(result.content)),
+                        len(str(evicted.content)),
+                        session_id,
+                    )
+                    return self._cover_with_watermark(session_id, result, evicted)
+                # The offload store is unavailable: fall through to the
+                # in-memory clip so an oversized payload never reaches state raw.
+            clipped = hard_clip_tool_result(result)
+            if clipped is None:
                 return result
             logger.debug(
-                "ContextEviction: evicted tool result name={} ({} -> {} chars) session={}",
+                "ContextEviction: hard-clipped tool result name={} ({} -> {} chars) session={}",
                 name,
                 len(str(result.content)),
-                len(str(evicted.content)),
+                len(str(clipped.content)),
                 session_id,
             )
-            return self._cover_with_watermark(session_id, result, evicted)
+            return self._cover_with_watermark(session_id, result, clipped)
         except Exception:
             logger.exception("tool result eviction failed (fail-open)")
+            try:
+                clipped = hard_clip_tool_result(result)
+                if clipped is not None:
+                    return self._cover_with_watermark(session_id, result, clipped)
+            except Exception:
+                logger.exception("tool result hard-clip fallback failed (fail-open)")
             return result
 
     @staticmethod
