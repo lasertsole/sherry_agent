@@ -13,12 +13,15 @@ time:
 * level 2 — level 1 plus thinking OFF (some providers reject the forced
   ``tool_choice`` only while thinking).
 
-The level is PERSISTED per ``(provider, model)`` so a model that already
-degraded is never probed again: every later subagent starts at the learned
-level instead of paying for the same rejected request (the user's "avoid
-repeated degradation wasting tokens" rule). A missing/corrupt file reads as
-"every model starts at 0", and a failed write is fail-open (the level still
-applies for this process).
+The level is PERSISTED per ``(provider, model)`` with a re-probe clock: every
+later subagent starts at the learned level instead of paying for the same
+rejected request, but after 24 h → 48 h → 7 d the effective level decays one
+rung so a provider that gained support can recover. A spawn that succeeds at the
+decayed rung commits it (:func:`confirm_level`); re-reaching the same degraded
+rung refreshes the clock with backoff instead of restarting it. Transient
+429/rate-limit/timeout/connection errors never escalate. A missing/corrupt file
+reads as "every model starts at 0", and a failed write is fail-open (the level
+still applies for this process).
 """
 
 from __future__ import annotations

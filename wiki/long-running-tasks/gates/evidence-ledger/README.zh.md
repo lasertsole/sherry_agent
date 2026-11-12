@@ -159,9 +159,13 @@ def derive_evidence_state(records, index):
         elif event == "stale":
             path = str(later.get("file_path") or "")
             if modified:
-                stale = stale or (path in modified) or _command_references_path(command, path)
+                stale = stale or (
+                    path in modified
+                    or _path_covers_modified(path, modified)
+                    or _command_references_path(command, path)
+                )
             else:
-                stale = stale or (path in command)
+                stale = stale or _command_references_path(command, path)
     return broken, stale
 ```
 
@@ -169,7 +173,7 @@ def derive_evidence_state(records, index):
 
 - **方向重要：** 只有**后来的** stale 事件能使**先前的** evidence 行过期。stale 事件在 evidence 行之前意味着文件被编辑后又重新验证了——验证是新鲜的。
 - **新行精确集合：** `file_path in modified_files`、某个 modified 文件的目录前缀，或 command 中的真实路径 token。能捕获命令从未点名的源文件（`pytest tests/test_beta.py` + 写入 `alpha.py`）以及 A 没写过的测试文件，同时避免旧的子串误报（`feature.py` vs `test_feature.py`）。
-- **旧行降级：** `file_path in command`。B' 之前的行保持原行为，故意宽松且不变。
+- **旧行回退：** 旧行没有快照，因此只匹配 command 中的 `shlex` 路径 token——不再使用 `file_path in command` 子串规则。
 - **路径规范化：** 累积路径与 stale 事件都按写入方 session 的 project root 规范化（`./`、`..`、root 内绝对 → project-relative；root 外绝对保留绝对）。这是字符串规范化，不解析符号链接；不同 session root 不统一。
 - **按 session 分组：** `SessionEvidenceLedger.list_records()` 先按 `session_id` 过滤，派生只在一个 session 的序列内比较。因此跨 session 失效会**写进受影响 session 自己的组**（每个 session 一行），而不是留在写入方的组里。
 - **Broken 与 unmark：** 同 `command` 的更晚 `broken` 事件渲染为 `[broken]`（重验后命令失败）；同 `command` 的更晚 `unmark` 同时清除 `[stale]` 与 `[broken]`。`evidence_ledger.py` 的 `derive_evidence_state()` 是唯一实现，`[broken]` 优先于 `[stale]`。

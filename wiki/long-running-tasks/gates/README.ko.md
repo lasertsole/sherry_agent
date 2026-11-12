@@ -34,7 +34,7 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 
 - **불일치**는 오류와 함께 `schema_validated=false`로 기록되고 실패로 취급되며 재시도 유형은 `schema_error`입니다 — 판정 호출은 절대 쓰지 않고, 재시도되지 않은 불일치는 스텝을 `failed`로 만듭니다.
 - **불일치는 재시도에게 알려줍니다.** schema 실패는 판정보다 먼저 단락되므로 `judge_feedback`은 비어 있습니다. 그래서 대체 자식의 작업에는 검증기 자체의 메시지(`Your previous output failed schema validation: <필드 경로, expected/got>.`)가 `## Previous Attempt Feedback`으로 실리고, 자식은 스텝의 spawn 계약 일체(`response_schema` → 구조화 출력 요구, 기능 역할, 모델 재정의, 실행 타임아웃)를 상속합니다 — schema도 실패 이유도 볼 수 없는 재시도는 추측할 수밖에 없습니다.
-- **형태는 생성 시점에도 강제됩니다.** 스텝이 `response_schema`를 선언하면 자식 에이전트는 LangChain의 `response_format`과 함께 만들어집니다(원시 schema는 `AutoStrategy`로 해석되어, 공급자가 지원하면 네이티브 구조화 출력, 아니면 구조화 출력 도구 호출). 그래서 뚜렷한 불일치는 이 검증기가 아니라 모델 단계에서 멈춥니다. schema 본문은 자식의 system prompt에 프롬프트 수준 폴백으로 남고, 이 Tier 1 검사는 두 번째 그물로 남습니다 — 공급자 가장자리 사례나 구조화 출력 도구를 호출하지 않는 모델은 여기서 잡힙니다. `sessions_spawn`은 같은 `output_schema` 필드를 노출하므로 도구 기반 자식도 같은 방식으로 구속됩니다. 구조화 출력이 거부되면 **단계적으로 강등**됩니다: 레벨 0(기본)은 schema를 LangChain에 넘기고, 그 전략을 지목하는 400이 오면 레벨 1(자식이 직접 `response_format={"type":"json_object"}`를 보내고 schema는 프롬프트에 남기며 결과를 로컬 검증)로, 다시 실패하면 레벨 2(레벨 1 + 사고 끔)로 내려갑니다. 단계는 `(provider, model)`별로 `src/data/subagent_model_caps.json`에 영속화되어, 이미 강등된 모델을 이후 자식이 다시 시도하지 않습니다.
+- **형태는 생성 시점에도 강제됩니다.** 스텝이 `response_schema`를 선언하면 자식 에이전트는 LangChain의 `response_format`과 함께 만들어집니다(원시 schema는 `AutoStrategy`로 해석되어, 공급자가 지원하면 네이티브 구조화 출력, 아니면 구조화 출력 도구 호출). 그래서 뚜렷한 불일치는 이 검증기가 아니라 모델 단계에서 멈춥니다. schema 본문은 자식의 system prompt에 프롬프트 수준 폴백으로 남고, 이 Tier 1 검사는 두 번째 그물로 남습니다 — 공급자 가장자리 사례나 구조화 출력 도구를 호출하지 않는 모델은 여기서 잡힙니다. `sessions_spawn`은 같은 `output_schema` 필드를 노출하므로 도구 기반 자식도 같은 방식으로 구속됩니다. 구조화 출력이 거부되면 **단계적으로 강등**됩니다: 레벨 0(기본)은 schema를 LangChain에 넘기고, 그 전략을 지목하는 400이 오면 레벨 1(자식이 직접 `response_format={"type":"json_object"}`를 보내고 schema는 프롬프트에 남기며 결과를 로컬 검증)로, 다시 실패하면 레벨 2(레벨 1 + 사고 끔)로 내려갑니다. 단계는 `(provider, model)`별로 `src/data/subagent_model_caps.json`에 영속화되며 재시도 시계를 가집니다. 24시간 → 48시간 → 7일 후 한 단계 내려가고, spawn 성공 시 그 하위 레벨이 확정됩니다. 일시적인 429 / 레이트 리밋 / 타임아웃 / 연결 오류는 강등을 유발하지 않습니다. 시스템 설정 → 모델 설정에서 목록을 보고 지울 수 있습니다.
 - **일치**는 `structured_result` + `schema_validated=true`를 저장하고 Tier 2로 넘어갑니다. 구조만으로 내용이 옳다는 것이 증명되지 않습니다 — 그것이 두 번째 층이 존재하는 이유입니다.
 
 ### Tier 2 — 의미론(보조 LLM)
@@ -57,7 +57,7 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 
 ### 그리고: `done`은 "설정된 게이트를 통과했다"는 뜻
 
-스텝의 `done`은 그 자체로 "작업이 옳다"는 뜻이 아닙니다. **어떤** 기대도 설정되지 않았다면(`response_schema`, `judge_criteria` / `validation_criteria`, `retry_policy`) 옛 의미 — "결과가 주입되었다" — 로 강등되므로, 오류를 보고한 자식도 `done`이 되어 후속 스텝을 해제할 수 있습니다. 기대를 선언하거나(`response_schema`는 무료로, 판정 호출 전에 검증됩니다) `step_outcome="failure"`를 보고하면 폐루프가 그것을 잡습니다: `failed` / `skipped` / `cancelled`는 실제 스텝 상태가 되고, 실패는 의존 스텝을 절대 해제하지 않으며, `taskflow_flow(action="finish")`는 미해결 스텝을 안고 완료하는 것을 거부합니다.
+스텝의 `done`은 그 자체로 "작업이 옳다"는 뜻이 아닙니다. **어떤** 기대도 설정되지 않았다면(`response_schema`, `judge_criteria` / `validation_criteria`, `retry_policy`) 옛 의미 — "결과가 주입되었다" — 로 강등되므로, 오류를 보고한 자식도 `done`이 되어 후속 스텝을 해제할 수 있습니다. 기대를 선언하거나(`response_schema`는 무료로, 판정 호출 전에 검증됩니다) `step_outcome="failure"`를 보고하면 폐루프가 그것을 잡습니다: `failed` / `skipped` / `cancelled`는 실제 스텝 상태가 되고, 실패는 의존 스텝을 절대 해제하지 않으며, `taskflow_flow(action="finish")`는 미해결 스텝을 안고 완료하는 것을 거부합니다. goal loop 예산 소진은 대신 `step_outcome="blocked"`를 보고합니다. 단계는 부분 결과를 유지하고 의존 단계는 blocked로 남아 에이전트가 재시도·재계획·취소를 선택할 수 있습니다.
 
 ## 플로우 층위(`taskflow_flow(action="finish")`)
 

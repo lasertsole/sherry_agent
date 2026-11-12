@@ -1,11 +1,12 @@
 """Cross-session evidence staleness propagation.
 
 A file write invalidates the writer's own evidence today. These tests pin the
-new broadcast: every OTHER session whose evidence command names the written
-path receives its own stale row, so its evidence collector (and the TaskFlow
-finish gate) sees the invalidation. The ledger schema is unchanged — the new
-row rides the existing ``{"event": "stale"}`` shape with ``scope`` and
-``source_session`` metadata.
+broadcast: every OTHER session whose ``modified_files`` snapshot covers the
+written path (exact or directory prefix), or whose evidence command names it as
+a ``shlex`` path token, receives its own stale row, so its evidence collector
+(and the TaskFlow finish gate) sees the invalidation. A mere command substring
+is not a match. The ledger schema is unchanged — the new row rides the existing
+``{"event": "stale"}`` shape with ``scope`` and ``source_session`` metadata.
 """
 
 from __future__ import annotations

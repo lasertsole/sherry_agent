@@ -159,9 +159,13 @@ def derive_evidence_state(records, index):
         elif event == "stale":
             path = str(later.get("file_path") or "")
             if modified:
-                stale = stale or (path in modified) or _command_references_path(command, path)
+                stale = stale or (
+                    path in modified
+                    or _path_covers_modified(path, modified)
+                    or _command_references_path(command, path)
+                )
             else:
-                stale = stale or (path in command)
+                stale = stale or _command_references_path(command, path)
     return broken, stale
 ```
 
@@ -169,7 +173,7 @@ def derive_evidence_state(records, index):
 
 - **방향이 중요:** **더 나중의** stale 이벤트만이 **더 이전의** evidence 행을 무효화합니다. evidence 이전의 stale 이벤트는 파일이 편집된 후 재검증되었음을 의미합니다 — 검증은 신선합니다.
 - **새 행은 정확한 집합:** `file_path in modified_files`, modified 파일의 디렉터리 접두사, 또는 command의 실제 경로 토큰. 명령이 지목하지 않은 소스 파일(`pytest tests/test_beta.py` + `alpha.py` 쓰기)과 A가 쓰지 않은 테스트 파일을 잡고, 기존 부분문자열 오탐(`feature.py` vs `test_feature.py`)을 피합니다.
-- **레거시 행 폴백:** `file_path in command`. B' 이전 행은 원래 동작을 유지합니다.
+- **레거시 행 폴백:** 레거시 행에는 스냅샷이 없으므로 command의 `shlex` 경로 토큰에만 일치합니다 — `file_path in command` 부분 문자열 규칙은 제거되었습니다.
 - **경로 정규화:** 누적 경로와 stale 이벤트 모두 writer 세션의 project root 기준으로 정규화합니다(`./`, `..`, root 내부 절대 → project-relative, root 외부 절대는 절대 유지). 문자열 정규화이며 심볼릭 링크를 해석하지 않고, 서로 다른 session root는 통합하지 않습니다.
 - **세션 그룹:** `SessionEvidenceLedger.list_records()`는 `session_id`로 필터링하고, 도출은 한 세션의 행 순서 안에서만 비교합니다. 따라서 크로스 세션 무효화는 영향을 받는 세션 자신의 그룹에 **기록되며**(세션당 한 행), writer의 그룹에 남지 않습니다.
 - **Broken과 unmark:** 같은 `command`의 더 나중 `broken` 이벤트는 `[broken]`(재검증 실패)으로 표시되고, 같은 `command`의 더 나중 `unmark`는 `[stale]`과 `[broken]`을 모두 지웁니다. `evidence_ledger.py`의 `derive_evidence_state()`가 유일한 구현이며, `[broken]`이 `[stale]`보다 우선합니다.

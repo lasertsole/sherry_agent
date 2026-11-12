@@ -159,9 +159,13 @@ def derive_evidence_state(records, index):
         elif event == "stale":
             path = str(later.get("file_path") or "")
             if modified:
-                stale = stale or (path in modified) or _command_references_path(command, path)
+                stale = stale or (
+                    path in modified
+                    or _path_covers_modified(path, modified)
+                    or _command_references_path(command, path)
+                )
             else:
-                stale = stale or (path in command)
+                stale = stale or _command_references_path(command, path)
     return broken, stale
 ```
 
@@ -169,7 +173,7 @@ def derive_evidence_state(records, index):
 
 - **方向が重要:** **より後の** stale イベントだけが**より前の** evidence 行を無効化します。evidence より前の stale イベントは、ファイルが編集された後に再検証されたことを意味し、検証は新鮮です。
 - **新行の正確な集合:** `file_path in modified_files`、modified ファイルのディレクトリ接頭辞、または command の実パストークン。コマンドが名指ししないソースファイル（`pytest tests/test_beta.py` + `alpha.py` への書き込み）と、A が書いていないテストファイルを捕まえ、旧来の部分文字列誤報（`feature.py` vs `test_feature.py`）を避けます。
-- **旧行のフォールバック:** `file_path in command`。B' 以前の行は元の動作のままです。
+- **旧行のフォールバック:** 旧行にはスナップショットがないため、command 内の `shlex` パストークンのみに一致します——`file_path in command` の部分文字列ルールは廃止されました。
 - **パス正規化:** 蓄積パスと stale イベントの両方を書き込み側セッションの project root に対して正規化します（`./`、`..`、root 内絶対 → project-relative、root 外絶対は絶対のまま）。文字列正規化であり、シンボリックリンクは解決しません。異なる session root は統一されません。
 - **セッショングループ:** `SessionEvidenceLedger.list_records()` は `session_id` でフィルタリングし、導出は 1 つのセッションの行順の中だけで比較します。したがってクロスセッションの無効化は、影響を受けるセッション自身のグループに**書き込まれ**（セッションごとに 1 行）、書き込み側のグループには残りません。
 - **Broken と unmark:** 同じ `command` のより後の `broken` イベントは `[broken]`（再検証で失敗）として描画され、同じ `command` のより後の `unmark` は `[stale]` と `[broken]` の両方を消します。`evidence_ledger.py` の `derive_evidence_state()` が唯一の実装で、`[broken]` は `[stale]` より優先されます。

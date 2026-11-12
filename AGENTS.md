@@ -399,8 +399,9 @@ User message → Robyn WS → agent.core.built_agent() graph
       `LIST_SETTING_KEYS` in `config/sherry_settings.py` — validating every entry
       for lowercase/no-shell-metacharacters/bounds, with the built-in defaults
       never removable); read side derives
-      broken/stale using the exact `modified_files` set, falling back to the
-      command substring for legacy rows (evidence_collector.py)
+      broken/stale using exact / directory-prefix `modified_files` matches plus
+      `shlex`-token command matches, with the same token rule for legacy rows
+      (evidence_collector.py)
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's evidence read by `flow_id` FIRST (step children are stamped at
