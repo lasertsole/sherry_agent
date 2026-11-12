@@ -145,6 +145,7 @@ middleware = [
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -162,7 +163,7 @@ Differences vs the main agent:
 - A tighter iteration budget (60 instead of 90).
 - No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `PlanContinuationEnforcer`, no `WorkspaceNoticeMiddleware`.
 - No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
-- No `ContextEvictionMiddleware`: child transcripts keep their full tool results (no eviction files, no read_file slice) and oversized human messages are never tagged/truncated.
+- `ContextEvictionMiddleware` runs in the child chain too, with the SAME configuration as the main chain: tool results over 20 000 chars are written to the child's own `SESSIONS_DIR/<session_id>/evicted/` and `read_file` results are sliced. Human-message eviction only matches `origin="user"`, which child task/continuation messages never carry.
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
@@ -475,7 +476,7 @@ The shared batch pipeline (both hooks):
 **Module:** `agent/middlewares/context_eviction/core.py` · **Class:** `ContextEvictionMiddleware(AgentMiddleware)`
 **Hooks:** `wrap_tool_call` / `awrap_tool_call` (P0-2/P2-4) and `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call` (P1-9)
 
-Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split for tool results: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Not registered in the worker pipeline: child transcripts keep their full tool results.
+Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split for tool results: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Registered in the worker pipeline with the SAME configuration: the evicted file lands in the CHILD's own `SESSIONS_DIR/<session_id>/evicted/`, which the session may read back without HITL. Human-message eviction only matches `origin="user"`, which child task messages never carry.
 
 **Untrusted tool results are fenced.** After eviction, a result from an attacker-facing tool (`web_search` — one tool whichever backend serves it, plus the `tavily_search` name it carried before the rename — `message_search`, and any `mcp_` tool) is wrapped in an `<untrusted_tool_result source="…" id="…">` block whose advisory states the content is data, not instructions. Any closing tag inside the payload is rewritten to `</untrusted-tool-result>` before wrapping, so it cannot end the block early, and only this model view is fenced — the raw text the inner boundary persisted is untouched. Switch and wording live in `config/features/agent_side/untrusted_output.py`.
 The same pass masks credentials in results from tools that leak them for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`) — **evict → redact → fence**, in that order; file tools stay verbatim so a read-then-write round trip cannot corrupt a config. Switch: `REDACTION["tool_output_enabled"]`.

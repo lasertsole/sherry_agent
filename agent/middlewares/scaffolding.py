@@ -44,7 +44,9 @@ from .specs import MAIN, CHILD, RequiredMiddlewareEntry, required_entries
 _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = required_entries(MAIN)
 
 # The child chain is intentionally leaner than the main chain: no HITL,
-# eviction, persistence, path guard, or LLM retry. The entries below are the
+# persistence, path guard, or LLM retry. Context eviction IS required, with the
+# same configuration as the main chain (the child's own evicted/ tree is
+# readable, so the pointer is recoverable). The entries below are the
 # per-agent safety baseline every child shares regardless of depth role
 # (ORCHESTRATOR / LEAF) or functional role.
 _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = required_entries(CHILD)

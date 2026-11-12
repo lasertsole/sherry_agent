@@ -153,6 +153,7 @@ middleware = [
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -172,7 +173,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 더 타이트한 반복 예산(90 대신 60).
 - `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `WorkspaceNoticeMiddleware`, `PlanContinuationEnforcer`도 없음.
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
-- `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
+- 자식 체인도 `ContextEvictionMiddleware`를 메인 체인과 **같은 설정**으로 등록합니다: 20 000자를 넘는 도구 결과는 자식 자신의 `SESSIONS_DIR/<session_id>/evicted/`에 기록되고 `read_file` 결과도 슬라이스됩니다. 인간 메시지 축출은 `origin="user"`만 일치하며 자식 작업/연속 메시지는 이를 갖지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - `MaxTokensBoostMiddleware`는 비스트리밍 경로를 탑니다. 자식은
   `ainvoke`로 실행되므로 자식 세션 id에는 `is_stream_turn` 플래그가 절대 설정되지 않습니다.
@@ -485,7 +486,7 @@ main과 child 두 체인 모두에서 히스토리 미디어를 `history_media_b
 **모듈:** `agent/middlewares/context_eviction/core.py` · **클래스:** `ContextEvictionMiddleware(AgentMiddleware)`
 **후크:** `wrap_tool_call` / `awrap_tool_call`(P0-2/P2-4) 및 `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`(P1-9)
 
-메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 도구 결과의 경우 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에는 등록되지 않습니다(자식 트랜스크립트는 완전한 도구 결과를 유지).
+메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 도구 결과의 경우 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에도 같은 설정으로 등록됩니다: 축출 파일은 자식 자신의 `SESSIONS_DIR/<session_id>/evicted/`에 놓이고 세션은 HITL 없이 다시 읽을 수 있습니다. 인간 메시지 축출은 `origin="user"`만 일치하며 자식의 작업 메시지는 이를 갖지 않습니다.
 
 **신뢰할 수 없는 도구 결과는 펜스됩니다.** 축출 후 공격자가 제어할 수 있는 도구의 결과(`web_search`——백엔드가 무엇이든 같은 하나의 도구이며 이름 변경 전의 `tavily_search`도 목록에 포함——`message_search`, 그리고 모든 `mcp_` 도구)는 `<untrusted_tool_result source="…" id="…">` 블록으로 감싸지고, 그 권고문이 내용은 지시가 아니라 데이터라고 밝힙니다. 페이로드 안의 닫는 태그는 감싸기 전에 `</untrusted-tool-result>` 로 바뀌어 블록을 일찍 닫을 수 없습니다. 펜스되는 것은 이 모델 표시뿐이며, 내부가 영속화한 원문은 변하지 않습니다. 스위치와 문구는 `config/features/agent_side/untrusted_output.py` 에 있습니다.
 같은 패스가 유출되기 쉬운 도구(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`) 결과의 자격 증명도 마스킹합니다——순서는 **evict → redact → fence**. 파일 도구는 원문 그대로 두어 읽고 되쓰는 왕복이 설정을 망가뜨리지 않습니다. 스위치는 `REDACTION["tool_output_enabled"]`.

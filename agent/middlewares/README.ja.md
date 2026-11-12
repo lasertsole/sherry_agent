@@ -153,6 +153,7 @@ middleware = [
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -172,7 +173,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - より厳しい反復予算（90 ではなく 60）。
 - `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`WorkspaceNoticeMiddleware`、`PlanContinuationEnforcer` もなし。
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
-- `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
+- 子エージェントチェーンも `ContextEvictionMiddleware` をメインチェーンと**同じ設定**で登録します：20 000 文字を超えるツール結果は子自身の `SESSIONS_DIR/<session_id>/evicted/` に書き込まれ、`read_file` 結果もスライスされます。人間メッセージ退避は `origin="user"` のみに一致し、子のタスク/継続メッセージはそれを持ちません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
 - `MaxTokensBoostMiddleware` は非ストリーミング経路を取ります。子は
   `ainvoke` で実行されるため、子セッション id に `is_stream_turn` フラグが立つことはありません。
@@ -485,7 +486,7 @@ main と child の両チェーンで、履歴メディアを `history_media_budg
 **モジュール：** `agent/middlewares/context_eviction/core.py` · **クラス：** `ContextEvictionMiddleware(AgentMiddleware)`
 **フック：** `wrap_tool_call` / `awrap_tool_call`（P0-2/P2-4）と `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`（P1-9）
 
-メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、ツール結果については内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインには登録されません（子トランスクリプトは完全なツール結果を保持）。
+メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、ツール結果については内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインにも同じ設定で登録されます：退避ファイルは子自身の `SESSIONS_DIR/<session_id>/evicted/` に置かれ、セッションは HITL なしで読み戻せます。人間メッセージ退避は `origin="user"` のみに一致し、子のタスクメッセージはそれを持ちません。
 
 **信頼できないツール結果はフェンスされます。** 退避の後、攻撃者が制御しうるツールの結果（`web_search`——バックエンドがどちらでも同じ 1 つのツール。改名前の名前 `tavily_search` も一覧に含みます——`message_search`、および `mcp_` ツール）は `<untrusted_tool_result source="…" id="…">` ブロックで包まれ、その勧告文が内容は指示ではなくデータだと述べます。ペイロード内の閉じタグは包む前に `</untrusted-tool-result>` へ書き換えられ、ブロックを早期に閉じられません。フェンスされるのはこのモデル表示だけで、内側が永続化した原文は変わりません。スイッチと文言は `config/features/agent_side/untrusted_output.py` にあります。
 同じパスが、漏洩しやすいツール（`terminal`、`python_repl`、信頼できないツール群、`mcp_*`）の結果中の資格情報もマスクします——順序は **evict → redact → fence**。ファイルツールは原文のまま（読み書き往復で設定を壊さないため）。スイッチは `REDACTION["tool_output_enabled"]`。

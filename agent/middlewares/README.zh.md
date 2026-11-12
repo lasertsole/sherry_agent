@@ -153,6 +153,7 @@ middleware = [
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -171,7 +172,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 更紧的迭代预算（60 而非 180）。
 - 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`PlanContinuationEnforcer`、`WorkspaceNoticeMiddleware`。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
-- 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
+- 子会话也注册 `ContextEvictionMiddleware`，配置与主链**完全相同**：超过 20 000 字符的工具结果写入子会话自己的 `SESSIONS_DIR/<session_id>/evicted/`，`read_file` 结果同样切片。人类消息驱逐只匹配 `origin="user"`，子代理的任务/续跑消息不带该标记。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - `MaxTokensBoostMiddleware` 走非流式路径：子会话通过
   `ainvoke` 运行，因此子会话 id 永远不会置上 `is_stream_turn` 标志。
@@ -483,7 +484,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/context_eviction/core.py` · **类：** `ContextEvictionMiddleware(AgentMiddleware)`
 **钩子：** `wrap_tool_call` / `awrap_tool_call`（P0-2/P2-4）与 `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`（P1-9）
 
-在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成工具结果的关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线不注册本中间件：子会话保留完整工具结果。
+在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成工具结果的关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线注册同一配置：驱逐文件落在子会话自己的 `SESSIONS_DIR/<session_id>/evicted/`，该目录免 HITL 可读回；人类消息驱逐只匹配 `origin="user"`，子代理任务消息不带该标记。
 
 **不可信工具结果会被围栏。** 驱逐之后，来自攻击者可控工具的结果（`web_search`——无论后端是谁都是同一个工具，另含它改名前的名字 `tavily_search`——`message_search`，以及任何 `mcp_` 工具）会被包进 `<untrusted_tool_result source="…" id="…">` 块，块内提示语声明这些内容是数据而非指令。载荷里的任何闭合标签都会在包装前被改写成 `</untrusted-tool-result>`，无法提前结束该块；被围栏的只有模型视图——内层已持久化的原文不受影响。开关与提示语在 `config/features/agent_side/untrusted_output.py`。
 同一趟还会掩码那些天生易泄漏的工具结果（`terminal`、`python_repl`、不可信工具集、`mcp_*`）中的凭证——顺序为 **evict → redact → fence**；文件工具保持原文，避免读回再写回时破坏配置。开关：`REDACTION["tool_output_enabled"]`。
