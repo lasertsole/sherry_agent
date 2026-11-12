@@ -161,12 +161,13 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     (`is_user_message`: `metadata.origin == "user"`; reminders, notices and
   │     every other injected carrier are never tagged) and wrap_model_call
   │     truncates only the model view. The CHILD chain registers the same
-  │     middleware in its trimmed mode (`human_eviction=False,
-  │     evict_to_file=False`): the same 20 000-char tool-result threshold and
-  │     `read_file` slice, but the preview is built IN MEMORY with no file
-  │     pointer — a subagent cannot self-approve the external read an evicted
-  │     path would require — and human messages are untouched. A main-chain
-  │     offload failure ALSO falls back to that in-memory clip (M12), so an
+  │     middleware in its trimmed mode (`human_eviction=False`): the same
+  │     20 000-char tool-result threshold and `read_file` slice, with tool
+  │     results written to the child's OWN `evicted/` directory. That tree is
+  │     part of the session's private `SESSIONS_DIR` state (readable/writable
+  │     without HITL — see the self-path policy), so the preview pointer is
+  │     recoverable there too; human messages are untouched. A failed offload
+  │     (either chain) falls back to an in-memory hard clip (M12), so an
   │     oversized payload never reaches state raw)
   │    ThinkingControl: per-session thinking control (client switch / level
   │     picker → PUT /sessions/thinking → state register); swaps request.model
@@ -3039,8 +3040,13 @@ each suite is the version-controlled reference (threshold + model id).
   (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
 writable_roots)` takes the caller's write surface, which each tool resolves from
   the SESSION's project directory (so a project bound outside the checkout is
-  writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
-  an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=auto` (the same
+  writable and the checkout itself is not); `terminal` / `python_repl` append the
+  session's OWN `SESSIONS_DIR/<session_id>` tree (`with_own_session_root`, created
+  on demand — it lets a session create/modify/delete its private files with `rm`
+  even when the project is bound elsewhere, and adds exactly one session
+  directory, never the shared root or another session); `TEMP_DIR` is appended
+  centrally, and an empty list raises. The tracked `.env` ships
+  `SANDBOX_POLICY=auto` (the same
   as the unset fallback: the packaged desktop app has no OS sandbox backend on
   macOS/Windows, where `required` would refuse every command — a server
   deployment that wants the hard guarantee sets `required` itself) — boot logs
@@ -3117,20 +3123,24 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   session root IS the checkout, so the in-root test used to call the whole
   source tree — and the credentials beside it — safe; a WHITELIST replaces that
   assumption. WRITE allows only `<project>/.sherry/`, the CURRENT session's
-  `plans|attachments|uploads`, `TEMP_DIR`, `STATIC_DIR`,
+  ENTIRE private `SESSIONS_DIR/<session_id>/` tree (`plans`/`attachments`/
+  `uploads`/`evicted`/scratch files), `TEMP_DIR`, `STATIC_DIR`,
   `SRC_DIR/{images,audio,video}` and `SRC_DIR/rag/uploads`. READ is broader by
   design — the whole source tree is readable (reading breaks nothing, leaks
   nothing) — and denies `.env` `.models` `.network` `sherry.jsonc` and their
   `.example`s, `src/data/**`, `src/checkpoints/**`, the workspace persona files
   and `workspace/{memory,knowledge}/**`, model-weight suffixes, `mcp_servers/**`,
   the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory
-  ledger and every session directory except the CURRENT session's `plans/`.
-  Enforced in `resolve_tool_path` (including its IN-ROOT success branch, and
-  `search_files`' own resolve) and in `resolve_external_path`; a path in a
-  DIFFERENT session project directory is the user's workspace and never reaches
-  it. The main agent gets one-shot HITL (`sherry_self_access`, approve/reject
-  only — no YOLO, no session allowlist), a SUBAGENT is refused with no card,
-  and outside an agent run (no runnable context to ask) the access fails CLOSED.
+  ledger and every session directory except the CURRENT session's ENTIRE
+  private tree. Enforced in `resolve_tool_path` (including its IN-ROOT success
+  branch, and `search_files`' own resolve) and in `resolve_external_path`; the
+  latter also has an explicit own-session bypass, so a session (main OR child)
+  reads/writes its own directory without HITL even when that directory sits
+  outside the project root. A path in a DIFFERENT session project directory is
+  the user's workspace and never reaches it. The main agent gets one-shot HITL
+  (`sherry_self_access`, approve/reject only — no YOLO, no session allowlist)
+  for sherry's OTHER files, a SUBAGENT is refused there with no card, and
+  outside an agent run (no runnable context to ask) the access fails CLOSED.
   Internal writers are untouched: `memory`, `skill_manage`, `exit_plan_mode`,
   the ledger, shadow-git, the checkpointer, trajectory and the knowledge index
   build paths from `config.path` constants and never call those resolvers.

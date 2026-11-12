@@ -62,7 +62,7 @@
 `SandboxBackend` 是所有后端实现的 ABC：
 
 - `probe() -> bool`：绝不抛异常；后端自己捕获探测异常并返回 `False`。
-- `wrap(cmd, env, writable_roots) -> (argv, env)`：返回包装后的 argv 与 env，以 list 形式直接 exec（不经 shell）。`writable_roots` 是该命令**唯一**的可写面（即调用会话的项目目录；共享归一化函数会追加 `TEMP_DIR`，因为沙箱自身需要可写临时目录）。该参数**必填**，空列表抛 `ValueError` —— 给它默认值会让任何忘记传参的调用点悄悄退回「整个 `ROOT_DIR` 可写」，而那正是本契约要堵死的写绕过。
+- `wrap(cmd, env, writable_roots) -> (argv, env)`：返回包装后的 argv 与 env，以 list 形式直接 exec（不经 shell）。`writable_roots` 是该命令**唯一**的可写面（即调用会话的项目目录；`terminal` / `python_repl` 还会追加该会话自己的 `SESSIONS_DIR/<session_id>` 私有目录 —— plans、attachments、uploads、`evicted/` 预览与 scratch 文件；共享归一化函数会追加 `TEMP_DIR`，因为沙箱自身需要可写临时目录）。该参数**必填**，空列表抛 `ValueError` —— 给它默认值会让任何忘记传参的调用点悄悄退回「整个 `ROOT_DIR` 可写」，而那正是本契约要堵死的写绕过。
 
 `get_backend(policy)` 的分发逻辑：
 
@@ -74,7 +74,7 @@
 
 `SafeShellTool`（名称 `terminal`）与 `TimedPythonREPLTool`（名称 `python_repl`）的 `_run`/`_arun` 仍保留内部 `sandbox: bool = True` 参数供服务端调用，但它**不在** LLM 可见的 schema 中（terminal 为 `commands`/`run_in_background`/`timeout`，python_repl 为 `query`）；模型伪造的 `sandbox=false` 会被 schema 校验丢弃。PTC 的 `ExecuteCodeTool`（名称 `execute_code`）完全没有 `sandbox` 参数——它仅归 executor，且始终请求沙箱。
 
-- **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`（语义上等价于 POSIX `shell=True`），python_repl 与 PTC 子进程同理。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。`roots` 来自**会话的项目目录**（`current_project_dir(session_id)` / PTC 子进程的 cwd）—— 与命令的 cwd 同源，因此可写面与工作目录永不打架；绑定在仓库之外的项目目录可写（此前是 EROFS），而仓库本身不可写（此前可写，那正是 terminal 绕过外部路径门禁的通道）。
+- **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`（语义上等价于 POSIX `shell=True`），python_repl 与 PTC 子进程同理。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。`roots` 来自**会话的项目目录**（`current_project_dir(session_id)` / PTC 子进程的 cwd）—— 与命令的 cwd 同源，因此可写面与工作目录永不打架；绑定在仓库之外的项目目录可写（此前是 EROFS），而仓库本身不可写（此前可写，那正是 terminal 绕过外部路径门禁的通道）。`terminal` 与 `python_repl` 还会追加该会话自己的 `SESSIONS_DIR/<session_id>` 私有目录（`with_own_session_root`，按需创建）：它是文件工具本就可免 HITL 读写的私有运行态，使会话即使绑定了别的项目目录，也能创建、修改、删除（`rm`）自己的文件。只追加这**一个**会话目录 —— 共享的 sessions 根目录与其他会话仍只读。PTC 保持其 cwd。
 - **裸跑会被记录**：证据账本里的命令行携带 `sandboxed: false`，而沙箱绕过审批卡片会标注 `⚠ UNSANDBOXED` 并说明含义 —— 人工审批时看得到，事后审计也查得到。
 - **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。
 - **所有路径都无条件执行**：`env=scrub_env()` 与 `cwd=str(ROOT_DIR)`（cwd 钳制）。两个工具都强制 30 秒超时（`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`），超时即杀死子进程；PTC 强制执行自己的 `ptc_timeout_seconds` 并对子进程组发 SIGKILL。

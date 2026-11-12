@@ -54,7 +54,7 @@ from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
 
-from config.path import TEMP_DIR
+from config.path import SESSIONS_DIR, TEMP_DIR, is_safe_session_segment
 
 __all__ = [
     "SandboxPolicy",
@@ -63,6 +63,7 @@ __all__ = [
     "read_policy",
     "register_sandbox_backend",
     "get_backend",
+    "with_own_session_root",
 ]
 
 #: Default read-deny paths, masked by both OS backends: well-known credential
@@ -165,9 +166,10 @@ class SandboxBackend(ABC):
         """Wrap a command argv + environment for sandboxed execution.
 
         ``writable_roots`` is the only write surface the wrapped command gets:
-        the calling session's project directory (plus the process temp dir,
-        which backends append themselves because the sandbox needs a writable
-        ``/tmp``). The parameter is REQUIRED — a default would silently restore
+        the calling session's project directory and (for terminal / python_repl)
+        its own private ``SESSIONS_DIR`` tree, plus the process temp dir, which
+        backends append themselves because the sandbox needs a writable
+        ``/tmp``. The parameter is REQUIRED — a default would silently restore
         the old "whole ROOT_DIR is writable" behaviour at any call site that
         forgot to pass it, which is exactly the write bypass this contract
         exists to close. An empty list is a caller bug and raises ``ValueError``
@@ -181,6 +183,36 @@ class SandboxBackend(ABC):
         (list form, no shell).
         """
         ...
+
+
+def with_own_session_root(writable_roots: Sequence[Path], session_id: str) -> list[Path]:
+    """Append this session's private ``SESSIONS_DIR`` tree to the write surface.
+
+    The own session directory holds only the session's private runtime state
+    (plans, attachments, uploads, ``evicted/`` previews, scratch files), which
+    the file tools may already read/write without HITL. Sandboxed ``terminal`` /
+    ``python_repl`` need the same surface so a session can create, modify and
+    delete (``rm``) its own files even when its project directory is bound
+    elsewhere — without it the sandbox pinned writes to the project root and the
+    own tree was read-only.
+
+    Cross-session isolation is preserved: only ``SESSIONS_DIR/<this session>``
+    is added, never the shared sessions root. The directory is created on
+    demand (bwrap needs a bind source) and unsafe session ids add nothing.
+    """
+    roots = list(writable_roots)
+    if not session_id or not is_safe_session_segment(session_id):
+        return roots
+    own = Path(SESSIONS_DIR) / session_id
+    try:
+        own.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # A read-only home keeps the historical surface (the command's own
+        # access then fails exactly as it did before).
+        return roots
+    if own.resolve() not in {root.resolve() for root in roots}:
+        roots.append(own)
+    return roots
 
 
 def normalize_writable_roots(writable_roots: Sequence[Path]) -> list[Path]:

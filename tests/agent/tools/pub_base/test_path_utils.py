@@ -463,6 +463,47 @@ class TestSessionProjectDirIsNeverExternal:
         assert f"Project root: {project}" in description
 
 
+class TestOwnSessionDirIsNeverExternal:
+    """The session's own SESSIONS_DIR tree is private state, not an external path."""
+
+    @staticmethod
+    def _bind_sessions(monkeypatch, tmp_path) -> Path:
+        import config.path as paths
+
+        sessions = tmp_path.resolve() / "sessions"
+        monkeypatch.setattr(paths, "SESSIONS_DIR", sessions)
+        return sessions
+
+    def test_the_current_sessions_private_tree_never_prompts(
+        self, tmp_path, clean_state, mock_interrupt, monkeypatch
+    ):
+        sessions = self._bind_sessions(monkeypatch, tmp_path)
+        target = sessions / "agent:main:session:s1:sub:1" / "evicted" / "e.txt"
+        target.parent.mkdir(parents=True)
+        target.write_text("x", encoding="utf-8")
+
+        resolved = resolve_external_path(
+            str(target), session_id="agent:main:session:s1:sub:1", action_desc="read file"
+        )
+
+        assert resolved == target.resolve()
+        assert mock_interrupt.calls == []
+
+    def test_another_sessions_tree_still_reaches_the_gate(
+        self, tmp_path, clean_state, mock_interrupt, monkeypatch
+    ):
+        sessions = self._bind_sessions(monkeypatch, tmp_path)
+        target = sessions / "s2" / "evicted" / "e.txt"
+        target.parent.mkdir(parents=True)
+        target.write_text("x", encoding="utf-8")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        resolved = resolve_external_path(str(target), session_id="s1", action_desc="read file")
+
+        assert resolved == target.resolve()
+        assert len(mock_interrupt.calls) == 1
+
+
 # ── C. YOLO mechanism ───────────────────────────────────────────────────
 
 

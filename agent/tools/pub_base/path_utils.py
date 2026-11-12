@@ -730,6 +730,9 @@ def resolve_external_path(
        return directly (safe path: the operator pointed the agent at that
        directory, so neither it nor anything beneath it is "external")
     2. YOLO deny list → deny (security floor: checked before YOLO and allowlist)
+    2b. Inside THIS session's own ``SESSIONS_DIR/<session_id>`` tree → return
+        (main AND child: the private session state the file tools already
+        allow; another session's directory is NOT covered)
     3. YOLO flag (state_register_db) → return
     4. Session allowlist (exact or directory-prefix match) → return
     5. Subagent without prior auth → deny (cannot self-approve)
@@ -768,6 +771,15 @@ def resolve_external_path(
         raise PathOutOfBoundsError(
             f"Path is in the YOLO deny list and cannot be accessed: {resolved}"
         )
+
+    # 2b. The CURRENT session's private directory (SESSIONS_DIR/<sid>) is the
+    # agent's own working state, not an external path. Both the main agent and
+    # its subagents may read/write it without HITL; cross-session paths are NOT
+    # covered and still fall through to the checks below.
+    from agent.tools.pub_base.self_path_policy import is_own_session_path
+
+    if is_own_session_path(resolved, session_id):
+        return resolved
 
     # 3. YOLO — persistent global allow-all
     if _is_yolo():

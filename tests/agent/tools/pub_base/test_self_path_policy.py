@@ -8,7 +8,8 @@ beside it) safe — ``patch_file`` could rewrite ``agent/core.py`` and
 Covered here:
 
 * the policy itself (write whitelist vs the broader read whitelist) — the
-  acceptance matrix, including the session-scoped plans / evicted boundary;
+  acceptance matrix, including the CURRENT session's whole private tree vs
+  every other session;
 * the file-tool gate (``resolve_tool_path``): in-root is no longer the end of
   the story, so a write to the source tree raises (or asks the operator);
 * the shell screen: ``cat .models`` and ``echo x > agent/core.py`` are stopped,
@@ -117,6 +118,10 @@ class TestWriteWhitelist:
     def test_the_current_sessions_products_are_writable_but_others_are_not(self, repo: Path):
         assert _decide(repo, "workspace/sessions/s1/plans/p.md", "write", "s1") == "allow"
         assert _decide(repo, "workspace/sessions/s1/uploads/u.bin", "write", "s1") == "allow"
+        # The whole private tree is writable now: evicted previews and scratch
+        # files are the agent's own session state.
+        assert _decide(repo, "workspace/sessions/s1/evicted/e.txt", "write", "s1") == "allow"
+        assert _decide(repo, "workspace/sessions/s1/scratch.txt", "write", "s1") == "allow"
         assert _decide(repo, "workspace/sessions/s2/x.txt", "write", "s1") == "deny"
 
     def test_without_a_session_only_the_global_areas_are_writable(self, repo: Path):
@@ -153,8 +158,10 @@ class TestReadWhitelist:
 
     def test_the_current_sessions_plans_are_readable_but_history_is_not(self, repo: Path):
         assert _decide(repo, "workspace/sessions/s1/plans/p.md", "read", "s1") == "allow"
-        # evicted/ holds discarded transcript: writable nowhere, readable never.
-        assert _decide(repo, "workspace/sessions/s1/evicted/e.txt", "read", "s1") == "deny"
+        # The whole private tree is readable: evicted previews are recoverable
+        # by the session that owns them (the read_file hint in a preview works).
+        assert _decide(repo, "workspace/sessions/s1/evicted/e.txt", "read", "s1") == "allow"
+        assert _decide(repo, "workspace/sessions/s1/scratch.txt", "read", "s1") == "allow"
         assert _decide(repo, "workspace/sessions/s2/plans/p.md", "read", "s1") == "deny"
 
     def test_model_weights_are_denied_without_the_source_dir(self, repo: Path):

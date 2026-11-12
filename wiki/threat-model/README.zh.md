@@ -103,10 +103,10 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 | 模式 | 判定规则 | sherry 自身树内允许的路径 |
 |---|---|---|
-| **写** | "改了不破坏运行时、不影响其它会话、不泄露凭证" | `<project>/.sherry/`（索引、attachments）、`APP_HOME/checkpoints/store`、**当前会话**的 `plans/` `attachments/` `uploads/`、`TEMP_DIR`、`STATIC_DIR`、`SRC_DIR/{images,audio,video}`、`SRC_DIR/rag/uploads` |
-| **读** | "读了不泄露凭证、私人记忆或其它会话的记录" | 整棵**源码树**（读源码既不破坏运行也不泄露）加上写白名单；拒绝：`.env` `.models` `.network` `sherry.jsonc` 及其 `.example`、`src/data/**`、`src/checkpoints/**`、`workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`、`workspace/memory/**`、`workspace/knowledge/**`、模型权重文件、`mcp_servers/**`、可写技能树、`CODE_INTEL_DIR`、`LOG_DIR`、共享 trajectory 账本，以及除**当前会话** `plans/` 之外的每个会话目录 |
+| **写** | "改了不破坏运行时、不影响其它会话、不泄露凭证" | `<project>/.sherry/`（索引、attachments）、`APP_HOME/checkpoints/store`、**当前会话**的整棵 `SESSIONS_DIR/<session_id>/` 私有目录（`plans/` `attachments/` `uploads/` `evicted/` 与 scratch 文件）、`TEMP_DIR`、`STATIC_DIR`、`SRC_DIR/{images,audio,video}`、`SRC_DIR/rag/uploads` |
+| **读** | "读了不泄露凭证、私人记忆或其它会话的记录" | 整棵**源码树**（读源码既不破坏运行也不泄露）加上写白名单；拒绝：`.env` `.models` `.network` `sherry.jsonc` 及其 `.example`、`src/data/**`、`src/checkpoints/**`、`workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`、`workspace/memory/**`、`workspace/knowledge/**`、模型权重文件、`mcp_servers/**`、可写技能树、`CODE_INTEL_DIR`、`LOG_DIR`、共享 trajectory 账本，以及除**当前会话**整棵私有目录之外的每个会话目录 |
 
-两者都挂在文件工具的解析路径上——而且包括 **in-root 成功分支**，不只是外部路径分支，因为默认 checkout 恰恰是从那里静默通过的（`agent/tools/pub_base/path_utils.py` 的 `resolve_tool_path`，外加自行解析的 `search_files`）。落在**其它**会话项目目录内的路径属于用户工作区，不经过本策略。
+两者都挂在文件工具的解析路径上——而且包括 **in-root 成功分支**，不只是外部路径分支，因为默认 checkout 恰恰是从那里静默通过的（`agent/tools/pub_base/path_utils.py` 的 `resolve_tool_path`，外加自行解析的 `search_files`）。落在**其它**会话项目目录内的路径属于用户工作区，不经过本策略。**当前会话自己的 `SESSIONS_DIR/<session_id>` 目录对两条链都豁免**：`resolve_external_path` 第 2b 步直接返回，根内策略也放行，因此主 agent 与子 agent 都能免 HITL 读取、写入、修改、删除自己的私有文件——即使该目录位于项目根之外。跨会话隔离不变：其它会话的目录仍会（主 agent）弹审批或（子 agent）被拒绝。
 
 **谁来批准。** main agent 得到的是**一次性**审批（`sherry_self_access`，只有 `approve` / `reject`——没有 YOLO，也没有会话 allowlist：sherry 自身文件永不永久解锁）。**子代理**直接被拒、不弹卡片：子代理读父会话配置或其它会话状态就是跨会话泄露，且那条链上没有操作者。在 agent 运行之外（脚本直接调工具）没有人可问，因此**失败关闭**。
 

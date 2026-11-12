@@ -364,15 +364,16 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     # Registered directly after ToolGuardrails, i.e. OUTER relative to PathGuard
     # / HITL / MessagePersistenceMiddleware in the wrap chain. The child chain
     # uses the SAME class in its trimmed mode: the 20k tool-result net and the
-    # read_file slice, but no human-message eviction and no evicted-file pointer
-    # (a subagent cannot self-approve the external read it would require).
+    # read_file slice, with human-message eviction off. The child's own
+    # SESSIONS_DIR tree is readable (the self-path policy allows it), so the
+    # evicted-file preview pointer is recoverable there too.
     MiddlewareSpec(
         name="ContextEvictionMiddleware",
         cls=ContextEvictionMiddleware,
         main=ProfileBinding(12, lambda _ctx: ContextEvictionMiddleware()),
         child=ProfileBinding(
             6,
-            lambda _ctx: ContextEvictionMiddleware(human_eviction=False, evict_to_file=False),
+            lambda _ctx: ContextEvictionMiddleware(human_eviction=False),
         ),
         required_in=_BOTH,
     ),

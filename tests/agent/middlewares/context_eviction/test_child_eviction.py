@@ -69,7 +69,7 @@ def big_output() -> str:
     return "line\n" * 10_000
 
 
-def test_child_mode_hard_clips_without_a_file_pointer(monkeypatch, tmp_path):
+def test_disk_free_mode_hard_clips_without_a_file_pointer(monkeypatch, tmp_path):
     monkeypatch.setattr("pub.func.message.eviction.SESSIONS_DIR", tmp_path)
     middleware = ContextEvictionMiddleware(human_eviction=False, evict_to_file=False)
 
@@ -80,6 +80,21 @@ def test_child_mode_hard_clips_without_a_file_pointer(monkeypatch, tmp_path):
     assert "re-run with a narrower range" in result.content
     assert len(result.content) < len(_huge_message().content)
     assert not (tmp_path / "child-1" / "evicted").exists()
+
+
+def test_child_mode_evicts_to_its_own_session_directory(monkeypatch, tmp_path):
+    from pub.func.message.eviction import load_evicted
+
+    monkeypatch.setattr("pub.func.message.eviction.SESSIONS_DIR", tmp_path)
+    middleware = ContextEvictionMiddleware(human_eviction=False)
+
+    original = _huge_message()
+    result = middleware._maybe_evict(original, "child-1")
+
+    assert result.content.startswith("[evicted to: ")
+    path = result.content.split("[evicted to: ", 1)[1].split("]", 1)[0]
+    assert load_evicted(path) == original.content
+    assert (tmp_path / "child-1" / "evicted").is_dir()
 
 
 def test_main_offload_failure_hard_clips_instead_of_returning_raw(monkeypatch):
@@ -140,7 +155,7 @@ async def test_a_real_child_graph_clips_the_tool_message(monkeypatch, tmp_path):
         state_schema=_HarnessState,
         checkpointer=MemorySaver(),
         tools=[big_output],
-        middleware=[ContextEvictionMiddleware(human_eviction=False, evict_to_file=False)],
+        middleware=[ContextEvictionMiddleware(human_eviction=False)],
     )
 
     out = await graph.ainvoke(
@@ -152,7 +167,7 @@ async def test_a_real_child_graph_clips_the_tool_message(monkeypatch, tmp_path):
     assert len(tool_messages) == 1
     content = tool_messages[0].content
     assert isinstance(content, str)
-    assert content.startswith(CLIPPED_PREFIX)
-    assert "evicted to:" not in content
+    assert content.startswith("[evicted to: ")
+    assert CLIPPED_PREFIX not in content
     assert len(content) < 100_000
-    assert not (tmp_path / "child-e2e" / "evicted").exists()
+    assert (tmp_path / "child-e2e" / "evicted").is_dir()

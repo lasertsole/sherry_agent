@@ -72,7 +72,12 @@ from agent.tools.pub_base.stdout_fd import (
     read_or_evict_output,
 )
 from agent.security.terminal_output import strip_control_sequences
-from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.sandbox import (
+    SandboxPolicy,
+    get_backend,
+    read_policy,
+    with_own_session_root,
+)
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 from agent.tools.pub_base.evidence_recorder import record_verification_evidence
@@ -423,7 +428,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         ``terminal`` a way around the external-path gate).
         """
         cwd = self._resolve_cwd(session_id)
-        return [Path(cwd)] if cwd else []
+        roots = [Path(cwd)] if cwd else []
+        return with_own_session_root(roots, session_id)
 
     def _resolve_sandbox_argv(
         self,

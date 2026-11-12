@@ -62,7 +62,7 @@
 `SandboxBackend`는 모든 백엔드가 구현하는 ABC입니다:
 
 - `probe() -> bool`: 절대 예외를 던지지 않아야 합니다. 백엔드가 자체 프로브 예외를 잡고 `False`를 반환합니다.
-- `wrap(cmd, env, writable_roots) -> (argv, env)`: 감싸진 argv와 env를 반환하며, list 형태로 직접 exec됩니다(셸 없음). `writable_roots`는 그 명령이 얻는 **유일한** 쓰기 면입니다(호출 세션의 프로젝트 디렉터리이며, 공용 정규화 함수가 `TEMP_DIR`를 덧붙입니다 — 샌드박스 자체가 쓸 수 있는 임시 공간을 필요로 하기 때문입니다). 이 인자는 **필수**이며 빈 리스트는 `ValueError`를 던집니다. 기본값을 주면 인자를 빠뜨린 호출 지점이 '`ROOT_DIR` 전체가 쓰기 가능'이라는 옛 동작으로 조용히 되돌아가는데, 그것이 바로 이 계약이 막는 쓰기 우회입니다.
+- `wrap(cmd, env, writable_roots) -> (argv, env)`: 감싸진 argv와 env를 반환하며, list 형태로 직접 exec됩니다(셸 없음). `writable_roots`는 그 명령이 얻는 **유일한** 쓰기 면입니다(호출 세션의 프로젝트 디렉터리와, `terminal` / `python_repl`의 경우 그 세션 자신의 `SESSIONS_DIR/<session_id>` 트리 — plans, attachments, uploads, `evicted/` 미리보기, scratch 파일 — 이며, 공용 정규화 함수가 `TEMP_DIR`를 덧붙입니다 — 샌드박스 자체가 쓸 수 있는 임시 공간을 필요로 하기 때문입니다). 이 인자는 **필수**이며 빈 리스트는 `ValueError`를 던집니다. 기본값을 주면 인자를 빠뜨린 호출 지점이 '`ROOT_DIR` 전체가 쓰기 가능'이라는 옛 동작으로 조용히 되돌아가는데, 그것이 바로 이 계약이 막는 쓰기 우회입니다.
 
 `get_backend(policy)`의 디스패치:
 
@@ -74,7 +74,7 @@
 
 `SafeShellTool`(이름 `terminal`)과 `TimedPythonREPLTool`(이름 `python_repl`)의 `_run`/`_arun`에는 서버 측 호출자를 위한 내부 `sandbox: bool = True` 파라미터가 남아 있지만 LLM이 보는 스키마에는 **없습니다**(terminal은 `commands`/`run_in_background`/`timeout`, python_repl은 `query`). 모델이 위조한 `sandbox=false`는 스키마 검증에서 버려집니다. PTC의 `ExecuteCodeTool`(이름 `execute_code`)에는 `sandbox` 파라미터가 전혀 없습니다 — executor 전용이며 항상 샌드박스를 요청합니다.
 
-- **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True`와 의미적으로 동일), python_repl과 PTC 자식도 같습니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다. `roots`는 **세션의 프로젝트 디렉터리**(`current_project_dir(session_id)` / PTC 자식의 cwd)이며 명령의 cwd와 같은 출처입니다 — 그래서 쓰기 면과 작업 디렉터리가 어긋날 수 없습니다. 저장소 밖에 바인딩한 프로젝트 디렉터리는 쓰기 가능해지고(예전에는 EROFS), 저장소 자체는 쓰기 불가가 됩니다(예전에는 가능했고, 그것이 terminal로 외부 경로 게이트를 우회하는 길이었습니다).
+- **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True`와 의미적으로 동일), python_repl과 PTC 자식도 같습니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다. `roots`는 **세션의 프로젝트 디렉터리**(`current_project_dir(session_id)` / PTC 자식의 cwd)이며 명령의 cwd와 같은 출처입니다 — 그래서 쓰기 면과 작업 디렉터리가 어긋날 수 없습니다. 저장소 밖에 바인딩한 프로젝트 디렉터리는 쓰기 가능해지고(예전에는 EROFS), 저장소 자체는 쓰기 불가가 됩니다(예전에는 가능했고, 그것이 terminal로 외부 경로 게이트를 우회하는 길이었습니다). `terminal`과 `python_repl`은 여기에 그 세션 자신의 `SESSIONS_DIR/<session_id>` 트리(`with_own_session_root`, 필요 시 생성)를 더합니다 — 파일 도구가 HITL 없이 읽고 쓰는 사적 실행 상태이며, 프로젝트가 다른 곳에 바인딩되어 있어도 자기 파일을 만들고 고치고 지울(`rm`) 수 있게 합니다. 추가되는 것은 **그 하나의** 세션 디렉터리뿐이며, 공용 sessions 루트와 다른 세션은 읽기 전용으로 남습니다. PTC는 자신의 cwd를 유지합니다.
 - **베어 실행은 기록됩니다**: 증거 원장 행이 `sandboxed: false`를 담고, 샌드박스 우회 승인 카드가 `⚠ UNSANDBOXED`와 그 의미를 표시합니다 — 승인하는 사람이 읽고, 나중에 원장을 감사해도 찾을 수 있습니다.
 - **폴백 경로(Windows / 백엔드 없음)**: terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**.
 - **모든 경로에서 무조건**: `env=scrub_env()`와 `cwd=str(ROOT_DIR)`(cwd 고정). 두 도구 모두 30초 타임아웃(`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`)을 강제하고 만료 시 자식을 죽입니다. PTC는 자체 `ptc_timeout_seconds`를 강제하고 자식의 프로세스 그룹에 SIGKILL합니다.

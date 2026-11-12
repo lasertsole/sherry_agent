@@ -62,7 +62,7 @@
 `SandboxBackend` はすべてのバックエンドが実装する ABC です:
 
 - `probe() -> bool`: 決して例外を送出してはいけません。バックエンドが自身のプローブ例外を捕捉して `False` を返します。
-- `wrap(cmd, env, writable_roots) -> (argv, env)`: 包まれた argv と env を返し、list 形式で直接 exec されます(シェルなし)。`writable_roots` はそのコマンドが得る**唯一**の書き込み面です（呼び出し元セッションのプロジェクトディレクトリ。共有の正規化関数が `TEMP_DIR` を追加します — サンドボックス自身が書き込み可能な一時領域を必要とするため）。この引数は**必須**で、空リストは `ValueError` を送出します。デフォルト値を与えると、渡し忘れた呼び出し点が「`ROOT_DIR` 全体が書き込み可能」という旧挙動へ静かに戻ってしまい、それこそがこの契約が塞ぐ書き込みバイパスです。
+- `wrap(cmd, env, writable_roots) -> (argv, env)`: 包まれた argv と env を返し、list 形式で直接 exec されます(シェルなし)。`writable_roots` はそのコマンドが得る**唯一**の書き込み面です（呼び出し元セッションのプロジェクトディレクトリに加え、`terminal` / `python_repl` はそのセッション自身の `SESSIONS_DIR/<session_id>` ツリー — plans、attachments、uploads、`evicted/` プレビュー、scratch ファイル — を追加します。共有の正規化関数が `TEMP_DIR` を追加します — サンドボックス自身が書き込み可能な一時領域を必要とするため）。この引数は**必須**で、空リストは `ValueError` を送出します。デフォルト値を与えると、渡し忘れた呼び出し点が「`ROOT_DIR` 全体が書き込み可能」という旧挙動へ静かに戻ってしまい、それこそがこの契約が塞ぐ書き込みバイパスです。
 
 `get_backend(policy)` のディスパッチ:
 
@@ -74,7 +74,7 @@
 
 `SafeShellTool`(名前 `terminal`)と `TimedPythonREPLTool`(名前 `python_repl`)の `_run`/`_arun` にはサーバー側呼び出し元向けの内部 `sandbox: bool = True` パラメータが残りますが、LLM から見えるスキーマには**ありません**(terminal は `commands`/`run_in_background`/`timeout`、python_repl は `query`)。モデルが偽装した `sandbox=false` はスキーマ検証で破棄されます。PTC の `ExecuteCodeTool`(名前 `execute_code`)には `sandbox` パラメータが一切ありません — executor 専用で、常にサンドボックスを要求します。
 
-- **サンドボックス経路**: terminal は `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True` と意味的に同一)、python_repl と PTC の子も同様です。包まれた argv は list として exec され、シェル kwargs は一切ありません。`roots` は**セッションのプロジェクトディレクトリ**(`current_project_dir(session_id)` / PTC 子の cwd)で、コマンドの cwd と同じ出所です — だから書き込み面と作業ディレクトリが食い違うことはありません。リポジトリ外に束ねたプロジェクトディレクトリは書き込み可能になり(以前は EROFS)、リポジトリ自体は書き込み不可になります(以前は可能で、それが terminal で外部パスゲートを迂回する経路でした)。
+- **サンドボックス経路**: terminal は `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True` と意味的に同一)、python_repl と PTC の子も同様です。包まれた argv は list として exec され、シェル kwargs は一切ありません。`roots` は**セッションのプロジェクトディレクトリ**(`current_project_dir(session_id)` / PTC 子の cwd)で、コマンドの cwd と同じ出所です — だから書き込み面と作業ディレクトリが食い違うことはありません。リポジトリ外に束ねたプロジェクトディレクトリは書き込み可能になり(以前は EROFS)、リポジトリ自体は書き込み不可になります(以前は可能で、それが terminal で外部パスゲートを迂回する経路でした)。`terminal` と `python_repl` はさらにそのセッション自身の `SESSIONS_DIR/<session_id>` ツリー(`with_own_session_root`、必要時に作成)を追加します — ファイルツールが HITL なしで読み書きできる私有の実行状態であり、プロジェクトが別の場所に束ねられていても自分のファイルの作成・変更・削除(`rm`)ができます。追加されるのは**その 1 つ**のセッションディレクトリだけで、共有 sessions ルートと他のセッションは読み取り専用のままです。PTC は自身の cwd を保ちます。
 - **裸実行は記録される**: 証拠台帳の行は `sandboxed: false` を運び、サンドボックス迂回の承認カードは `⚠ UNSANDBOXED` とその意味を明示します — 承認する人に見え、後から台帳を監査しても見つかります。
 - **フォールバック経路(Windows / バックエンドなし)**: terminal はコマンドを `" && "` で連結して `shell=True` で起動し、python_repl は `[sys.executable, "-c", script]` を list として起動します。Windows には OS サンドボックスバックエンドが**ありません**。
 - **すべての経路で無条件**: `env=scrub_env()` と `cwd=str(ROOT_DIR)`(cwd 固定)。両ツールとも30秒のタイムアウト(`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`)を強制し、期限切れで子を kill します。PTC は自前の `ptc_timeout_seconds` を強制し、子のプロセスグループへ SIGKILL します。

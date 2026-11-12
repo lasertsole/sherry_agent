@@ -46,7 +46,12 @@ from agent.tools.pub_base.shadow_git import ensure_checkpoint
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import kill_process_tree
 from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
-from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.sandbox import (
+    SandboxPolicy,
+    get_backend,
+    read_policy,
+    with_own_session_root,
+)
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 from agent.tools.pub_base.safe_exec import validate_restricted_code
@@ -309,13 +314,14 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
             reason=f"before_write:python_repl:{query[:120]}",
         )
         session_cwd = _resolve_session_cwd(run_manager, session_id)
+        bound_session = resolve_tool_session_id(session_id, run_manager)
         result, ran_sandboxed = _run_with_timeout(
             query,
             PYTHON_REPL_TIMEOUT,
             sandbox,
             session_cwd,
-            [Path(session_cwd)] if session_cwd else None,
-            session_id=resolve_tool_session_id(session_id, run_manager),
+            (with_own_session_root([Path(session_cwd)], bound_session) if session_cwd else None),
+            session_id=bound_session,
         )
         record_verification_evidence(
             query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
@@ -344,6 +350,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
             reason=f"before_write:python_repl:{query[:120]}",
         )
         session_cwd = _resolve_session_cwd(run_manager, session_id)
+        bound_session = resolve_tool_session_id(session_id, run_manager)
         proc_out: list[subprocess.Popen[bytes]] = []
         try:
             result, ran_sandboxed = await asyncio.to_thread(
@@ -352,7 +359,11 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
                 PYTHON_REPL_TIMEOUT,
                 sandbox,
                 session_cwd,
-                [Path(session_cwd)] if session_cwd else None,
+                (
+                    with_own_session_root([Path(session_cwd)], bound_session)
+                    if session_cwd
+                    else None
+                ),
                 proc_out=proc_out,
             )
         except asyncio.CancelledError:

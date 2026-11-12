@@ -31,7 +31,7 @@
 `ContextEvictionMiddleware.wrap_tool_call`은 도구 응답을 **그래프 state에 들어가기 전에** 가로챈다(`agent/middlewares/context_eviction/core.py`; 원시 함수는 `pub/func/message/eviction.py`):
 
 - 추출 텍스트가 **`evict_threshold_chars`(20 000자)를 초과하는** 일반 결과는 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`에 기록되고, 메시지 내용은 파일 경로를 담은 head/tail 프리뷰로 대체된다.
-- **자식 모드는 메모리에서 하드 클립한다.** 서브에이전트는 같은 미들웨어를 `evict_to_file=False`(인간 메시지 축출도 끔)로 등록한다: 같은 임계값을 넘으면 텍스트가 `[output truncated: …]` head/tail 프리뷰가 되며 파일 포인터는 **없다**. 서브에이전트는 외부 읽기를 스스로 승인할 수 없어 evicted 경로를 복구할 수 없기 때문이다. 메인 체인의 축출 실패도 이 하드 클립으로 폴백하므로, 거대한 페이로드가 원문 그대로 state에 들어가는 일은 없다.
+- **자식 모드도 파일로 축출한다.** 서브에이전트는 같은 미들웨어를 `human_eviction=False`로 등록한다: 같은 임계값을 넘으면 결과가 **자식 자신의** `evicted/` 디렉터리에 기록되고 보통의 head/tail 프리뷰로 대체된다. 이 디렉터리는 세션 전용 `SESSIONS_DIR` 트리 안이라 읽기/쓰기에 HITL이 필요 없으므로 포인터를 복구할 수 있다. 어느 체인이든 축출이 실패하면 메모리 내 `[output truncated: …]` 하드 클립으로 폴백한다.
 - `excluded_tools`(8개 이름 — `read_file`, `write_file`, `patch_file`, `search_files`, `list_files`, `memory`, `skill_view`, `skill_list`)는 그대로 통과한다: 페이로드가 이미 백엔드 파일시스템에 있거나 회수 비용이 낮다. `read_file`은 추가로 아래의 슬라이스 경로를 탄다.
 - 대체는 `ToolMessage.model_copy`로 만들어지므로 메시지 `id`, `tool_call_id`, `name`, `status`, `additional_kwargs`가 모두 살아남는다 — 페어링, 새니타이저, 워터마크가 계속 같은 논리 메시지에 매칭된다.
 - 멀티모달 비텍스트 블록(이미지/오디오/비디오)은 원문 그대로 유지되고 텍스트 블록만 교체된다.

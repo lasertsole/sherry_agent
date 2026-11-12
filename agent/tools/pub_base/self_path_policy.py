@@ -10,13 +10,14 @@ The policy is a WHITELIST, and there are TWO of them because the criteria differ
 
 * **write** — "would changing it break the runtime, another session, or leak a
   credential". Only deliberately harmless directories qualify: the project's
-  ``.sherry/`` (index + shadow-git + attachments), the CURRENT session's
-  ``plans/`` / ``attachments/`` / ``uploads/``, ``TEMP_DIR``, ``STATIC_DIR`` and
-  the uploaded-media areas.
+  ``.sherry/`` (index + shadow-git + attachments), the CURRENT session's ENTIRE
+  private tree (``plans/`` / ``attachments/`` / ``uploads/`` / ``evicted/`` and
+  scratch files), ``TEMP_DIR``, ``STATIC_DIR`` and the uploaded-media areas.
 * **read** — "would reading it leak a credential, private memory, or another
   session's transcript". Broader than write on purpose: the SOURCE TREE is
   readable (reading source neither breaks the runtime nor leaks a secret, and an
-  agent debugging itself legitimately reads it) while it is not writable.
+  agent debugging itself legitimately reads it) while it is not writable. The
+  CURRENT session's whole private tree is readable too.
 
 A path counts as "sherry's own" when it resolves inside ``ROOT_DIR`` or
 ``APP_HOME``. Anything inside a DIFFERENT session project directory is the
@@ -43,8 +44,10 @@ import config.path as paths
 __all__ = [
     "SelfPathDecision",
     "classify_self_path",
+    "is_own_session_path",
     "is_self_path",
     "is_sensitive_root_file",
+    "own_session_dir",
     "read_denied_reason",
     "write_denied_reason",
 ]
@@ -119,6 +122,31 @@ def is_self_path(resolved: Path) -> bool:
     return any(_under(target, root) for root in _self_roots())
 
 
+def own_session_dir(session_id: str) -> Path | None:
+    """This session's private ``SESSIONS_DIR/<session_id>`` tree, or ``None``.
+
+    The single accessor for every own-session exemption (file-tool policy,
+    external-path bypass, sandbox write surface). An empty or path-traversal
+    session id answers ``None`` so callers fail closed.
+    """
+    session = (session_id or "").strip()
+    if not session or not paths.is_safe_session_segment(session):
+        return None
+    return paths.SESSIONS_DIR / session
+
+
+def is_own_session_path(resolved: Path, session_id: str) -> bool:
+    """Whether *resolved* is inside THIS session's private ``SESSIONS_DIR`` tree.
+
+    The owning session (main or child) may read/write every file under its own
+    directory without HITL: plans, attachments, uploads, ``evicted/`` and the
+    rest are the agent's private working state. A path under another session's
+    directory is NOT covered — cross-session isolation stays intact.
+    """
+    directory = own_session_dir(session_id)
+    return directory is not None and _under(_resolved(resolved), _resolved(directory))
+
+
 def _write_allow_roots(session_id: str) -> tuple[Path, ...]:
     """Directories the general file tools may write to inside sherry's trees."""
     session = (session_id or "").strip()
@@ -134,8 +162,9 @@ def _write_allow_roots(session_id: str) -> tuple[Path, ...]:
         paths.SRC_DIR / "rag" / "uploads",
     ]
     if session and paths.is_safe_session_segment(session):
-        session_dir = paths.SESSIONS_DIR / session
-        roots.extend((session_dir / "plans", session_dir / "attachments", session_dir / "uploads"))
+        # The whole private session tree, not just plans/attachments/uploads:
+        # the agent may also rewrite its own evicted previews and scratch files.
+        roots.append(paths.SESSIONS_DIR / session)
     return tuple(_resolved(root) for root in roots)
 
 
@@ -189,16 +218,12 @@ def _read_allowed_except_denied(path: Path, session_id: str) -> bool:
     if target.suffix.lower() in _WEIGHT_SUFFIXES:
         return True
 
-    # Sessions: only the CURRENT session's plans are readable. Every other
+    # Sessions: the CURRENT session's whole private tree is readable (plans,
+    # attachments, uploads, evicted previews, scratch files). Every other
     # session (and the shared trajectory ledger) is another conversation.
     sessions = _resolved(paths.SESSIONS_DIR)
     if _under(target, sessions):
-        session = (session_id or "").strip()
-        if not session or not paths.is_safe_session_segment(session):
-            return True
-        plans = sessions / session / "plans"
-        if not _under(target, plans):
-            return True
+        return not is_own_session_path(target, session_id)
 
     return False
 
@@ -229,8 +254,8 @@ def write_denied_reason(resolved: Path, session_id: str = "") -> str | None:
         return None
     return (
         f"{resolved} is sherry's own source, configuration or runtime state — "
-        "the general file tools may only write .sherry/, this session's plans / "
-        "attachments / uploads, temp, static and the upload areas"
+        "the general file tools may only write .sherry/, this session's private "
+        "directory, temp, static and the upload areas"
     )
 
 

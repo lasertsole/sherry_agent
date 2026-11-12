@@ -103,10 +103,10 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 
 | モード | 規則 | sherry 自身のツリー内で許可されるパス |
 |---|---|---|
-| **書き込み** | 「変更しても実行時・他セッションを壊さず、資格情報も漏らさない」 | `<project>/.sherry/`（インデックス、attachments）、`APP_HOME/checkpoints/store`、**現在のセッション**の `plans/` `attachments/` `uploads/`、`TEMP_DIR`、`STATIC_DIR`、`SRC_DIR/{images,audio,video}`、`SRC_DIR/rag/uploads` |
-| **読み取り** | 「読んでも資格情報・私的メモリ・他セッションの記録を漏らさない」 | **ソースツリー全体**（読むだけでは実行時も壊さず漏洩もない）＋書き込み許可リスト。拒否：`.env` `.models` `.network` `sherry.jsonc` と各 `.example`、`src/data/**`、`src/checkpoints/**`、`workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`、`workspace/memory/**`、`workspace/knowledge/**`、モデル重みファイル、`mcp_servers/**`、書き込み可能なスキルツリー、`CODE_INTEL_DIR`、`LOG_DIR`、共有 trajectory 台帳、そして**現在のセッション**の `plans/` 以外のすべてのセッションディレクトリ |
+| **書き込み** | 「変更しても実行時・他セッションを壊さず、資格情報も漏らさない」 | `<project>/.sherry/`（インデックス、attachments）、`APP_HOME/checkpoints/store`、**現在のセッション**の `SESSIONS_DIR/<session_id>/` ツリー全体(`plans/` `attachments/` `uploads/` `evicted/` と scratch ファイル)、`TEMP_DIR`、`STATIC_DIR`、`SRC_DIR/{images,audio,video}`、`SRC_DIR/rag/uploads` |
+| **読み取り** | 「読んでも資格情報・私的メモリ・他セッションの記録を漏らさない」 | **ソースツリー全体**（読むだけでは実行時も壊さず漏洩もない）＋書き込み許可リスト。拒否：`.env` `.models` `.network` `sherry.jsonc` と各 `.example`、`src/data/**`、`src/checkpoints/**`、`workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`、`workspace/memory/**`、`workspace/knowledge/**`、モデル重みファイル、`mcp_servers/**`、書き込み可能なスキルツリー、`CODE_INTEL_DIR`、`LOG_DIR`、共有 trajectory 台帳、そして**現在のセッション**の私有ツリー全体以外のすべてのセッションディレクトリ |
 
-どちらもファイルツールの解決経路に掛かります——外部パス分岐だけでなく **in-root 成功分岐**にも。既定の checkout はまさにそこを静かに通過していたためです（`agent/tools/pub_base/path_utils.py` の `resolve_tool_path`、および独自に解決する `search_files`）。**別の**セッションのプロジェクトディレクトリ内のパスはユーザーの作業領域であり、このポリシーを通りません。
+どちらもファイルツールの解決経路に掛かります——外部パス分岐だけでなく **in-root 成功分岐**にも。既定の checkout はまさにそこを静かに通過していたためです（`agent/tools/pub_base/path_utils.py` の `resolve_tool_path`、および独自に解決する `search_files`）。**別の**セッションのプロジェクトディレクトリ内のパスはユーザーの作業領域であり、このポリシーを通りません。**現在のセッション自身の `SESSIONS_DIR/<session_id>` ツリーは両方のチェーンで免除**されます:`resolve_external_path` はステップ 2b でそのまま返し、ルート内ポリシーも許可するため、メインエージェントもサブエージェントも自分の私有ファイルを HITL なしで読み取り・書き込み・変更・削除できます — そのツリーがプロジェクトルートの外にあってもです。クロスセッション分離は不変です:他のセッションのディレクトリは(メインでは)承認カードを出し、(サブでは)拒否されます。
 
 **誰が承認するか。** main agent は**一度きり**の承認（`sherry_self_access`、`approve` / `reject` のみ——YOLO もセッション許可リストもなし：sherry 自身のファイルは永久に解錠されません）を得ます。**サブエージェント**は拒否され、カードも出ません：親の設定や他セッションの状態を読むのはクロスセッション漏洩であり、その経路に操作者はいません。agent 実行外（スクリプトからの直接呼び出し）では問い合わせる相手がいないため、**フェイルクローズ**します。
 

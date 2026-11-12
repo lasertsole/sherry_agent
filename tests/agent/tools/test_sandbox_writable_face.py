@@ -1,4 +1,4 @@
-"""The sandbox's WRITE surface is the session's project directory, not ROOT_DIR.
+"""The sandbox's WRITE surface is the session's project dir + its own session tree.
 
 P1 of the bypass-defense plan. The sandbox is the only write barrier terminal /
 python_repl / ptc have, and its writable面 used to be the hardcoded ROOT_DIR —
@@ -7,7 +7,11 @@ granted write access to all of the checkout (a way around the external-path
 gate). These tests pin the new contract at each layer:
 
 * the backends bind ONLY what the caller passed (+ TEMP_DIR),
-* the three tools pass their session's project root,
+* the three tools pass their session's project root; terminal / python_repl
+  ALSO pass that session's own ``SESSIONS_DIR/<session_id>`` tree (private
+  runtime state the file tools already read/write without HITL, so `rm` /
+  modify works even with the project bound elsewhere),
+* another session's directory is never added,
 * an unbound session keeps the pre-existing behaviour.
 """
 
@@ -59,6 +63,38 @@ def project_root(tmp_path: Path, monkeypatch):
     state_register_mem.clear_session(SESSION)
 
 
+@pytest.fixture()
+def sessions_root(tmp_path: Path, monkeypatch):
+    """Point the shared SESSIONS_DIR at a temp tree (never the checkout)."""
+    root = tmp_path / "sessions"
+    monkeypatch.setattr(sandbox_mod, "SESSIONS_DIR", root)
+    return root
+
+
+class TestOwnSessionRoot:
+    def test_appends_and_creates_the_own_session_directory(self, sessions_root: Path):
+        from agent.tools.pub_base.sandbox import with_own_session_root
+
+        roots = with_own_session_root([Path("/tmp/project")], SESSION)
+
+        assert roots == [Path("/tmp/project"), sessions_root / SESSION]
+        assert (sessions_root / SESSION).is_dir()
+
+    def test_never_adds_another_session_or_the_shared_root(self, sessions_root: Path):
+        from agent.tools.pub_base.sandbox import with_own_session_root
+
+        roots = with_own_session_root([Path("/tmp/project")], SESSION)
+
+        assert sessions_root not in roots
+        assert not (sessions_root / "someone-else").exists()
+
+    @pytest.mark.parametrize("session_id", ["", ".", "..", "a/b", "a\\b"])
+    def test_unsafe_session_ids_add_nothing(self, sessions_root: Path, session_id: str):
+        from agent.tools.pub_base.sandbox import with_own_session_root
+
+        assert with_own_session_root([Path("/tmp/project")], session_id) == [Path("/tmp/project")]
+
+
 class TestNormalizeWritableRoots:
     def test_empty_is_a_caller_bug(self):
         with pytest.raises(ValueError):
@@ -106,7 +142,9 @@ class TestBwrapBindsOnlyTheCallersRoots:
 
 
 class TestTerminalPassesTheSessionRoot:
-    def test_bound_session_gets_its_project_dir(self, project_root: Path, monkeypatch):
+    def test_bound_session_gets_its_project_dir(
+        self, project_root: Path, sessions_root: Path, monkeypatch
+    ):
         from agent.tools.terminal import build_terminal_tool
 
         backend = _RecordingBackend()
@@ -119,6 +157,10 @@ class TestTerminalPassesTheSessionRoot:
         roots = tool._session_writable_roots(SESSION)
 
         assert roots and roots[0] == project_root
+        # The session's OWN private tree rides along (delete/modify via `rm`),
+        # while another session's directory never does.
+        assert sessions_root / SESSION in roots
+        assert sessions_root / "another-session" not in roots
         assert all("sherry_agent" not in str(root) or root == project_root for root in roots)
 
     def test_unbound_session_falls_back_to_the_process_root(self):
@@ -157,6 +199,29 @@ class TestPythonReplPassesTheSessionRoot:
         python_repl._run_with_timeout("print(1)", 5, True, str(project_root), [project_root])
 
         assert backend.roots == [[project_root]]
+
+    def test_the_tool_appends_the_own_session_root(
+        self, project_root: Path, sessions_root: Path, monkeypatch
+    ):
+        from agent.tools import python_repl
+
+        captured: dict[str, list[Path] | None] = {}
+
+        def fake_run(command, timeout, sandbox=True, cwd=None, writable_roots=None, **_kw):
+            captured["roots"] = writable_roots
+            return "1", True
+
+        monkeypatch.setattr(python_repl, "_run_with_timeout", fake_run)
+        monkeypatch.setattr(python_repl, "ensure_checkpoint", lambda *_a, **_k: None)
+        monkeypatch.setattr(python_repl, "record_verification_evidence", lambda *_a, **_k: None)
+        monkeypatch.setattr("agent.tools.terminal._record_shell_writes", lambda *_a, **_k: None)
+
+        out = python_repl.build_python_repl_tool()._run("print(1)", session_id=SESSION)
+
+        assert out == "1"
+        assert captured["roots"] is not None
+        assert captured["roots"][0] == project_root
+        assert sessions_root / SESSION in captured["roots"]
 
 
 class TestPtcPassesItsCwd:
