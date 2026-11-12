@@ -57,6 +57,7 @@ from .retry_events import publish_model_retry
 _STALE_STREAK_KEY = StateKey.LLM_STALE_STREAK
 _FALLBACK_INDEX_KEY = StateKey.LLM_FALLBACK_INDEX
 _FALLBACK_SWITCHES_KEY = StateKey.LLM_FALLBACK_SWITCHES
+_TURN_CALLS_KEY = StateKey.LLM_TURN_PHYSICAL_CALLS
 _CONTENT_FILTER_KEY = StateKey.LLM_CONTENT_FILTER_BLOCKED
 # Mid-stream safety-cut flag set by the stream layer (same contract as
 # ``_CONTENT_FILTER_KEY``, which covers the explicit finish_reason path).
@@ -75,6 +76,17 @@ class ContentFilterError(Exception):
     """The model (or the stream layer) flagged the response as safety-filtered."""
 
 
+class CallBudgetExceededError(RuntimeError):
+    """The per-turn physical LLM call cap was reached.
+
+    Raised BEFORE a model call when the cumulative counter (retries, empty
+    re-calls, boost/recovery re-calls and stub recalls included) would exceed
+    ``LLM_RETRY["max_physical_calls_per_turn"]``. Deliberately not retryable:
+    running the same nested budget again is exactly the amplification the cap
+    exists to stop.
+    """
+
+
 @dataclass
 class LLMRetryConfig:
     max_retries: int = LLM_RETRY["max_retries"]
@@ -88,13 +100,20 @@ class LLMRetryConfig:
     empty_completion_retries: int = LLM_RETRY["empty_completion_retries"]
     emit_retry_events: bool = LLM_RETRY["emit_retry_events"]
     max_fallback_switches: int = LLM_RETRY["max_fallback_switches"]
+    max_physical_calls_per_turn: int = LLM_RETRY["max_physical_calls_per_turn"]
     stale_giveup_scope: str = LLM_RETRY["stale_giveup_scope"]
     stale_giveup_threshold: int = LLM_RETRY["stale_giveup_threshold"]
 
 
 # ``FallbackCandidate`` lives in ``pub/types/llm.py`` (shared with models) and is
 # re-exported here (and by ``agent.middlewares``) for backwards compatibility.
-__all__ = ["ContentFilterError", "FallbackCandidate", "LLMRetryConfig", "LLMRetryMiddleware"]
+__all__ = [
+    "CallBudgetExceededError",
+    "ContentFilterError",
+    "FallbackCandidate",
+    "LLMRetryConfig",
+    "LLMRetryMiddleware",
+]
 
 
 class LLMRetryMiddleware(AgentMiddleware):
@@ -122,6 +141,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         if session_id is None:
             return None
         state_register_mem.set_state(session_id, _FALLBACK_SWITCHES_KEY, 0)
+        state_register_mem.set_state(session_id, _TURN_CALLS_KEY, 0)
         if self.config.stale_giveup_scope == "turn":
             self._reset_stale_streak(session_id)
         return None
@@ -130,6 +150,24 @@ class LLMRetryMiddleware(AgentMiddleware):
         """Async twin of :meth:`before_agent` (the server runs async turns)."""
         self.before_agent(state, runtime)
         return None
+
+    def _charge_physical_call(self, session_id: str) -> None:
+        """Count one physical model call; raise once the turn's cap is spent.
+
+        The counter lives in the session state register, so every layer that
+        re-enters this middleware (retry loops, empty-completion re-calls,
+        boost/overflow recovery, stub recall) shares ONE per-turn budget.
+        """
+        limit = int(self.config.max_physical_calls_per_turn)
+        if limit <= 0:
+            return
+        used = int(state_register_mem.get_state(session_id, _TURN_CALLS_KEY, 0) or 0) + 1
+        if used > limit:
+            raise CallBudgetExceededError(
+                f"LLM call budget exhausted for this turn ({limit} physical calls); "
+                "aborting to stop retry amplification"
+            )
+        state_register_mem.set_state(session_id, _TURN_CALLS_KEY, used)
 
     def wrap_model_call(self, request: ModelRequest, handler: Callable) -> Any:
         session_id = self._get_session_id(request)
@@ -141,6 +179,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         last_reason = ""
         while True:
             self._raise_if_provider_stale(session_id)
+            self._charge_physical_call(session_id)
             try:
                 result = handler(request)
             except Exception as exc:
@@ -293,6 +332,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         last_reason = ""
         while True:
             self._raise_if_provider_stale(session_id)
+            self._charge_physical_call(session_id)
             try:
                 result = await handler(request)
             except Exception as exc:
@@ -631,6 +671,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         in finally).
         """
         self._prepare_stub_retry(session_id, stub_reason)
+        self._charge_physical_call(session_id)
         logger.warning(
             "Previous stream was cut mid-output (reason={}): retrying in {:.2f}s",
             stub_reason.value,
@@ -654,6 +695,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         delay: float,
     ) -> Any:
         self._prepare_stub_retry(session_id, stub_reason)
+        self._charge_physical_call(session_id)
         logger.warning(
             "Previous stream was cut mid-output (reason={}): retrying in {:.2f}s",
             stub_reason.value,

@@ -772,6 +772,32 @@ async def _execute_subagent_scoped(
     finally:
         await seams.release_child_resources(run, child_agent)
         await seams.finalize_child_run(run, outcome, result_text, handoff)
+        await _kill_descendants_after_failure(run, outcome)
+
+
+async def _kill_descendants_after_failure(run: SubagentRunRecord, outcome: RunOutcome) -> None:
+    """Cascade-kill descendants when this run did not end OK.
+
+    A timed-out/killed/failed parent can never collect its children's results,
+    and every live grandchild would keep a SUBAGENT lane slot. The run is
+    already FINALIZED here, so this is advisory: a kill problem must never
+    rewrite its outcome (per-run fail-open inside the cascade).
+    """
+    if outcome.status is RunOutcomeStatus.OK:
+        return
+    try:
+        from ..control.kill import kill_descendants_of_run
+
+        killed = await kill_descendants_of_run(run.run_id, f"parent {outcome.status.value}")
+        if killed:
+            logger.info(
+                "Subagent run {} ended {}: cascade-killed {} descendant(s)",
+                run.run_id,
+                outcome.status.value,
+                len(killed),
+            )
+    except Exception:
+        logger.warning("Subagent cascade kill failed for run {}", run.run_id, exc_info=True)
 
 
 async def _rollback_spawn(

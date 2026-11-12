@@ -232,6 +232,7 @@ curated 直达路径），其 `constraints` 规则要求优先写 HARD 约束，
 |------|------|--------|------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal loop 轮次预算，含第一轮 |
 | 每次 spawn 的 `goal_max_turns` | `sessions_spawn` 参数 | `None` → 配置值 | 覆盖单次 spawn 的预算 |
+| 每次 spawn 的 `run_timeout_seconds` | `sessions_spawn` 参数 / `SubagentConfig.run_timeout_seconds` | `600` 秒 | 该 run **及其子树**的墙钟上限：冻结在 run 上，后代被父级剩余预算封顶（1 秒快速失败下限）；父 run 非 OK 结束时级联 kill 存活的子孙 |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | 步骤被阻塞前允许的 `RETRY` 次数 |
 | `default_functional_role` | `SubagentConfig` | `"general"` | 提示与 `agent_id` 匹配都失败时的回退角色 |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 存放可选角色覆盖的工作区目录 |

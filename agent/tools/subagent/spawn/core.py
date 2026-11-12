@@ -58,7 +58,7 @@ from .target_policy import validate_target_policy as validate_target_policy
 from .plan import (
     resolve_model_and_thinking_plan,
     resolve_role_model_profile,
-    resolve_run_timeout_seconds,
+    resolve_run_timeout_for_requester,
 )
 from .task_name import normalize_subagent_task_name
 from .request import SpawnRequest
@@ -570,6 +570,10 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
     tool_allow, tool_deny = _resolve_child_tool_policy(role_def, role, extra_tools)
     extra_tool_names: list[str] = list(dict.fromkeys(extra_tools or []))
 
+    # A descendant may never outlive its parent's remaining subtree budget.
+    # Resolved BEFORE registration so the frozen value is what grandchildren read.
+    timeout_seconds = resolve_run_timeout_for_requester(requester_session_key, run_timeout_seconds)
+
     run = register_run(
         child_session_key=child_session_key,
         requester_session_key=ownership.completion_requester_session_key,
@@ -585,6 +589,7 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
             model_tier=resolved_model_tier,
             role=role,
         ),
+        run_timeout_seconds=timeout_seconds,
         depth=child_depth,
         label=label,
         functional_role=functional_role,
@@ -672,8 +677,6 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
         isolated=isolated_workspace is not None,
         output_schema=output_schema,
     )
-    timeout_seconds = resolve_run_timeout_seconds(run_timeout_seconds)
-
     # Warn if the run already looks orphaned at creation time (e.g. parent disconnected)
     orphan_reason = resolve_run_orphan_reason(run)
     if orphan_reason:

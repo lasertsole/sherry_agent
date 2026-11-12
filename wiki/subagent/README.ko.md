@@ -240,6 +240,7 @@ curated 직행 경로로 교체)를 추가하고, `constraints` 규칙은 HARD �
 |------|------|--------|------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal loop 턴 예산(첫 턴 포함) |
 | spawn별 `goal_max_turns` | `sessions_spawn` 파라미터 | `None` → 설정값 | 단일 spawn의 예산 재정의 |
+| spawn별 `run_timeout_seconds` | `sessions_spawn` 파라미터 / `SubagentConfig.run_timeout_seconds` | `600`초 | 실행 **및 그 하위 트리**의 벽시계 상한: 실행에 고정되고, 자손은 부모의 남은 예산으로 상한이 적용됨(1초 즉시 실패 하한); OK가 아닌 부모는 살아 있는 자손을 캐스케이드 kill |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | 단계가 차단되기 전까지의 `RETRY` 횟수 |
 | `default_functional_role` | `SubagentConfig` | `"general"` | 힌트와 `agent_id` 일치가 모두 실패할 때의 폴백 |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 선택적 역할 재정의를 두는 워크스페이스 디렉터리 |

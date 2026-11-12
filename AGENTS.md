@@ -238,8 +238,16 @@ User message → Robyn WS → agent.core.built_agent() graph
 
      spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
      `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
-     callers bypass the clamp and keep their own bounds), and after a
-     timeout/kill whose completion notice has no Result the caller can pull the
+     callers bypass the clamp and keep their own bounds). The timeout is a
+     SUBTREE budget: the effective value is frozen on the run
+     (`SubagentRunRecord.run_timeout_seconds`), and a descendant spawn is
+     capped by its parent's remaining wall clock (`started_at + timeout - now`,
+     with a 1 s fail-fast floor), so a grandchild can never outlive the root
+     run. When a parent ends without OK (timeout / killed / error / budget
+     exhausted), `_kill_descendants_after_failure` cascade-kills its live
+     descendants — they can never have their results collected and would
+     otherwise hold SUBAGENT lane slots. After a timeout/kill whose completion
+     notice has no Result the caller can pull the
      child's transcript — `sessions_messages` reads its checkpoint by
      session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
      budgeted, spawner-only)
@@ -329,7 +337,8 @@ User message → Robyn WS → agent.core.built_agent() graph
   counter; a failed spawn does not reset, writes alone do not reset, and
   `after_agent` also resets at the turn boundary.
 
-  completion gates (all always-on, all fail-open):
+  completion gates (all always-on; Gate C's evidence READ is the one
+  unavailable-means-reject rule while the rest fail open):
     · Tier 1 schema gate — a step's response_schema is validated on
       taskflow_step(action="resume") (json parse + validate_structured_output); a miss is a
       retry signal ("schema_error") that never spends a judge call, and an
@@ -422,7 +431,10 @@ User message → Robyn WS → agent.core.built_agent() graph
       stamp is memory-only — so an EMPTY flow-scoped result falls back to the
       flow's OWN sessions (its step children plus the creator, never the whole
       session), which is the only way evidence that still exists can gate the
-      finish. Then Gate E's goal judge (only for a flow with a description and
+      finish. An UNREADABLE collector is not treated as empty: the finish
+      is rejected and the reason is recorded in the flow state as
+      `evidence_unavailable` (an empty-but-readable ledger still passes). Then
+      Gate E's goal judge (only for a flow with a description and
       at least GOAL_GATE["min_steps"] = 3 steps)
     · TaskFlow state-machine guards — `validate_steps_list` refuses a
       `depends_on` CYCLE at create/update time (depth-first over the
@@ -764,7 +776,7 @@ Three layers, OFF by default (`sherry.jsonc` `safety_filter.*`, read LIVE throug
 
 - **Rules** (`rules.py`): `{pattern, type: exact|contains|regex, action: block|replace|warn, scope: input|output|both, replacement}`; validated (count / pattern / replacement caps, regex compiles) before writing, compiled with an mtime cache so an edit applies without a restart, and fail-open (a broken file reads as no rules).
 - **Input** (`InputSafetyFilter`, `awrap_model_call`): a `block` hit returns `safe_refusal_message` WITHOUT calling the provider; `warn`/`replace` pass through and only notify (the input side never rewrites the user's own text).
-- **LLM review** (`LLMModerationMiddleware`, inner to the keyword filter so a keyword block never pays for it): needs ALL THREE of the master switch, a non-`off` strategy (`on_keyword_hit` / `always`) and a model name — `safety_filter.llm_moderation_model` EMPTY keeps the review off whatever the strategy says, and the tab's switch is disabled until one is typed. The call reuses the auxiliary family's provider/credentials with the name overridden (`build_auxiliary_llm(model_name=…)`) and FAILS OPEN: timeout (20 s), request failure or an unparseable verdict lets the turn through.
+- **LLM review** (`LLMModerationMiddleware`, inner to the keyword filter so a keyword block never pays for it): needs ALL THREE of the master switch, a non-`off` strategy (`on_keyword_hit` / `always`) and a model name — `safety_filter.llm_moderation_model` EMPTY keeps the review off whatever the strategy says, and the tab's switch is disabled until one is typed. The call reuses the auxiliary family's provider/credentials with the name overridden (`build_auxiliary_llm(model_name=…)`). Its failure policy follows the strategy: `always` fails CLOSED — a timeout (20 s), request failure or unparseable verdict blocks the turn with the safe refusal — while `on_keyword_hit` fails OPEN, because the keyword layer already produced a verdict.
 - **Output** (`OutputSafetyFilter`, `aafter_model`): registered between `LLMRetry` and `Summarization`, so the reverse `after_model` chain runs it BEFORE `MessagePersistence` stores the row — `block` replaces the whole answer, `replace` substitutes the hit, `warn` only reports; the row is upserted with the same message id.
 - **Streaming** (`stream_guard.py::StreamTextGuard`): holds the last `stream_buffer_window` (20) characters and releases ONLY scanned text. A `block` anywhere in the buffer latches (buffered text dropped, the replacement notice emitted once), a `replace` ending inside the releasable prefix is substituted, one the release point would cut in half holds the release back. A pattern longer than the window can only complete in the tail, so at most `len(match) - 1` characters can be visible before the end-of-stream flush cuts. A streamed answer therefore never reaches `OutputSafetyFilter` — the guard scrubs chunks before they become frames, so the client and the persisted row agree (`StreamTurn._safety_guard`, re-armed per phase).
 - **Surface**: `GET|PUT /safety-filter/rules`, `POST /safety-filter/test`, `GET /safety-filter/log` (`server/trigger/http/safety_filter.py`); switches/model ride `PUT /sherry-config`. Every decision records one bounded per-session event and pushes a `safety_filter` WS frame; the client toasts it (block = error level). Tests: `tests/agent/middlewares/safety_filter/` + `SafetyFilterPanel.integration.test.ts`.
@@ -1628,8 +1640,8 @@ budget. `config/features/agent_side/llm_retry.py::LLM_RETRY` defaults:
 `max_retries=10` (11 total attempts), `base_delay=2.0`, `backoff_factor=2.0`,
 `max_delay=60.0`, `jitter_mode="full"` (0.5–1.0×), `respect_retry_after=True`,
 `retry_after_cap_s=300`, `empty_completion_retries=1`, `emit_retry_events=True`,
-`max_fallback_switches=1`, `stale_giveup_scope="turn"`,
-`stale_giveup_threshold=5`. `pub/func/retry_policy.py` owns the delay math and
+`max_fallback_switches=1`, `max_physical_calls_per_turn=200`,
+`stale_giveup_scope="turn"`, `stale_giveup_threshold=5`. `pub/func/retry_policy.py` owns the delay math and
 `Retry-After` parsing (`retry-after-ms`, seconds, HTTP-date; read off the SDK
 exception's `headers`/`response.headers` and carried by
 `ClassifiedError.retry_after_s`).
@@ -1644,12 +1656,18 @@ resets the budget: fallback activation, multimodal skill degradation and a
 content-filter rebind. Empty completion CONSUMES one ordinary retry (and is
 separately capped by `empty_completion_retries`); auth-refresh / signature-repair
 extra attempts (not implemented — no provider seam) would use subtraction, not a
-reset. `before_agent` resets the per-turn `llm_fallback_switches` counter and,
-when `stale_giveup_scope="turn"`, the cross-call `llm_stale_streak`; the breaker
-still aborts the current turn at 5 consecutive timeouts, but a later turn gets a
-fresh chance instead of being wedged forever. `max_fallback_switches` caps model
-switches per turn (0 disables fallback, including a sticky candidate); the
-session-level sticky `llm_fallback_index` is unchanged.
+reset. `before_agent` resets the per-turn `llm_fallback_switches`,
+`llm_turn_physical_calls` counters and, when `stale_giveup_scope="turn"`, the
+cross-call `llm_stale_streak`; the breaker still aborts the current turn at 5
+consecutive timeouts, but a later turn gets a fresh chance instead of being
+wedged forever. `max_fallback_switches` caps model switches per turn (0 disables
+fallback, including a sticky candidate); the session-level sticky
+`llm_fallback_index` is unchanged. The per-call budgets still MULTIPLY across
+nested layers (boost / overflow recovery / stub recall each re-enter this
+middleware), so `max_physical_calls_per_turn` (default 200, `0` disables) counts
+EVERY physical request in the session state register and raises
+`CallBudgetExceededError` once the cap is spent. It sits above the main
+IterationBudget (180 logical calls), so an ordinary long turn is unaffected.
 
 The loop re-calls on classified retryable failures, emits one
 `model_retry` event per scheduled/succeeded/exhausted transition, and keeps the

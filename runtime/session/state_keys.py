@@ -58,6 +58,9 @@ class StateKey(StrEnum):
     LLM_FALLBACK_INDEX = "llm_fallback_index"
     # Per-turn fallback-switch counter, reset by LLMRetryMiddleware.before_agent.
     LLM_FALLBACK_SWITCHES = "llm_fallback_switches"
+    # Cumulative PHYSICAL model calls in one turn, across every nested retry
+    # layer. Reset by LLMRetryMiddleware.before_agent.
+    LLM_TURN_PHYSICAL_CALLS = "llm_turn_physical_calls"
     LLM_CONTENT_FILTER_BLOCKED = "llm_content_filter_blocked"
     LLM_CONTENT_FILTER_TERMINATED = "llm_content_filter_terminated"
     LLM_PARTIAL_STREAM_STUB = "llm_partial_stream_stub"

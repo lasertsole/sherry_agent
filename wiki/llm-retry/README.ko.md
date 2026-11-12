@@ -40,6 +40,10 @@ WS 이벤트는 네 개의 숫자를 전달하므로 UI가 추측할 필요가 �
 
 fallback 후보는 새 모델 요청을 시작하므로 재시도 예산이 0에서 시작합니다. 상한이 없으면 N개 후보가 `11 × N`개의 물리 요청을 보낼 수 있습니다. 그래서 Sherry는 턴마다 `llm_fallback_switches`를 기록하고 `max_fallback_switches`(기본 `1`)에 도달하면 전환을 거부합니다. `0`은 이미 고정된 후보도 비활성화합니다. 세션의 fallback 인덱스는 바뀌지 않으므로 이후 턴도 이미 선택된 후보에서 시작합니다.
 
+## 턴당 물리 호출 상한
+
+위 예산은 모두 **모델 호출 단위**이며, 같은 사용자 메시지에 대해 여러 계층이 이 미들웨어에 다시 들어옵니다(MaxTokensBoost, 오버플로 복구 루프, 스트림 중단 스텁 재호출). `max_physical_calls_per_turn`(기본 `200`, `0`이면 비활성)은 세션 state register에서 모든 물리 요청을 세고 모든 계층이 공유하며, 한도를 다 쓰면 `CallBudgetExceededError`를 던져 중첩 예산이 곱해지는 것을 막습니다. `before_agent`가 카운터를 초기화합니다. 상한은 메인 `IterationBudget`(180 논리 호출)보다 위에 있어 일반적인 긴 턴은 영향받지 않고 재시도 증폭만 제한됩니다.
+
 ## 타임아웃 차단 범위
 
 `llm_stale_streak`는 연속 timeout 실패를 셉니다. `stale_giveup_scope = "turn"`(기본)에서 `before_agent`가 메인 agent 턴 시작마다 초기화합니다. 차단은 `stale_giveup_threshold = 5`에서 현재 턴을 중단하지만 다음 턴으로 이어지지 않습니다. `"session"`은 이전의 턴 간 동작을 복원합니다. ZCode에는 동등한 턴 간 차단이 없으며, 이는 Sherry의 의도적인 보호이지 parity 주장이 아닙니다.

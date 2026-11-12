@@ -70,7 +70,7 @@ Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该�
 | **C — 证据** | 流程证据中没有 `FAIL`、没有 `[broken]`、也没有 `[stale]` 行（见[证据账本](../gates/evidence-ledger/README.zh.md)） | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 目标判别** | 辅助模型判断收集到的结果是否满足流程的 `description` | 拒绝文本会点名 `taskflow_flow(action="replan")` |
 
-每道门都是 **fail-open**：collector 不可读、模型出错或判定无法解析都放行，而不是阻塞完成。Gate E 只在流程有 `description` 且步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行——一两步的流程已由子级[完成判别器](../../subagent/README.zh.md)覆盖，再对同一份工作给出第二个判定正是那处重叠；`GOAL_GATE["enabled"]` 是它的总开关，`GOAL_GATE["max_result_chars"]`（4000）限定交给它的每个结果。
+Gate E 与回归重放是 **fail-open**：模型出错或判定无法解析都放行，而不是阻塞完成。Gate C 的证据**读取**不同：collector 不可读时会在流程 state 里记录 `evidence_unavailable` 并**拒绝**完成，无法验证的收口不会溜过去；真正**为空**的账本仍然放行。Gate E 只在流程有 `description` 且步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行——一两步的流程已由子级[完成判别器](../../subagent/README.zh.md)覆盖，再对同一份工作给出第二个判定正是那处重叠；`GOAL_GATE["enabled"]` 是它的总开关，`GOAL_GATE["max_result_chars"]`（4000）限定交给它的每个结果。
 
 ## 相邻的门（在别的页面，同一个思路）
 

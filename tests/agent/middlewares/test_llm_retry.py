@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.middlewares import llm_capability_cache
 from agent.middlewares.llm_retry.core import (
+    CallBudgetExceededError,
     ContentFilterError,
     FallbackCandidate,
     LLMRetryConfig,
@@ -127,6 +128,63 @@ class TestRetryOnTransient:
             return _ok_result(req)
 
         assert asyncio.run(mw.awrap_model_call(_request(), handler)) == "ok:main"
+        assert calls["n"] == 2
+
+
+class TestCumulativeCallBudget:
+    """Nested retry layers share ONE per-turn physical-call cap."""
+
+    def test_the_cap_stops_retry_amplification(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = LLMRetryMiddleware(
+            config=LLMRetryConfig(max_retries=10, max_physical_calls_per_turn=3)
+        )
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            raise TimeoutError("timed out")
+
+        with pytest.raises(CallBudgetExceededError):
+            mw.wrap_model_call(_request(), handler)
+        assert calls["n"] == 3
+
+    def test_the_counter_is_shared_across_re_entries_and_reset_per_turn(self):
+        mw = LLMRetryMiddleware(config=LLMRetryConfig(max_retries=1, max_physical_calls_per_turn=1))
+        assert mw.wrap_model_call(_request(), _ok_result) == "ok:main"
+
+        # Same turn, second entry: the budget is already spent.
+        with pytest.raises(CallBudgetExceededError):
+            mw.wrap_model_call(_request(), _ok_result)
+
+        mw.before_agent({"session_id": SID})
+        assert mw.wrap_model_call(_request(), _ok_result) == "ok:main"
+
+    def test_zero_disables_the_cap(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = LLMRetryMiddleware(config=LLMRetryConfig(max_retries=2, max_physical_calls_per_turn=0))
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            raise TimeoutError("timed out")
+
+        with pytest.raises(TimeoutError):
+            mw.wrap_model_call(_request(), handler)
+        assert calls["n"] == 3  # initial + 2 retries (the ordinary budget)
+
+    def test_the_async_loop_enforces_the_same_cap(self):
+        mw = LLMRetryMiddleware(
+            config=LLMRetryConfig(max_retries=10, max_physical_calls_per_turn=2)
+        )
+        calls = {"n": 0}
+
+        async def handler(req):
+            calls["n"] += 1
+            raise TimeoutError("timed out")
+
+        with pytest.raises(CallBudgetExceededError):
+            asyncio.run(mw.awrap_model_call(_request(), handler))
         assert calls["n"] == 2
 
 

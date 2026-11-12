@@ -238,6 +238,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 |------|----------|---------|--------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal-loop turn budget, including the first turn |
 | per-spawn `goal_max_turns` | `sessions_spawn` parameter | `None` → configured value | overrides the budget for one spawn |
+| per-spawn `run_timeout_seconds` | `sessions_spawn` parameter / `SubagentConfig.run_timeout_seconds` | `600` s | wall-clock ceiling for the run AND its subtree: frozen on the run, descendants capped by the parent's remaining budget (1 s fail-fast floor); a non-OK parent cascade-kills its live descendants |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | `RETRY` verdicts before the step is blocked |
 | `default_functional_role` | `SubagentConfig` | `"general"` | fallback when neither a hint nor an `agent_id` match resolves |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | workspace directory holding optional role overrides |

@@ -70,7 +70,7 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 | **C — 증거** | 플로우 증거에 `FAIL`, `[broken]`, `[stale]` 행이 없음([증거 원장](../gates/evidence-ledger/README.ko.md) 참조) | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 목표 판정** | 수집된 결과가 플로우의 `description`을 충족하는지 보조 모델이 판정 | `taskflow_flow(action="replan")`을 지목하는 거부 |
 
-모든 게이트는 **페일오픈**입니다: 읽을 수 없는 collector, 모델 오류, 파싱 불가능한 판정은 완료를 막지 않고 통과시킵니다. Gate E는 `description`이 있고 스텝 수가 `GOAL_GATE["min_steps"]`(3) 이상인 플로우에서만 돕니다 — 한두 스텝짜리 플로우는 자식 층위 [완료 판정기](../../subagent/README.ko.md)가 이미 덮고 있고, 같은 작업에 두 번째 판정을 얹는 것이 바로 그 중복이기 때문입니다. `GOAL_GATE["enabled"]`가 마스터 스위치이고 `GOAL_GATE["max_result_chars"]`(4000)가 넘겨지는 각 결과의 창입니다.
+Gate E와 회귀 재실행은 **페일오픈**입니다: 모델 오류나 파싱 불가능한 판정은 완료를 막지 않고 통과시킵니다. Gate C의 증거 **읽기**는 다릅니다: 읽을 수 없는 collector는 플로우 state에 `evidence_unavailable`로 기록되며 완료를 **거부**합니다 — 검증할 수 없는 완료를 통과시키지 않습니다. 정말로 **비어 있는** 원장은 통과합니다. Gate E는 `description`이 있고 스텝 수가 `GOAL_GATE["min_steps"]`(3) 이상인 플로우에서만 돕니다 — 한두 스텝짜리 플로우는 자식 층위 [완료 판정기](../../subagent/README.ko.md)가 이미 덮고 있고, 같은 작업에 두 번째 판정을 얹는 것이 바로 그 중복이기 때문입니다. `GOAL_GATE["enabled"]`가 마스터 스위치이고 `GOAL_GATE["max_result_chars"]`(4000)가 넘겨지는 각 결과의 창입니다.
 
 ## 이웃 게이트 (다른 페이지, 같은 생각)
 

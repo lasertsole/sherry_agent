@@ -70,7 +70,7 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 | **C — エビデンス** | フローのエビデンスに `FAIL`、`[broken]`、`[stale]` 行が無い（[エビデンス台帳](../gates/evidence-ledger/README.ja.md)参照） | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 目標判定** | 収集された結果がフローの `description` を満たすかを補助モデルが判定 | `taskflow_flow(action="replan")` を名指しする拒否 |
 
-すべてのゲートは**フェイルオープン**です：読めない collector、モデルエラー、パース不能な判定は完了を妨げず通過させます。Gate E は `description` を持ち、ステップ数が `GOAL_GATE["min_steps"]`（3）以上の場合にのみ走ります — 1〜2 ステップのフローは子レベルの[完了判定器](../../subagent/README.ja.md)がすでに覆っており、同じ仕事への二つ目の判定はまさにその重複だからです。`GOAL_GATE["enabled"]` はそのマスタースイッチ、`GOAL_GATE["max_result_chars"]`（4000）は渡される各結果の窓です。
+Gate E と回帰リプレイは**フェイルオープン**です：モデルエラーやパース不能な判定は完了を妨げず通過させます。Gate C の証跡**読み取り**は異なります：読めない collector はフロー state に `evidence_unavailable` として記録され、完了を**拒否**します — 検証できない完了を通しません。本当に**空**の台帳は通過します。Gate E は `description` を持ち、ステップ数が `GOAL_GATE["min_steps"]`（3）以上の場合にのみ走ります — 1〜2 ステップのフローは子レベルの[完了判定器](../../subagent/README.ja.md)がすでに覆っており、同じ仕事への二つ目の判定はまさにその重複だからです。`GOAL_GATE["enabled"]` はそのマスタースイッチ、`GOAL_GATE["max_result_chars"]`（4000）は渡される各結果の窓です。
 
 ## 隣接するゲート（別ページ、同じ考え方）
 

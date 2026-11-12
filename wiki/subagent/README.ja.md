@@ -239,6 +239,7 @@ curated 直行パスへ置換）を追加し、`constraints` のルールは HAR
 |--------|------|--------|------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal loop のターン予算（最初のターンを含む） |
 | spawn ごとの `goal_max_turns` | `sessions_spawn` パラメータ | `None` → 設定値 | 単一 spawn の予算を上書き |
+| spawn ごとの `run_timeout_seconds` | `sessions_spawn` パラメータ / `SubagentConfig.run_timeout_seconds` | `600` 秒 | 実行**とそのサブツリー**のウォールクロック上限：実行に凍結され、子孫は親の残り予算で上限化（1 秒の即時失敗フロア）；OK 以外で終わった親は生存中の子孫をカスケード kill |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | ステップがブロックされるまでの `RETRY` 回数 |
 | `default_functional_role` | `SubagentConfig` | `"general"` | ヒントも `agent_id` 一致も解決しない場合のフォールバック |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 任意のロール上書きを置くワークスペースディレクトリ |

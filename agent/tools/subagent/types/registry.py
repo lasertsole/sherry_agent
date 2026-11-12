@@ -115,6 +115,10 @@ class SubagentRunRecord(BaseModel):
     #: The serving model's configured max-output budget, frozen at spawn. ``None``
     #: = the user left it unset, so the legacy result caps apply.
     max_output_tokens: int | None = None
+    #: The EFFECTIVE wall-clock ceiling frozen at spawn (already capped by the
+    #: parent's remaining subtree budget). Descendant spawns read it to
+    #: derive their own remaining budget; ``None`` = unbounded/legacy row.
+    run_timeout_seconds: float | None = None
 
     depth: int = 1
     role: SubagentSessionRole = SubagentSessionRole.LEAF
