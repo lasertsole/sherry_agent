@@ -20,6 +20,7 @@ from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 from config.models_settings import (
     MODELS_CONFIG_PATH,
     MODEL_SETTING_DEFAULTS,
+    is_secret_model_key,
     parse_model_value,
 )
 
@@ -130,6 +131,11 @@ def read_models_config() -> dict:
         {"groups": [{"name": "MAIN_LLM", "kind": "model",
                      "entries": [{"key": "...", "value": "...", "value_edited": false}]}]}
 
+    A ``*_API_KEY`` entry NEVER carries its value: it answers
+    ``{"key", "value": "", "value_edited": false, "secret": true,
+    "configured": bool}`` instead, so the browser can render a write-only
+    password field without receiving the credential.
+
     Raises ``FileNotFoundError`` when ``.models`` does not exist yet.
     """
     if not MODELS_CONFIG_PATH.exists():
@@ -145,9 +151,13 @@ def read_models_config() -> dict:
         key = match.group(1)
         if key not in MODEL_SETTING_DEFAULTS:
             continue
-        groups.setdefault(_group_of(key), []).append(
-            {"key": key, "value": _display_value(match.group(2)), "value_edited": False}
-        )
+        display = _display_value(match.group(2))
+        entry: dict = {"key": key, "value": display, "value_edited": False}
+        if is_secret_model_key(key):
+            entry["value"] = ""
+            entry["secret"] = True
+            entry["configured"] = bool(display.strip())
+        groups.setdefault(_group_of(key), []).append(entry)
 
     ordered_groups: list[dict] = []
     ordered_names = [p[:-1] for p in GROUP_PREFIXES] + (
@@ -164,6 +174,28 @@ def read_models_config() -> dict:
             }
         )
     return {"groups": ordered_groups}
+
+
+def read_models_raw_values() -> dict[str, str]:
+    """Every known ``.models`` value, credentials INCLUDED.
+
+    Server-internal only (the model test endpoint fills a blank API key from
+    here so the Test button works without the browser ever holding the key).
+    Never serialize this mapping to a client.
+    """
+    if not MODELS_CONFIG_PATH.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        lines = MODELS_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        match = None if _COMMENT_RE.match(line) else _ASSIGN_RE.match(line)
+        if match is None or match.group(1) not in MODEL_SETTING_DEFAULTS:
+            continue
+        values[match.group(1)] = _display_value(match.group(2))
+    return values
 
 
 def write_models_config(changes: dict[str, str]) -> None:

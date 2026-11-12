@@ -64,10 +64,10 @@ const stubs = {
     template: '<button class="btn" :disabled="disabled" :title="title" @click="$emit(\'click\')">{{ label }}</button>'
   },
   InputText: {
-    props: ['modelValue', 'disabled'],
+    props: ['modelValue', 'disabled', 'type', 'placeholder', 'autocomplete'],
     emits: ['update:modelValue'],
     template:
-      '<input class="inp" :value="modelValue" :disabled="disabled" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+      '<input class="inp" :type="type || \'text\'" :value="modelValue" :disabled="disabled" :placeholder="placeholder" :autocomplete="autocomplete" @input="$emit(\'update:modelValue\', $event.target.value)" />'
   }
 };
 
@@ -110,10 +110,18 @@ const mountPanel = (
   group = 'MAIN_LLM',
   keys: string[] = KEYS,
   values: Record<string, string> = ENV_VALUES,
-  downloadGroup?: string
+  downloadGroup?: string,
+  configuredSecrets?: Record<string, boolean>
 ) =>
   mount(LlmModelManager, {
-    props: { group, keys, values, groupTitle: group, ...(downloadGroup ? { downloadGroup } : {}) },
+    props: {
+      group,
+      keys,
+      values,
+      groupTitle: group,
+      ...(downloadGroup ? { downloadGroup } : {}),
+      ...(configuredSecrets ? { configuredSecrets } : {})
+    },
     global: { stubs }
   });
 
@@ -326,6 +334,50 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const payload = emitted![0]![0] as { id: string; params: Record<string, string> };
     expect(payload.id).toBe('p1');
     expect(payload.params.MAIN_LLM_NAME).toBe('glm-4.7');
+  });
+
+  it('renders the API key write-only and keeps the profile key when blank', async () => {
+    makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'glm-4.6' } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', KEYS, ENV_VALUES, undefined, {
+      MAIN_LLM_API_KEY: true
+    });
+    await expand(wrapper);
+
+    const secret = wrapper.get('input[type="password"]').element as HTMLInputElement;
+    expect(secret.value).toBe('');
+    expect(wrapper.get('[data-test="secret-state-MAIN_LLM_API_KEY"]').text()).toContain('已配置');
+
+    await buttonFor(wrapper, '应用')!.trigger('click');
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    // The blank box does not erase the key the client profile already carries.
+    expect(payload.params.MAIN_LLM_API_KEY).toBe('sk-env');
+  });
+
+  it('omits a blank API key when neither the profile nor the store has one', async () => {
+    const NO_KEY = { ...ENV_VALUES, MAIN_LLM_API_KEY: '' };
+    makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...NO_KEY, MAIN_LLM_NAME: 'glm-4.6' } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', KEYS, NO_KEY, undefined, { MAIN_LLM_API_KEY: false });
+    await expand(wrapper);
+
+    expect(wrapper.get('[data-test="secret-state-MAIN_LLM_API_KEY"]').text()).toContain('尚未保存');
+
+    await buttonFor(wrapper, '应用')!.trigger('click');
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    expect('MAIN_LLM_API_KEY' in payload.params).toBe(false);
+  });
+
+  it('sends a newly typed API key and keeps it out of the draft afterwards', async () => {
+    makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'glm-4.6' } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', KEYS, ENV_VALUES, undefined, {
+      MAIN_LLM_API_KEY: true
+    });
+    await expand(wrapper);
+
+    await wrapper.get('input[type="password"]').setValue('sk-new');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    expect(payload.params.MAIN_LLM_API_KEY).toBe('sk-new');
   });
 
   it('the local entry shows the group parameters read-only, with 应用 but no 保存', async () => {

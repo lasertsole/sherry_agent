@@ -180,16 +180,36 @@
           <InputText
             v-else
             v-model="draft[key]"
+            :type="isSecretKey(key) ? 'password' : 'text'"
             :disabled="isLocalEntrySelected"
-            :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
+            :placeholder="
+              isLocalEntrySelected
+                ? t('config.llm.localUnused')
+                : isSecretKey(key)
+                  ? secretConfigured(key)
+                    ? t('config.llm.secretKeep')
+                    : t('config.llm.secretInput')
+                  : ''
+            "
             :class="[
               'w-full font-mono text-xs disabled:opacity-60',
               missingRequired && (key === providerKey || key === nameKey) && !(draft[key] ?? '').trim()
                 ? 'border-red-400'
                 : ''
             ]"
-            autocomplete="off"
+            :autocomplete="isSecretKey(key) ? 'new-password' : 'off'"
             spellcheck="false" />
+          <!-- The stored key is never sent to the browser: state it explicitly
+               so an empty box does not read as "no key configured". -->
+          <p
+            v-if="isSecretKey(key) && !isLocalEntrySelected"
+            class="m-0 text-[11px]"
+            :class="
+              secretConfigured(key) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+            "
+            :data-test="`secret-state-${key}`">
+            {{ secretConfigured(key) ? t('config.llm.secretConfigured') : t('config.llm.secretUnset') }}
+          </p>
         </div>
 
         <div
@@ -341,6 +361,11 @@ const props = defineProps<{
   keys: string[];
   /** Live `.env` values for those keys (used to seed new profiles / infer the applied one). */
   values: Record<string, string>;
+  /**
+   * Secret key → whether the backend already stores a value. The VALUE is
+   * never sent; the panel renders a write-only password field.
+   */
+  configuredSecrets?: Record<string, boolean>;
   /** Group heading shown above the panel. */
   groupTitle?: string;
   /**
@@ -750,6 +775,21 @@ const selected = computed(() =>
   isLocalEntrySelected.value ? localEntry.value : store.byId(props.group, selectedId.value)
 );
 
+/**
+ * API keys are write-only: the backend never returns their value.
+ * @param key
+ */
+const isSecretKey = (key: string): boolean => key.endsWith('_API_KEY');
+
+/**
+ * Whether a secret is already stored — either the backend reports one
+ * (``configuredSecrets``) or the selected client profile still carries a key
+ * the user typed earlier. The value itself is never rendered.
+ * @param key
+ */
+const secretConfigured = (key: string): boolean =>
+  props.configuredSecrets?.[key] === true || !!selected.value?.params[key]?.trim();
+
 /** The provider key of this group (any `*_PROVIDER` variant, e.g. `ITTT_model_PROVIDER`). */
 const providerKey = computed(() => props.keys.find(k => k.endsWith('_PROVIDER')) ?? '');
 /** The model-name key of this group (`*_API_NAME` wins over `*_NAME`). */
@@ -800,7 +840,11 @@ const isActive = (profile: { id: string; params: Record<string, string> }): bool
 const syncDraft = () => {
   const profile = selected.value;
   const next: Record<string, string> = {};
-  for (const key of props.keys) next[key] = profile?.params[key] ?? props.values[key] ?? '';
+  for (const key of props.keys) {
+    // Secret values are never rendered: the box always starts empty and the
+    // profile's stored key (if any) is used only when applying.
+    next[key] = isSecretKey(key) ? '' : (profile?.params[key] ?? props.values[key] ?? '');
+  }
   draft.value = next;
 };
 // Keep the built-in entry's read-only display in sync with the live `.env`.
@@ -887,8 +931,16 @@ const runTest = async () => {
   }
   testing.value = true;
   testResult.value = null;
+  // A blank password box is not "no key": use this profile's stored key when
+  // it has one, otherwise the backend fills it from .models.
+  const testParams: Record<string, string> = { ...draft.value };
+  for (const key of props.keys) {
+    if (!isSecretKey(key) || (testParams[key] ?? '').trim()) continue;
+    const stored = (selected.value?.params[key] ?? '').trim();
+    if (stored) testParams[key] = selected.value!.params[key]!;
+  }
   try {
-    const result = await testModelProfile(props.group, { ...draft.value });
+    const result = await testModelProfile(props.group, testParams);
     testResult.value = result ?? {
       supported: true,
       ok: false,
@@ -941,6 +993,13 @@ const saveProfile = () => {
     return;
   }
   const params: Record<string, string> = { ...draft.value };
+  // An empty password box means "keep the key this profile already carries";
+  // it must not erase it from the client-side profile.
+  for (const key of props.keys) {
+    if (isSecretKey(key) && !(params[key] ?? '').trim()) {
+      params[key] = selected.value?.params[key] ?? '';
+    }
+  }
   store.update(props.group, selected.value!.id, {
     label: params[nameKey.value] || selected.value.label,
     params
@@ -961,6 +1020,11 @@ const payloadFor = (entry: { id: string; params: Record<string, string> }): Reco
   if (entry.id === LOCAL_ENTRY_ID) return flagKey ? { [flagKey]: 'true' } : {};
   const params: Record<string, string> = { ...entry.params };
   if (flagKey) params[flagKey] = 'false';
+  // A blank secret means "leave whatever .models already stores"; sending ""
+  // would wipe a credential the browser was never given.
+  for (const key of props.keys) {
+    if (isSecretKey(key) && !(params[key] ?? '').trim()) delete params[key];
+  }
   return params;
 };
 
@@ -1029,6 +1093,16 @@ const applyProfile = () => {
   const params: Record<string, string> = isLocalEntrySelected.value
     ? payloadFor(selected.value)
     : { ...draft.value, ...(flagKey ? { [flagKey]: 'false' } : {}) };
+  if (!isLocalEntrySelected.value) {
+    for (const key of props.keys) {
+      if (!isSecretKey(key)) continue;
+      const typed = (draft.value[key] ?? '').trim();
+      const stored = (selected.value?.params[key] ?? '').trim();
+      if (typed) params[key] = draft.value[key]!;
+      else if (stored) params[key] = selected.value!.params[key]!;
+      else delete params[key];
+    }
+  }
   emit('apply', { id: selected.value.id, params });
 };
 

@@ -19,6 +19,10 @@ export interface EnvEntry {
   key: string;
   value: string;
   value_edited: boolean;
+  /** True for a write-only credential: the backend never sends its value. */
+  secret?: boolean;
+  /** For a secret, whether the backend currently stores a non-empty value. */
+  configured?: boolean;
 }
 
 export interface EnvGroup {

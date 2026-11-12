@@ -220,6 +220,7 @@
                   :group="group.name"
                   :keys="group.entries.map(e => e.key)"
                   :values="groupValues[group.name] ?? {}"
+                  :configured-secrets="configuredSecrets[group.name] ?? {}"
                   :group-title="groupTitle(group.name)"
                   :download-group="downloadGroupFor(group.name)"
                   @apply="payload => applyModelProfile(group.name, payload)" />
@@ -628,6 +629,19 @@ const groupValues = computed<Record<string, Record<string, string>>>(() => {
   return all;
 });
 
+/** Secret key → whether the backend stores a value (the value itself never arrives). */
+const configuredSecrets = computed<Record<string, Record<string, boolean>>>(() => {
+  const all: Record<string, Record<string, boolean>> = {};
+  for (const group of envGroups.value) {
+    const flags: Record<string, boolean> = {};
+    for (const entry of group.entries) {
+      if (entry.secret) flags[entry.key] = entry.configured === true;
+    }
+    all[group.name] = flags;
+  }
+  return all;
+});
+
 /**
  * Apply a model profile: write its MAIN_LLM_* parameters into .models through
  * the env tab's write path, then sync the tab's draft/snapshot so the diff stays
@@ -638,7 +652,14 @@ const groupValues = computed<Record<string, Record<string, string>>>(() => {
  * @param payload.params
  */
 const applyModelProfile = async (groupName: string, payload: { id: string; params: Record<string, string> }) => {
-  const ok = await writeModelsConfig(payload.params);
+  // An empty secret means "keep the stored credential"; it must never be
+  // written as an empty string. Non-empty typed keys are sent normally.
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload.params)) {
+    if (key.endsWith('_API_KEY') && !String(value ?? '').trim()) continue;
+    params[key] = value;
+  }
+  const ok = await writeModelsConfig(params);
   if (!ok) {
     envLoadError.value = t('config.env.saveFailed');
     return;
@@ -646,10 +667,16 @@ const applyModelProfile = async (groupName: string, payload: { id: string; param
   envLoadError.value = '';
   const group = envGroups.value.find(g => g.name === groupName);
   for (const entry of group?.entries ?? []) {
-    if (entry.key in payload.params) entry.value = payload.params[entry.key]!;
+    if (!(entry.key in params)) continue;
+    if (entry.secret) {
+      entry.value = '';
+      entry.configured = true;
+    } else {
+      entry.value = params[entry.key]!;
+    }
   }
-  for (const [key, value] of Object.entries(payload.params)) {
-    originalEnvValues.value[key] = value;
+  for (const [key, value] of Object.entries(params)) {
+    originalEnvValues.value[key] = key.endsWith('_API_KEY') ? '' : value;
   }
   llmProfiles.setActive(groupName, payload.id);
 };
@@ -729,9 +756,17 @@ const persistEnvChanges = async (): Promise<boolean> => {
     const ok = await writers[source](perSource[source]);
     if (!ok) return false;
   }
-  // Sync the snapshot to serve as the baseline for the next diff
+  // Sync the snapshot to serve as the baseline for the next diff. A secret the
+  // user just typed is dropped from memory/snapshot: .models now holds it and
+  // the field returns to its write-only "configured" state.
   for (const g of envGroups.value) {
-    for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
+    for (const e of g.entries) {
+      if (e.secret) {
+        if (e.value.trim()) e.configured = true;
+        e.value = '';
+      }
+      originalEnvValues.value[e.key] = e.value;
+    }
   }
   return true;
 };

@@ -35,6 +35,9 @@ from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
+from config.models_settings import is_secret_model_key
+from server.service.models_config import read_models_raw_values
+
 __all__ = ["SUPPORTED_GROUPS", "test_model_group"]
 
 #: Groups this module can probe; anything else answers ``supported: False``.
@@ -157,6 +160,17 @@ async def test_model_group(group: str, params: dict[str, str]) -> dict[str, Any]
     """
     name = str(group or "").strip()
     values = {str(k): str(v) for k, v in (params or {}).items()}
+    # API keys are write-only in the panel: a blank field means "keep the
+    # stored credential", so the probe fills it server-side without the browser
+    # ever holding the value. An explicitly typed key still wins.
+    stored = read_models_raw_values()
+    for key, value in stored.items():
+        if not is_secret_model_key(key) or not value.strip():
+            continue
+        if key in values and not values[key].strip():
+            values[key] = value
+        elif key.startswith(f"{name}_") and not values.get(key, "").strip():
+            values[key] = value
     model = _param(values, "_API_NAME", "_NAME")
     result: dict[str, Any] = {
         "supported": name in SUPPORTED_GROUPS,

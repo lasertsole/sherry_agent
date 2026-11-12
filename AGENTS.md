@@ -1479,7 +1479,11 @@ the file to edit). `GET/PUT /models-config` and `GET/PUT /network-config`
 sources and routes each group's save back to its own endpoint, while the
 Model Network tab writes Tavily / SearXNG through `PUT /network-config`.
 `.env` no longer gets a `.env.bak` (it is tracked — git is the backup);
-`.models` / `.network` keep one.
+`.models` / `.network` keep one. `GET /models-config` NEVER returns an
+`*_API_KEY` value: each such entry is `{value: "", secret: true,
+configured: bool}`, the panel renders a write-only password field, a blank
+field on save/apply means "keep the stored key", and the connectivity probe
+fills a blank key server-side from `.models` (the browser never holds it).
 
 The Model Config panel's built-in local entry (embedding, reranker, ITTT / VTTT,
 auxiliary) prefetches the same GGUFs the runtime would download lazily, with a

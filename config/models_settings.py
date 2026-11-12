@@ -55,6 +55,17 @@ APP_HOME = resolve_app_home(_CODE_ROOT)
 MODELS_CONFIG_PATH = APP_HOME / ".models"
 MODELS_CONFIG_TEMPLATE = _TEMPLATE_ROOT / ".models.example"
 
+#: Settings that hold credentials. The config reader NEVER returns their
+#: value to a client; it returns a ``configured`` flag instead. Writes still
+#: accept a new value (the panel's write-only password field).
+SECRET_MODEL_KEY_SUFFIX = "_API_KEY"
+
+
+def is_secret_model_key(key: str) -> bool:
+    """True when ``key`` names a model credential (write-only in the UI)."""
+    return str(key).endswith(SECRET_MODEL_KEY_SUFFIX)
+
+
 # Single source of truth for accepted keys and their typed defaults. The keys
 # mirror the historical ``.env`` spelling one-for-one, so a migration is a value
 # copy and the panels' prefix grouping keeps working.
