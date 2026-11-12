@@ -16,6 +16,8 @@ _MODULE_MAP = {
     "is_zhipu_reasoning_model": ".LLMs",
     "ITTT_model": ".ITTT_model",
     "build_ittt_model": ".ITTT_model",
+    "TTI_model": ".TTI_model",
+    "build_tti_model": ".TTI_model",
     "VTTT_model": ".VTTT_model",
     "build_vttt_model": ".VTTT_model",
     "build_embed_model": ".embed_model",

@@ -1,10 +1,10 @@
-# 🖼️ 미디어 파이프라인: 압축, 네이티브 읽기, 히스토리 예산, Artifact
+# 🖼️ 미디어 파이프라인: 압축, 네이티브 읽기, 히스토리 예산, Artifact, 이미지 생성
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 에이전트가 이미지와 PDF를 끝에서 끝까지 다루는 방식: 모든 업로드는 provider에 도달하기 전에 하나의 결정적 압축 캐스케이드를 거치고, `read_file`은 skill 우회 없이 모델에게 이미지나 PDF를 그대로 보여줄 수 있으며, 히스토리 미디어는 매 턴 벗겨지는 대신 바이트 예산 안에서 최신순으로 유지되고, 영속화된 업로드는 SHA-256 내용 주소 기반 artifact 저장소에 들어가 동일 바이트를 중복 제거하고 `sherry-artifact://` 참조로 제공됩니다.
+> 에이전트가 이미지와 PDF를 끝에서 끝까지 다루는 방식: 모든 업로드는 provider에 도달하기 전에 하나의 결정적 압축 캐스케이드를 거치고, `read_file`은 skill 우회 없이 모델에게 이미지나 PDF를 그대로 보여줄 수 있으며, 히스토리 미디어는 매 턴 벗겨지는 대신 바이트 예산 안에서 최신순으로 유지되고, 영속화된 업로드는 SHA-256 내용 주소 기반 artifact 저장소에 들어가 동일 바이트를 중복 제거하고 `sherry-artifact://` 참조로 제공됩니다. `image_generation`은 프롬프트에서 이미지를 생성해 같은 artifact 저장소에 보관합니다.
 
-사실상의 기준(source of truth): `pub/func/media/image_compress.py`, `agent/middlewares/media_pipeline/core.py`, `agent/middlewares/media_pipeline/media_handlers.py`, `agent/middlewares/media_pipeline/tool_media.py`, `agent/middlewares/media_pipeline/scrub.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/pub_base/pdf_render.py`, `agent/tools/pub_base/artifact_store.py`, `agent/middlewares/summarization/media_offload.py`, `server/trigger/http/artifacts.py`, `client/app/composables/use-chat-media.ts`, `config/features/agent_side/media_pipeline.py`. 이 문서의 모든 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `pub/func/media/image_compress.py`, `agent/middlewares/media_pipeline/core.py`, `agent/middlewares/media_pipeline/budget_projection.py`, `agent/middlewares/media_pipeline/media_handlers.py`, `agent/middlewares/media_pipeline/tool_media.py`, `agent/middlewares/media_pipeline/scrub.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/pub_base/pdf_render.py`, `agent/tools/pub_base/artifact_store.py`, `agent/tools/image_gen.py`, `models/TTI_model/core.py`, `agent/middlewares/summarization/media_offload.py`, `server/trigger/http/artifacts.py`, `client/app/composables/use-chat-media.ts`, `config/features/agent_side/media_pipeline.py`, `config/features/agent_side/image_gen.py`. 이 문서의 모든 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -23,6 +23,7 @@
   - [저장 레이아웃과 중복 제거](#-저장-레이아웃과-중복-제거)
   - [제공과 렌더링](#-제공과-렌더링)
   - [압축 시점 재사용](#-압축-시점-재사용)
+- [이미지 생성](#-이미지-생성)
 - [청크 업로드: `/upload/chunk`](#-청크-업로드-uploadchunk)
 - [설정 참고](#-설정-참고)
 - [테스트](#-테스트)
@@ -109,7 +110,7 @@ PDF 분기는 제공 모델의 선언된 능력으로 경로를 고릅니다(세
 
 ### 🛡️ 순서와 플레이스홀더
 
-`wrap_model_call`(및 비동기 쌍둥이)은 `_scrub_request`를 먼저, `_project_budget_request`를 나중에 적용합니다. 스크럽 계층은 모델이 읽을 수 없는 계열을 텍스트 플레이스홀더로 바꾸고, 예산 계층은 남은 각 `image_url` 블록을 디코딩된 data URL 바이트 수로 측정합니다(원격 URL은 provider가 가져오므로 0바이트). 그런 다음 `model_copy` 요청 사본을 만듭니다. 체크포인트는 절대 변경되지 않습니다.
+`MediaBudgetProjectionMiddleware`(`agent/middlewares/media_pipeline/budget_projection.py`)가 `wrap_model_call`(및 비동기 쌍둥이)에서 `_project_media_budget`을 적용합니다. `MultimodalProcessor`는 업로드 / 영속화 / 능력 스크럽 절반을 유지하고 `_scrub_request`를 먼저 적용합니다. 스크럽 계층은 모델이 읽을 수 없는 계열을 텍스트 플레이스홀더로 바꾸고, 예산 미들웨어는 남은 각 `image_url` / `audio_url` / `video_url` 블록을 디코딩된 data URL 바이트 수로 측정합니다(원격 URL은 provider가 가져오므로 0바이트). 그런 다음 `model_copy` 요청 사본을 만듭니다. 체크포인트는 절대 변경되지 않습니다. 이 미들웨어는 main과 child 양쪽 체인에 등록되므로 이미지를 많이 읽는 서브에이전트도 메인 에이전트와 같은 예산을 씁니다.
 
 최신 실제 사용자 메시지(`metadata.origin == "user"`)는 보호되어 혼자서 예산을 넘어도 미디어가 유지됩니다. 그 표시가 없는 기록은 최신 미디어 보유 `HumanMessage`로 폴백합니다. 보호 바이트를 먼저 예산에서 빼고, 나머지를 메시지 위치 기준 최신순으로 받아들입니다. 들어가지 않는 블록은 다음 텍스트가 됩니다:
 
@@ -141,6 +142,26 @@ src/<session_id>/artifacts/
 
 압축이 인라인 미디어를 오프로드할 때 `media_offload`는 먼저 디코딩한 바이트와 미디어 계열로 `find_artifact`를 호출합니다. 히트하면 업로드 경로가 이미 저장했다는 뜻이므로 블록은 두 번째 쓰기 없이 `[evicted to: <artifact path>]` 포인터가 됩니다. 미스하면 기존 디코딩 + 쓰기 경로(`SESSIONS_DIR/<session_id>/media/`)를 유지하며, 오디오와 비디오 바이트 같은 파이프라인 밖 미디어도 포함합니다.
 
+## 🎨 이미지 생성
+
+`image_generation`은 텍스트 프롬프트를 이미지로 바꾸는 메인 에이전트 전용 도구입니다. `TTI_*` 계열이 설정된 경우(`TTI_API_NAME` + `TTI_API_KEY`, `TTI_MODEL_PROVIDER`와 `TTI_API_BASE`로 OpenAI 호환 Images API 지정)에만 등록되며 서브에이전트에는 전달되지 않습니다——생성은 과금되고 어떤 모델을 쓸지는 운영자의 선택이기 때문입니다.
+
+provider 쪽은 `models/TTI_model/core.py::TTIModel`입니다. `POST /v1/images/generations`에 `model`, `prompt`, `n`, `size`를 보냅니다. `quality`는 적용될 때만 보내고(gpt-image 계열에서는 옛 `standard`/`hd` 값을 버림), 오래된 `dall-e-*`에는 `response_format="b64_json"`을 강제하며 `gpt-image-*` / `chatgpt-image-latest`에서는 생략합니다. 새 모델 전용 옵션(`background`, `output_format`, `output_compression`, `moderation`)은 새 모델에만, DALL·E `style`은 옛 모델에만 전달합니다. URL 응답은 다운로드(50 MiB 상한)해 `b64_json`과 똑같이 처리합니다.
+
+이미지 수는 두 번 제한됩니다. 모델별 `IMAGE_GEN_MAX_OUTPUT`(`dall-e-3` = 1, `dall-e-2`와 gpt-image 계열 = 10, 미지의 모델 = 1)과 `IMAGE_GEN["max_n"]`(10) 하드 상한입니다. 반환된 각 이미지는 `write_artifact(session_id, data, media_type="image", ext=…)`로 저장되므로 동일 바이트는 중복 제거되고 세션별 URI는 안정적입니다. 도구는 저장된 업로드와 똑같은 Markdown 참조를 반환합니다:
+
+```
+Generated 2 image(s) with gpt-image-1:
+
+![generated image 1](sherry-artifact://<session>/image-<sha256[:16]>.png)
+
+![generated image 2](sherry-artifact://<session>/image-<sha256[:16]>.png)
+```
+
+채팅의 기존 `resolveArtifactRefsInMarkdown`과 갤러리 / lightbox 경로가 이 참조를 렌더링합니다. 생성 전용 프런트엔드 코드는 없습니다. provider 오류, 키 누락, artifact 쓰기 실패는 모두 `Error: …` 텍스트로 돌아가며 예외가 도구 밖으로 새지 않습니다. provider 호출은 워커 스레드에서 실행되어 이벤트 루프를 막지 않습니다.
+
+1단계는 생성만 합니다. `inputImageMask` / `inputFidelity`(inpaint)와 스트리밍 partial image 이벤트는 연결하지 않았습니다. 모델 능력 카탈로그(`config/model_capabilities.json`)는 입력 미디어를 설명하므로 이미지 생성 모델의 상한은 가짜 입력 능력으로 넣지 않고 `models/TTI_model/core.py::IMAGE_GEN_MAX_OUTPUT`에 둡니다.
+
 ## 📤 청크 업로드: `/upload/chunk`
 
 브라우저와 Tauri 셸은 `bridge/upload-chunked.ts`를 통해 첨부를 전송합니다. `CHUNK_SIZE`(512 KiB) 이하는 기존 전체 `/images|/audio|/video/upload` 경로를 씁니다. 더 큰 페이로드는 `POST /upload/begin`(session, filename, content type, `total_chunks`, `total_bytes`)으로 세션을 열고 각 청크를 `POST /upload/chunk?upload_id&chunk_index`로 보낸 뒤 `POST /upload/complete?upload_id`로 마칩니다.
@@ -168,17 +189,22 @@ src/<session_id>/artifacts/
 | `chunk_size_bytes` | `524288` | `/upload/chunk` 본문 하나의 최대 바이트. |
 | `max_concurrent_files` | `8` | 한 번의 다중 첨부 전송에서 병렬 파일 레인 수. |
 | `read_cache_ttl_ms` | `30000` | 업로드된 URL의 클라이언트 중복 제거 창. |
+| `IMAGE_GEN["max_n"]` | `10` | 한 번의 생성 요청 절대 상한(모델별 상한이 먼저 적용). |
+| `IMAGE_GEN["default_size"]` | `"1024x1024"` | 호출자가 크기를 생략했을 때의 기본값. |
+| `IMAGE_GEN["default_quality"]` | `""` | 품질을 생략했을 때의 기본값(빈 값 = provider 기본). |
+| `IMAGE_GEN["timeout_s"]` | `120.0` | provider 및 이미지 다운로드 타임아웃. |
 
 ## 🧪 테스트
 
 - `tests/pub/func/media/test_image_compress.py` — 통과, 품질 단계, 크기 상한, 토큰 게이트, WebP, `too_large`.
 - `tests/agent/tools/file_tools/test_read_file_image.py`와 `test_read_file_pdf.py` — 네이티브 블록, skill 폴백, 상한, 페이지 범위 오류.
 - `tests/agent/tools/pub_base/test_pdf_render.py` — PyMuPDF 경로, `pdftoppm` 폴백, 타임아웃, 렌더러 부재 오류.
-- `tests/agent/middlewares/media_pipeline/test_history_budget.py` — 전체 수용, 최신순 퇴출, 최신 사용자 보호, 원격 URL, 전체 폐기.
+- `tests/agent/middlewares/media_pipeline/test_budget_projection.py` — 전체 수용, 최신순 퇴출, 최신 사용자 보호, 원격 URL, 전체 폐기, 양쪽 체인.
 - `tests/agent/tools/pub_base/test_artifact_store.py`와 `tests/server/trigger/http/test_artifacts.py` — 중복 제거, 동시성, URI 파싱, 제공, 세션 범위.
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 재사용과 기존 오프로드 경로.
 - `tests/agent/middlewares/test_media_pipeline_e2e.py` — 실제 agent 그래프: 서버 압축 → artifact 저장소 + `/artifacts` → `read_file` 이미지/PDF 블록 → 히스토리 예산 투영.
 - `tests/server/trigger/http/test_upload_chunked.py`와 클라이언트 `upload-chunked` / `upload-cache` 스위트 — 스테이징, 조립, 내용 해시 중복 제거, 상한, 짧은 TTL 캐시.
+- `tests/models/TTI_model/test_core.py`와 `tests/agent/tools/test_image_gen.py` — 요청 형태, 모델별 상한, `response_format` 가드, URL 다운로드, artifact 중복 제거, 오류 텍스트, 등록 게이트.
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 첨부와 Markdown 참조의 URI 해석.
 
 ## ⚠️ 한계
@@ -187,3 +213,4 @@ src/<session_id>/artifacts/
 - 비디오는 페이로드당 상한(`video_max_bytes`, 30 MiB)만 있고 압축도 누적 히스토리 버킷도 없습니다. ZCode도 같습니다.
 - 75 MiB 예산은 요청 크기 휴리스틱이지 토큰 예측기가 아닙니다. 압축된 이미지가 많아도 provider 토큰은 비쌀 수 있고, 압축 미들웨어가 사후 안전망입니다.
 - `artifact_store_enabled`를 끄기 전에 기록된 artifact URI는 계속 읽을 수 있습니다. 새 업로드는 타임스탬프 `media/` 파일과 `/media` 엔드포인트로 돌아갑니다.
+- 이미지 생성은 운영자가 설정한 provider에 의존합니다. `TTI_API_NAME`과 `TTI_API_KEY`가 없으면 도구 자체가 없고 모델은 그릴 수 없습니다. 1단계에는 편집 / inpaint도 스트리밍 미리보기도 없습니다.

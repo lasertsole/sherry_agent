@@ -85,6 +85,8 @@ from .agent_side import (
     GRAPH_RAG_PATH as GRAPH_RAG_PATH,
     GraphRagPathConfig as GraphRagPathConfig,
     MediaPipelineConfig as MediaPipelineConfig,
+    IMAGE_GEN as IMAGE_GEN,
+    ImageGenConfig as ImageGenConfig,
     BackgroundReviewConfig as BackgroundReviewConfig,
     ContextGuardConfig as ContextGuardConfig,
     HeartbeatStalenessConfig as HeartbeatStalenessConfig,

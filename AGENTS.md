@@ -42,7 +42,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (90 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (91 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -2215,7 +2215,7 @@ question unanswerable by traversal. `path_search.py` adds the explicit layer
   regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
   total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
 
-## Media Pipeline: Compression, Native Reads, History Budget & Artifacts
+## Media Pipeline: Compression, Native Reads, History Budget, Artifacts & Image Generation
 
 Every image the agent sends passes one compression cascade
 (`pub/func/media/image_compress.py::prepare_for_model`, aligned with ZCode's
@@ -2263,16 +2263,20 @@ skill detour:
   embed the whole base64 payload and cut the media block away.
 
 History media is projected against a byte budget at REQUEST time — there is no
-checkpoint rewrite and no unconditional strip. In `wrap_model_call` the
-capability scrub runs first (`scrub_messages`: unsupported families become text
-placeholders), then `_project_history_media_budget` keeps every `image_url`
-block that fits `history_media_budget_bytes` (75 MiB, ZCode's `Mui`) choosing
-newest-first by message index. The latest real user message's media is
-PROTECTED (`preserve_latest_user_media`, resolved through
-`is_user_message`; a transcript without `metadata.origin == "user"` falls back
-to the newest media-bearing HumanMessage) and is kept even over budget. Only
-inline data-URL payloads are measured (decoded size; a remote URL is fetched by
-the provider and costs zero), and a dropped block becomes
+checkpoint rewrite and no unconditional strip. The capability scrub
+(`scrub_messages`: unsupported families become text placeholders) stays in
+`MultimodalProcessor.wrap_model_call` and runs first; the budget half is the
+separate `MediaBudgetProjectionMiddleware`
+(`agent/middlewares/media_pipeline/budget_projection.py`, registered in BOTH the
+main and child chains, so a subagent reading many images is budgeted too). It
+keeps every `image_url` / `audio_url` / `video_url` block that fits
+`history_media_budget_bytes` (75 MiB, ZCode's `Mui`) choosing newest-first by
+message index. The latest real user message's media is PROTECTED
+(`preserve_latest_user_media`, resolved through `is_user_message`; a transcript
+without `metadata.origin == "user"` falls back to the newest media-bearing
+HumanMessage) and is kept even over budget. Only inline data-URL payloads are
+measured (decoded size; a remote URL is fetched by the provider and costs zero),
+and a dropped block becomes
 `[Attached image]\n[Media omitted from provider request … media budget.]` in a
 `model_copy` request copy. A session under budget therefore keeps all its
 images; the old `_strip_history_images` (which dropped history media after every
@@ -2295,6 +2299,30 @@ instead of decoding and writing a second copy at compression time.
 `artifact_store_enabled` (default true) off restores the legacy timestamped
 `media/<ts><ext>` copy and the `/media` URL; artifact URIs written earlier stay
 readable.
+
+**Image generation** is the reverse direction over the same store.
+`agent/tools/image_gen.py::ImageGenerationTool` (`image_generation`, main-agent
+only — registered by `build_image_gen_tool`, which returns `[]` unless the
+`TTI_*` family names both a model and a key) calls
+`models/TTI_model/core.py::TTIModel.generate`. The provider half sends the
+OpenAI-compatible Images API request: `model`/`prompt`/`n`/`size` always,
+`quality` only when applicable (a legacy `standard`/`hd` is dropped for a
+gpt-image model), `response_format="b64_json"` forced for `dall-e-*` and
+omitted for `gpt-image-*`/`chatgpt-image-latest`, and the newer-only
+`background`/`output_format`/`output_compression`/`moderation` plus DALL·E
+`style` routed to the model family that accepts them. A URL response is
+downloaded with a 50 MiB cap. `n` is clamped twice — per model
+(`IMAGE_GEN_MAX_OUTPUT`: `dall-e-3` 1, `dall-e-2` and gpt-image 10, unknown 1)
+and `IMAGE_GEN["max_n"]` (10). Each returned image is persisted with
+`write_artifact(..., media_type="image")` (same SHA-256 dedupe and
+`sherry-artifact://` namespace as uploads) and the tool answers Markdown
+`![generated image N](sherry-artifact://…)` lines the existing gallery/lightbox
+renders; a provider/configuration/artifact failure comes back as `Error: …`
+text. The provider call runs in `asyncio.to_thread`. Phase 1 is generation only
+(`inputImageMask`/inpainting and partial-image streaming are not wired), the
+`TTI_*` keys live in `.models` (already present in 模型配置), and the
+input-media capability catalog is deliberately NOT extended — output-model
+limits live in `IMAGE_GEN_MAX_OUTPUT`.
 
 The end-to-end surface is `tests/agent/middlewares/test_media_pipeline_e2e.py`:
 a scripted stub model drives the real `create_agent` graph through server
@@ -2646,9 +2674,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 59 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, delegation_pressure, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 60 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, delegation_pressure, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, image_gen, ...) |
 | `config/features/infra_side/` | 31 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, local_daemons, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 90 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 91 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._; LangSmith moved to `.network` / `config/network_settings.py`)                                                                                                                                          |
