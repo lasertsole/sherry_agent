@@ -92,6 +92,10 @@ def _build_graph(tools: tuple = ()):
     from langchain.agents import create_agent
     from langchain.agents.middleware import AgentState
 
+    from agent.middlewares.media_pipeline.budget_projection import (
+        MediaBudgetProjectionMiddleware,
+    )
+
     class HarnessState(AgentState):
         session_id: str
 
@@ -102,6 +106,7 @@ def _build_graph(tools: tuple = ()):
         tools=list(tools),
         middleware=[
             mm_core.MultimodalProcessor(),
+            MediaBudgetProjectionMiddleware(),
             LLMRetryMiddleware(config=LLMRetryConfig(max_retries=0)),
         ],
     )

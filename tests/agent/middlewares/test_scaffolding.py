@@ -159,6 +159,32 @@ class TestActualChainCompliance:
         validate_required_middleware(middleware, chain="subagent", entries=_SUBAGENT_REQUIRED)
         assert SUBAGENT_REQUIRED_CLASSES <= {type(mw) for mw in middleware}
 
+    def test_media_budget_projection_is_required_in_both_chains(self):
+        from agent.middlewares.media_pipeline.budget_projection import (
+            MediaBudgetProjectionMiddleware,
+        )
+
+        main = [
+            mw
+            for mw in _build_middlewares(
+                fallback_chain=None,
+                auxiliary_llm=None,
+                main_llm_context_window=_CONTEXT_WINDOW,
+                compression_trigger_ratio=0.8,
+            )
+            if not isinstance(mw, MediaBudgetProjectionMiddleware)
+        ]
+        with pytest.raises(ScaffoldingViolationError, match="MediaBudgetProjection"):
+            validate_required_middleware(main, chain="main", entries=_MAIN_REQUIRED)
+
+        child = [
+            mw
+            for mw in _real_subagent_chain()
+            if not isinstance(mw, MediaBudgetProjectionMiddleware)
+        ]
+        with pytest.raises(ScaffoldingViolationError, match="MediaBudgetProjection"):
+            validate_required_middleware(child, chain="subagent", entries=_SUBAGENT_REQUIRED)
+
     @pytest.mark.parametrize(
         ("role", "expected"),
         [

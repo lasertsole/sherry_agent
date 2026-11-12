@@ -79,7 +79,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → PlanModeToolGate → MultimodalProcessor → IterationBudget
-  │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → UserHooks → ContextEviction(P0-2/P2-4)
+  │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → MediaBudgetProjection → UserHooks → ContextEviction(P0-2/P2-4)
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
@@ -433,6 +433,33 @@ User message → Robyn WS → agent.core.built_agent() graph
       gates read), so a child whose work a later write invalidated cannot drain
       as if it were verified
 ```
+
+## Middleware Spec Table (`agent/middlewares/specs.py`)
+
+`MIDDLEWARE_SPECS` is the ONE declarative source for both chains. Each row is a
+`MiddlewareSpec` with an optional `main` / `child` `ProfileBinding(position,
+builder)` and `required_in` (the safety baseline). `agent/core.py`,
+`child_agent_factory.py`, `scaffolding._MAIN_REQUIRED` / `_SUBAGENT_REQUIRED`,
+`catalog.MIDDLEWARE_ORDER`, `chain_for()` and both builders all derive from it —
+never edit a derived list as a second source. The import-time `_validate_table()`
+enforces unique contiguous positions per profile and that every
+`required_in` member has a binding.
+
+Adding a middleware: add one row; positions of later entries in the SAME profile
+shift by one. Marking it safety-critical: set `required_in` (a subset of
+`{MAIN, CHILD}`; `_BOTH` is both). Renaming a required class: change the row and
+update name-based tests; the derived sets follow. Demoting a required entry:
+remove its `required_in` only with a recorded reason and update its
+non-required test. The order-pinning tests are
+`tests/agent/core/test_middleware_order.py` and
+`tests/agent/middlewares/test_scaffolding.py`; the chain contracts and
+per-middleware sections live in `agent/middlewares/README.md` (four languages).
+
+`MediaBudgetProjectionMiddleware` (main 10 / child 5, `required_in=_BOTH`) is
+the extracted history-media budget layer: `MultimodalProcessor` stays
+main-only, while both chains project `image_url` / `audio_url` / `video_url`
+blocks newest-first within `history_media_budget_bytes`, protecting the latest
+real user message and never rewriting the checkpoint.
 
 ## PTC Replay (`agent/tools/ptc/`)
 

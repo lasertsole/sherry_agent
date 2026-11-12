@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -151,6 +152,7 @@ middleware = [
     IterationBudget(执行者 ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -183,7 +185,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent`（列表顺序）           | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                      |
 | `before_model`（列表顺序）           | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（两个注入器都排在净化重写之后，因此其消息在注入回合不会被剥离）                                                                             |
-| `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware 最贴近 LLM；Summarization 被 LLMRetry 从外部包住其 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
+| `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware 最贴近 LLM；Summarization 被 LLMRetry 从外部包住其 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序）                | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库）                                                                                                                                                                 |
 | `wrap_tool_call`（最外层 → 最内层）  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
 | `after_agent`（逆序）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合）                                                                                                                                             |
@@ -259,11 +261,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 当模型拒绝被分类为 `multimodal_not_supported` 时，`LLMRetryMiddleware` 会把消息中实际出现的媒体类型写为 `"unsupported"`，并把请求改写为技能路径；同进程内的后续会话与回合因此不再尝试原生。拒绝会记在**实际服务的**模型上：当该调用已被重绑到回退候选时，`LLMRetryMiddleware` 会在写缓存前把 `_multimodal_native_model` 改写为该候选（见其小节）。
 - **静默降级检测**（`main_llm_silent_degradation_detection`，默认开启）：当原生尝试**成功**、但回复自述无法感知媒体或要求用户描述附件时，`LLMRetryMiddleware` 会把请求中出现的媒体类型针对实际服务的模型缓存为 `"unsupported"`，后续回合不再做注定失败的原生探测。检测器（`media_pipeline/degradation.py::detect_media_blindness`）是对 EN/ZH/JA/KO 的高精度正则：只有媒体词出现在失明/描述短语附近时才判定。原先"回复从未提及媒体内容"的字面启发式被刻意弃用——有能力的模型可以完全不使用媒体关键词就描述图片，而误判会让较慢的技能路径永久生效。
 - 持久化图片引用（`sherry-artifact://<session_id>/<name>`，或旧版 media 路径）与音视频路径写入 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`，随后由 MesMemory 写库供历史渲染使用。
-- `image_url` 块不再每轮剥离：`wrap_model_call` 按 `history_media_budget_bytes`（75 MiB）对历史媒体做从新到旧的预算投影，保护最新真实用户消息，只替换放不下的块。检查点永不被改写。
+- 历史媒体投影已移到 `MediaBudgetProjectionMiddleware`（main 与 child 两条链都注册）：本处理器只保留上传/持久化/能力擦洗部分；共享预算层在每个 model request 上投影历史媒体。
 
 `wrap_model_call` / `awrap_model_call` 在**每次模型请求**上运行（仅 `"auto"` 模式），擦洗请求副本：族被缓存为 `"unsupported"` 的媒体块被替换为文本占位符，其中写明被剥离的媒体、其落盘路径与对应技能（`image_to_text` / `speech_to_text` / `video_text_to_text`）；supported 与未探测的块原样保留。改写使用 `request.override(messages=...)`——state、checkpointer 与 MesMemory 均不被触碰——无需擦洗时原样返回原请求对象。能力查询使用环境主模型 key（`get_model_key()`）：本层包在 `LLMRetryMiddleware` 之外，无法感知在链路更内层重绑的粘性回退候选；该候选的拒绝仍由 `multimodal_not_supported` → 技能路径改写覆盖——写缓存前它会把实际服务的候选写进 `_multimodal_native_model`。
 
 `after_agent` 清理 `mutil_temp`：删除文件名主干不是纯数字时间戳、或超过 7 天的文件。
+
+### MediaBudgetProjectionMiddleware
+
+**模块：** `agent/middlewares/media_pipeline/budget_projection.py` · **类：** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**钩子：** `wrap_model_call` / `awrap_model_call`
+
+在 main 与 child 两条链中都按 `history_media_budget_bytes`（75 MiB）从新到旧保留历史媒体。它测量 `image_url` / `audio_url` / `video_url` 的 data URL 载荷，保护最新真实用户消息的媒体，只把放不下的块替换为带类型名的文本占位符。远程 URL 不计成本并保留；预算为 `0` 时丢弃所有非保护块（显式 skill 路径还会丢弃最新用户媒体）。检查点永不被改写。`required_in=_BOTH`：即使 `MultimodalProcessor` 只在 main 链，子代理连续读多张图也不会无限累积媒体历史。
 
 ### IterationBudget
 

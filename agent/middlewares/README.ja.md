@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -151,6 +152,7 @@ middleware = [
     IterationBudget(executor ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -185,7 +187,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent`（リスト順）           | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                    |
 | `before_model`（リスト順）           | ContextEvictionMiddleware（P1-9：末尾の巨大な HumanMessage にタグ付け。`before_agent` チェーンが先に走るため、メディアヒントは既にテキストへ統合済み） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（2 つのインジェクタはいずれもサニタイズ書き換えの後に位置するため、注入ターンでもメッセージが剥がされない）                                       |
-| `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
+| `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
 | `after_model`（逆順）                | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない）                                                                                                                                                                                     |
 | `wrap_tool_call`（最外層 → 最内層）  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
 | `after_agent`（逆順）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する）                                                                                                                                                                     |
@@ -261,11 +263,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - モデルが `multimodal_not_supported` として分類される拒否を返すと、`LLMRetryMiddleware` がメッセージに実際に含まれるメディア種別を `"unsupported"` として記録し、リクエストをスキルパスへ書き換えます。同じプロセス内の以降のセッションとターンはネイティブ試行を省略します。拒否は**実際に処理した**モデルに記録されます：呼び出しがフォールバック候補へ再バインドされていた場合、`LLMRetryMiddleware` はキャッシュ書き込み前に `_multimodal_native_model` をその候補へ書き換えます（同セクション参照）。
 - **サイレント劣化の検知**（`main_llm_silent_degradation_detection`、既定で有効）：ネイティブ試行が**成功**したのに、返信がメディアを認識できないと自ら述べたり、添付の説明をユーザーに求めたりした場合、`LLMRetryMiddleware` はリクエストに含まれる全メディア種別を実際に処理したモデルに対して `"unsupported"` としてキャッシュし、以降のターンは失敗必至のネイティブ試行を行いません。検出器（`media_pipeline/degradation.py::detect_media_blindness`）は EN/ZH/JA/KO 対応の高精度正規表現で、失明/説明要求フレーズの近くにメディア語がある場合のみ一致します。「返信がメディアに言及しない」という字面のヒューリスティックは意図的に採用していません — 有能なモデルはメディア語を一切使わずに画像を説明でき、誤検知は遅いスキルパスを恒久化してしまうためです。
 - 永続化された画像参照（`sherry-artifact://<session_id>/<name>`、または従来の media パス）と音声・動画パスは `additional_kwargs["images"]` / `["audios"]` / `["videos"]` に格納され、後から MesMemory に書き込まれ履歴レンダリングに使われます。
-- `image_url` ブロックはターンごとに剥ぎ取られません：`wrap_model_call` が履歴メディアを `history_media_budget_bytes`（75 MiB）に対して新しい順に投影し、最新の実ユーザーメッセージを保護して、収まらないブロックだけを置換します。チェックポイントは決して書き換えません。
+- 履歴メディアの投影は `MediaBudgetProjectionMiddleware` に移りました（main と child の両チェーンに登録）：このプロセッサはアップロード / 永続化 / 能力スクラブの半分だけを持ち、共有予算層がすべての model request で履歴メディアを投影します。
 
 `wrap_model_call` / `awrap_model_call` は**すべてのモデルリクエスト**で（`"auto"` モードのみ）実行され、リクエストのコピーをスクラブします：種別が `"unsupported"` キャッシュのメディアブロックは、剥ぎ取られたメディア・そのディスク上のパス・対応スキル（`image_to_text` / `speech_to_text` / `video_text_to_text`）を示すテキストプレースホルダーに置換されます。supported と未検証のブロックはそのまま通ります。書き換えは `request.override(messages=...)` で行い、state・checkpointer・MesMemory には一切触れず、スクラブ不要なら元のリクエストオブジェクトをそのまま返します。能力参照には環境のメインモデルキー（`get_model_key()`）を使います：本層は `LLMRetryMiddleware` の外側を包むため、チェーン内層で再バインドされたスティッキー・フォールバック候補を観測できません。その候補の拒否は `multimodal_not_supported` → スキルパス書き換えが引き続き担い、キャッシュ書き込み前に実際に処理した候補を `_multimodal_native_model` へ記録します。
 
 `after_agent` は `mutil_temp` を清掃します：ファイル名の本体が純粋な数値タイムスタンプでないもの、または 7 日より古いものを削除します。
+
+### MediaBudgetProjectionMiddleware
+
+**モジュール：** `agent/middlewares/media_pipeline/budget_projection.py` · **クラス：** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**フック：** `wrap_model_call` / `awrap_model_call`
+
+main と child の両チェーンで、履歴メディアを `history_media_budget_bytes`（75 MiB）に対して新しい順に保ちます。`image_url` / `audio_url` / `video_url` の data URL ペイロードを測定し、最新の実ユーザーメッセージのメディアを保護して、収まらないブロックだけを種類名付きのテキスト プレースホルダーに置換します。リモート URL はコスト 0 として保持され、予算 `0` は非保護ブロックをすべて落とします（明示的な skill パスでは最新ユーザーメディアも落とします）。チェックポイントは決して書き換えません。`required_in=_BOTH`：`MultimodalProcessor` が main 専用でも、子エージェントが複数の画像を読んでも履歴メディアは無限に蓄積しません。
 
 ### IterationBudget
 

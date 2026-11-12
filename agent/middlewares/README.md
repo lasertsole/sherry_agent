@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -143,6 +144,7 @@ middleware = [
     ChildTokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -175,7 +177,7 @@ Differences vs the main agent:
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent` (list order)               | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                                                                         |
 | `before_model` (list order)               | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn)                                                                                                             |
-| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
+| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
 | `after_model` (reverse order)             | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush)                                                                                                                                                                                                          |
 | `wrap_tool_call` (outermost → innermost)  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
 | `after_agent` (reverse order)             | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn)                                                                                                                                                                                                              |
@@ -251,11 +253,18 @@ The gate applies only while a plan is open; a session outside plan mode sees the
 - A model rejection classified as `multimodal_not_supported` makes `LLMRetryMiddleware` write `"unsupported"` for the media families actually present and rewrite the request onto the skill path, so later sessions and turns in the same process skip the native probe. The rejection is cached against the **serving** model: when the call was rebound to a fallback candidate, `LLMRetryMiddleware` rewrites `_multimodal_native_model` to that candidate before caching (see its section).
 - **Silent-degradation detection** (`main_llm_silent_degradation_detection`, default on): when a native attempt **succeeds** but the reply self-reports media blindness or asks the user to describe the attachment, `LLMRetryMiddleware` caches every media family present as `"unsupported"` against the serving model, so later turns skip the doomed native probe. The detector (`media_pipeline/degradation.py::detect_media_blindness`) is a precision-first regex over EN/ZH/JA/KO: a blindness/describe phrase only counts when a media word sits near it. The literal "the reply never mentions the media" heuristic is deliberately absent — a capable model can describe an image without any media keyword, and a false positive would force the slower skill path forever.
 - Persisted image references (`sherry-artifact://<session_id>/<name>`, or legacy media paths) and audio/video paths are stored in `additional_kwargs["images"]` / `["audios"]` / `["videos"]` and later written to MesMemory for history rendering.
-- `image_url` blocks are not stripped per turn: `wrap_model_call` projects history media against `history_media_budget_bytes` (75 MiB), newest-first, protecting the latest real user message, and replaces only the blocks that no longer fit. The checkpoint is never rewritten.
+- History media projection moved to `MediaBudgetProjectionMiddleware` (registered in BOTH chains): this processor keeps the upload / persistence / capability-scrub half; the shared budget layer below projects history media on every model request.
 
 `wrap_model_call` / `awrap_model_call` runs on **every model request** (auto mode only) and scrubs the request copy: each media block whose family is cached `"unsupported"` is replaced by a text placeholder naming the stripped media, its on-disk path and the matching skill (`image_to_text` / `speech_to_text` / `video_text_to_text`); supported and unprobed blocks pass through untouched. The rebuild is `request.override(messages=...)` — state, checkpointer and MesMemory are never touched — and the original request object is returned unchanged when nothing needs scrubbing. The capability lookup uses the env main-model key (`get_model_key()`): this layer wraps outside `LLMRetryMiddleware` and so cannot observe a sticky fallback candidate rebound deeper in the chain; that candidate's rejection is still covered by the `multimodal_not_supported` → skill-path rewrite, which stamps the serving candidate into `_multimodal_native_model` before caching.
 
 `after_agent` cleans `mutil_temp`: deletes files whose stem is not a pure numeric timestamp or that are older than 7 days.
+
+### MediaBudgetProjectionMiddleware
+
+**Module:** `agent/middlewares/media_pipeline/budget_projection.py` · **Class:** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call`
+
+Keeps history media newest-first within `history_media_budget_bytes` (75 MiB) in BOTH the main and child chains. It measures `image_url` / `audio_url` / `video_url` data-URL payloads, protects the latest real user message's media, and replaces only the blocks that no longer fit with a type-named text placeholder. Remote URLs cost nothing and are kept; a budget of `0` drops every non-protected block (the explicit skill-path mode also drops the latest user media). The checkpoint is never rewritten. `required_in=_BOTH`: a subagent that reads several images cannot accumulate unbounded media history even though `MultimodalProcessor` is main-only.
 
 ### IterationBudget
 

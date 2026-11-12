@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -151,6 +152,7 @@ middleware = [
     IterationBudget(executor ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -185,7 +187,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent` (리스트 순서)        | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                       |
 | `before_model`(목록 순서)           | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음)                                                                |
-| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
+| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
 | `after_model` (역순)                | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음)                                                                                                                                                                              |
 | `wrap_tool_call` (최외곽 → 최내곽)  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
 | `after_agent` (역순)                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄)                                                                                                                                                           |
@@ -261,11 +263,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 모델이 `multimodal_not_supported`로 분류되는 거부를 반환하면 `LLMRetryMiddleware`가 메시지에 실제로 존재하는 미디어 종류를 `"unsupported"`로 기록하고 요청을 스킬 경로로 다시 씁니다. 같은 프로세스의 이후 세션과 턴은 네이티브 시도를 건너뜁니다. 거부는 **실제로 서빙한** 모델에 기록됩니다: 호출이 폴백 후보로 재바인딩된 경우 `LLMRetryMiddleware`가 캐시를 쓰기 전에 `_multimodal_native_model`을 그 후보로 다시 씁니다(해당 섹션 참조).
 - **사일런트 열화 감지**(`main_llm_silent_degradation_detection`, 기본 켜짐): 네이티브 시도가 **성공**했는데 응답이 스스로 미디어를 인지할 수 없다고 밝히거나 사용자에게 첨부 설명을 요청하면, `LLMRetryMiddleware`가 요청에 존재하는 모든 미디어 종류를 실제 서빙한 모델에 대해 `"unsupported"`로 캐시하여 이후 턴이 실패할 네이티브 시도를 건너뜁니다. 검출기(`media_pipeline/degradation.py::detect_media_blindness`)는 EN/ZH/JA/KO를 지원하는 고정밀 정규식으로, 실명/설명 요청 구문 근처에 미디어 단어가 있을 때만 일치합니다. "응답이 미디어를 언급하지 않는다"는 문자적 휴리스틱은 의도적으로 채택하지 않았습니다 — 유능한 모델은 미디어 키워드 없이도 이미지를 설명할 수 있고, 오탐은 느린 스킬 경로를 영구화하기 때문입니다.
 - 영속화된 이미지 참조(`sherry-artifact://<session_id>/<name>` 또는 기존 media 경로)와 오디오·비디오 경로는 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`에 저장되고, 이후 MesMemory에 기록되어 히스토리 렌더링에 사용됩니다.
-- `image_url` 블록은 턴마다 제거되지 않습니다: `wrap_model_call`이 히스토리 미디어를 `history_media_budget_bytes`(75 MiB)에 대해 최신순으로 투영하고 최신 실제 사용자 메시지를 보호하며, 들어가지 않는 블록만 교체합니다. 체크포인트는 절대 변경되지 않습니다.
+- 히스토리 미디어 투영은 `MediaBudgetProjectionMiddleware`로 이동했습니다(main과 child 두 체인 모두 등록): 이 프로세서는 업로드/영속화/능력 스크럽 절반만 유지하고, 공유 예산 계층이 모든 model request에서 히스토리 미디어를 투영합니다.
 
 `wrap_model_call` / `awrap_model_call`은 **모든 모델 요청**에서(`"auto"` 모드에서만) 실행되어 요청 복사본을 스크럽합니다: 종류가 `"unsupported"`로 캐시된 미디어 블록은 제거된 미디어, 디스크 경로, 대응 스킬(`image_to_text` / `speech_to_text` / `video_text_to_text`)을 명시한 텍스트 자리표시자로 교체됩니다. supported 및 미검증 블록은 그대로 통과합니다. 재작성은 `request.override(messages=...)`로 이루어지며 state / checkpointer / MesMemory는 전혀 건드리지 않고, 스크럽할 것이 없으면 원래 요청 객체를 그대로 반환합니다. 능력 조회는 환경 메인 모델 키(`get_model_key()`)를 사용합니다: 이 계층은 `LLMRetryMiddleware` 바깥을 감싸므로 체인 안쪽에서 재바인딩된 스티키 폴백 후보를 관측할 수 없습니다. 그 후보의 거부는 `multimodal_not_supported` → 스킬 경로 재작성이 여전히 담당하며, 캐시를 쓰기 전에 실제 서빙한 후보를 `_multimodal_native_model`에 기록합니다.
 
 `after_agent`는 `mutil_temp`를 청소합니다: 파일명 본체가 순수 숫자 타임스탬프가 아니거나 7일보다 오래된 파일을 삭제합니다.
+
+### MediaBudgetProjectionMiddleware
+
+**모듈:** `agent/middlewares/media_pipeline/budget_projection.py` · **클래스:** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call`
+
+main과 child 두 체인 모두에서 히스토리 미디어를 `history_media_budget_bytes`(75 MiB)에 대해 최신순으로 유지합니다. `image_url` / `audio_url` / `video_url` data URL 페이로드를 측정하고 최신 실제 사용자 메시지의 미디어를 보호하며, 들어가지 않는 블록만 유형 이름이 붙은 텍스트 자리표시자로 교체합니다. 원격 URL은 비용이 0이라 유지되고, 예산 `0`은 비보호 블록을 모두 제거합니다(명시적 skill 경로는 최신 사용자 미디어도 제거). 체크포인트는 절대 변경되지 않습니다. `required_in=_BOTH`: `MultimodalProcessor`가 main 전용이어도 하위 에이전트가 여러 이미지를 읽어도 히스토리 미디어가 무한히 쌓이지 않습니다.
 
 ### IterationBudget
 
