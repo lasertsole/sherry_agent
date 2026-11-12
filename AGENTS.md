@@ -160,15 +160,17 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     before_model tags only an oversized trailing USER HumanMessage
   │     (`is_user_message`: `metadata.origin == "user"`; reminders, notices and
   │     every other injected carrier are never tagged) and wrap_model_call
-  │     truncates only the model view. The CHILD chain registers the same
-  │     middleware in its trimmed mode (`human_eviction=False`): the same
-  │     20 000-char tool-result threshold and `read_file` slice, with tool
-  │     results written to the child's OWN `evicted/` directory. That tree is
-  │     part of the session's private `SESSIONS_DIR` state (readable/writable
-  │     without HITL — see the self-path policy), so the preview pointer is
-  │     recoverable there too; human messages are untouched. A failed offload
-  │     (either chain) falls back to an in-memory hard clip (M12), so an
-  │     oversized payload never reaches state raw)
+  │     truncates only the model view. The CHILD chain registers the SAME
+  │     middleware with NO special mode (the old trimmed child flags are
+  │     gone): the same 20 000-char tool-result threshold, the same
+  │     `read_file` slice and the same human-message switch, with tool results
+  │     written to the child's OWN `evicted/` directory. That tree is part of
+  │     the session's private `SESSIONS_DIR` state (readable/writable without
+  │     HITL — see the self-path policy), so the preview pointer is recoverable
+  │     there too. Human eviction only matches `origin="user"`, which a child's
+  │     task/continuation messages never carry, so their instructions are not
+  │     offloaded. A failed offload falls back to an in-memory hard clip (M12),
+  │     so an oversized payload never reaches state raw)
   │    ThinkingControl: per-session thinking control (client switch / level
   │     picker → PUT /sessions/thinking → state register); swaps request.model
   │     for the variant built by build_main_llm(thinking=... / level=...) when

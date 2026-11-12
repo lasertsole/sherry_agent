@@ -31,7 +31,7 @@
 `ContextEvictionMiddleware.wrap_tool_call` 在工具响应**进入图 state 之前**将其拦截（`agent/middlewares/context_eviction/core.py`；原语在 `pub/func/message/eviction.py`）：
 
 - 提取文本**超过 `evict_threshold_chars`（20 000 字符）**的通用结果写入 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`，消息内容替换为携带文件路径的 head/tail 预览。
-- **子代理模式同样落盘。** 子代理用 `human_eviction=False` 注册同一个中间件：超过同一阈值时，结果写入**子代理自己的** `evicted/` 目录，并替换为通常的 head/tail 预览。该目录属于会话私有 `SESSIONS_DIR` 树，会话语义下读写免 HITL，因此指针可恢复。任一链卸载失败时回退到内存 `[output truncated: …]` 硬截断，超大载荷永远不会以原文进入 state。
+- **子代理使用完全相同的配置。** 子代理注册同一个中间件（旧的精简开关已移除）：超过同一阈值时，结果写入**子代理自己的** `evicted/` 目录，并替换为通常的 head/tail 预览。该目录属于会话私有 `SESSIONS_DIR` 树，会话语义下读写免 HITL，因此指针可恢复。人类消息开关也共享，但它只匹配 `origin="user"`，子代理的任务/续跑消息不带该标记。卸载失败时回退到内存 `[output truncated: …]` 硬截断，超大载荷永远不会以原文进入 state。
 - `excluded_tools`（8 个名字 —— `read_file`、`write_file`、`patch_file`、`search_files`、`list_files`、`memory`、`skill_view`、`skill_list`）原样通过：它们的载荷已在后端文件系统上或取回成本极低。`read_file` 另外走下面的切片路径。
 - 替换经 `ToolMessage.model_copy` 构造，消息 `id`、`tool_call_id`、`name`、`status` 与 `additional_kwargs` 全部存活 —— 配对、净化器与水位始终匹配同一条逻辑消息。
 - 多模态非文本块（图片/音频/视频）原样保留，只替换文本块。

@@ -111,10 +111,10 @@ _HUMAN_PREVIEW_TEMPLATE = """\
 
 {notice}"""
 
-#: In-memory fallback preview: no file, no recovery pointer. Used when a child
-#: has no readable eviction store (a subagent cannot self-approve an external
-#: path) and when a main-chain offload fails (the oversized payload must not
-#: reach state raw).
+#: In-memory fallback preview: no file, no recovery pointer. Used when an
+#: offload fails on EITHER chain (the oversized payload must not reach state
+#: raw); the child pipeline uses normal file-backed eviction too, because its
+#: own session tree is readable/writable without HITL.
 _CLIPPED_PREFIX = "[output truncated: "
 CLIPPED_PREFIX = _CLIPPED_PREFIX
 _CLIPPED_PREVIEW_TEMPLATE = """\
@@ -445,9 +445,8 @@ def hard_clip_tool_result(msg: ToolMessage) -> ToolMessage | None:
     multimodal content, at/under the threshold, already an eviction/clip
     preview, or the head/tail render would not shrink it). Unlike
     :func:`evict_tool_result` this never touches the filesystem, so it is the
-    fallback for a failed offload and the child pipeline's mode: the preview
-    carries no file pointer because a subagent cannot self-approve an external
-    read.
+    fallback when an offload FAILS on either chain: the preview carries no file
+    pointer because there is no file.
     """
     if not TOOL_RESULT_EVICTION["enabled"]:
         return None

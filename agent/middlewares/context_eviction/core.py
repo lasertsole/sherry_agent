@@ -43,15 +43,16 @@ model boundary never writes a second row for the same logical message.
 Session deletion: eviction files live under ``SESSIONS_DIR/{session_id}/`` and
 are removed by ``clear_session``'s folder rmtree.
 
-The child pipeline registers the SAME class in a trimmed mode
-(``human_eviction=False``): tool results over the same threshold are written to
-the CHILD's own ``evicted/`` directory and replaced by the usual head/tail
-preview. That directory is part of the child's private ``SESSIONS_DIR`` tree,
-which the self-path policy lets the session read/write without HITL, so the
-preview pointer is recoverable there too. ``read_file`` keeps its 4 000-char
-slice, and human-message eviction is off because a child's task and
-continuation messages are not user turns. A failed offload (either chain) falls
-back to an in-memory hard clip, so an oversized payload never reaches state raw.
+The child pipeline registers the SAME middleware with no special mode. Tool
+results over the same threshold are written to the CHILD's own ``evicted/``
+directory and replaced by the usual head/tail preview; that directory is part
+of the child's private ``SESSIONS_DIR`` tree, which the self-path policy lets
+the session read/write without HITL, so the preview pointer is recoverable
+there too. ``read_file`` keeps its 4 000-char slice. Human-message eviction is
+shared with the main chain but only matches ``metadata.origin == "user"`` — a
+child's task and continuation messages carry no such origin, so they are never
+offloaded. A failed offload falls back to an in-memory hard clip, so an
+oversized payload never reaches state raw.
 """
 
 from __future__ import annotations
@@ -174,29 +175,17 @@ class ContextEvictionMiddleware(AgentMiddleware):
     view only.
     """
 
-    def __init__(
-        self,
-        *,
-        human_eviction: bool | None = None,
-        evict_to_file: bool = True,
-    ) -> None:
-        """Build the middleware for the main or the child pipeline.
+    def __init__(self) -> None:
+        """Build the middleware; the main and child pipelines share one config.
 
-        ``human_eviction`` defaults to the global P1-9 switch; the child
-        pipeline passes ``False`` (its task/continuation messages are not user
-        turns). ``evict_to_file=False`` is an optional disk-free mode: the same
-        threshold applies, but the preview is built in memory and nothing is
-        stored. The child spec uses normal file-backed eviction because its own
-        ``evicted/`` tree is readable; this flag keeps a no-disk mode available
-        for tests and a future deployment that wants it.
+        Tool-result eviction is always file-backed (the only other mode was an
+        experimental disk-free clip, removed once the session's own tree became
+        readable). Human-message eviction follows the global P1-9 switch; it
+        only ever matches ``metadata.origin == "user"``, so child task and
+        continuation messages are never evicted.
         """
         self._enabled = TOOL_RESULT_EVICTION["enabled"]
-        self._human_enabled = (
-            TOOL_RESULT_EVICTION["human_evict_enabled"]
-            if human_eviction is None
-            else bool(human_eviction)
-        )
-        self._evict_to_file = bool(evict_to_file)
+        self._human_enabled = TOOL_RESULT_EVICTION["human_evict_enabled"]
         self._wrap_enabled = UNTRUSTED_OUTPUT["enabled"]
         self._wrap_advisory = UNTRUSTED_OUTPUT["advisory"]
         self._redact_enabled = REDACTION["tool_output_enabled"]
@@ -380,19 +369,18 @@ class ContextEvictionMiddleware(AgentMiddleware):
                     session_id,
                 )
                 return self._cover_with_watermark(session_id, result, sliced)
-            if self._evict_to_file:
-                evicted = evict_tool_result(result, session_id)
-                if evicted is not None:
-                    logger.debug(
-                        "ContextEviction: evicted tool result name={} ({} -> {} chars) session={}",
-                        name,
-                        len(str(result.content)),
-                        len(str(evicted.content)),
-                        session_id,
-                    )
-                    return self._cover_with_watermark(session_id, result, evicted)
-                # The offload store is unavailable: fall through to the
-                # in-memory clip so an oversized payload never reaches state raw.
+            evicted = evict_tool_result(result, session_id)
+            if evicted is not None:
+                logger.debug(
+                    "ContextEviction: evicted tool result name={} ({} -> {} chars) session={}",
+                    name,
+                    len(str(result.content)),
+                    len(str(evicted.content)),
+                    session_id,
+                )
+                return self._cover_with_watermark(session_id, result, evicted)
+            # The offload store is unavailable: fall through to the in-memory
+            # clip so an oversized payload never reaches state raw.
             clipped = hard_clip_tool_result(result)
             if clipped is None:
                 return result

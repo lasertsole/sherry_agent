@@ -1,10 +1,12 @@
-"""Child-mode context eviction: in-memory tool-result clipping + graph e2e.
+"""Child context eviction: same middleware, own evicted/ directory + graph e2e.
 
-The child pipeline registers the same ``ContextEvictionMiddleware`` with
-``human_eviction=False, evict_to_file=False``. It must bound oversized tool
-results (the 20k generic net) without handing the child a file pointer it
-cannot open, and the main-chain fail-open path must fall back to the same
-in-memory clip instead of letting the raw payload through.
+The child pipeline now registers ``ContextEvictionMiddleware`` with the SAME
+configuration as the main chain (the old ``human_eviction=False`` /
+``evict_to_file=False`` child mode is gone). Oversized tool results are written
+to the child's own ``SESSIONS_DIR/<session_id>/evicted/`` and replaced by the
+usual pointer preview, which the session can read back without HITL. The
+main-chain fail-open path still falls back to the in-memory clip instead of
+letting the raw payload through.
 """
 
 from __future__ import annotations
@@ -69,24 +71,11 @@ def big_output() -> str:
     return "line\n" * 10_000
 
 
-def test_disk_free_mode_hard_clips_without_a_file_pointer(monkeypatch, tmp_path):
-    monkeypatch.setattr("pub.func.message.eviction.SESSIONS_DIR", tmp_path)
-    middleware = ContextEvictionMiddleware(human_eviction=False, evict_to_file=False)
-
-    result = middleware._maybe_evict(_huge_message(), "child-1")
-
-    assert result.content.startswith(CLIPPED_PREFIX)
-    assert "evicted to:" not in result.content
-    assert "re-run with a narrower range" in result.content
-    assert len(result.content) < len(_huge_message().content)
-    assert not (tmp_path / "child-1" / "evicted").exists()
-
-
 def test_child_mode_evicts_to_its_own_session_directory(monkeypatch, tmp_path):
     from pub.func.message.eviction import load_evicted
 
     monkeypatch.setattr("pub.func.message.eviction.SESSIONS_DIR", tmp_path)
-    middleware = ContextEvictionMiddleware(human_eviction=False)
+    middleware = ContextEvictionMiddleware()
 
     original = _huge_message()
     result = middleware._maybe_evict(original, "child-1")
@@ -124,7 +113,7 @@ def test_hard_clip_respects_threshold_excluded_and_multimodal():
 
 
 def test_child_mode_keeps_the_read_file_slice():
-    middleware = ContextEvictionMiddleware(human_eviction=False, evict_to_file=False)
+    middleware = ContextEvictionMiddleware()
     payload = ToolMessage(
         content="x" * 30_000,
         name="read_file",
@@ -137,9 +126,15 @@ def test_child_mode_keeps_the_read_file_slice():
     assert "read_file with offset and limit" in result.content
 
 
-def test_child_mode_does_not_evict_human_messages():
-    middleware = ContextEvictionMiddleware(human_eviction=False, evict_to_file=False)
-    message = HumanMessage(content="x" * 250_000, metadata={"origin": "user"})
+def test_child_task_message_without_user_origin_is_never_evicted():
+    """Full parity is safe: the spawn prompt is a bare HumanMessage.
+
+    Human eviction only matches ``metadata.origin == "user"``. A child's task
+    and continuation messages carry no origin, so enabling the shared switch
+    for the child chain never offloads its instructions.
+    """
+    middleware = ContextEvictionMiddleware()
+    message = HumanMessage(content="x" * 250_000)
 
     update = middleware._tag_last_human({"messages": [message], "session_id": "child-1"})
 
@@ -147,7 +142,7 @@ def test_child_mode_does_not_evict_human_messages():
 
 
 @pytest.mark.asyncio
-async def test_a_real_child_graph_clips_the_tool_message(monkeypatch, tmp_path):
+async def test_a_real_child_graph_evicts_the_tool_message(monkeypatch, tmp_path):
     monkeypatch.setattr("pub.func.message.eviction.SESSIONS_DIR", tmp_path)
     _ScriptedModel.calls = 0
     graph = create_agent(
@@ -155,7 +150,7 @@ async def test_a_real_child_graph_clips_the_tool_message(monkeypatch, tmp_path):
         state_schema=_HarnessState,
         checkpointer=MemorySaver(),
         tools=[big_output],
-        middleware=[ContextEvictionMiddleware(human_eviction=False)],
+        middleware=[ContextEvictionMiddleware()],
     )
 
     out = await graph.ainvoke(
