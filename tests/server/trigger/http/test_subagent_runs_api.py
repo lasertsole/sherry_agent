@@ -61,7 +61,7 @@ def test_session_scoped_query_canonicalizes_a_bare_session_id(monkeypatch):
         seen.append(session_id)
         return []
 
-    monkeypatch.setattr(subagent_http, "list_descendant_runs_readonly", fake_list_readonly)
+    monkeypatch.setattr(subagent_http.queries, "list_descendant_runs", fake_list_readonly)
     response = asyncio.run(
         subagent_http.get_subagent_runs_handler(_FakeRequest({"session_id": "default"}))
     )
@@ -79,7 +79,7 @@ def test_an_already_prefixed_session_id_is_passed_through(monkeypatch):
         seen.append(session_id)
         return []
 
-    monkeypatch.setattr(subagent_http, "list_descendant_runs_readonly", fake_list_readonly)
+    monkeypatch.setattr(subagent_http.queries, "list_descendant_runs", fake_list_readonly)
     asyncio.run(
         subagent_http.get_subagent_runs_handler(
             _FakeRequest({"session_id": "agent:main:session:default"})
@@ -92,8 +92,8 @@ def test_an_already_prefixed_session_id_is_passed_through(monkeypatch):
 def test_controller_scope_reads_the_controller_view(monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(
-        subagent_http,
-        "list_runs_for_controller_readonly",
+        subagent_http.queries,
+        "list_runs_for_controller",
         lambda session_id: seen.append(session_id) or [],
     )
     response = asyncio.run(
