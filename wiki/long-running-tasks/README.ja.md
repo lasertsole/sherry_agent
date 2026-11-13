@@ -83,6 +83,13 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 出典：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；テスト：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
 
+## 🧩 役割別モデルと異種 judge
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` は機能役割ごとのオプトインなファミリです。設定したファミリ（provider か api_base、または `MODEL_LOCAL=true` で MAIN モデルのローカル GGUF を再利用）はその役割の全子エージェントに適用され、**空**のファミリは役割定義自身のティア（同梱ロールは `model_tier: auxiliary`）を維持します。したがって新しいキーに触れなければ挙動は変わりません。
+- 子エージェントのモデル選択順は、セッションの役割別モデル profile → 名前付き model override → **設定済み**の役割ファミリ → 役割のモデルティア → depth ロールです。出力上限の解決と永続化される構造化出力の劣化キーもこの順序を反映し、spawn ログと 1 件の `subagent_model` trajectory イベントが実際のモデルと取得元（`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`）を記録します。
+- `GET /sherry-config/model-roles` は各 judge/役割の `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}` を返します。モデル設定タブは 4 つの役割ファミリを通常のモデル profile カードとして表示し（接続テストも可）、「役割の既定ティアを維持」バッジと有効モデル行を出します。
+- 異種 judge：StepJudge は `TASKFLOW_LLM_*`（未設定なら補助）、完了 judge は `AUXILIARY_LLM_*`（CJ_LLM ファミリはありません）、実行者は役割ファミリまたはティアです。judge を実行者と別ファミリにすると同源の盲点（同じモデルが同じ入力で同じように誤る）を減らせます。強制はなく、空設定なら継承関係は従来どおりです。
+
 ## ⚙️ 設定レジストリ
 
 すべての調整値は `config/features/` 配下にあり、これは**オブジェクト単位 `TypedDict` パッケージ**です——単一の巨大モジュールではありません。3 つの部分に分かれます：

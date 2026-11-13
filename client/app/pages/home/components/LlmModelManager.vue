@@ -101,6 +101,20 @@
           data-test="follows-auxiliary">
           {{ t('config.llm.followsAuxiliary') }}
         </p>
+        <!-- Per-role families: empty keeps the role's own model tier, and the
+             backend reports the effective model + where it came from. -->
+        <p
+          v-if="isRoleFamily && followsRoleDefault && !isLocalEntrySelected"
+          class="m-0 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+          data-test="follows-role-default">
+          {{ t('config.llm.followsRoleDefault') }}
+        </p>
+        <p
+          v-if="isRoleFamily && roleModel && !isLocalEntrySelected"
+          class="m-0 rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-600 dark:bg-gray-800/60 dark:text-gray-300"
+          data-test="role-effective-model">
+          {{ roleEffectiveText }}
+        </p>
         <div
           v-for="key in paramKeys"
           :key="key"
@@ -344,7 +358,7 @@ import { useI18n } from 'vue-i18n';
 import LlmProfileRow from './LlmProfileRow.vue';
 import { MAX_TOKEN_GUARD_KEYS } from '@/constants/env';
 import { MAX_PROFILES_PER_GROUP } from '~/stores/llm-profiles';
-import type { ModelTestResult } from '~/composables/env';
+import type { ModelRoleEffective, ModelTestResult } from '~/composables/env';
 // Stable module specifiers so tests can vi.mock the composables (the unimport
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
@@ -370,9 +384,15 @@ const props = defineProps<{
   groupTitle?: string;
   /**
    * Model-download family behind the built-in local entry. Defaults to the
-   * group itself; the optional internal families reuse the auxiliary GGUF.
+   * group itself; the optional internal families reuse the auxiliary GGUF and
+   * the per-role families reuse the main model.
    */
   downloadGroup?: string;
+  /**
+   * The family's effective judge/role model from `GET /sherry-config/model-roles`
+   * (what this panel will actually serve, and where it is inherited from).
+   */
+  roleModel?: ModelRoleEffective | null;
 }>();
 
 const emit = defineEmits<{
@@ -400,6 +420,10 @@ const GROUP_HELP_KEYS: Record<string, string> = {
   AUXILIARY_LLM: 'config.llm.modelHelp.auxiliary',
   TASKFLOW_LLM: 'config.llm.modelHelp.taskflow',
   COMPRESSION_LLM: 'config.llm.modelHelp.compression',
+  EXECUTOR_LLM: 'config.llm.modelHelp.executor',
+  RESEARCHER_LLM: 'config.llm.modelHelp.researcher',
+  REVIEWER_LLM: 'config.llm.modelHelp.reviewer',
+  LIBRARIAN_LLM: 'config.llm.modelHelp.librarian',
   ITTT: 'config.llm.modelHelp.ittt',
   VTTT: 'config.llm.modelHelp.vttt',
   TTI: 'config.llm.modelHelp.tti',
@@ -801,6 +825,10 @@ const nameKey = computed(
 const INTERNAL_FAMILIES = ['TASKFLOW_LLM', 'COMPRESSION_LLM'] as const;
 const isInternalFamily = computed(() => (INTERNAL_FAMILIES as readonly string[]).includes(props.group));
 
+/** Per-role subagent families: an empty family keeps the role's own tier. */
+const ROLE_FAMILIES = ['EXECUTOR_LLM', 'RESEARCHER_LLM', 'REVIEWER_LLM', 'LIBRARIAN_LLM'] as const;
+const isRoleFamily = computed(() => (ROLE_FAMILIES as readonly string[]).includes(props.group));
+
 /**
  * True when this internal family is UNCONFIGURED, i.e. its provider and API
  * base are both empty and the backend factory falls back to the auxiliary
@@ -812,6 +840,33 @@ const followsAuxiliary = computed(() => {
   const provider = (draft.value[providerKey.value] ?? '').trim();
   const base = baseKey ? (draft.value[baseKey] ?? '').trim() : '';
   return !provider && !base;
+});
+
+/**
+ * True when this ROLE family is unconfigured (no provider / API base / local
+ * switch): the child keeps the role definition's own model tier — the shipped
+ * roles use the auxiliary model. The precise effective model arrives from the
+ * backend when the read succeeds (`roleModel`); the badge alone is the
+ * offline-safe statement.
+ */
+const followsRoleDefault = computed(() => {
+  if (!isRoleFamily.value) return false;
+  const baseKey = props.keys.find(k => k.endsWith('_API_BASE'));
+  const localKey = props.keys.find(k => k.endsWith('_MODEL_LOCAL'));
+  const provider = (draft.value[providerKey.value] ?? '').trim();
+  const base = baseKey ? (draft.value[baseKey] ?? '').trim() : '';
+  const local = localKey ? (draft.value[localKey] ?? '').toLowerCase() === 'true' : false;
+  return !provider && !base && !local;
+});
+
+/** The "effective model — source" line under the role-family header. */
+const roleEffectiveText = computed(() => {
+  const row = props.roleModel;
+  if (!row) return '';
+  const source = t(`config.llm.source.${row.source}`);
+  return row.effective_model
+    ? t('config.llm.effectiveModel', { model: row.effective_model, source })
+    : t('config.llm.effectiveModelDepth');
 });
 
 /**
@@ -893,6 +948,10 @@ const TESTABLE_GROUPS = [
   'AUXILIARY_LLM',
   'TASKFLOW_LLM',
   'COMPRESSION_LLM',
+  'EXECUTOR_LLM',
+  'RESEARCHER_LLM',
+  'REVIEWER_LLM',
+  'LIBRARIAN_LLM',
   'EMBEDDING',
   'RERANKER'
 ] as const;

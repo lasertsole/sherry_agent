@@ -83,6 +83,13 @@ Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/r
 
 Source: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`, `workspace/prompt_builder.py`, `agent/middlewares/reminder_catalog/`; tests: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`, `tests/agent/middlewares/test_taskflow_reminder_ready.py`.
 
+## 🧩 Per-Role Models & Heterogeneous Judges
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` are opt-in per-functional-role families. A configured family (provider or api_base, or `MODEL_LOCAL=true`, which reuses the MAIN model's local GGUF) serves every child of that role; an EMPTY family keeps the role definition's own tier (the shipped roles declare `model_tier: auxiliary`), so leaving the new keys untouched changes nothing.
+- The child-LLM precedence is: the session's per-role model profile → a named model override → a CONFIGURED role family → the role's model tier → the depth role. The output-cap resolver and the persisted structured-output degradation key mirror that order, and the spawn log plus one `subagent_model` trajectory event name the resolved model and its source (`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`).
+- `GET /sherry-config/model-roles` answers every judge/role's `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}`. The Model Config tab renders the four role families as ordinary model-profile cards (Test button included) and shows the "keeps the role default tier" badge plus that effective-model line.
+- Heterogeneous judges: StepJudge runs on `TASKFLOW_LLM_*` (auxiliary fallback), the completion judge on `AUXILIARY_LLM_*` (there is no CJ_LLM family), and the executor on its role family or tier. Pointing a judge at a different family from the executor reduces correlated blind spots (the same model failing the same way on the same input); nothing is forced, and an empty configuration keeps every inheritance as before.
+
 ## ⚙️ Configuration Registry
 
 All tunables live under `config/features/`, which is a **per-object `TypedDict` package** — not a single monolithic module. It is split into three parts:

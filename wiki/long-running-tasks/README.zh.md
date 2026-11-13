@@ -83,6 +83,13 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
 
+## 🧩 按角色的模型与异构 judge
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` 是可选的按功能角色家族。配置了家族（provider 或 api_base，或 `MODEL_LOCAL=true`，复用主模型的本地 GGUF）时，该角色的所有子代理都用它；**留空**则沿用角色定义自身的层级（内置角色声明 `model_tier: auxiliary`），因此不动这些新键行为完全不变。
+- 子代理选模型优先级：会话的按角色模型 profile → 具名 model override → **已配置**的角色家族 → 角色模型层级 → 深度角色。输出上限解析与持久化的结构化输出降级键都镜像这一顺序；spawn 日志和一条 `subagent_model` trajectory 事件会记录实际模型与来源（`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`）。
+- `GET /sherry-config/model-roles` 返回每个 judge/角色的 `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}`。模型配置面板把四个角色家族渲染成普通的模型 profile 卡片（含连通性测试），并显示「沿用角色默认层级」徽章和生效模型行。
+- 异构 judge：StepJudge 用 `TASKFLOW_LLM_*`（未配置回退辅助模型），完成 judge 用 `AUXILIARY_LLM_*`（没有 CJ_LLM 家族），executor 用其角色家族或层级。让 judge 与 executor 使用不同家族可减少同源盲点（同一模型在同类输入上一起犯错）；不做强制，留空时继承关系与之前完全一致。
+
 ## ⚙️ 配置注册表
 
 所有可调项都放在 `config/features/` 下，它是一个**按对象划分的 `TypedDict` 包**——而不是单个庞大的模块。它分为三部分：

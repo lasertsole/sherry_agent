@@ -4,6 +4,7 @@ from server.service import (
     clear_all_model_caps,
     clear_model_cap,
     read_model_caps,
+    read_model_roles,
     read_sherry_config,
     read_sherry_list,
     write_sherry_config,
@@ -26,6 +27,19 @@ async def read_sherry_config_handler(request):
         # bare HTTP 500 (the packaged app's first run used to surface one).
         logger.error(f"sherry.jsonc is unavailable: {e}")
         return {"success": False, "message": str(e)}, {}, 503
+
+
+@app.get("/sherry-config/model-roles")
+async def read_model_roles_handler(request):
+    """
+    Read the effective model of every judge / subagent role, with its source.
+
+    Answers ``{"roles": [{"role", "family", "configured", "local", "source",
+    "effective_provider", "effective_model", "max_output_tokens"}, ...]}``. A
+    role family whose provider / api_base is empty reports the family it
+    inherits from (auxiliary / main / depth) instead of a misleading blank.
+    """
+    return read_model_roles()
 
 
 @app.put("/sherry-config")

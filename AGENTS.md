@@ -1442,8 +1442,8 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
   (`SANDBOX_*`, `SHERRY_GATEWAY_*`, `SHERRY_AUTH_*`). Never put a key here.
 - **`.models`** (gitignored; template `.models.example`) — the model families:
   provider / endpoint / key / local-model switch for main, auxiliary, TaskFlow
-  decisions, compression, ITTT, VTTT, TTI, reranker, embedding and STT, plus
-  the scanner's LLM selection. Loaded by
+  decisions, compression, the four per-role subagent families, ITTT, VTTT, TTI,
+  reranker, embedding and STT, plus the scanner's LLM selection. Loaded by
   `config/models_settings.py`.
 - **`.network`** (gitignored; template `.network.example`) — network services:
   `TAVILY_API_KEY` + the `SEARXNG_*` backends, the `SHERRY_BROWSER_*` switches
@@ -1472,6 +1472,29 @@ are deliberately NOT part of the per-session agent config):
   summary (`_create_summary` / `_acreate_summary`). It does NOT serve memory
   review (the MAIN model, cache-warm by design) or the skill review (the
   auxiliary model).
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` —
+  one family per functional subagent role. A CONFIGURED family (provider or
+  api_base, or `MODEL_LOCAL=true`) serves every child of that role and outranks
+  the role's `model_tier`; an EMPTY family changes nothing — the shipped role
+  definitions declare `model_tier: auxiliary`, so an untouched deployment is
+  byte-for-byte unchanged. `build_role_llm(role)`'s own fallback is MAIN
+  (matching the per-role documentation), but the spawn resolver reaches it only
+  when `role_llm_configured(role)` is true; `general` has no family.
+  `_RoleFamilyResolver` sits after the session per-role profile and the named
+  model override, before the tier/depth resolvers, and the output-cap resolver
+  (`output_caps.resolve_child_max_output_tokens`) plus the structured-output
+  identity (`_child_model_identity`) mirror that precedence — a configured
+  family's `MAX_OUTPUT_TOKEN` drives the result-text caps and its
+  `(provider, model)` keys the persisted degradation rung. The selected source
+  (`role_profile` / `model_override` / `role_family` / `tier_main` /
+  `tier_auxiliary` / `depth_main` / `depth_auxiliary`) is logged at spawn and
+  recorded as one `subagent_model` trajectory event, and
+  `GET /sherry-config/model-roles` answers every judge/role's
+  `{family, configured, local, source, effective_provider, effective_model,
+  max_output_tokens}` for the panel's inheritance labels. StepJudge stays on
+  `TASKFLOW_LLM_*`; the completion judge reuses `AUXILIARY_LLM_*` (no CJ_LLM
+  family) — making those two a different family from the executor is the
+  heterogeneous-judge setup, and the Model Config tab says so.
 
 Both are built by `models/LLMs/family_llm.py::build_family_llm` (exposed as
 `build_taskflow_llm` / `build_compression_llm`): an empty provider + api_base
@@ -1481,9 +1504,13 @@ timeout / retries / per-provider max-output), and `*_MODEL_LOCAL=true` reuses
 the auxiliary GGUF — there is no second local model to download. A configured
 `*_MAX_TOKEN` must be >= 200000 (200K) and `*_MAX_OUTPUT_TOKEN` empty or
 >= 8192 (8K): the save path refuses a smaller value and the boot/runtime gates
-abort, exactly like the main/auxiliary keys. The Model Config tab renders both
-families as model-profile cards, whose local entry reports the aux family's
-download progress; a pre-existing `.models` gains a wholly missing family block
+abort, exactly like the main/auxiliary keys. The Model Config tab renders every
+family as a model-profile card (the internal families' local entry reports the
+aux family's download progress, the per-role families' reports the main
+model's; the Test button probes the role families too), and an empty role
+family shows a "keeps the role default tier" badge plus the backend's
+effective-model/source line. A pre-existing `.models` gains a wholly missing
+family block
 on import (`ensure_models_config_file`), because the panel only renders keys the
 file contains. A configured-but-unbuildable remote model (unknown provider)
 logs a warning and falls back to auxiliary instead of stranding TaskFlow or

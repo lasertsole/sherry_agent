@@ -108,3 +108,100 @@ def test_lazy_exports_are_available_from_the_models_package():
 
     assert models.build_taskflow_llm is not None
     assert models.build_compression_llm is not None
+
+
+# ── Per-role subagent families (EXECUTOR_LLM_* / …) ──────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clean_role_family_env(monkeypatch: pytest.MonkeyPatch):
+    """Drop the hydrated role-family values so each test states its own config."""
+    for key in MODEL_SETTING_KEYS:
+        if key.split("_", 1)[0] in {"EXECUTOR", "RESEARCHER", "REVIEWER", "LIBRARIAN"}:
+            monkeypatch.delenv(key, raising=False)
+    yield
+
+
+def _sentinel_main(monkeypatch: pytest.MonkeyPatch) -> object:
+    sentinel = object()
+    calls: list[float | None] = []
+
+    def _build(temperature: float | None = None):
+        calls.append(temperature)
+        return sentinel
+
+    monkeypatch.setattr("models.build_main_llm", _build)
+    return sentinel
+
+
+def test_an_unconfigured_role_family_builder_falls_back_to_main(monkeypatch):
+    from models.LLMs.role_llm import build_role_llm
+
+    sentinel = _sentinel_main(monkeypatch)
+
+    assert build_role_llm("executor", temperature=0.3) is sentinel
+
+
+def test_local_role_family_reuses_the_main_branch(monkeypatch):
+    from models.LLMs.role_llm import build_role_llm
+
+    monkeypatch.setenv("EXECUTOR_LLM_MODEL_LOCAL", "true")
+    monkeypatch.setenv("EXECUTOR_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("EXECUTOR_LLM_API_BASE", "https://example.invalid/v1")
+    sentinel = _sentinel_main(monkeypatch)
+
+    assert build_role_llm("executor") is sentinel
+
+
+def test_a_configured_role_family_builds_a_remote_client(monkeypatch):
+    from models.LLMs.role_llm import build_role_llm
+
+    monkeypatch.setenv("REVIEWER_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("REVIEWER_LLM_API_NAME", "gpt-4o-mini")
+    monkeypatch.setenv("REVIEWER_LLM_API_BASE", "https://example.invalid/v1")
+    monkeypatch.setenv("REVIEWER_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("REVIEWER_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("REVIEWER_LLM_MAX_OUTPUT_TOKEN", "8192")
+    captured: dict[str, object] = {}
+
+    def _fake_init(**kwargs):
+        captured.update(kwargs)
+        return FakeListChatModel(responses=["ok"])
+
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", _fake_init)
+
+    model = build_role_llm("reviewer", temperature=0)
+
+    assert isinstance(model, NormalizingChatModel)
+    assert captured["model_provider"] == "openai"
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["base_url"] == "https://example.invalid/v1"
+    assert captured["max_tokens"] == 8192
+
+
+def test_role_llm_configured_is_false_until_provider_base_or_local(monkeypatch):
+    from models.LLMs.role_llm import role_llm_configured
+
+    assert role_llm_configured("executor") is False
+
+    monkeypatch.setenv("EXECUTOR_LLM_API_BASE", "https://example.invalid/v1")
+    assert role_llm_configured("executor") is True
+
+    monkeypatch.delenv("EXECUTOR_LLM_API_BASE")
+    monkeypatch.setenv("EXECUTOR_LLM_MODEL_LOCAL", "true")
+    assert role_llm_configured("executor") is True
+
+
+def test_the_identity_role_has_no_family():
+    from models.LLMs.role_llm import build_role_llm, role_family, role_llm_configured
+
+    assert role_family("general") is None
+    assert role_llm_configured("general") is False
+    with pytest.raises(ValueError):
+        build_role_llm("general")
+
+
+def test_family_configured_reports_remote_or_local():
+    from models.LLMs.family_llm import family_configured
+
+    assert family_configured("TASKFLOW_LLM") is False

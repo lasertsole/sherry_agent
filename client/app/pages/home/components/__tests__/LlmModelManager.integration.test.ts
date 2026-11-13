@@ -934,3 +934,90 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     wrapper.unmount();
   });
 });
+
+describe('LlmModelManager.vue per-role families', () => {
+  const KEYS_ROLE = [
+    'EXECUTOR_LLM_MODEL_LOCAL',
+    'EXECUTOR_LLM_PROVIDER',
+    'EXECUTOR_LLM_API_NAME',
+    'EXECUTOR_LLM_API_BASE',
+    'EXECUTOR_LLM_API_KEY',
+    'EXECUTOR_LLM_MAX_TOKEN'
+  ];
+  const emptyRoleValues = () =>
+    Object.fromEntries(KEYS_ROLE.map(key => [key, key === 'EXECUTOR_LLM_MAX_TOKEN' ? '200000' : '']));
+  const roleRow = (over: Record<string, unknown> = {}) => ({
+    role: 'executor',
+    family: 'EXECUTOR_LLM',
+    configured: false,
+    local: false,
+    source: 'auxiliary',
+    effective_provider: 'deepseek',
+    effective_model: 'deepseek-chat',
+    max_output_tokens: null,
+    ...over
+  });
+  const mountRole = (
+    values: Record<string, string>,
+    roleModel: Record<string, unknown> | null,
+    profiles: { id: string; label: string; params: Record<string, string> }[] = [],
+    activeId: string | null = null
+  ) => {
+    makeStore(profiles, activeId, 'EXECUTOR_LLM');
+    return mount(LlmModelManager, {
+      props: {
+        group: 'EXECUTOR_LLM',
+        keys: KEYS_ROLE,
+        values,
+        groupTitle: 'executor',
+        roleModel
+      },
+      global: { stubs }
+    });
+  };
+
+  beforeEach(() => {
+    makeStore();
+  });
+
+  it('badges an unconfigured role family and shows the inherited model', async () => {
+    const wrapper = mountRole(
+      emptyRoleValues(),
+      roleRow(),
+      [{ id: 'p1', label: 'exec', params: emptyRoleValues() }],
+      'p1'
+    );
+    await expand(wrapper);
+
+    expect(wrapper.find('[data-test="follows-role-default"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="role-effective-model"]').text()).toContain('deepseek-chat');
+
+    // A provider makes the family its own configuration: the badge goes away.
+    await wrapper.findAll('input.inp')[0]!.setValue('openai');
+    expect(wrapper.find('[data-test="follows-role-default"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows a configured family effective model without the inherit badge', async () => {
+    const values = { ...emptyRoleValues(), EXECUTOR_LLM_PROVIDER: 'anthropic', EXECUTOR_LLM_API_NAME: 'claude' };
+    const wrapper = mountRole(
+      values,
+      roleRow({ configured: true, source: 'configured', effective_provider: 'anthropic', effective_model: 'claude' }),
+      [{ id: 'p1', label: 'exec', params: values }],
+      'p1'
+    );
+    await expand(wrapper);
+
+    expect(wrapper.find('[data-test="follows-role-default"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="role-effective-model"]').text()).toContain('claude');
+    wrapper.unmount();
+  });
+
+  it('renders no effective line without a role row (backend read failed)', async () => {
+    const wrapper = mountRole(emptyRoleValues(), null);
+    await expand(wrapper);
+
+    expect(wrapper.find('[data-test="role-effective-model"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});

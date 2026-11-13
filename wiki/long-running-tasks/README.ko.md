@@ -83,6 +83,13 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 
 출처: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`, `workspace/prompt_builder.py`, `agent/middlewares/reminder_catalog/`; 테스트: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`, `tests/agent/middlewares/test_taskflow_reminder_ready.py`.
 
+## 🧩 역할별 모델과 이기종 judge
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*`는 기능 역할별 옵트인 패밀리입니다. 패밀리를 설정하면(provider 또는 api_base, 또는 `MODEL_LOCAL=true`로 MAIN 모델의 로컬 GGUF 재사용) 해당 역할의 모든 자식 에이전트가 그 패밀리를 쓰고, **비어 있으면** 역할 정의 자체의 티어(내장 역할은 `model_tier: auxiliary`)를 유지합니다. 따라서 새 키를 건드리지 않으면 동작이 그대로입니다.
+- 자식 모델 우선순위는 세션의 역할별 모델 profile → 이름 지정 model override → **설정된** 역할 패밀리 → 역할 모델 티어 → depth 역할입니다. 출력 상한 해석과 영속화되는 구조화 출력 열화 키도 이 순서를 반영하며, spawn 로그와 1개의 `subagent_model` trajectory 이벤트가 실제 모델과 출처(`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`)를 기록합니다.
+- `GET /sherry-config/model-roles`는 각 judge/역할의 `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}`를 반환합니다. 모델 설정 탭은 네 역할 패밀리를 일반 모델 profile 카드로 렌더링하고(연결 테스트 포함) "역할 기본 티어 유지" 배지와 유효 모델 줄을 보여 줍니다.
+- 이기종 judge: StepJudge는 `TASKFLOW_LLM_*`(미설정 시 보조), 완료 judge는 `AUXILIARY_LLM_*`(CJ_LLM 패밀리 없음), 실행자는 역할 패밀리 또는 티어를 씁니다. judge를 실행자와 다른 패밀리로 두면 동일 원인의 맹점(같은 모델이 같은 입력에서 같은 방식으로 틀림)을 줄일 수 있습니다. 강제는 없으며, 비어 있으면 상속 관계는 이전과 같습니다.
+
 ## ⚙️ 설정 레지스트리
 
 모든 조정 값은 `config/features/` 아래에 있으며, 이는 **객체별 `TypedDict` 패키지**입니다 — 단일 거대 모듈이 아닙니다. 세 부분으로 나뉩니다:

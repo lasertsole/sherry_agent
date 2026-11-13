@@ -575,7 +575,11 @@
         "tti": "Text-to-image model — generates images from prompts. Use for illustrations, visual drafts, and assets.",
         "reranker": "Reranker — reorders retrieved results by relevance. Use to improve RAG/search quality.",
         "embedding": "Embedding model — converts text to vectors for memory and knowledge retrieval. Use for semantic search and RAG.",
-        "stt": "Speech-to-text model — transcribes audio. Use for voice input and meeting/recording transcripts."
+        "stt": "Speech-to-text model — transcribes audio. Use for voice input and meeting/recording transcripts.",
+        "executor": "Executor subagent model — runs the actual work (edits, commands, tests). Best for a strong, tool-reliable model; empty keeps the role default tier (the shipped roles use the auxiliary model).",
+        "researcher": "Researcher subagent model — read-only codebase / web research. A cheaper model is usually enough; empty keeps the role default tier.",
+        "reviewer": "Reviewer subagent model — independent acceptance checks. A different family from the executor reduces correlated blind spots; empty keeps the role default tier.",
+        "librarian": "Librarian subagent model — read-only external-repository retrieval. A cheaper model is usually enough; empty keeps the role default tier."
       },
       "test": "Test connection",
       "testHint": "Probe once with the parameters on screen — nothing is written to .env",
@@ -585,8 +589,23 @@
       "testRequestFailed": "request failed: the backend did not answer",
       "groupTaskflow": "TaskFlow decision model",
       "groupCompression": "Compression model",
+      "groupExecutor": "Executor subagent model",
+      "groupResearcher": "Researcher subagent model",
+      "groupReviewer": "Reviewer subagent model",
+      "groupLibrarian": "Librarian subagent model",
       "followsAuxiliary": "Provider and API Base are empty — this family follows the auxiliary model (AUXILIARY_LLM_*).",
-      "compressionScope": "Used for the LLM summary. Memory review uses the main model; skill review uses the auxiliary model."
+      "compressionScope": "Used for the LLM summary. Memory review uses the main model; skill review uses the auxiliary model.",
+      "followsRoleDefault": "Provider and API Base are empty — this role keeps its own default model tier (the shipped roles use the auxiliary model).",
+      "effectiveModel": "Effective model: {model} — source: {source}",
+      "effectiveModelDepth": "Effective model: decided by the depth role of the child",
+      "source": {
+        "configured": "this family",
+        "local": "local model (reuses the GGUF of the fallback family)",
+        "auxiliary": "auxiliary model",
+        "main": "main model",
+        "depth": "the depth role of the child"
+      },
+      "heterogeneousJudge": "Heterogeneous judges: running a judge on a different model family from the executor reduces correlated blind spots (executor and judge failing on the same kind of input). Recommended: keep the executor on your strongest model and point StepJudge / the completion judge at another family — e.g. DeepSeek ↔ Claude. Left empty, each judge follows the inheritance shown on its card."
     },
     "memory": {
       "addEntry": "Add entry",

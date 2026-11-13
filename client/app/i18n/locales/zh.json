@@ -575,7 +575,11 @@
         "tti": "文生图模型：根据提示词生成图片。用于插画、配图和视觉草稿。",
         "reranker": "重排序模型：按相关性重新排序检索结果。用于提升 RAG/搜索质量。",
         "embedding": "向量模型：把文本转成向量，供记忆和知识库检索。用于语义搜索与 RAG。",
-        "stt": "语音转文字模型：转写音频内容。用于语音输入、会议和录音转写。"
+        "stt": "语音转文字模型：转写音频内容。用于语音输入、会议和录音转写。",
+        "executor": "执行者子代理模型：实际干活（改文件、跑命令、跑测试）。建议用最强、工具调用最稳的模型；留空则沿用角色自身的默认层级（内置角色用辅助模型）。",
+        "researcher": "研究子代理模型：只读的代码库 / 网络调研。通常用便宜模型即可；留空则沿用角色自身默认层级。",
+        "reviewer": "审查子代理模型：独立验收检查。与执行者用不同家族可减少同源盲点；留空则沿用角色自身默认层级。",
+        "librarian": "图书管理子代理模型：只读的外部仓库检索。通常用便宜模型即可；留空则沿用角色自身默认层级。"
       },
       "test": "测试连通性",
       "testHint": "用当前填写的参数试调一次，不写入 .env",
@@ -585,8 +589,23 @@
       "testRequestFailed": "请求失败：后端未响应",
       "groupTaskflow": "TaskFlow 决策模型",
       "groupCompression": "压缩模型",
+      "groupExecutor": "执行者子代理模型",
+      "groupResearcher": "研究子代理模型",
+      "groupReviewer": "审查子代理模型",
+      "groupLibrarian": "图书管理子代理模型",
       "followsAuxiliary": "Provider 与 API Base 均为空 —— 该组跟随辅助模型（AUXILIARY_LLM_*）。",
-      "compressionScope": "用于 LLM 摘要；记忆回顾走主模型，计划提炼走辅助模型。"
+      "compressionScope": "用于 LLM 摘要；记忆回顾走主模型，计划提炼走辅助模型。",
+      "followsRoleDefault": "Provider 与 API Base 均为空 —— 该角色沿用自身默认模型层级（内置角色使用辅助模型）。",
+      "effectiveModel": "生效模型：{model} —— 来源：{source}",
+      "effectiveModelDepth": "生效模型：由子代理的深度角色决定",
+      "source": {
+        "configured": "本家族配置",
+        "local": "本地模型（复用回退家族的 GGUF）",
+        "auxiliary": "辅助模型",
+        "main": "主模型",
+        "depth": "子代理深度角色"
+      },
+      "heterogeneousJudge": "异构 judge：让 judge 使用与执行者不同的模型家族，可减少同源盲点（执行者和 judge 在同一类输入上一起犯错）。建议执行者保持最强模型，把 StepJudge / 完成 judge 指向另一家族（如 DeepSeek ↔ Claude）。留空时各 judge 按卡片上显示的继承关系跟随默认模型。"
     },
     "memory": {
       "addEntry": "添加条目",

@@ -39,7 +39,8 @@ vi.mock('@/composables/env', () => ({
   readNetworkConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: [] })),
   writeEnvConfig: vi.fn(async () => true),
   writeModelsConfig: writeModelsConfigMock,
-  writeNetworkConfig: vi.fn(async () => true)
+  writeNetworkConfig: vi.fn(async () => true),
+  readModelRoles: vi.fn(async () => [])
 }));
 
 vi.mock('@/composables/model-config', () => ({

@@ -41,6 +41,7 @@ from .models_config import (
     read_models_config as read_models_config,
     write_models_config as write_models_config,
 )
+from .model_roles_service import read_model_roles as read_model_roles
 from .network_config import (
     network_file_values as network_file_values,
     read_network_config as read_network_config,

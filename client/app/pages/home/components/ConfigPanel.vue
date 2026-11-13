@@ -209,6 +209,13 @@
             </template>
 
             <template v-else>
+              <!-- Why three independently configurable families exist: the
+                   heterogeneous-judge guidance, shown once above the cards. -->
+              <p
+                class="m-0 rounded-lg border border-solid border-sky-100 bg-sky-50/60 px-3 py-2 text-[11px] leading-relaxed text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-300"
+                data-test="heterogeneous-judge-hint">
+                {{ t('config.llm.heterogeneousJudge') }}
+              </p>
               <template
                 v-for="group in modelTabGroups"
                 :key="group.name">
@@ -223,6 +230,7 @@
                   :configured-secrets="configuredSecrets[group.name] ?? {}"
                   :group-title="groupTitle(group.name)"
                   :download-group="downloadGroupFor(group.name)"
+                  :role-model="roleEffective[group.name] ?? null"
                   @apply="payload => applyModelProfile(group.name, payload)" />
                 <div
                   v-else
@@ -454,7 +462,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
-import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
+import type { ConfigSource, EnvGroup, ModelRoleEffective, SourcedEnvGroup } from '@/composables/env';
 import type { CodeEmbedderStatus } from '@/composables/code-embedder';
 import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
@@ -481,18 +489,27 @@ const { t } = useI18n({ useScope: 'local' });
 /** Localized headings for the two optional internal model families. */
 const GROUP_TITLE_KEYS: Record<string, string> = {
   TASKFLOW_LLM: 'config.llm.groupTaskflow',
-  COMPRESSION_LLM: 'config.llm.groupCompression'
+  COMPRESSION_LLM: 'config.llm.groupCompression',
+  EXECUTOR_LLM: 'config.llm.groupExecutor',
+  RESEARCHER_LLM: 'config.llm.groupResearcher',
+  REVIEWER_LLM: 'config.llm.groupReviewer',
+  LIBRARIAN_LLM: 'config.llm.groupLibrarian'
 };
 const groupTitle = (name: string): string => (GROUP_TITLE_KEYS[name] ? t(GROUP_TITLE_KEYS[name]!) : name);
 
 /**
  * Local-model prefetch family behind a group's built-in local entry. The two
- * internal families reuse the auxiliary GGUF (no second download), so their
- * download box reports / downloads the auxiliary family.
+ * internal families reuse the auxiliary GGUF and the per-role families reuse
+ * the MAIN model's weights (no second download), so their download box reports
+ * the family they actually load.
  */
 const LOCAL_DOWNLOAD_GROUP: Record<string, string> = {
   TASKFLOW_LLM: 'AUXILIARY_LLM',
-  COMPRESSION_LLM: 'AUXILIARY_LLM'
+  COMPRESSION_LLM: 'AUXILIARY_LLM',
+  EXECUTOR_LLM: 'MAIN_LLM',
+  RESEARCHER_LLM: 'MAIN_LLM',
+  REVIEWER_LLM: 'MAIN_LLM',
+  LIBRARIAN_LLM: 'MAIN_LLM'
 };
 const downloadGroupFor = (name: string): string => LOCAL_DOWNLOAD_GROUP[name] ?? name;
 
@@ -529,6 +546,25 @@ const saving = ref(false);
 const envGroups = ref<SourcedEnvGroup[]>([]);
 const originalEnvValues = ref<Record<string, string>>({});
 const envLoadError = ref('');
+
+/** Per-family effective judge/role model rows (the "inherits from" labels). */
+const roleEffective = ref<Record<string, ModelRoleEffective>>({});
+
+/** Refresh the effective-model map after a load or a successful write.
+ *
+ * Decoration only: a failed read (or a transport mock that lacks it) leaves
+ * the previous map in place instead of surfacing an unhandled rejection.
+ */
+const refreshModelRoles = async (): Promise<void> => {
+  try {
+    const rows = await readModelRoles();
+    const next: Record<string, ModelRoleEffective> = {};
+    for (const row of rows) next[row.family] = row;
+    roleEffective.value = next;
+  } catch {
+    /* keep the last known effective map */
+  }
+};
 
 /** Whether the env config has already been loaded (avoids duplicate GETs) */
 const envLoaded = ref(false);
@@ -679,6 +715,8 @@ const applyModelProfile = async (groupName: string, payload: { id: string; param
     originalEnvValues.value[key] = key.endsWith('_API_KEY') ? '' : value;
   }
   llmProfiles.setActive(groupName, payload.id);
+  // The inherits-from labels follow the write that just landed.
+  void refreshModelRoles();
 };
 
 /** Lazily loads the three config files when the env tab is opened */
@@ -688,6 +726,9 @@ const loadEnvConfig = async () => {
   envLoadError.value = '';
   try {
     const [models, network, env] = await Promise.all([readModelsConfig(), readNetworkConfig(), readEnvConfig()]);
+    // The effective judge/role rows are decoration for the model cards — a
+    // failed read must not block the tab.
+    void refreshModelRoles();
     const tag = (groups: EnvGroup[], source: ConfigSource): SourcedEnvGroup[] => groups.map(g => ({ ...g, source }));
     const modelGroups = tag(models.groups || [], 'models');
     const networkGroups = tag(network.groups || [], 'network');
@@ -768,6 +809,7 @@ const persistEnvChanges = async (): Promise<boolean> => {
       originalEnvValues.value[e.key] = e.value;
     }
   }
+  void refreshModelRoles();
   return true;
 };
 
