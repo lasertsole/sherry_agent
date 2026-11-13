@@ -96,6 +96,28 @@ async def test_restore_finalizes_leftover_pending_runs_silently(isolated_store, 
 
 
 @pytest.mark.asyncio
+async def test_restore_does_not_extend_a_terminal_runs_archive_deadline(
+    isolated_store, monkeypatch
+):
+    """L3: the restore only hands a fresh archive window to runs IT terminalized."""
+    import time
+
+    terminal_run = _make_run(
+        "restore-terminal-archive", ExecutionStatus.TERMINAL, ended_reason="complete"
+    ).model_copy(update={"archive_at": 999_999.0})
+    store_sqlite.upsert_run_sync(terminal_run)
+
+    before = time.monotonic()
+    await registry_state.restore_runs_from_disk()
+    after = time.monotonic()
+
+    restored = get_run("restore-terminal-archive")
+    assert restored is not None
+    assert restored.archive_at is not None
+    assert before <= restored.archive_at <= after
+
+
+@pytest.mark.asyncio
 async def test_restore_runs_only_once(isolated_store):
     first = _make_run("restore-once-1", ExecutionStatus.PENDING)
     store_sqlite.upsert_run_sync(first)

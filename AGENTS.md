@@ -288,8 +288,12 @@ User message → Robyn WS → agent.core.built_agent() graph
      REBASED onto the restore point (`_rebase_restored_clock`):
      `time.monotonic()` is process-relative, so an old value can read as hours
      old or as a future time and silently disable each `now - timestamp` expiry
-     check; `archive_at` is a deadline and gets a fresh window rather than being
-     rebased to "now" (which would archive on the first sweep). Killing an
+     check; `archive_at` is a deadline, so a run the RESTORE terminalized
+     (PENDING/RUNNING) gets a fresh window rather than being rebased to "now"
+     (which would archive on the first sweep). A run that was ALREADY terminal
+     before the restart keeps its elapsed clock and is due immediately — a
+     restart no longer extends every old terminal row by another full window.
+     Killing an
      INTERRUPTED run also releases its per-session guard state
      (`release_child_session_state`) — there is no live child agent whose
      `finally` would.
@@ -1130,8 +1134,9 @@ approval prompt names the session's root, not the checkout.
 File browsing (`GET /project/tree`, `GET /project/file`,
 `server/service/project_files_service.py`) is read-only and hard-refused to the
 session's root: `resolve_within(base, path)` runs the same gate order as the
-tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
-size (413), non-UTF-8 (415), depth and entries per level. Since the 2026-11-09
+tools, reads go through `_open_no_follow` (component-wise `O_NOFOLLOW` walk, so a
+parent directory swapped for a symlink cannot redirect the read), and
+`FILE_BROWSER` bounds size (413), non-UTF-8 (415), depth and entries per level. Since the 2026-11-09
 audit (H1) an UNBOUND session cannot read files at all (its fallback root is the
 sherry checkout, so `path=.env` used to return the model API keys), and a bound
 checkout still refuses sherry's own root config/credential files through the

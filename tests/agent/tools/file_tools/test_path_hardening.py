@@ -153,6 +153,62 @@ class TestToctouRace:
         assert "error" in json.loads(out), out
         assert secret.read_text(encoding="utf-8") == "top-secret"
 
+    def test_read_rejects_an_intermediate_dir_swapped_after_resolve(
+        self, virtual_root, monkeypatch
+    ):
+        """L2: the swap targets a PARENT directory, not the final component."""
+        sub = virtual_root / "sub"
+        sub.mkdir()
+        (sub / "victim.txt").write_text("safe", encoding="utf-8")
+        outside = virtual_root.parent / "intermediate-swap"
+        outside.mkdir(exist_ok=True)
+        (outside / "victim.txt").write_text("top-secret", encoding="utf-8")
+
+        import agent.tools.pub_base.path_utils as path_utils
+
+        real_resolve = path_utils.resolve_workspace_path
+
+        def racing_resolve(file_path, root):
+            resolved = real_resolve(file_path, root)
+            os.rename(sub, virtual_root / "sub.orig")
+            os.symlink(outside, sub)
+            return resolved
+
+        monkeypatch.setattr(path_utils, "resolve_workspace_path", racing_resolve)
+
+        result = json.loads(build_read_file_tool()._core("sub/victim.txt", session_id=SESSION))
+
+        assert "error" in result
+        assert "top-secret" not in result.get("content", "")
+
+    def test_write_rejects_an_intermediate_dir_swapped_after_resolve(
+        self, virtual_root, monkeypatch
+    ):
+        sub = virtual_root / "sub"
+        sub.mkdir()
+        (sub / "victim.txt").write_text("safe", encoding="utf-8")
+        outside = virtual_root.parent / "intermediate-swap-write"
+        outside.mkdir(exist_ok=True)
+        victim = outside / "victim.txt"
+        victim.write_text("original", encoding="utf-8")
+
+        import agent.tools.pub_base.path_utils as path_utils
+
+        real_resolve = path_utils.resolve_workspace_path
+
+        def racing_resolve(file_path, root):
+            resolved = real_resolve(file_path, root)
+            os.rename(sub, virtual_root / "sub.orig")
+            os.symlink(outside, sub)
+            return resolved
+
+        monkeypatch.setattr(path_utils, "resolve_workspace_path", racing_resolve)
+
+        out = build_write_file_tool()._core("sub/victim.txt", "pwned", session_id=SESSION)
+
+        assert "error" in json.loads(out), out
+        assert victim.read_text(encoding="utf-8") == "original"
+
 
 class TestRegularFilesUnaffected:
     def test_write_read_patch_roundtrip(self, virtual_root):

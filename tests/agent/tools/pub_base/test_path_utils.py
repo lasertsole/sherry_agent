@@ -36,6 +36,7 @@ from agent.tools.pub_base.path_utils import (
     _is_yolo,
     _is_yolo_denied,
     _is_subagent,
+    _can_walk_beneath,
     _open_no_follow,
     _raise_if_symlink_loop,
     _candidate_session_ids,
@@ -502,6 +503,58 @@ class TestOwnSessionDirIsNeverExternal:
 
         assert resolved == target.resolve()
         assert len(mock_interrupt.calls) == 1
+
+
+class TestNoFollowIntermediateDirectories:
+    """L2: every path component is opened with O_NOFOLLOW, not just the last."""
+
+    @staticmethod
+    def _require_walk() -> None:
+        if not _can_walk_beneath():
+            pytest.skip("component-by-component dir_fd walking is unavailable here")
+
+    def test_a_plain_nested_path_still_opens(self, tmp_path):
+        self._require_walk()
+        target = tmp_path / "a" / "b" / "file.txt"
+        target.parent.mkdir(parents=True)
+        target.write_text("hello", encoding="utf-8")
+
+        fd = _open_no_follow(target, os.O_RDONLY)
+        try:
+            assert os.read(fd, 16) == b"hello"
+        finally:
+            os.close(fd)
+
+    def test_an_intermediate_directory_swapped_for_a_symlink_is_refused(self, tmp_path):
+        self._require_walk()
+        root = tmp_path / "root"
+        (root / "sub").mkdir(parents=True)
+        (root / "sub" / "file.txt").write_text("safe", encoding="utf-8")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "file.txt").write_text("top-secret", encoding="utf-8")
+        os.rename(root / "sub", root / "sub.orig")
+        os.symlink(outside, root / "sub")
+
+        with pytest.raises(OSError) as excinfo:
+            _open_no_follow(root / "sub" / "file.txt", os.O_RDONLY)
+
+        # Linux reports ENOTDIR for O_NOFOLLOW|O_DIRECTORY on a symlink; the
+        # refusal (never the redirect) is the contract.
+        assert excinfo.value.errno in (errno.ELOOP, errno.ENOTDIR)
+
+    def test_a_symlinked_ancestor_is_never_followed(self, tmp_path):
+        self._require_walk()
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "file.txt").write_text("x", encoding="utf-8")
+        link = tmp_path / "link"
+        os.symlink(real, link)
+
+        with pytest.raises(OSError) as excinfo:
+            _open_no_follow(link / "file.txt", os.O_RDONLY)
+
+        assert excinfo.value.errno in (errno.ELOOP, errno.ENOTDIR)
 
 
 # ── C. YOLO mechanism ───────────────────────────────────────────────────

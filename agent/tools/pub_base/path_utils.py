@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 
@@ -79,18 +80,76 @@ def _raise_if_symlink_loop(path: Path) -> None:
             raise
 
 
-def _open_no_follow(path: Path, flags: int, mode: int = 0o644) -> int:
-    """``os.open`` with ``O_NOFOLLOW``; Windows fallback: an ``is_symlink`` check.
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+#: O_PATH (Linux) opens a directory without needing READ permission; on macOS
+#: there is no O_PATH, so O_RDONLY is the portable fallback.
+_O_DIR_OPEN = getattr(os, "O_PATH", os.O_RDONLY) | _O_DIRECTORY
 
-    Closes the TOCTOU window between resolution and I/O: the final path
-    component is refused when it is a symlink, so a link swapped in after
-    validation cannot redirect the read/write outside ROOT_DIR. Raises
-    ``OSError(ELOOP)`` — the same errno Linux/macOS produce natively.
+
+def _can_walk_beneath() -> bool:
+    """Whether component-by-component ``openat`` walking is available here."""
+    return (
+        os.name != "nt"
+        and bool(_O_DIRECTORY)
+        and hasattr(os, "O_NOFOLLOW")
+        and os.open in os.supports_dir_fd
+    )
+
+
+@contextlib.contextmanager
+def _open_dir_no_symlinks(directory: Path, *, readable: bool = False):
+    """Yield a dir fd for *directory*, opening every component with O_NOFOLLOW.
+
+    ``directory`` must be absolute and ALREADY RESOLVED (the file tools pass
+    ``resolve_workspace_path``'s output). Because each component is opened
+    relative to its parent fd and refuses symlinks, an intermediate directory
+    swapped for a symlink between validation and open fails instead of
+    redirecting the operation outside the project root (the residual TOCTOU the
+    single final-component ``O_NOFOLLOW`` used to leave open).
+
+    ``readable`` opens the components with ``O_RDONLY`` instead of ``O_PATH``:
+    needed by callers that ``scandir`` the fd (the temp-file sweep), at the
+    cost of requiring READ permission on the directory.
+
+    Raises ``OSError`` on a symlinked/looping component or a missing directory.
     """
+    target = Path(directory)
+    parts = target.parts
+    if not target.is_absolute() or not parts:
+        raise OSError(errno.EINVAL, "a secure directory walk requires an absolute path")
+    flags = (os.O_RDONLY if readable else getattr(os, "O_PATH", os.O_RDONLY)) | _O_DIRECTORY
+    fd = os.open("/", flags)
+    try:
+        for part in parts[1:]:
+            next_fd = os.open(part, flags | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _open_no_follow(path: Path, flags: int, mode: int = 0o644) -> int:
+    """Open *path* without following ANY symlink in the path.
+
+    On POSIX the parent directory is walked component-by-component
+    (:func:`_open_dir_no_symlinks`) and the final component is opened relative
+    to that fd with ``O_NOFOLLOW``. This closes both the final-component and
+    the intermediate-directory TOCTOU windows: a link swapped in after
+    validation raises ``OSError(ELOOP)`` — the same errno as before.
+
+    ``path`` must be the RESOLVED absolute path returned by the path gates;
+    callers never pass a path containing symlinks on purpose. Windows (and any
+    platform without dir_fd) keeps the historical final-component check only.
+    """
+    target = Path(path)
+    if _can_walk_beneath() and target.is_absolute():
+        with _open_dir_no_symlinks(target.parent) as parent_fd:
+            return os.open(target.name, flags | os.O_NOFOLLOW, mode, dir_fd=parent_fd)
     if not hasattr(os, "O_NOFOLLOW"):
-        if path.is_symlink():
+        if target.is_symlink():
             raise OSError(errno.ELOOP, "Symbolic link not allowed")
-    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), mode)
+    return os.open(target, flags | getattr(os, "O_NOFOLLOW", 0), mode)
 
 
 def resolve_workspace_path(file_path: str, workspace_root: Path | None = None) -> Path:

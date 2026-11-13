@@ -39,7 +39,7 @@ OS-isolation detail.
 | Memory / skill file injection | **Memory-write scan** on all three write paths (a prose-specific table, because a note *about* the system is not an attack) + skill scan gate on install | — |
 | Secret leakage into logs / tool output | **Redaction engine** on the log pipeline (always on, exception text included) and on leak-prone tool output, `scrub_env` for child processes | It removes what its patterns recognise, nothing more |
 | URL credential leakage | **URL redaction**: extra schemes, nested percent-encoding (depth 8), query and presigned parameters | — |
-| Path traversal | `PathGuard` + `O_NOFOLLOW` | — |
+| Path traversal | `PathGuard` + component-wise `O_NOFOLLOW` (`dir_fd` walking) | — |
 | Shell injection | `agent/middlewares/humanInTheLoop/detection.py` blocklist (12 hardline + 61 dangerous rules) | — |
 | Sandbox escape | `bwrap` / `seatbelt` | — |
 | Reasoning-block leakage into the stream | **Inline-CoT redirect**: the thinking is moved to the reasoning channel, not discarded | Models that emit no tags at all are unaffected by definition |
