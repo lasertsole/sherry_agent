@@ -367,7 +367,7 @@ def sandbox_effective(requested: bool = True) -> bool:
 def sandbox_degraded(requested: bool = True) -> bool:
     """Whether a REQUESTED sandbox will silently degrade to unsandboxed.
 
-    This is the H3 approval predicate: only ``AUTO`` + no usable backend
+    This is the approval predicate: only ``AUTO`` + no usable backend
     degrades. It deliberately excludes:
 
     * ``sandbox=False`` — the explicit bypass has its own approval card;

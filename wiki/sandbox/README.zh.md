@@ -76,7 +76,7 @@
 
 - **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`（语义上等价于 POSIX `shell=True`），python_repl 与 PTC 子进程同理。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。`roots` 来自**会话的项目目录**（`current_project_dir(session_id)` / PTC 子进程的 cwd）—— 与命令的 cwd 同源，因此可写面与工作目录永不打架；绑定在仓库之外的项目目录可写（此前是 EROFS），而仓库本身不可写（此前可写，那正是 terminal 绕过外部路径门禁的通道）。`terminal` 与 `python_repl` 还会追加该会话自己的 `SESSIONS_DIR/<session_id>` 私有目录（`with_own_session_root`，按需创建）：它是文件工具本就可免 HITL 读写的私有运行态，使会话即使绑定了别的项目目录，也能创建、修改、删除（`rm`）自己的文件。只追加这**一个**会话目录 —— 共享的 sessions 根目录与其他会话仍只读。PTC 保持其 cwd。
 - **裸跑会被记录**：证据账本里的命令行携带 `sandboxed: false`，而沙箱绕过审批卡片会标注 `⚠ UNSANDBOXED` 并说明含义 —— 人工审批时看得到，事后审计也查得到。
-- **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。主 HITL 路径会在工具执行**之前**批准这次降级（H3）；headless 回合则自动拒绝。
+- **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。主 HITL 路径会在工具执行**之前**批准这次降级；headless 回合则自动拒绝。
 - **所有路径都无条件执行**：`env=scrub_env()` 与 `cwd=str(ROOT_DIR)`（cwd 钳制）。两个工具都强制 30 秒超时（`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`），超时即杀死子进程；PTC 强制执行自己的 `ptc_timeout_seconds` 并对子进程组发 SIGKILL。
 - **错误呈现**：`REQUIRED` 且无后端时，terminal 把 `RuntimeError` 包成 `ToolException`（经 `handle_tool_error=True` 原样呈现）；python_repl 直接抛出原始 `RuntimeError`；PTC 在派生子进程之前返回 `status: "sandbox_unavailable"` 信封。
 - **降级日志**：当这次调用想要沙箱、但后端不存在且策略不是 `off` 时，`terminal` / `python_repl` 记录恰好一条 loguru INFO，然后无沙箱执行——主 HITL 路径此前已经展示并批准了沙箱绕过卡：

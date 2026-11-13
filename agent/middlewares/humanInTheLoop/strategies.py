@@ -127,7 +127,7 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             return True
 
         # Sandbox-bypass approval gates explicit sandbox=False executions AND
-        # the H3 degradation path: sandbox=True on an AUTO policy with no
+        # the sandbox-degradation path: sandbox=True on an AUTO policy with no
         # usable backend runs unsandboxed, so the operator must approve it
         # before the tool's silent fallback happens. OFF and REQUIRED are NOT
         # routed here (OFF is the operator's choice, REQUIRED refuses in the

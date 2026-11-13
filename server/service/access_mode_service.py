@@ -117,7 +117,7 @@ def set_access_mode(session_id: str, mode: str) -> str:
     set_plan_state(sid, status=PLAN_STATUS_IDLE)
     if mode == FULL_ACCESS:
         set_session_yolo(sid)
-        # H3: full access bypasses every approval, so on a platform with no
+        # Full access bypasses every approval, so on a platform with no
         # usable OS sandbox the session will run every command naked. Say so
         # once at activation instead of letting it be discovered later.
         from agent.tools.pub_base.sandbox import sandbox_effective

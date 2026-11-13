@@ -1,4 +1,4 @@
-"""H3 predicates: when does a requested sandbox actually run / degrade?"""
+"""Sandbox predicates: when does a requested sandbox actually run / degrade?"""
 
 from __future__ import annotations
 

@@ -305,7 +305,7 @@ class HumanInTheLoop(AgentMiddleware):
         ``caller_scope`` + ``sandbox=False`` and for ``SANDBOX_POLICY=required``
         + ``sandbox=False``. YOLO mode (``is_yolo_mode``) calls must never reach
         the interrupt; a ``sandbox=True`` call reaches it ONLY when AUTO has no
-        usable backend (H3 degradation) — callers filter every other case out
+        usable backend (sandbox degradation) — callers filter every other case out
         BEFORE invoking this helper.
 
         Returns:

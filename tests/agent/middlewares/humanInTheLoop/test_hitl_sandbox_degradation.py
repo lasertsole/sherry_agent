@@ -1,4 +1,4 @@
-"""H3: a REQUESTED sandbox that would silently degrade must ask the operator.
+"""A REQUESTED sandbox that would silently degrade must ask the operator.
 
 The rest of the HITL suite assumes a usable OS sandbox (``conftest.py``);
 these tests override that assumption and exercise the degradation path:
@@ -80,7 +80,7 @@ def _fake_repl(query: str = "") -> str:
 
 @pytest.fixture()
 def degraded(monkeypatch):
-    """Simulate AUTO + no usable backend (the H3 trigger)."""
+    """Simulate AUTO + no usable backend (the degradation trigger)."""
     import agent.tools.pub_base.sandbox as sandbox
 
     monkeypatch.setattr(sandbox, "sandbox_degraded", lambda requested=True: bool(requested))

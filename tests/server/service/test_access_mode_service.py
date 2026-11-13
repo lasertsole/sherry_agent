@@ -107,7 +107,7 @@ def test_confirm_all_sets_the_strict_flag(register):
 
 
 def test_full_access_warns_when_no_os_sandbox_is_available(register, monkeypatch):
-    """H3: YOLO bypasses every approval, so activation says it runs naked."""
+    """YOLO bypasses every approval, so activation says it runs naked."""
     from loguru import logger
 
     import agent.tools.pub_base.sandbox as sandbox

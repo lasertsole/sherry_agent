@@ -123,8 +123,8 @@ def _hermetic_sandbox_policy(monkeypatch):
     after this fixture and wins.
 
     The suite also pretends a usable OS sandbox exists (``sandbox_degraded``
-    False): most tests predate the H3 approval routing and would otherwise start
-    asking for an operator merely because the CI host cannot run bwrap. The H3
+    False): most tests predate the sandbox-degradation approval routing and would otherwise start
+    asking for an operator merely because the CI host cannot run bwrap. The
     tests override these two predicates explicitly.
     """
     monkeypatch.setenv("SANDBOX_POLICY", "auto")

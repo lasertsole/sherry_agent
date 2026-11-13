@@ -226,7 +226,7 @@ def _loguru_warnings():
 
 @contextmanager
 def _loguru_info():
-    """Capture loguru INFO+ records (the H3 degrade line is informational)."""
+    """Capture loguru INFO+ records (the degrade line is informational)."""
     records: list[str] = []
     sink_id = logger.add(lambda m: records.append(str(m)), level="INFO")
     try:

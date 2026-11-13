@@ -8,7 +8,7 @@ filesystem and the process API through introspection::
 
 That escape is the reason 2026-11-09 audit item H4 exists. The OS sandbox is
 the real barrier; this module is the cheap layer in front of it that refuses
-the escape SHAPES before anything runs (a sandbox may be unavailable — H3 — and
+the escape SHAPES before anything runs (a sandbox may be unavailable and
 ``python_repl``/PTC execute model-written code, so defense in depth is the
 point).
 

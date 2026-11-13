@@ -3076,7 +3076,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
-  H3: on an `auto` policy with NO usable backend, a `sandbox=True` terminal /
+  On an `auto` policy with NO usable backend, a `sandbox=True` terminal /
   python_repl call is routed through the existing sandbox-bypass HITL card
   BEFORE the tool runs (`sandbox_degraded()`; the card says OS sandbox
   unavailable); confirm-all keeps its own card and appends the note; a headless
