@@ -717,7 +717,7 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 
 
-在任何 spawn 之前验证整个批次（全有或全无）。随后整个批次通过共享 `_dispatch.dispatch_child` 接缝**并发** spawn，并发上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（默认 2：SUBAGENT 泳道才是全局背压，这个上限只决定同时有多少个 spawn 调用在途）。单个 spawn 失败不再中止兄弟步骤——每个成功的子代理都会在一次 `update_flow` 调用中持久化，每个失败的步骤 id 都会出现在应答里（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。`apply_dispatched_steps()` 辅助函数将已记录的已派发步骤载荷重新应用到新读取的步骤列表上，按 `step_id` 匹配——已 spawn 的子代理不会因并发写入重写步骤列表而丢失。`max_parallel_dispatch = 1` 精确还原历史上的顺序行为。
+在任何 spawn 之前验证整个批次（全有或全无）。随后整个批次通过共享 `_dispatch.dispatch_child` 接缝**并发** spawn，并发上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（默认 2：SUBAGENT 泳道才是全局背压，这个上限只决定同时有多少个 spawn 调用在途）。单个 spawn 失败不再中止兄弟步骤——每个成功的子代理都会在一次 `update_flow` 调用中持久化，每个失败的步骤 id 都会出现在应答里（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。失败的步骤还会写入持久化标记 `last_spawn_error`（+ `last_spawn_failed_at`）——有成功项时同一次写入，全部失败时单独写标记——成功派发会清掉两者，于是 board 能区分「可重试目标」与「下一波自动派发会启动的工作」。`apply_dispatched_steps()` 辅助函数将已记录的已派发步骤载荷重新应用到新读取的步骤列表上，按 `step_id` 匹配——已 spawn 的子代理不会因并发写入重写步骤列表而丢失。`max_parallel_dispatch = 1` 精确还原历史上的顺序行为。
 
 
 
@@ -725,7 +725,7 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 
 
-resume 会启动整个 ready 集，而不只是它解锁的依赖者（`auto_dispatch=True`，默认值）：`newly_ready ∪ all_ready` —— 本次解锁的下游，加上一直 `ready` 却未派发的兄弟步骤 —— 通过同一接缝、同一 `max_parallel_dispatch` 上限并发 spawn。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（默认 true）控制扩大扫描；设为 false（或传 `auto_dispatch=False`）可恢复旧的「只解锁/只派发新解锁集」行为。spawn 出的子代理键通过 CAS 重试写入（`update_flow_with_conflict_retry`）持久化，并发写入无法丢掉它们。每个步骤的派发方式与 `taskflow_step(action="dispatch")` 完全一致（任务绑定 + 判别反馈）。失败只报告、不抛出：spawn 不成的步骤保持 `ready`，resume 的应答里带 `auto_dispatch_failed=<step_id>: <error>` 供手动重试。已派发的步骤会被过滤并在 flow 锁内重新确认，因此扩大扫描也只会 spawn 一次。
+resume 会启动整个 ready 集，而不只是它解锁的依赖者（`auto_dispatch=True`，默认值）：`newly_ready ∪ all_ready` —— 本次解锁的下游，加上一直 `ready` 却未派发的兄弟步骤 —— 通过同一接缝、同一 `max_parallel_dispatch` 上限并发 spawn。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（默认 true）控制扩大扫描；设为 false（或传 `auto_dispatch=False`）可恢复旧的「只解锁/只派发新解锁集」行为。spawn 出的子代理键通过 CAS 重试写入（`update_flow_with_conflict_retry`）持久化，并发写入无法丢掉它们。每个步骤的派发方式与 `taskflow_step(action="dispatch")` 完全一致（任务绑定 + 判别反馈）。失败只报告、不抛出：spawn 不成的步骤保持 `ready`，resume 的应答里带 `auto_dispatch_failed=<step_id>: <error>` 供手动重试，并且该步骤带 `last_spawn_error` 标记，board 会持续把它列为重试目标（之后成功派发会清除标记）。已派发的步骤会被过滤并在 flow 锁内重新确认，因此扩大扫描也只会 spawn 一次。
 
 
 

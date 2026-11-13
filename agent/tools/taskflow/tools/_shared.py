@@ -549,7 +549,8 @@ def apply_dispatched_steps(fresh_steps: list[dict], records: list[dict]) -> list
 
     Matching is by ``step_id``. A record whose step is absent from the fresh
     state is appended, so a spawned child is never lost to a concurrent writer
-    that rewrote the step list.
+    that rewrote the step list. A successful dispatch also clears the step's
+    failed-spawn marker.
     """
     merged = list(fresh_steps)
     by_id = {s.get("step_id"): s for s in merged if s.get("step_id") is not None}
@@ -557,13 +558,52 @@ def apply_dispatched_steps(fresh_steps: list[dict], records: list[dict]) -> list
         step_id = record.get("step_id")
         target = by_id.get(step_id) if step_id is not None else None
         if target is None:
-            merged.append(dict(record))
+            restored = dict(record)
+            restored.pop(SPAWN_ERROR_KEY, None)
+            restored.pop(SPAWN_FAILED_AT_KEY, None)
+            merged.append(restored)
             continue
         target["status"] = record["status"]
         target["child_session_key"] = record["child_session_key"]
         target["dispatched_at"] = record["dispatched_at"]
         target.pop("judge_feedback", None)
+        target.pop(SPAWN_ERROR_KEY, None)
+        target.pop(SPAWN_FAILED_AT_KEY, None)
     return merged
+
+
+#: Step fields recording why the last dispatch attempt could not spawn a child.
+#: Only a step whose spawn never produced a child carries them; a successful
+#: dispatch clears both. The board reads ``last_spawn_error`` to tell
+#: "waiting for the automatic wave" (no marker) from "needs a manual retry".
+SPAWN_ERROR_KEY = "last_spawn_error"
+SPAWN_FAILED_AT_KEY = "last_spawn_failed_at"
+
+
+def spawn_failure_record(step_id: str, error: str, at: float) -> dict:
+    """Build one failed-spawn marker for persistence on the step."""
+    message = " ".join(str(error).split())
+    return {
+        "step_id": step_id,
+        SPAWN_ERROR_KEY: message[:400] or "spawn failed",
+        SPAWN_FAILED_AT_KEY: at,
+    }
+
+
+def apply_spawn_failures(fresh_steps: list[dict], failures: list[dict]) -> list[dict]:
+    """Stamp failed-spawn markers onto their steps (matched by ``step_id``).
+
+    A marker whose step a concurrent writer removed is dropped: there is no
+    longer anything to retry.
+    """
+    by_id = {s.get("step_id"): s for s in fresh_steps if s.get("step_id") is not None}
+    for failure in failures:
+        target = by_id.get(failure.get("step_id"))
+        if target is None:
+            continue
+        target[SPAWN_ERROR_KEY] = failure[SPAWN_ERROR_KEY]
+        target[SPAWN_FAILED_AT_KEY] = failure[SPAWN_FAILED_AT_KEY]
+    return fresh_steps
 
 
 async def update_flow_with_conflict_retry(

@@ -65,7 +65,7 @@ blocked ──(deps satisfied)──▶ ready ──(dispatch)──▶ dispatch
 
 | Status | Meaning | Set by |
 | :--- | :--- | :--- |
-| `blocked` | at least one `depends_on` id is not `done`; no child spawned | `taskflow_step(action="run_task")` |
+| `blocked` | no child can proceed: at least one `depends_on` id is not `done` (no child spawned), **or** the step's result was never proven (`step_outcome="blocked"` / a StepJudge BLOCK); dependents stay blocked | `taskflow_step(action="run_task")` / `taskflow_step(action="resume")` / `taskflow_step(action="update_steps")` |
 | `ready` | all dependencies satisfied, awaiting dispatch | registration, or `unlock_dependents` after a resume |
 | `dispatched` | a detached child session was spawned; `child_session_key` + `dispatched_at` recorded | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | a result was injected by `taskflow_step(action="resume")` | `taskflow_step(action="resume")` |

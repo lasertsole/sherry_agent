@@ -384,6 +384,7 @@ main と child の両チェーンで、履歴メディアを `history_media_budg
 - **継続バジェット**：`mark_injected` はその turn もカウントするため、このカウンタは実際に**配信された**連続継続 turn 数です（trigger に拒否された指令——`busy` / `already_pending`——はカウントされず、次の turn 終了時に再試行されます。リカバリ指令もカウント対象です）。`TODOLIST_INFRA["max_continuation_turns"]`（15）に達すると、ゲートは最後の `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令を配信し、セッションをラッチして、自分が注入していない turn——実際のユーザーメッセージ、または subagent 完了——がバジェットとラッチをリセットするまで沈黙します。これは停滞チェックが見逃す形（モデルが毎回わずかに計画を編集してスナップショットを動かし続ける場合）を制限します。
 - fail-open：例外はログに記録され、ターンは通常どおり終了します。
 - **todowrite ナッジ**: フックは `todowrite` を呼ばないターン数を数え（`stagnation_tracker.record_turn` / `record_todowrite`。そのターンに `todowrite` を呼べばリセット）、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` ブロックを**追記**します——スナップショット停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。リカバリモードは独自のより強い todowrite ガイダンスを持ち、ナッジは付きません。
+- **blocked のみの専用指令**: 残りの TaskFlow step がすべて `blocked` で、実行できる todo もない場合、ゲートは継続プロンプトではなく `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]` を送ります——「次の pending タスクを続ける」では blocked の作業を進められません。step を done にしてはいけないこと、そして 3 つの判断（再計画 `taskflow_flow(action='replan')`、そのブランチ/step またはフロー全体の取り消し `taskflow_step(action='update_steps')` / `taskflow_flow(action='cancel')`、不足結果の注入 `taskflow_step(action='resume')`）を明示します。ready/dispatched の兄弟 step や pending todo が残っていれば通常の継続指令のままです。
 
 ### DynamicReminderMiddleware
 
@@ -392,7 +393,7 @@ main と child の両チェーンで、履歴メディアを `history_media_budg
 
 `TaskIntentMiddleware` の直後に登録されます（そのターン内重複排除は、実行時にユーザーメッセージが最後のままである必要があります）。ターンの**最初のモデル呼び出し**で、**ライブビュー**を `<system-reminder source="…">` HumanMessage として注入します: プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引。システムプロンプト自体は安定した内容（persona + memory + スキル索引）だけを載せます——最初のトークンが毎ターン変わるプロンプトは、以降すべての prefix キャッシュを無効化します; 設定変更 / 圧縮でしか再構築されないプロンプトは、その間**古い** todo リストを見せ続けます。
 
-- **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（TaskFlow ボード / boulder: 5 ターンに 1 回まで）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
+- **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（boulder: 5 ターンに 1 回まで。TaskFlow ボードは spawn 失敗または判断が必要な blocked step がある間だけ `taskflow_reminder_cooldown_when_ready` に短縮し、それ以外は 5 のまま）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
 - **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約のラベル。
 - **圧縮後**はカタログがリセットされ、次のターンにすべてのソースが live state から再導出されます——この層は古いリマインダーの生存に依存しません。
 - 全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません（チェーンにセッション単位のスイッチはありません）。

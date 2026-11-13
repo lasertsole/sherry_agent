@@ -717,7 +717,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 
 
-全 spawn の前にバッチ全体を検証（全か無か）。その後バッチは共有の `_dispatch.dispatch_child` シームを通じて**同時に** spawn し、同時実行数は `TASKFLOW_INFRA["max_parallel_dispatch"]`（既定 2：SUBAGENT レーンがグローバルな背圧であり、この上限は同時に何個の spawn 呼び出しが飛行中かを決めるだけ）で制限されます。1 つの spawn の失敗はもはや兄弟を中止させません——成功した子はすべて 1 回の `update_flow` で永続化され、失敗したステップ id はすべて応答に列挙されます（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。`apply_dispatched_steps()` ヘルパーが新読みのステップリストに記録済みディスパッチステップペイロードを再適用し、`step_id` でマッチ——spawn 済み子エージェントが同時書き込みによるステップリスト書き換えで失われることはない。`max_parallel_dispatch = 1` は歴史的な順次動作を正確に再現します。
+全 spawn の前にバッチ全体を検証（全か無か）。その後バッチは共有の `_dispatch.dispatch_child` シームを通じて**同時に** spawn し、同時実行数は `TASKFLOW_INFRA["max_parallel_dispatch"]`（既定 2：SUBAGENT レーンがグローバルな背圧であり、この上限は同時に何個の spawn 呼び出しが飛行中かを決めるだけ）で制限されます。1 つの spawn の失敗はもはや兄弟を中止させません——成功した子はすべて 1 回の `update_flow` で永続化され、失敗したステップ id はすべて応答に列挙されます（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。失敗したステップには永続マーカー `last_spawn_error`（+ `last_spawn_failed_at`）が付きます——何かが spawn できた場合は同じ書き込みで、全滅時はマーカー専用の書き込み——成功した dispatch は両方を消すため、board は「再試行対象」と「次の自動 wave が起動する作業」を区別できます。`apply_dispatched_steps()` ヘルパーが新読みのステップリストに記録済みディスパッチステップペイロードを再適用し、`step_id` でマッチ——spawn 済み子エージェントが同時書き込みによるステップリスト書き換えで失われることはない。`max_parallel_dispatch = 1` は歴史的な順次動作を正確に再現します。
 
 
 
@@ -725,7 +725,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 
 
-resume はアンロックした依存側だけでなく、**ready 集合全体**を起動します（`auto_dispatch=True`、既定）：`newly_ready ∪ all_ready` —— 今回 unlock した下流と、以前から `ready` だが未 dispatch だった兄弟 —— を同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）が広い走査を制御し、false（または `auto_dispatch=False`）で従来の「unlock のみ/新規 unlock のみ」動作に戻せます。spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_step(action="dispatch")` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライできます。既に dispatched のステップは除外されフローロック内で再確認されるため、広い走査でも spawn は正確に 1 回です。
+resume はアンロックした依存側だけでなく、**ready 集合全体**を起動します（`auto_dispatch=True`、既定）：`newly_ready ∪ all_ready` —— 今回 unlock した下流と、以前から `ready` だが未 dispatch だった兄弟 —— を同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）が広い走査を制御し、false（または `auto_dispatch=False`）で従来の「unlock のみ/新規 unlock のみ」動作に戻せます。spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_step(action="dispatch")` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライでき、さらに `last_spawn_error` マーカーが付くので board は再試行対象として示し続けます（後で成功すればマーカーは消えます）。既に dispatched のステップは除外されフローロック内で再確認されるため、広い走査でも spawn は正確に 1 回です。
 
 
 

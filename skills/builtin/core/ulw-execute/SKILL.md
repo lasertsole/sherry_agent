@@ -37,7 +37,8 @@ Phase 3: Execute the next checkbox (all scheduling is delegated to TaskFlow)
   -> Register checkboxes with dependencies as TaskFlow steps:
        taskflow_step(action="run_task", flow_id=..., task=..., depends_on=[...])
   -> Steps with unmet dependencies are recorded as blocked by TaskFlow and not dispatched
-  -> Call taskflow_step(action="dispatch", flow_id=..., step_ids=[...]) to dispatch ready steps in parallel
+  -> Ready steps are auto-dispatched: run_task dispatches its own step, and every resume starts the unlocked + sibling ready set — do not call dispatch for them
+  -> Only when the TaskFlow board marks a step "dispatch failed" (an automatic spawn failed), retry it with taskflow_step(action="dispatch", flow_id=..., step_ids=[...])
   -> taskflow_step(action="wait_all", flow_id=...) waits for the child sessions dispatched by this flow to settle
   -> taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...) injects the result, unlocks successors, and auto-dispatches the whole ready set
   -> DELEGATE EVERYTHING, routing each sub-task through the routing table below
@@ -102,7 +103,7 @@ If verification fails, the task is not complete: re-dispatch, or fix and restart
 The orchestration layer only calls TaskFlow; it never rebuilds it:
 
 - `taskflow_step(action="run_task", flow_id=..., task=..., depends_on=[...])`: register a step and decide whether to dispatch based on dependencies.
-- `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`: batch-dispatch ready steps.
+- `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`: batch-dispatch a step left `ready` by a FAILED automatic spawn (the board marks it "dispatch failed") or by `auto_dispatch=false`; normal ready work is already started automatically.
 - `taskflow_step(action="wait_all", flow_id=...)`: wait for the child sessions dispatched by this flow to settle.
 - `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`: inject the result, mark done, unlock successors, auto-dispatch the ready set (idempotent).
 - `taskflow_inspect(action="summary", flow_id=...)`: read-only readback of each step's `status` / `depends_on` and the per-status counts.

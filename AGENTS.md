@@ -3212,11 +3212,27 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `auto_dispatch=False` keeps the "unlock only" shape). `taskflow_flow(action="plan")`
   also starts its initial ready set through the same batch path
   (`auto_dispatch_initial_ready`), leaving only dependency-blocked steps parked.
-  The TaskFlow board reminder lists every ready step with a
-  `[N steps ready — parallelize via taskflow_dispatch!]` marker and shortens its
-  cooldown to `taskflow_reminder_cooldown_when_ready` (1) while that set exists.
+  The TaskFlow board reminder splits ready work by what the model owes: a step
+  carrying a persisted `last_spawn_error` is listed as
+  `dispatch failed: s1(...) — retry via taskflow_step(action='dispatch', step_ids=['s1'])`,
+  ordinary ready work is only counted (`pending auto-dispatch: N step(s)`), and
+  blocked steps are counted + listed with their `block_reason` (plus
+  `waiting on upstream: <dep>` when the DAG is the cause; `next:` carries the
+  status). Its cooldown shortens to `taskflow_reminder_cooldown_when_ready` (1)
+  only while a failed spawn or a DECISION-blocked step (a recorded
+  `block_reason`; dependency-blocked is normal mid-run state) is outstanding,
+  and with either auto-dispatch wave disabled the old `ready_to_dispatch` /
+  `parallelize` wording returns.
   The AI still supervises the exceptions — judge BLOCK, failures,
-  planning and the final finish — instead of driving every step. `taskflow_flow(action="replan")`
+  planning and the final finish — instead of driving every step. A blocked step
+  reaches every channel as `blocked`: `_try_auto_resume_taskflow` reads the
+  post-resume step state, remembers a StepJudge BLOCK / caller-declared blocked
+  verdict, and the completion notice, third-path marker
+  (`[subagent:{name} blocked]`) and sub→sub internal injection all use it (a
+  BUDGET_EXHAUSTED goal loop maps there directly). The plan-continuation gate
+  sends `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]` instead of the normal
+  continuation when every remaining step is blocked and no todo is actionable,
+  naming replan / cancel / resume as the decisions. `taskflow_flow(action="replan")`
   regenerates a flow's REMAINING steps from the goal, the done results and the
   failure reason (transitively invalidated steps go back to `blocked`; bounded by
   `REPLAN_MAX` replans per flow), and `taskflow_flow(action="finish")`
@@ -3285,7 +3301,11 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   are in flight at once. A partial wave failure persists every successful child
   (via `update_flow_with_conflict_retry`, so a concurrent writer cannot drop a
   spawned key) and names the failed step ids (`auto_dispatch_failed=…` on the
-  resume answer). `taskflow_step(action="resume")`'s normal path also writes through that
+  resume answer). Each failed step also gets a persisted `last_spawn_error` /
+  `last_spawn_failed_at` marker — in the same write when anything spawned, in a
+  marker-only CAS write when the whole wave failed — and a successful dispatch
+  clears both; the board reads that marker to tell "retry me" from "the next
+  wave starts me". `taskflow_step(action="resume")`'s normal path also writes through that
   CAS-retry: the `build_state` callback re-applies the ALREADY-DECIDED verdict +
   result onto the freshly-read state and re-derives the unlock set from what was
   actually persisted — two children completing at once both land, and the same

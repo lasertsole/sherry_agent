@@ -42,7 +42,7 @@
 - delegation="subagent": 다중 파일, 100줄 초과, 복잡한 로직, 병렬화 가능 또는 전문 역할이 필요한 작업은 `sessions_spawn`으로 위임
 - 장시간 외부 자료 조사(웹, 이슈, 업스트림 PR, 저장소 간 검색): `sessions_spawn(functional_role="researcher")`로 읽기 전용 researcher를 생성하고, 메인 에이전트는 로컬 최소 patch와 검증을 계속합니다. 조사가 편집을 막지 않게 합니다
 - 코드 편집, 테스트 작성 및 수정은 직접 해도 되고 위임해도 됩니다. 더 빠르고 검증하기 쉬운 방법을 선택합니다
-- `taskflow_step(action="run_task", depends_on=[...])`로 의존성을 선언하고, `taskflow_step(action="dispatch")`로 준비된 단계를 디스패치하며, `taskflow_step(action="wait_all")`로 기다립니다
+- `taskflow_step(action="run_task", depends_on=[...])`로 의존성을 선언합니다. ready 단계는 plan 시점과 매 resume 시점에 자동 디스패치되므로 보통 수동 dispatch가 필요 없습니다. 자동 디스패치 spawn이 실패한 단계(TaskFlow board에 "dispatch failed"로 표시)를 재시도할 때만 `taskflow_step(action="dispatch")`를 사용하고, `taskflow_step(action="wait_all")`로 기다립니다
 
 ### 전이 장벽 (CRITICAL)
 

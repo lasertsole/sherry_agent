@@ -23,6 +23,9 @@ from config.features import LSP, TASKFLOW_INFRA
 from config.path import resolve_default_project_dir
 
 from workspace.prompt_builder import (
+    _ATTENTION_AUTO_PENDING,
+    _ATTENTION_BLOCKED,
+    _ATTENTION_FAILED_SPAWN,
     _build_boulder_block,
     _build_continuity_block,
     _build_plan_mode_block,
@@ -30,7 +33,8 @@ from workspace.prompt_builder import (
     _build_project_instructions_block,
     _build_taskflow_block,
     _build_todo_block,
-    has_undispatched_ready_steps,
+    auto_dispatch_waves_enabled,
+    taskflow_attention,
 )
 
 from .core import ReminderChannel, ReminderSource, register
@@ -179,19 +183,26 @@ def _lsp_diagnostics_builder(session_id: str, _state: dict[str, Any]) -> str | N
     return "\n".join(lines)
 
 
-#: The board's normal throttle when no dispatch decision is outstanding.
+#: The board's normal throttle when nothing needs a model decision.
 _TASKFLOW_IDLE_COOLDOWN = 5
 
 
 def _taskflow_cooldown(session_id: str, _state: dict[str, Any]) -> int:
-    """Shorten the board cooldown while ready work is waiting for dispatch.
+    """Shorten the board cooldown only while the model owes a TaskFlow action.
 
-    A ready-but-undispatched step is a decision the model must make now; a
-    running board with nothing to start keeps the historical 5-turn throttle.
-    ``only_if_changed`` still suppresses a byte-identical board, so this changes
-    WHEN a changed board is eligible, not whether duplicates are repeated.
+    A BLOCKED step needs a decision (replan / cancel / resolve) and a
+    failed-spawn step needs a retry call, so both re-show the board every
+    ``taskflow_reminder_cooldown_when_ready`` turns. Ordinary ready work does
+    not: with both auto-dispatch waves on, the next wave starts it without the
+    model. When a wave is disabled, ready work IS the model's to start and the
+    old short cooldown returns. ``only_if_changed`` still suppresses a
+    byte-identical board, so this changes WHEN a changed board is eligible, not
+    whether duplicates are repeated.
     """
-    if has_undispatched_ready_steps(session_id):
+    attention = taskflow_attention(session_id)
+    if attention in (_ATTENTION_BLOCKED, _ATTENTION_FAILED_SPAWN):
+        return int(TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"])
+    if attention == _ATTENTION_AUTO_PENDING and not auto_dispatch_waves_enabled():
         return int(TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"])
     return _TASKFLOW_IDLE_COOLDOWN
 

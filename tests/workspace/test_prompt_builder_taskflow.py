@@ -181,7 +181,6 @@ class TestTaskflowBlockInjection:
         assert prompt_env["flow_store"].calls == 0
 
     def test_taskflow_block_shows_step_progress(self, prompt_env):
-
         prompt_env["flow_store"].flows = [
             _flow(
                 "deploy-v2",
@@ -192,10 +191,15 @@ class TestTaskflowBlockInjection:
         prompt = _reminder("sess-main", "taskflow_status")
 
         assert "2/5 steps done" in prompt
-        assert "ready_to_dispatch: s3(task 3)" in prompt
-        assert "parallelize" not in prompt, "one ready step is not a fan-out"
+        # With both auto-dispatch waves on, a ready step is the SYSTEM's to
+        # start: the board counts it and does not ask the model to dispatch.
+        assert "pending auto-dispatch: 1 step(s)" in prompt
+        assert "ready_to_dispatch" not in prompt
+        assert "parallelize" not in prompt
+        assert "blocked: 1" in prompt
+        assert "blocked s4 (task 4) — no reason recorded" in prompt
 
-    def test_taskflow_block_lists_every_ready_sibling(self, prompt_env):
+    def test_taskflow_block_lists_every_ready_sibling_under_auto_dispatch(self, prompt_env):
         prompt_env["flow_store"].flows = [
             _flow(
                 "fanout",
@@ -211,13 +215,83 @@ class TestTaskflowBlockInjection:
 
         prompt = _reminder("sess-main", "taskflow_status")
 
+        assert "pending auto-dispatch: 3 step(s)" in prompt
+        assert "parallelize via taskflow_dispatch!" not in prompt, (
+            "the automatic wave already starts these siblings"
+        )
+
+    def test_taskflow_block_restores_the_dispatch_call_when_a_wave_is_off(
+        self, prompt_env, monkeypatch
+    ):
+        from config.features import TASKFLOW_INFRA
+
+        monkeypatch.setitem(TASKFLOW_INFRA, "auto_dispatch_all_ready_on_resume", False)
+        prompt_env["flow_store"].flows = [
+            _flow(
+                "fanout",
+                steps=[
+                    _step("s2", "write the tests", status="ready"),
+                    _step("s3", "update the docs", status="ready"),
+                ],
+            )
+        ]
+
+        prompt = _reminder("sess-main", "taskflow_status")
+
+        assert "ready_to_dispatch: s2(write the tests), s3(update the docs)" in prompt
+        assert "[2 steps ready — parallelize via taskflow_dispatch!]" in prompt
+
+    def test_taskflow_block_marks_failed_spawns_for_manual_retry(self, prompt_env):
+        step = _step("s1", "implement the parser", status="ready")
+        step["last_spawn_error"] = "RuntimeError: lane refused the spawn"
+        prompt_env["flow_store"].flows = [_flow("retry", steps=[step])]
+
+        prompt = _reminder("sess-main", "taskflow_status")
+
+        assert "dispatch failed: s1(implement the parser)" in prompt
+        assert "taskflow_step(action='dispatch', step_ids=['s1'])" in prompt
+        assert "parallelize" not in prompt
+
+    def test_taskflow_block_separates_auto_pending_from_failed_spawns(self, prompt_env):
+        failed = _step("s1", "retry me", status="ready")
+        failed["last_spawn_error"] = "RuntimeError: lane refused"
+        prompt_env["flow_store"].flows = [
+            _flow(
+                "mixed",
+                steps=[failed, _step("s2", "wave will start me", status="ready")],
+            )
+        ]
+
+        prompt = _reminder("sess-main", "taskflow_status")
+
+        assert "dispatch failed: s1(retry me)" in prompt
+        assert "pending auto-dispatch: 1 step(s)" in prompt
+
+    def test_taskflow_block_renders_block_reason_and_upstream(self, prompt_env):
+        blocked = _step("s2", "verify the change", status="blocked")
+        blocked["depends_on"] = ["s1"]
+        blocked["block_reason"] = "StepJudge blocked: no evidence"
+        cascade = _step("s3", "publish", status="blocked")
+        cascade["depends_on"] = ["s2"]
+        prompt_env["flow_store"].flows = [
+            _flow(
+                "blocked",
+                steps=[
+                    _step("s1", "collect", status="dispatched"),
+                    blocked,
+                    cascade,
+                ],
+            )
+        ]
+
+        prompt = _reminder("sess-main", "taskflow_status")
+
+        assert "blocked: 2" in prompt
         assert (
-            "ready_to_dispatch: s2(write the tests), s3(update the docs), s4(wire the CLI)"
-            in prompt
+            "blocked s2 (verify the change) — StepJudge blocked: no evidence "
+            "(waiting on upstream: s1)" in prompt
         )
-        assert "[3 steps ready — parallelize via taskflow_dispatch!]" in prompt, (
-            "the fan-out must be explicit, not only implied by the list"
-        )
+        assert "blocked s3 (publish) — waiting on upstream: s2" in prompt
 
     def test_taskflow_block_falls_back_to_next_when_nothing_is_ready(self, prompt_env):
         prompt_env["flow_store"].flows = [
@@ -234,7 +308,7 @@ class TestTaskflowBlockInjection:
         prompt = _reminder("sess-main", "taskflow_status")
 
         assert "ready_to_dispatch" not in prompt
-        assert 'next: s2 "waiting on a child"' in prompt
+        assert 'next: s2 "waiting on a child" (dispatched)' in prompt
 
     def test_taskflow_block_max_three_flows(self, prompt_env):
 

@@ -84,15 +84,91 @@ def test_has_undispatched_ready_steps_is_session_scoped(monkeypatch):
     assert has_undispatched_ready_steps("someone-else") is False
 
 
-def test_board_cooldown_shortens_while_ready_work_waits(monkeypatch):
-    monkeypatch.setattr(sources, "has_undispatched_ready_steps", lambda _sid: True)
+def _patch_attention_flows(monkeypatch, steps):
+    import workspace.prompt_builder as prompt_builder
+
+    class _Provider:
+        @staticmethod
+        def step_status(step):
+            return step["status"]
+
+        @staticmethod
+        def get_active_flows(_session_id):
+            return [{"state": {"steps": steps}}]
+
+    monkeypatch.setattr(prompt_builder, "_resolve_provider", lambda _name: _Provider())
+
+
+def test_attention_reads_auto_pending_when_only_ready_work_waits(monkeypatch):
+    from workspace.prompt_builder import taskflow_attention
+
+    _patch_attention_flows(monkeypatch, [_step("s1", "ready")])
+
+    assert taskflow_attention("me") == "auto_pending"
+
+
+def test_attention_reads_failed_spawn_from_the_persisted_marker(monkeypatch):
+    from workspace.prompt_builder import taskflow_attention
+
+    step = _step("s1", "ready")
+    step["last_spawn_error"] = "RuntimeError: lane refused"
+    _patch_attention_flows(monkeypatch, [step])
+
+    assert taskflow_attention("me") == "failed_spawn"
+
+
+def test_attention_ignores_a_step_merely_waiting_on_its_upstream(monkeypatch):
+    from workspace.prompt_builder import taskflow_attention
+
+    _patch_attention_flows(
+        monkeypatch,
+        [_step("s1", "dispatched"), _step("s2", "blocked", depends_on=["s1"])],
+    )
+
+    assert taskflow_attention("me") == "none"
+
+
+def test_attention_reads_a_blocked_decision(monkeypatch):
+    from workspace.prompt_builder import taskflow_attention
+
+    step = _step("s1", "blocked")
+    step["block_reason"] = "StepJudge blocked: no evidence"
+    _patch_attention_flows(monkeypatch, [step])
+
+    assert taskflow_attention("me") == "blocked"
+
+
+def test_board_cooldown_shortens_for_a_failed_spawn(monkeypatch):
+    monkeypatch.setattr(sources, "taskflow_attention", lambda _sid: "failed_spawn")
     monkeypatch.setitem(TASKFLOW_INFRA, "taskflow_reminder_cooldown_when_ready", 1)
 
     assert sources._taskflow_cooldown("sid", {}) == 1
 
 
-def test_board_cooldown_returns_to_five_without_ready_work(monkeypatch):
-    monkeypatch.setattr(sources, "has_undispatched_ready_steps", lambda _sid: False)
+def test_board_cooldown_shortens_for_a_blocked_step(monkeypatch):
+    monkeypatch.setattr(sources, "taskflow_attention", lambda _sid: "blocked")
+    monkeypatch.setitem(TASKFLOW_INFRA, "taskflow_reminder_cooldown_when_ready", 1)
+
+    assert sources._taskflow_cooldown("sid", {}) == 1
+
+
+def test_board_cooldown_stays_long_while_auto_dispatch_covers_ready_work(monkeypatch):
+    monkeypatch.setattr(sources, "taskflow_attention", lambda _sid: "auto_pending")
+    monkeypatch.setattr(sources, "auto_dispatch_waves_enabled", lambda: True)
+
+    assert sources._taskflow_cooldown("sid", {}) == 5
+
+
+def test_board_cooldown_shortens_for_ready_work_when_a_wave_is_off(monkeypatch):
+    monkeypatch.setattr(sources, "taskflow_attention", lambda _sid: "auto_pending")
+    monkeypatch.setattr(sources, "auto_dispatch_waves_enabled", lambda: False)
+    monkeypatch.setitem(TASKFLOW_INFRA, "taskflow_reminder_cooldown_when_ready", 1)
+
+    assert sources._taskflow_cooldown("sid", {}) == 1
+
+
+def test_board_cooldown_returns_to_five_with_nothing_outstanding(monkeypatch):
+    monkeypatch.setattr(sources, "taskflow_attention", lambda _sid: "none")
 
     assert sources._taskflow_cooldown("sid", {}) == 5
 

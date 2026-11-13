@@ -717,7 +717,7 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 
 
-모든 spawn 이전에 배치 전체를 검증(전부 아니면 전무). 이후 배치는 공유 `_dispatch.dispatch_child` 시임을 통해 **동시에** spawn하며, 동시 실행 수는 `TASKFLOW_INFRA["max_parallel_dispatch"]`(기본 2: SUBAGENT 레인이 전역 배압이고, 이 상한은 동시에 몇 개의 spawn 호출이 비행 중인지만 결정)로 제한됩니다. 하나의 spawn 실패가 더 이상 형제 단계를 중단시키지 않습니다——성공한 자식은 모두 1회의 `update_flow`로 영속화되고, 실패한 단계 id는 모두 응답에 명시됩니다(`Error: dispatch failed for step_id(s) …; dispatched=[…]`). `apply_dispatched_steps()` 헬퍼가 신규 조회된 단계 리스트에 기록된 디스패치 단계 페이로드를 재적용하며, `step_id`로 매칭——spawn된 자식 에이전트가 동시 쓰기로 인한 단계 리스트 재작성에 의해 유실되지 않음. `max_parallel_dispatch = 1`은 역사적인 순차 동작을 정확히 복원합니다.
+모든 spawn 이전에 배치 전체를 검증(전부 아니면 전무). 이후 배치는 공유 `_dispatch.dispatch_child` 시임을 통해 **동시에** spawn하며, 동시 실행 수는 `TASKFLOW_INFRA["max_parallel_dispatch"]`(기본 2: SUBAGENT 레인이 전역 배압이고, 이 상한은 동시에 몇 개의 spawn 호출이 비행 중인지만 결정)로 제한됩니다. 하나의 spawn 실패가 더 이상 형제 단계를 중단시키지 않습니다——성공한 자식은 모두 1회의 `update_flow`로 영속화되고, 실패한 단계 id는 모두 응답에 명시됩니다(`Error: dispatch failed for step_id(s) …; dispatched=[…]`). 실패한 단계에는 영속 마커 `last_spawn_error`(+ `last_spawn_failed_at`)가 붙습니다——하나라도 spawn했다면 같은 쓰기에, 전멸이면 마커 전용 쓰기에——성공한 dispatch는 둘 다 지우므로 board가 "재시도 대상"과 "다음 자동 wave가 시작할 작업"을 구분할 수 있습니다. `apply_dispatched_steps()` 헬퍼가 신규 조회된 단계 리스트에 기록된 디스패치 단계 페이로드를 재적용하며, `step_id`로 매칭——spawn된 자식 에이전트가 동시 쓰기로 인한 단계 리스트 재작성에 의해 유실되지 않음. `max_parallel_dispatch = 1`은 역사적인 순차 동작을 정확히 복원합니다.
 
 
 
@@ -725,7 +725,7 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 
 
-resume은 언락한 의존 단계뿐 아니라 **ready 집합 전체**를 시작합니다(`auto_dispatch=True`, 기본값): `newly_ready ∪ all_ready` — 이번에 unlock한 하류와 이전부터 `ready`였지만 dispatch되지 않은 형제 — 를 같은 시임과 같은 `max_parallel_dispatch` 상한으로 동시에 spawn합니다. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`(기본 true)가 넓은 스캔을 제어하며, false(또는 `auto_dispatch=False`)면 기존의 "unlock만/새로 unlock된 집합만" 동작으로 돌아갑니다. spawn된 자식 키는 CAS 재시도 쓰기(`update_flow_with_conflict_retry`)로 영속화되므로 동시 쓰기가 그것들을 떨어뜨릴 수 없습니다. 각 단계의 디스패치 방식은 `taskflow_step(action="dispatch")`와 완전히 동일합니다(작업 바인딩 + 판정 피드백). 실패는 보고될 뿐 예외가 되지 않습니다: spawn하지 못한 단계는 `ready`로 남고 resume의 응답에 `auto_dispatch_failed=<step_id>: <error>`가 붙어 수동 재시도할 수 있습니다. 이미 dispatched된 단계는 걸러지고 플로우 락 안에서 다시 확인되므로 넓은 스캔에서도 spawn은 정확히 한 번입니다.
+resume은 언락한 의존 단계뿐 아니라 **ready 집합 전체**를 시작합니다(`auto_dispatch=True`, 기본값): `newly_ready ∪ all_ready` — 이번에 unlock한 하류와 이전부터 `ready`였지만 dispatch되지 않은 형제 — 를 같은 시임과 같은 `max_parallel_dispatch` 상한으로 동시에 spawn합니다. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`(기본 true)가 넓은 스캔을 제어하며, false(또는 `auto_dispatch=False`)면 기존의 "unlock만/새로 unlock된 집합만" 동작으로 돌아갑니다. spawn된 자식 키는 CAS 재시도 쓰기(`update_flow_with_conflict_retry`)로 영속화되므로 동시 쓰기가 그것들을 떨어뜨릴 수 없습니다. 각 단계의 디스패치 방식은 `taskflow_step(action="dispatch")`와 완전히 동일합니다(작업 바인딩 + 판정 피드백). 실패는 보고될 뿐 예외가 되지 않습니다: spawn하지 못한 단계는 `ready`로 남고 resume의 응답에 `auto_dispatch_failed=<step_id>: <error>`가 붙어 수동 재시도할 수 있으며, `last_spawn_error` 마커가 붙어 board가 계속 재시도 대상으로 표시합니다(나중에 성공하면 마커가 지워집니다). 이미 dispatched된 단계는 걸러지고 플로우 락 안에서 다시 확인되므로 넓은 스캔에서도 spawn은 정확히 한 번입니다.
 
 
 

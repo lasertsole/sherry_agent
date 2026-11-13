@@ -384,6 +384,7 @@ main과 child 두 체인 모두에서 히스토리 미디어를 `history_media_b
 - **계속 예산**: `mark_injected`가 그 turn도 세므로, 이 카운터는 실제로 **전달된** 연속 계속 turn 수입니다 (trigger가 거부한 지시 — `busy` / `already_pending` — 는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). `TODOLIST_INFRA["max_continuation_turns"]`(15)에 도달하면 게이트는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 전달하고 세션을 래치한 뒤, 자신이 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 — 이 예산과 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 검사가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 스냅샷을 계속 움직이는 경우)를 제한합니다.
 - fail-open: 예외는 로그로 남기고 턴은 정상 종료됩니다.
 - **todowrite 넛지**: 훅은 `todowrite`를 호출하지 않은 턴 수를 세고(`stagnation_tracker.record_turn` / `record_todowrite`, 그 턴에 `todowrite`를 호출하면 0으로), `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 블록을 **덧붙입니다** — 스냅샷 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다). 복구 모드는 자체의 더 강한 todowrite 안내를 가지며 넛지는 붙지 않습니다.
+- **blocked 전용 지시문**: 남은 TaskFlow step이 모두 `blocked`이고 실행할 todo도 없으면, 게이트는 계속 프롬프트 대신 `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]`를 보냅니다 — "다음 pending 작업을 계속"으로는 blocked 작업을 진행할 수 없습니다. step을 done으로 표시하지 말 것과 세 가지 결정(재계획 `taskflow_flow(action='replan')`, 해당 브랜치/step 또는 플로우 전체 취소 `taskflow_step(action='update_steps')` / `taskflow_flow(action='cancel')`, 누락 결과 주입 `taskflow_step(action='resume')`)을 명시합니다. ready/dispatched 형제 step이나 pending todo가 남아 있으면 평소 계속 지시문을 씁니다.
 
 ### DynamicReminderMiddleware
 
@@ -392,7 +393,7 @@ main과 child 두 체인 모두에서 히스토리 미디어를 `history_media_b
 
 `TaskIntentMiddleware` 바로 뒤에 등록됩니다(그 턴 내 중복 제거는 실행 시 사용자 메시지가 마지막이어야 합니다). 턴의 **첫 모델 호출**에 **라이브 뷰**를 `<system-reminder source="…">` HumanMessage로 주입합니다: 플랜 모드, 작업 디렉터리, todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스. 시스템 프롬프트 자체는 이제 안정적 내용(persona + memory + 스킬 인덱스)만 담습니다 — 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것의 prefix 캐시를 무효화합니다; 설정 변경/압축 때만 재구성되는 프롬프트는 그 사이 **오래된** todo 목록을 보여줍니다.
 
-- **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(TaskFlow 보드 / boulder: 5턴에 한 번), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
+- **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(boulder: 5턴에 한 번; TaskFlow 보드는 spawn 실패 또는 결정이 필요한 blocked step이 있는 동안만 `taskflow_reminder_cooldown_when_ready`로 단축하고 그 외에는 5 유지), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
 - **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 라벨.
 - **압축 후** 카탈로그가 리셋되어 다음 턴에 모든 소스가 live state에서 재도출됩니다 — 이 층은 오래된 리마인더의 생존에 의존하지 않습니다.
 - 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다(체인에 세션별 스위치가 없습니다).

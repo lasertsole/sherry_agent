@@ -382,6 +382,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **续跑预算**：`mark_injected` 同时给该 turn 计数，因此这个计数器是真正**投递成功**的连续续跑 turn 数（被 trigger 拒绝的指令——`busy` / `already_pending`——不计入，下一轮 turn 结束时重试；恢复指令同样计入）。达到 `TODOLIST_INFRA["max_continuation_turns"]`（15）时，强制器发出最后一条 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令、给会话上锁，并保持静默，直到出现一个不是它自己注入的 turn——真实用户消息，或子代理完成通知——才重置预算与锁。这条上限约束的是停滞检测看不见的形态：模型每轮都微改计划让快照一直在动。
 - Fail-open：任何异常都会记录日志，回合正常结束。
 - **todowrite 提醒**：钩子统计未调用 `todowrite` 的轮数（`stagnation_tracker.record_turn` / `record_todowrite`，本轮调用了 todowrite 即清零），超过 `TODOLIST_INFRA["todo_write_nudge_turns"]`（10）就在续跑指令后**追加** `[REMINDER: TODO TRACKING]` 块——这是快照式停滞检测唯一看不见的形态（推进 TaskFlow 会清零 streak，而 todo 列表在腐烂）。恢复模式自带更强的 todowrite 指引，不追加该提醒。
+- **仅剩 blocked 的专属指令**：当 TaskFlow 剩余步骤全部为 `blocked` 且没有可执行的 todo 时，网关改发 `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]` 而不是续跑提示——「继续做下一个待办」无法推进 blocked 工作。它要求模型不要把该步骤标为完成，并给出三种决策：重新规划（`taskflow_flow(action='replan')`）、取消该分支/步骤或整个 flow（`taskflow_step(action='update_steps')` / `taskflow_flow(action='cancel')`）、或注入缺失结果（`taskflow_step(action='resume')`）。只要还有 ready/dispatched 的兄弟步骤或 pending todo，就仍使用普通续跑指令。
 
 ### DynamicReminderMiddleware
 
@@ -390,7 +391,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 紧跟在 `TaskIntentMiddleware` 之后注册（后者的轮内去重需要它运行时用户消息仍在最后）。在每轮**首次模型调用**时把**实时视图**以 `<system-reminder source="…">` HumanMessage 注入：计划模式、工作目录、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引。系统提示词本身现在只承载稳定内容（persona + memory + 技能索引）——首 token 每轮变化的提示词会让提供方的前缀缓存从那里起全部失效；而只在配置变更/压缩时重建的提示词，其间展示的是**过期**的 todo 列表。
 
-- **目录说了算**：每个来源声明 builder、单项上限、优先级、`cooldown_turns`（TaskFlow 看板 / boulder：每 5 轮最多一次）与 `only_if_changed`（内容相同不重复注入）。总量受 `REMINDER_CATALOG["total_budget_chars"]`（30 000）约束——超预算时**整条**丢弃优先级最低者，绝不截成半句。节流状态只为真正注入过的来源推进。
+- **目录说了算**：每个来源声明 builder、单项上限、优先级、`cooldown_turns`（boulder：每 5 轮最多一次；TaskFlow 看板在存在 spawn 失败或需决策的 blocked 步骤时缩短为 `taskflow_reminder_cooldown_when_ready`，否则保持 5 轮）与 `only_if_changed`（内容相同不重复注入）。总量受 `REMINDER_CATALOG["total_budget_chars"]`（30 000）约束——超预算时**整条**丢弃优先级最低者，绝不截成半句。节流状态只为真正注入过的来源推进。
 - **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要标签。
 - **压缩之后**目录被重置，因此下一轮会从 live state 重新推导每个来源——这一层从不依赖旧提醒是否幸存。
 - 全程 fail-open：builder 出错或注册表不可读只损失一条提醒，不会影响回合（链上没有会话级开关）。

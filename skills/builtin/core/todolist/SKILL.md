@@ -48,7 +48,7 @@ The session-scoped lightweight planning/checklist layer. It is responsible for "
 The todolist layer does **not** track `depends_on`, does **not** store a DAG/wave projection, does **not** cache step status, and does **not** recompute the frontier. All of that belongs to TaskFlow:
 
 - Declare dependencies: `taskflow_step(action="run_task", flow_id=..., task=..., depends_on=["step-1"])`. While dependencies are unmet, the step is recorded as `blocked` and is not dispatched.
-- Dispatch ready steps in parallel: `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`.
+- Ready steps are auto-dispatched (by `run_task` and by each resume's wave). Use `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])` only to retry a step whose automatic spawn failed (the board marks it "dispatch failed") or when `auto_dispatch` is off.
 - Wait for the child sessions dispatched by this flow to settle: `taskflow_step(action="wait_all", flow_id=...)`.
 - Inject results and unlock successors: `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`. Resume auto-dispatches the whole ready set (newly unlocked downstream plus ready siblings) unless `auto_dispatch=false`.
 - Read back DAG state: `taskflow_inspect(action="summary", flow_id=...)` renders each step's `status` (`blocked | ready | dispatched | done`) and `depends_on`.

@@ -91,6 +91,10 @@ async def test_auto_wave_persists_the_survivors_and_names_the_rest(isolated_db: 
     for sid in ("step-4", "step-5"):
         assert by_id[sid]["status"] == "ready"
         assert "child_session_key" not in by_id[sid]
+        # The persisted marker is what the board reads to tell this step apart
+        # from one the next auto-dispatch wave will still start.
+        assert "spawn rejected" in by_id[sid]["last_spawn_error"]
+        assert by_id[sid]["last_spawn_failed_at"] > 0
 
 
 async def _seed_ready(flow_id: str, count: int) -> None:
@@ -136,10 +140,11 @@ async def test_manual_batch_persists_the_survivors_and_names_the_rest(
     dispatched = [sid for sid, s in by_id.items() if s["status"] == "dispatched"]
     assert sorted(dispatched) == ["step-1", "step-3", "step-4", "step-5"]
     assert by_id["step-2"]["status"] == "ready"
+    assert "registry refused" in by_id["step-2"]["last_spawn_error"]
 
 
 @pytest.mark.asyncio
-async def test_an_all_failed_wave_reports_every_id_and_persists_nothing(
+async def test_an_all_failed_wave_reports_every_id_and_marks_them_retryable(
     isolated_db: Path, monkeypatch
 ):
     await _seed_ready("flow-pf3", count=2)
@@ -159,5 +164,43 @@ async def test_an_all_failed_wave_reports_every_id_and_persists_nothing(
     assert "step-1" in out and "step-2" in out
     after = await store_sqlite.get_flow("flow-pf3", _SESSION)
     assert after is not None
-    # Nothing spawned, so nothing was written — the revision is untouched.
-    assert after["expected_revision"] == before["expected_revision"]
+    # No child spawned, but the failed-spawn markers ARE written (one revision
+    # bump) so the board can name these steps as retryable instead of treating
+    # them as ordinary auto-pending work.
+    assert after["expected_revision"] == before["expected_revision"] + 1
+    by_id = {s["step_id"]: s for s in after["state"]["steps"]}
+    for sid in ("step-1", "step-2"):
+        assert by_id[sid]["status"] == "ready"
+        assert "registry down" in by_id[sid]["last_spawn_error"]
+
+
+@pytest.mark.asyncio
+async def test_a_successful_retry_clears_the_failed_spawn_marker(isolated_db: Path, monkeypatch):
+    await _seed_ready("flow-pf4", count=1)
+
+    async def _fail(task: str, requester_session_key: str, label=None, **_kwargs) -> str:
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr(_dispatch, "dispatch_child", _fail)
+    out = await taskflow_dispatch.coroutine(
+        flow_id="flow-pf4", step_ids=["step-1"], session_id=_SESSION
+    )
+    assert out.startswith("Error:"), out
+    flow = await store_sqlite.get_flow("flow-pf4", _SESSION)
+    assert flow is not None
+    assert "last_spawn_error" in flow["state"]["steps"][0]
+
+    async def _ok(task: str, requester_session_key: str, label=None, **_kwargs) -> str:
+        return "agent:auto:subagent:retried"
+
+    monkeypatch.setattr(_dispatch, "dispatch_child", _ok)
+    out = await taskflow_dispatch.coroutine(
+        flow_id="flow-pf4", step_ids=["step-1"], session_id=_SESSION
+    )
+    assert out.startswith("TaskFlow steps dispatched"), out
+    flow = await store_sqlite.get_flow("flow-pf4", _SESSION)
+    assert flow is not None
+    step = flow["state"]["steps"][0]
+    assert step["status"] == "dispatched"
+    assert "last_spawn_error" not in step
+    assert "last_spawn_failed_at" not in step
