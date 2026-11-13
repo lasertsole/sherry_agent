@@ -1072,7 +1072,15 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── media_offload.py         # 압축 시 인라인 미디어 오프로드
-│   ├── background_reviews.py    # 압축 시점 백그라운드 리뷰 스케줄링 + 프롬프트
+│   ├── background_reviews.py    # 분할된 리뷰 모듈의 재수출 facade
+│   ├── _common.py               # 공용 텍스트/렌더링 도우미
+│   ├── background_scaffold.py   # 공용 리뷰 agent 스캐폴드
+│   ├── memory_review.py         # 압축 시점 메모리 리뷰 + consolidation
+│   ├── session_end_salvage.py   # 세션 종료 메모리 salvage
+│   ├── handoff_tree.py          # handoff 집계 + plan 컨텍스트
+│   ├── skill_review_runner.py   # 플랜 완료 스킬 리뷰
+│   ├── ptc_compile.py           # PTC replay 스크립트 컴파일
+│   └── compression_todo.py      # 압축 후 todo 조정
 │   ├── plan_context.py          # 스킬 리뷰의 활성 플랜 감지
 │   └── summary_doc.py           # SummaryDoc 스키마 + 결정적 Markdown 렌더러
 ├── task_intent/                 # TaskIntentMiddleware

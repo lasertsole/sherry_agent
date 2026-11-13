@@ -1077,7 +1077,15 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
 │   ├── media_offload.py         # 圧縮時のインラインメディア退避
-│   ├── background_reviews.py    # 圧縮時バックグラウンドレビューのスケジューリング + プロンプト
+│   ├── background_reviews.py    # 分割後のレビューモジュールの再エクスポート facade
+│   ├── _common.py               # 共有テキスト/レンダリングヘルパー
+│   ├── background_scaffold.py   # 共有レビュー agent スキャフォールド
+│   ├── memory_review.py         # 圧縮時メモリレビュー + consolidation
+│   ├── session_end_salvage.py   # セッション終了時メモリサルベージ
+│   ├── handoff_tree.py          # handoff 集約 + plan コンテキスト
+│   ├── skill_review_runner.py   # プラン完了時スキルレビュー
+│   ├── ptc_compile.py           # PTC replay スクリプトのコンパイル
+│   └── compression_todo.py      # 圧縮後 todo 調整
 │   ├── plan_context.py          # スキルレビューのアクティブプラン検出
 │   └── summary_doc.py           # SummaryDoc スキーマ + 決定論的 Markdown レンダラー
 ├── task_intent/                 # TaskIntentMiddleware

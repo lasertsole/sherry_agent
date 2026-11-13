@@ -1055,7 +1055,15 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
 │   ├── media_offload.py         # 压缩时内联媒体归档
-│   ├── background_reviews.py    # 压缩时后台评审调度 + 提示词
+│   ├── background_reviews.py    # 拆分后的后台评审模块的 re-export facade
+│   ├── _common.py               # 共享文本/渲染工具
+│   ├── background_scaffold.py   # 共享评审 agent 脚手架
+│   ├── memory_review.py         # 压缩时记忆评审 + consolidation
+│   ├── session_end_salvage.py   # 会话结束时的记忆抢救
+│   ├── handoff_tree.py          # handoff 聚合 + plan 上下文
+│   ├── skill_review_runner.py   # 计划完成时的技能评审
+│   ├── ptc_compile.py           # PTC replay 脚本编译
+│   └── compression_todo.py      # 压缩后 todo 对账
 │   ├── plan_context.py          # 技能评审的活跃计划检测
 │   └── summary_doc.py           # SummaryDoc 模式 + 确定性 Markdown 渲染
 ├── task_intent/                 # TaskIntentMiddleware

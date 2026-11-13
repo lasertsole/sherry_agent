@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | `MAIN` | 메인 에이전트 턴(`server/service/input_queue_service.py::_run_executor`) | `min(16, max(8, CPU))`, `SUBAGENT + BACKGROUND_REVIEW` 이상으로 상향 클램프 → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 자식 에이전트 실행(`spawn/core.py`, `control/steer.py`) | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `BACKGROUND_REVIEW` | 메모리 리뷰 / 스킬 리뷰 / 압축 후 todo 갱신(`agent/middlewares/summarization/background_reviews.py` 3곳) | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
+| `BACKGROUND_REVIEW` | 메모리 리뷰 / 스킬 리뷰 / 압축 후 todo 갱신(`agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` 4곳) | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
 | `NESTED` | `sessions_send` 응답 턴(직렬) | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 설정과 검증
@@ -115,7 +115,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `server/service/lane_lifecycle.py` | 시작 검증, drain 게이트 등록, 유계 종료 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT 레인 래퍼 + PENDING → RUNNING 승격 |
-| `agent/middlewares/summarization/background_reviews.py` | BACKGROUND_REVIEW 레인 3개 호출 지점 |
+| `agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` | BACKGROUND_REVIEW 레인 4개 호출 지점 |
 | `agent/tools/subagent/tools/sessions_send.py` | 응답 턴을 감싸는 NESTED 레인 |
 | `server/service/input_queue_service.py` | `_run_executor`를 감싸는 MAIN 레인 |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 고아의 `pending_orphaned` 확정 |

@@ -14,7 +14,7 @@ Long-running work does not fan out unbounded: every detached child agent, every 
 | :--- | :--- | :--- | :--- |
 | `MAIN` | main-agent turn (`server/service/input_queue_service.py::_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + BACKGROUND_REVIEW` → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | child-agent execution (`spawn/core.py`, `control/steer.py`) | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `BACKGROUND_REVIEW` | memory review / skill review / compaction todo update (`agent/middlewares/summarization/background_reviews.py`, 3 sites) | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
+| `BACKGROUND_REVIEW` | memory review / skill review / compaction todo update (`agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py`, 4 sites) | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
 | `NESTED` | `sessions_send` reply turns (serialized) | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### Configuration & validation
@@ -136,7 +136,7 @@ At exit, the same seam flips drain mode (`set_draining(True)`) and runs a **boun
 | `server/service/lane_lifecycle.py` | Startup validation, drain-gate registration, bounded exit drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT lane wrappers + PENDING → RUNNING promotion |
-| `agent/middlewares/summarization/background_reviews.py` | 3 BACKGROUND_REVIEW lane call sites |
+| `agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` | 4 BACKGROUND_REVIEW lane call sites |
 | `agent/tools/subagent/tools/sessions_send.py` | NESTED lane around the reply turn |
 | `server/service/input_queue_service.py` | MAIN lane around `_run_executor` |
 | `agent/tools/subagent/orphan/recovery.py` | `pending_orphaned` finalize for PENDING orphans |

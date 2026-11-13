@@ -1070,7 +1070,15 @@ agent/middlewares/
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
 │   ├── media_offload.py         # compression-time inline-media offload
-│   ├── background_reviews.py    # compression-time review scheduling + prompts
+│   ├── background_reviews.py    # re-export facade for the split review modules
+│   ├── _common.py               # shared text/rendering helpers
+│   ├── background_scaffold.py   # shared review-agent scaffolding
+│   ├── memory_review.py         # compression-time memory review + consolidation
+│   ├── session_end_salvage.py   # session-end memory salvage
+│   ├── handoff_tree.py          # handoff aggregation + plan context
+│   ├── skill_review_runner.py   # plan-completion skill review
+│   ├── ptc_compile.py           # PTC replay-script compilation
+│   └── compression_todo.py      # post-compression todo reconciliation
 │   ├── plan_context.py          # active-plan detection for the skill review
 │   └── summary_doc.py           # SummaryDoc schema + deterministic Markdown renderer
 ├── task_intent/                 # TaskIntentMiddleware

@@ -86,7 +86,7 @@ LDW 路径的关键调用点：
 - `agent/tools/ldw/compiler.py` — 可能调 `plan_key`。
 - `agent/tools/ldw/tool.py` — `workflow_replay` tool 的 `status`/`compile`/`replay` action。
 - `agent/tools/subagent/spawn/ptc_prefill.py` — PTC prefill 用 `plan_key` 查找脚本（但 PTC 当前关闭）。
-- `agent/middlewares/summarization/background_reviews.py` — PTC 编译用 `plan_key`（同样关闭）。
+- `agent/middlewares/summarization/ptc_compile.py` — PTC 编译用 `plan_key`（同样关闭）。
 
 对每个调用点：
 - 如果能从 flow 的 `description` / `state.description` 拿到 goal → 传 `goal_text`
@@ -109,7 +109,7 @@ LDW 路径的关键调用点：
 | `agent/tools/ldw/tool.py` | **改**：`workflow_replay` tool 的 `status`/`compile`/`replay` action 传 goal_text（从当前 flow 获取） |
 | `agent/tools/ldw/compiler.py` | **可能改**：如果调 `plan_key`，传 goal_text |
 | `agent/tools/subagent/spawn/ptc_prefill.py` | **不改**（PTC 关闭；启用时一并加） |
-| `agent/middlewares/summarization/background_reviews.py` | **不改**（PTC 关闭；启用时一并加） |
+| `agent/middlewares/summarization/ptc_compile.py` | **不改**（PTC 关闭；启用时一并加） |
 
 **不改**：LDW config（`min_replays` 不变）、compiler 逻辑、replay 运行逻辑、存储结构。
 
