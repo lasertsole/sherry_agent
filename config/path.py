@@ -423,15 +423,26 @@ def resolve_boulder_path() -> Path:
     return SRC_DIR / "data" / "boulder.json"
 
 
+def resolve_registry_db_path() -> Path:
+    """Return the shared registry SQLite path (``SRC_DIR/data/registry.db``).
+
+    One file holds the subagent run registry, TaskFlow flows, todos and the
+    evidence ledger. They are separate tables with separate repositories; the
+    shared file removes the four-file scatter and lets flow-scoped evidence be
+    read without cross-database plumbing.
+    """
+    return SRC_DIR / "data" / "registry.db"
+
+
 def resolve_evidence_ledger_path() -> Path:
-    """Return the absolute evidence-ledger SQLite path (``SRC_DIR/data/evidence-ledger.db``).
+    """Return the absolute evidence-ledger SQLite path (``SRC_DIR/data/registry.db``).
 
     The ledger deliberately stays repo-scoped (not session-scoped): it is the
     audit trail shared across sessions that verify the same plan. The legacy
     ``evidence-ledger.jsonl`` beside it is imported once on first open and then
     renamed to ``.migrated``. The ``data`` directory is created on first access.
     """
-    return SRC_DIR / "data" / "evidence-ledger.db"
+    return resolve_registry_db_path()
 
 
 def subagent_model_caps_path() -> Path:

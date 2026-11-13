@@ -62,9 +62,9 @@ async def capture_subagent_completion_reply(
 
 async def _read_output_from_registry(child_session_key: str) -> str | None:
     """Read result text from the registry by child session key."""
-    from ..registry.read import get_run_by_child_session_key_readonly
+    from ..registry import memory
 
-    run = get_run_by_child_session_key_readonly(child_session_key)
+    run = memory.find_by_child_session_key(child_session_key)
     if run is None:
         return None
     return run.completion.result_text

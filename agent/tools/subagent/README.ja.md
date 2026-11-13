@@ -61,7 +61,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 1. 検証（Validation）
   │     ├── task は非空。task_name は正規化（[^a-zA-Z0-9_-] → _、重複圧縮、
-  │     │   64 文字に切り詰め — task_name.py）
+  │     │   64 文字に切り詰め — text_helpers.py）
   │     ├── target_policy：agent_id は allow_agents ホワイトリスト内
   │     │   （* ワイルドカード対応）
   │     ├── depth = 親の深さ + 1、max_spawn_depth（2）以下
@@ -80,7 +80,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │         researcher / librarian）——MAIN/general は無制限
   │
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
-  │     spawn/thinking.py）
+  │     spawn/text_helpers.py）
   │     ├── thinking の優先順位：明示指定 → リクエスタ → 対象エージェントの既定
   │     └── タイムアウト：spawn ごとの上書き（ツール入力は [600, 7200] に clamp）、
   │           なければ run_timeout_seconds（デフォルト 600 秒、0 = タイムアウトなし）
@@ -824,7 +824,6 @@ agent/tools/subagent/
 │   ├── work_admission.py      Gateway 非依存のルート作業アドミッション + pending カウント
 │   ├── lifecycle.py           ライフサイクルコントローラ（completeRun/resume/announce/pressurePrune/gracePeriod）
 │   ├── state.py               persist/restore ブリッジ（settle-wake 永続化リカバリを含む）
-│   ├── read.py                外部読み取り専用 API（find_run_by_task_name + run record 主クエリ）
 │   ├── task_refs.py           asyncio.Task 参照管理（register/get/remove/cancel）
 │   ├── yield_events.py        asyncio.Event 管理（yield 起床 / 子孫の決着）
 │   ├── sweeper.py             失敗バックオフ付きバックグラウンドスキャナ（階層式期限切れ：cron=2h, subagent=6h, interactive=24h）
@@ -844,15 +843,12 @@ agent/tools/subagent/
 │   ├── target_policy.py       allowAgents 検証
 │   ├── depth.py               深度の計算と制限
 │   ├── attachments.py         子 workspace への添付ファイル実体化（Unicode C0+DEL 制御文字検出、重名検出、厳格な base64 検証を含む）
-│   ├── task_name.py           taskName 正規化
+│   ├── text_helpers.py        taskName 正規化、受理ノート、最初の user message 封筒、thinking レベルの優先順位
 │   ├── system_prompt.py       子エージェントの system prompt 生成（6 部構成：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
-│   ├── initial_message.py     子エージェントの最初の user message（構造化エンベロープ：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  ツール許可/拒否リストの継承
 │   ├── runtime_isolation.py   ランタイム分離とセキュリティ境界 + workspace 継承
 │   ├── origin_routing.py      リクエスト元オリジンルーティング解決 + fingerprint 生成（build_origin_fingerprint を外部 API として公開）
 │   ├── gateway_dispatch.py    最小権限 scope 解決 + SubagentLaunchAuthorization + scope→deny マッピング
-│   ├── accepted_note.py       SpawnResult.note の内容生成
-│   ├── thinking.py            thinking レベル上書き解析
 │   └── completion_judge.py    CompletionJudge — 補助 LLM の done/continue 判定（goal loop）
 │
 ├── announce/                  完了通知パイプライン
@@ -931,7 +927,7 @@ registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
   ↑                    ↑                              ↑
 registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
                                                          ↑
-                                                    registry/read.py
+                                                    registry/memory.py + registry/queries.py
 
 swarm/fifo.py ← swarm/collector.py ← types/swarm.py
 
@@ -943,7 +939,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/initial_message.py ← spawn/task_name.py
+spawn/text_helpers.py（初期メッセージ ← taskName 正規化）
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 

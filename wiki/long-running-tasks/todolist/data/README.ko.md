@@ -1,8 +1,8 @@
-# 📦 TodoList 데이터 레이어 — 계획, Boulder, 원장, todos.db
+# 📦 TodoList 데이터 레이어 — 계획, Boulder, 원장, registry.db
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> [TodoList](../README.ko.md)의 일부: 계획 레이어를 뒷받침하는 세션 스코프 데이터 저장소 — 계획 파일, Boulder 상태, 증거 원장, todos.db 스키마.
+> [TodoList](../README.ko.md)의 일부: 계획 레이어를 뒷받침하는 세션 스코프 데이터 저장소 — 계획 파일, Boulder 상태, 증거 원장, registry.db 스키마.
 
 ---
 
@@ -66,11 +66,11 @@
 }
 ```
 
-### 증거 원장 (src/data/evidence-ledger.db)
+### 증거 원장 (`src/data/registry.db` (`evidence_events` table))
 
 SQLite 테이블 `evidence_events`(WAL): 공유 검증 감사 트레일입니다. 행은 INSERT만 되고 UPDATE되지 않으며 보존 기간이 오래된 행을 삭제합니다. 쓰는 쪽은 `agent/tools/pub_base/evidence_recorder.py`, 읽는 쪽은 `agent/tools/taskflow/evidence_collector.py`이며, 프로듀서·행 스키마·파생 스테일 규칙·요약 형식·보존 기간·이를 소비하는 게이트는 [증거 원장](../../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
-### todos.db — 세션 수준 TODO 저장
+### registry.db — 세션 수준 TODO 저장
 
 ```sql
 CREATE TABLE IF NOT EXISTS todos (
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `step_id`  | 연결된 TaskFlow step id (예: `step-2`), DAG 상태 재읽기용          |
 | `todo_id`  | 세션별 안정 식별자(`#N`). 로컬 patch/remove/reattach가 이 값으로 대상을 지정하며 `position`은 표시 순서만 담당 |
 
-> **설계 경계**: `todos.db`는 `depends_on` / 웨이브 / step 상태를 보유하지 않습니다. 의존성 그래프, `blocked/ready/dispatched/done`과 언록 로직은 모두 TaskFlow가 제공합니다. todo는 `flow_id`/`step_id`로 해당 flow step을 가리킬 뿐이며, DAG 상태는 `taskflow_inspect(action="summary", flow_id)`로 재읽기합니다.
+> **설계 경계**: `registry.db`는 `depends_on` / 웨이브 / step 상태를 보유하지 않습니다. 의존성 그래프, `blocked/ready/dispatched/done`과 언록 로직은 모두 TaskFlow가 제공합니다. todo는 `flow_id`/`step_id`로 해당 flow step을 가리킬 뿐이며, DAG 상태는 `taskflow_inspect(action="summary", flow_id)`로 재읽기합니다.
 
 CRUD 인터페이스:
 

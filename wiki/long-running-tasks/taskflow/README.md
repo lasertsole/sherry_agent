@@ -877,7 +877,7 @@ Consequences: `get_active_flows_sync` excludes a superseded flow even while its 
 
 
 
-- **Database**: `agent/tools/taskflow/data/taskflow_registry.db`
+- **Database**: `src/data/registry.db` (`task_flows` table)
 
 - **Table**: `task_flows(flow_id TEXT PK, state_json TEXT NOT NULL, wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL, child_session_key TEXT)`
 

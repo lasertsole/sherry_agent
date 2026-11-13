@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import threading
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 from pathlib import Path
 from loguru import logger
 from config import SRC_DIR
@@ -25,20 +25,6 @@ def _log_state_db_failure(operation: str, exc: BaseException, **context: object)
         logger.opt(exception=exc).error(
             "state_register_db {}: unexpected error ({})", operation, details
         )
-
-
-@runtime_checkable
-class StateRegisterProtocol(Protocol):
-    """Full contract shared by the in-memory and DB-backed state registers."""
-
-    def set_state(self, session_id: str, key: str, value: Any) -> bool: ...
-    def get_state(self, session_id: str, key: str, default: Any = None) -> Any: ...
-    def get_all_states(self, session_id: str) -> dict[str, Any]: ...
-    def delete_state(self, session_id: str, key: str) -> bool: ...
-    def clear_session(self, session_id: str) -> bool: ...
-    def has_session(self, session_id: str) -> bool: ...
-    def has_key(self, session_id: str, key: str) -> bool: ...
-    def update_states(self, session_id: str, states: dict[str, Any]) -> bool: ...
 
 
 class StateRegisterMeM(SessionRegister):
@@ -324,10 +310,6 @@ class StateRegisterDB(SessionRegister):
 
 
 state_register_db = StateRegisterDB()
-
-# Both implementations satisfy the shared register contract (static check).
-_mem_conforms_to_protocol: StateRegisterProtocol = state_register_mem
-_db_conforms_to_protocol: StateRegisterProtocol = state_register_db
 
 
 class ContextEpoch:

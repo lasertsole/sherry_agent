@@ -1,4 +1,4 @@
-"""SQLite evidence ledger (``src/data/evidence-ledger.db``).
+"""SQLite evidence ledger (``src/data/registry.db``, ``evidence_events`` table).
 
 One row records the VERIFICATION trail: a recognized test / lint / build /
 typecheck / format command the agent ran (``terminal`` and ``python_repl``

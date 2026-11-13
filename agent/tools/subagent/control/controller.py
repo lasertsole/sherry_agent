@@ -2,12 +2,12 @@
 
 from ..types.registry import SubagentRunRecord
 from ..types.capability import ControlScope
-from ..registry.read import list_runs_for_controller_readonly, get_run_by_child_session_key_readonly
+from ..registry import memory, queries
 
 
 def resolve_controller(session_key: str) -> str | None:
     """Resolve the controller session key for a given sub-agent session."""
-    run = get_run_by_child_session_key_readonly(session_key)
+    run = memory.find_by_child_session_key(session_key)
     if run is None:
         return None
     if run.controller_session_key:
@@ -17,7 +17,7 @@ def resolve_controller(session_key: str) -> str | None:
 
 def list_controlled_runs(controller_session_key: str) -> list[SubagentRunRecord]:
     """List runs that the given controller session is allowed to control."""
-    runs = list_runs_for_controller_readonly(controller_session_key)
+    runs = queries.list_runs_for_controller(controller_session_key)
     return [
         r
         for r in runs

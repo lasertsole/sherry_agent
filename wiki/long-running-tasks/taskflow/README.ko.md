@@ -829,7 +829,7 @@ resume은 언락한 의존 단계뿐 아니라 **ready 집합 전체**를 시작
 
 
 
-- **데이터베이스**: `agent/tools/taskflow/data/taskflow_registry.db`
+- **데이터베이스**: `src/data/registry.db` (`task_flows` table)
 
 - **테이블**: `task_flows(flow_id TEXT PK, state_json TEXT NOT NULL, wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL, child_session_key TEXT)`
 

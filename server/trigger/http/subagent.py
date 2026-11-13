@@ -17,10 +17,7 @@ from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS  #
 from server.trigger.subagent_serialize import serialize_run as _serialize_run
 from agent.tools.subagent.registry.session_keys import denormalize_session_key
 
-from agent.tools.subagent.registry.read import (
-    list_descendant_runs_readonly,
-    list_runs_for_controller_readonly,
-)
+from agent.tools.subagent.registry import queries
 from agent.tools.subagent.registry import (
     get_run,
     list_descendant_runs,
@@ -124,10 +121,10 @@ async def get_subagent_runs_handler(request):
         return _bad_request("session_id is required")
 
     elif scope == "controller":
-        runs = list_runs_for_controller_readonly(session_id)
+        runs = queries.list_runs_for_controller(session_id)
 
     else:
-        runs = list_descendant_runs_readonly(session_id)
+        runs = queries.list_descendant_runs(session_id)
 
     # Newest-spawned first for the UI list.
     runs = sorted(runs, key=lambda r: r.run_id, reverse=True)

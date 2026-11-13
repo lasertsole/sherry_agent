@@ -167,7 +167,7 @@ def resolve_model_and_thinking_plan(
     pick the LLM by role instead of depth. ``None`` means no functional-role
     override (pre-migration depth-based selection).
     """
-    from .thinking import resolve_thinking_override, resolve_initial_session_patch
+    from .text_helpers import resolve_thinking_override, resolve_initial_session_patch
 
     resolved_model = None
     model_applied = False

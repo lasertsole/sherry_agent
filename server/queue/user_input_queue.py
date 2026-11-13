@@ -6,7 +6,7 @@ current turn finishes instead of cancelling it. This module is a PURE store --
 no delivery decisions, no drain loops, no WS/channel frame sending (the
 own those), no priorities, no retries, no dead-letter handling.
 
-The ``user_input_queue`` table lives in the SAME SQLite database file as
+The ``user_input_queue`` table lives in the SHARED registry database file as
 ``PendingInjectionStore`` (``agent/tools/subagent/data/subagent_registry.db``);
 it is additive -- the ``subagent_runs`` / ``settle_wake_state`` /
 ``pending_injections`` tables are never touched.
@@ -86,13 +86,13 @@ from typing import Any, Literal
 import aiosqlite
 from config.features import INPUT_QUEUE
 from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
+from config.path import resolve_registry_db_path
 from loguru import logger
 from pydantic import BaseModel
 
-# The new table lives in the SAME SQLite database file the PendingInjectionStore
-# uses (agent/tools/subagent/data/subagent_registry.db) -- additive only.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DB_PATH = _REPO_ROOT / "agent" / "tools" / "subagent" / "data" / "subagent_registry.db"
+# The table shares the one registry database with the subagent run store,
+# TaskFlow, todos and the evidence ledger.
+_DB_PATH = resolve_registry_db_path()
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection.
 _BUSY_TIMEOUT_MS = INPUT_QUEUE["busy_timeout_ms"]

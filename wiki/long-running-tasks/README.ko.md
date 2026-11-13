@@ -2,6 +2,8 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
+> **저장소(2026-11-13):** TaskFlow, todos, 서브에이전트 레지스트리, 증거 원장은 이제 `src/data/registry.db`(`task_flows` / `todos` / `subagent_runs` / `evidence_events` 테이블)를 공유합니다. 부팅 시 일회성 마이그레이션이 기존 저장소 DB를 복사하고 `*.bak`으로 이름을 바꿉니다.
+
 > 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_flow` / `taskflow_step` / `taskflow_inspect`, 16개 action을 다루는 3개 그룹화 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 수용 기준을 가진 단계 결과를 TaskFlow 결정 모델(`TASKFLOW_LLM_*`, 미설정 시 보조 LLM)이 심사하고(`pass` / `retry` / `block`), 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
 사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
@@ -42,7 +44,7 @@
 
 | # | 하위 시스템 | 진입점 | 영속 위치 |
 | :- | :--- | :--- | :--- |
-| 1 | **TaskFlow DAG 엔진** | `agent/tools/taskflow/` | `data/taskflow_registry.db`(SQLite, WAL) |
+| 1 | **TaskFlow DAG 엔진** | `agent/tools/taskflow/` | `src/data/registry.db`(SQLite, WAL) |
 | 2 | **토큰 / 비용 예산** | `taskflow_flow(action="budget")`, `taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **데드라인** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **유휴 감지** | sweeper `_scan_stale_waiting_taskflows` | `wait_json`의 오래된 마커 |
@@ -64,7 +66,7 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 | 좀비 todo | 활성 todo가 failed/cancelled 플로우를 참조 | todo를 `cancelled` |
 | prune | 터미널/superseded 행이 `max_total_flows_per_session`(200) 초과 | 가장 오래된 행 삭제 |
 
-라이브 자식은 수집을 거부합니다. grace는 `todos.db`와 `taskflow_registry.db` 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록하며, `auto_kill_on_detach`가 켜져 있으면 **kill**합니다——실패한 flow는 결과를 받을 수 없으므로 살려 두면 레인만 차지합니다. `depends_on` 순환은 생성/갱신 시 거부되며(깊이 우선, id는 이미 검증됨) 비활성 스윕까지 flow를 붙잡지 않습니다. `supersede`는 `expected_revision`을 올리므로 이전 리비전을 가진 작성자는 취소된 flow를 되살리는 대신 CAS에 실패합니다. stale-WAITING 마커는 `updated_at`을 건드리지 않고 페이로드를 씁니다——그 컬럼이 바로 스윕이 읽는 비활성 시계입니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 루트 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
+라이브 자식은 수집을 거부합니다. grace는 `todos`와 `task_flows` 테이블 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록하며, `auto_kill_on_detach`가 켜져 있으면 **kill**합니다——실패한 flow는 결과를 받을 수 없으므로 살려 두면 레인만 차지합니다. `depends_on` 순환은 생성/갱신 시 거부되며(깊이 우선, id는 이미 검증됨) 비활성 스윕까지 flow를 붙잡지 않습니다. `supersede`는 `expected_revision`을 올리므로 이전 리비전을 가진 작성자는 취소된 flow를 되살리는 대신 CAS에 실패합니다. stale-WAITING 마커는 `updated_at`을 건드리지 않고 페이로드를 씁니다——그 컬럼이 바로 스윕이 읽는 비활성 시계입니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 루트 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
 
 전체 교체가 루트 todo를 버리면 유예 기간을 기다리지 않고 `update_todos`가 고아 flow를 즉시 보상한다(정책: `TODOLIST_INFRA["orphan_flow_on_drop"]`). 곧바로 세션 범위 sweep이 실행되고, flow가 종료 상태가 되면 루트 todo에 즉시 알린다. 활성 flow와 비슷한 목표의 생성은 `ack_dup`이 없으면 경고한다.
 

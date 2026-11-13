@@ -2,6 +2,8 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
+> **ストレージ(2026-11-13):** TaskFlow、todos、サブエージェントレジストリ、エビデンス台帳は `src/data/registry.db`(`task_flows` / `todos` / `subagent_runs` / `evidence_events` テーブル)を共有します。起動時の一度きりの移行が旧ストア DB をコピーし、`*.bak` に改名します。
+
 > エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_flow` / `taskflow_step` / `taskflow_inspect`、16 action を覆う 3 つのグループ化ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
@@ -42,7 +44,7 @@
 
 | # | サブシステム | 入口 | 永続化先 |
 | :- | :--- | :--- | :--- |
-| 1 | **TaskFlow DAG エンジン** | `agent/tools/taskflow/` | `data/taskflow_registry.db`（SQLite、WAL） |
+| 1 | **TaskFlow DAG エンジン** | `agent/tools/taskflow/` | `src/data/registry.db`（SQLite、WAL） |
 | 2 | **トークン / コスト予算** | `taskflow_flow(action="budget")`、`taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **締め切り** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
@@ -64,7 +66,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | ゾンビ todo | アクティブな todo が failed/cancelled フローを参照 | todo を `cancelled` |
 | prune | 終端/superseded 行が `max_total_flows_per_session`（200）超過 | 最も古い行を削除 |
 
-ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録し、`auto_kill_on_detach` が有効なら**kill** します——失敗した flow は結果を回収できないため、生かしておくとレーンを占有するだけです。`depends_on` の循環は作成/更新時に拒否され（深さ優先、id は先に検証済み）、フローを非活動スイープまで固定しません。`supersede` は `expected_revision` を進めるため、旧リビジョンを持つ書き手はキャンセル済みフローを復活させるのではなく CAS に失敗します。stale-WAITING マーカーは `updated_at` に触れずにペイロードを書き込みます——その列はスイープが読む非活動時計そのものだからです。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
+ライブ子は回収を拒否します。grace は `todos` と `task_flows` テーブルの間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録し、`auto_kill_on_detach` が有効なら**kill** します——失敗した flow は結果を回収できないため、生かしておくとレーンを占有するだけです。`depends_on` の循環は作成/更新時に拒否され（深さ優先、id は先に検証済み）、フローを非活動スイープまで固定しません。`supersede` は `expected_revision` を進めるため、旧リビジョンを持つ書き手はキャンセル済みフローを復活させるのではなく CAS に失敗します。stale-WAITING マーカーは `updated_at` に触れずにペイロードを書き込みます——その列はスイープが読む非活動時計そのものだからです。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
 
 全置換がルート todo を落とした場合、猶予期間を待たずに `update_todos` が孤立 flow を即座に補償する（方針: `TODOLIST_INFRA["orphan_flow_on_drop"]`）。直後にセッション限定の sweep が走り、flow が終端に達するとルート todo へ即座に通知する。稼働中 flow と似た目標の作成は `ack_dup` がない限り警告される。
 

@@ -829,7 +829,7 @@ resume はアンロックした依存側だけでなく、**ready 集合全体**
 
 
 
-- **データベース**：`agent/tools/taskflow/data/taskflow_registry.db`
+- **データベース**：`src/data/registry.db` (`task_flows` table)
 
 - **テーブル**：`task_flows(flow_id TEXT PK, state_json TEXT NOT NULL, wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL, child_session_key TEXT)`
 

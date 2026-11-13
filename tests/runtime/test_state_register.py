@@ -200,27 +200,6 @@ class TestStateRegisterDBFailures:
         assert not any("database error" in record for record in error_logs)
 
 
-class TestStateRegisterProtocolConformance:
-    """Both implementations expose the full StateRegisterProtocol contract."""
-
-    @pytest.fixture
-    def fresh_db_reg(self, tmp_path, monkeypatch):
-        import runtime.session.state_register as mod
-
-        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
-        return mod.StateRegisterDB()
-
-    def test_mem_conforms(self, fresh_db_reg):
-        import runtime.session.state_register as mod
-
-        assert isinstance(mod.state_register_mem, mod.StateRegisterProtocol)
-
-    def test_db_conforms(self, fresh_db_reg):
-        import runtime.session.state_register as mod
-
-        assert isinstance(fresh_db_reg, mod.StateRegisterProtocol)
-
-
 class TestStateRegisterDBLazyInit:
     def test_construction_has_no_io_and_first_use_initializes(self, tmp_path, monkeypatch):
         import runtime.session.state_register as mod

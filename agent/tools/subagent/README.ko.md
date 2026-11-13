@@ -61,7 +61,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 1. 검증 (Validation)
   │     ├── task는 비어 있으면 안 됨. task_name 정규화
-  │     │   ([^a-zA-Z0-9_-] → _, 반복 압축, 64자 절단 — task_name.py)
+  │     │   ([^a-zA-Z0-9_-] → _, 반복 압축, 64자 절단 — text_helpers.py)
   │     ├── target_policy: agent_id는 allow_agents 화이트리스트 내여야 함
   │     │   (* 와일드카드 지원)
   │     ├── depth = 부모 깊이 + 1, max_spawn_depth(2) 이하
@@ -80,7 +80,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │         researcher / librarian)——MAIN/general은 무제한
   │
   ├── 3. 모델 및 사고 계획 (Model & Thinking Plan, spawn/plan.py,
-  │     spawn/thinking.py)
+  │     spawn/text_helpers.py)
   │     ├── thinking 우선순위: 명시 지정 → 요청자 → 대상 에이전트 기본값
   │     └── 타임아웃: spawn별 재정의 가능(도구 입력은 [600, 7200]으로 clamp),
   │           없으면 run_timeout_seconds(기본 600초, 0 = 타임아웃 없음)
@@ -819,7 +819,6 @@ agent/tools/subagent/
 │   ├── work_admission.py      Gateway 독립적 루트 작업 어드미션 + pending 카운트
 │   ├── lifecycle.py           라이프사이클 컨트롤러(completeRun/resume/announce/pressurePrune/gracePeriod)
 │   ├── state.py               persist/restore 브리지(settle-wake 영속화 복구 포함)
-│   ├── read.py                외부 읽기 전용 API(find_run_by_task_name + run record 주요 쿼리)
 │   ├── task_refs.py           asyncio.Task 참조 관리(register/get/remove/cancel)
 │   ├── yield_events.py        asyncio.Event 관리(yield 깨우기 / 자손 정산)
 │   ├── sweeper.py             실패 백오프가 있는 백그라운드 스캐너(계층형 만료: cron=2h, subagent=6h, interactive=24h)
@@ -839,15 +838,12 @@ agent/tools/subagent/
 │   ├── target_policy.py       allowAgents 검증
 │   ├── depth.py               깊이 계산 및 제한
 │   ├── attachments.py         자식 workspace로의 첨부파일 실체화(Unicode C0+DEL 제어 문자 감지, 중복 이름 감지, 엄격한 base64 검증 포함)
-│   ├── task_name.py           taskName 정규화
+│   ├── text_helpers.py        taskName 정규화, 수락 노트, 첫 user message 봉투, thinking 수준 우선순위
 │   ├── system_prompt.py       자식 에이전트 system prompt 생성(6부 구성: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
-│   ├── initial_message.py     자식 에이전트의 첫 user message(구조화 봉투: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  도구 허용/차단 목록 상속
 │   ├── runtime_isolation.py   런타임 격리 및 보안 경계 + workspace 상속
 │   ├── origin_routing.py      요청자 오리진 라우팅 해결 + fingerprint 생성(build_origin_fingerprint를 외부 API로 노출)
 │   ├── gateway_dispatch.py    최소 권한 scope 해결 + SubagentLaunchAuthorization + scope→deny 매핑
-│   ├── accepted_note.py       SpawnResult.note 내용 생성
-│   ├── thinking.py            thinking 수준 재정의 파싱
 │   └── completion_judge.py    CompletionJudge — 보조 LLM done/continue 판정(goal loop)
 │
 ├── announce/                  완료 알림 파이프라인
@@ -926,7 +922,7 @@ registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
   ↑                    ↑                              ↑
 registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
                                                          ↑
-                                                    registry/read.py
+                                                    registry/memory.py + registry/queries.py
 
 swarm/fifo.py ← swarm/collector.py ← types/swarm.py
 
@@ -938,7 +934,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/initial_message.py ← spawn/task_name.py
+spawn/text_helpers.py(초기 메시지 ← taskName 정규화)
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 

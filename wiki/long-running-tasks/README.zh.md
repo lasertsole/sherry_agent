@@ -2,6 +2,8 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
+> **存储（2026-11-13）：** TaskFlow、todos、子代理注册表与证据账本现在共用 `src/data/registry.db`（`task_flows` / `todos` / `subagent_runs` / `evidence_events` 表）。启动时的一次性迁移会把旧的各存储 DB 复制进来，并改名为 `*.bak`。
+
 > Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_flow` / `taskflow_step` / `taskflow_inspect`，3 个分组工具覆盖 16 个 action）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，用 TaskFlow 决策模型（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）判别携带验收标准的步骤结果（`pass` / `retry` / `block`），按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
 事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/core.py`（TaskFlow 上下文区块）、`agent/middlewares/subagent_completion_drain/core.py`（记忆回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
@@ -42,7 +44,7 @@
 
 | # | 子系统 | 入口 | 持久化位置 |
 | :- | :--- | :--- | :--- |
-| 1 | **TaskFlow DAG 引擎** | `agent/tools/taskflow/` | `data/taskflow_registry.db`（SQLite，WAL） |
+| 1 | **TaskFlow DAG 引擎** | `agent/tools/taskflow/` | `src/data/registry.db`（SQLite，WAL） |
 | 2 | **Token / 成本预算** | `taskflow_flow(action="budget")`、`taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **截止时间** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **空闲检测** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` 中的过期标记 |
@@ -64,7 +66,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | 僵尸 todo | 活跃 todo 引用已 failed/cancelled 的 flow | todo 标 `cancelled` |
 | prune | 终态/superseded 行超过 `max_total_flows_per_session`（200） | 删除最旧的 |
 
-活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败、记录 detached 子代理，并在 `auto_kill_on_detach` 开启时**杀掉**它们——失败的 flow 永远收不到结果，留着只占 lane。`depends_on` 环在创建/更新时就被拒绝（深度优先，id 已先校验），而不是把 flow 钉到失活扫描为止；`supersede` 会递增 `expected_revision`，因此持旧 revision 的写者 CAS 失败，而不是把已取消的 flow 复活；陈旧 WAITING 标记写入载荷时**不碰 `updated_at`**——那一列正是扫描读取的失活时钟。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
+活子代理会否决回收；grace 窗口覆盖 `todos` 与 `task_flows` 表之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败、记录 detached 子代理，并在 `auto_kill_on_detach` 开启时**杀掉**它们——失败的 flow 永远收不到结果，留着只占 lane。`depends_on` 环在创建/更新时就被拒绝（深度优先，id 已先校验），而不是把 flow 钉到失活扫描为止；`supersede` 会递增 `expected_revision`，因此持旧 revision 的写者 CAS 失败，而不是把已取消的 flow 复活；陈旧 WAITING 标记写入载荷时**不碰 `updated_at`**——那一列正是扫描读取的失活时钟。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
 
 全量替换丢掉根 todo 时不再等待宽限期：`update_todos` 立即补偿孤儿 flow（策略：`TODOLIST_INFRA["orphan_flow_on_drop"]`），随后立即跑一次会话级 sweep；flow 进入终态时会立刻通知其根 todo。创建目标与活跃 flow 相似的新 flow 时会给出警告，除非设置 `ack_dup`。
 

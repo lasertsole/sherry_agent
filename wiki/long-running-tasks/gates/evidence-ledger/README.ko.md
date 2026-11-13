@@ -45,7 +45,7 @@ terminal / python_repl 이 명령을 실행
 
 ## 스토리지
 
-**파일:** `src/data/evidence-ledger.db`(`config.path.resolve_evidence_ledger_path`로 해결)
+**파일:** `src/data/registry.db` (`evidence_events` table)(`config.path.resolve_evidence_ledger_path`로 해결)
 
 | 속성 | 값 |
 |------|----|

@@ -45,7 +45,7 @@ terminal / python_repl がコマンドを実行
 
 ## ストレージ
 
-**ファイル:** `src/data/evidence-ledger.db`（`config.path.resolve_evidence_ledger_path` で解決）
+**ファイル:** `src/data/registry.db` (`evidence_events` table)（`config.path.resolve_evidence_ledger_path` で解決）
 
 | 項目 | 値 |
 |------|----|

@@ -45,7 +45,7 @@ terminal / python_repl 跑了一条命令
 
 ## 存储
 
-**文件：** `src/data/evidence-ledger.db`（由 `config.path.resolve_evidence_ledger_path` 解析）
+**文件：** `src/data/registry.db` (`evidence_events` table)（由 `config.path.resolve_evidence_ledger_path` 解析）
 
 | 属性 | 值 |
 |------|----|

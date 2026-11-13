@@ -2,15 +2,17 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review、プランがターン境界で完了したときの **スキルレビュー**、圧縮後の todo fork、そしてメインセッション削除時の session-end salvage。産出は 4 つのストア——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`todos.db`——と、監査用の生 `handoff-tree.json` に入る。以下の **Curator** 節は、スキルレビュー の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
+本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review、プランがターン境界で完了したときの **スキルレビュー**、圧縮後の todo fork、そしてメインセッション削除時の session-end salvage。産出は 4 つのストア——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`registry.db`——と、監査用の生 `handoff-tree.json` に入る。以下の **Curator** 節は、スキルレビュー の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
 
 > **ストレージ更新（2026-11-04）：** 以下で MEMORY.md / USER.md / FACTS.md と呼んでいる 3 つのメモリ出力は、MesMemory の `memory_entries` テーブルの行（ターゲット `memory` / `user` / `facts` ごと）になりました。旧 Markdown ファイルは起動時に `memory_migration.py` が一度だけインポートし、`*.md.bak` に改名します。読み込みは `MemoryStore.load_from_store()` で、各行は `origin_session`（由来）と `usage_count` / `last_used`（使用状況）を持ちます。
+
+> **モジュール構成(2026-11-13):** バックグラウンドレビューの各ジョブは `agent/middlewares/summarization/` 配下の専用ファイルに分かれました: `memory_review.py`、`session_end_salvage.py`、`handoff_tree.py`、`skill_review_runner.py`、`ptc_compile.py`、`compression_todo.py`、共有の `background_scaffold.py` / `_common.py`。`skill_review.py` は引き続きゲートです。`background_reviews.py` は再エクスポート facade で、モジュールプロキシが属性代入を実装モジュールへ転送するため、従来のシンボルと monkeypatch の継ぎ目は変わりません。
 
 > 以下の主張はすべてソースと照合済み。シンボル名、設定キー、既定値、パスはいずれも `agent/middlewares/`、`agent/tools/`、`config/features/` のコードに実在する。
 
 ## 設計原則
 
-1. **すべての抽出は既存ストアを拡張する。** 産出は MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`todos.db` のいずれかへ入る。生 handoff tree は監査用で、モデル向け知識ストアではない。並列ストアを作る抽出経路はない。
+1. **すべての抽出は既存ストアを拡張する。** 産出は MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`registry.db` のいずれかへ入る。生 handoff tree は監査用で、モデル向け知識ストアではない。並列ストアを作る抽出経路はない。
 2. **全面 fail-open。** どのトリガも自身の失敗をログに記録して握り潰す。todo ストアの破損、plan ファイルの読み取り不能、LLM 呼び出しの失敗が、メインの対話ターンを阻塞したり中断したりしない。
 3. **ターン経路はゼロ阻塞。** 圧縮後 todo fork と圧縮時バックグラウンドレビュー はどちらも fire-and-forget のバックグラウンドタスク。memory review と スキルレビュー は BACKGROUND_REVIEW レーン上で独立した子 Agent として走り、モデル呼び出しを決してブロックしない。
 4. **すべての抽出経路がツールを必要とする。** memory review、スキルレビュー、todo fork はいずれも `create_agent` fork で、それぞれ `memory`、`skill_manage`、`todowrite` を通じて書き込む。独立した純粋抽出呼び出しは残っていない。
@@ -22,7 +24,7 @@
 |---|---|---|
 | 圧縮のたび | memory review（`_execute_memory_review`）：**破棄される**スライスだけを**原文のまま**、そのターンが使ったモデル構成（`_build_session_model`）で送り、セッションのシステムプロンプトとツール面も再現してプレフィックスキャッシュに命中させる；`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` なら折り畳む（直近 24 件は原文、それ以前は 1 行に切詰め） | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
 | プラン完了——ターン境界で全 todo が `completed` / `cancelled`（**圧縮時ではない**） | スキルレビュー（`_run_skill_review`）：完了フック（`PlanContinuationEnforcer` → `maybe_trigger_skill_review`）が**補助モデル**で専用 agent を fork し、`_SKILL_REVIEW_PROMPT` を使い、**会話履歴を一切渡さない** | `skills/auto/`（クラスレベルスキル + `<module>-notes`）。judge 承認済み no-op も可。生 `handoff-tree.json` は先に監査用として書込 |
-| 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の バックグラウンドレビュー agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `todos.db` |
+| 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の バックグラウンドレビュー agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `registry.db` |
 | メインセッション削除時（purge 前） | session-end salvage（`salvage_session_memory`）：checkpoint transcript をスナップショットし、モデル/システムプロンプト/ツール面を捕捉し、通常の圧縮カットを読み取り専用で計算して、独立した 2 波の memory review をスケジュールする——第 1 波は破棄されるはずのプレフィックス、第 2 波は memory 再読込とプロンプト再構築後の保持尾部 | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
 
 ## トリガ詳細
@@ -89,7 +91,7 @@ fork の結果メッセージはログのみ。メイングラフやその check
 
 **frontmatter 契約（インデックスそのものがトリガー）。** `<available_skills>` が描画するのはスキルの frontmatter だけ——本文はロード後に読まれます——なので、これらのフィールドがルーティング信号です: `description`（能力の要約）、`when_to_use`（**必須**：これらの経路が作成・修正するすべてのスキルに、それを読み込むべき具体的なシナリオ／ユーザー意図を記載）、`when_not_to_use`（任意：除外条件と代替手段）。ローダーはこの 2 つのタグを CJK 対応のトークン予算（60 / 50 / 50 トークン）で描画し XML エスケープします。クライアントのスキルツールチップも同じ 3 フィールドを表示します。キュレーターはさらに狭い第 2 層を加えます: アンブレラの frontmatter がスキル全体を覆い、各 `##` サブ能力セクションは自身の `**When to use:**` 行で始まります（実際の除外がある場合のみ `**When NOT to use:**` も）。これによりモデルは `skill_view` 後に正しいセクションを選べます。決定的フォールバックも同じ形を書き、条件はマージ理由から抽出します。
 
-Curator（`context_engine/curator/`）は `skills/auto/` スキルライブラリのライフサイクルを担うバックグラウンドパスであり、まさに上記の抽出経路 2 の書込先である。読み書きするのはスキルだけ——MEMORY.md / USER.md / FACTS.md と `todos.db` は対象外である。
+Curator（`context_engine/curator/`）は `skills/auto/` スキルライブラリのライフサイクルを担うバックグラウンドパスであり、まさに上記の抽出経路 2 の書込先である。読み書きするのはスキルだけ——MEMORY.md / USER.md / FACTS.md と `registry.db` は対象外である。
 
 **何か。** 定時 cron ではなくアイドルトリガーのオーケストレーター。サービスエントリポイントが `context_engine.curator.init()` でデーモンスレッド（`curator-timer`）を起動する（`server/__main__.py:140`；HTTP-only モードではスキップ、`server/__main__.py:66-73`）。スレッドは 3600 秒ごとに起床し `maybe_run_curator(idle_for_seconds=...)` を呼ぶ（`context_engine/curator/__init__.py:122-140`）。パッケージのインポートは副作用なし——スレッドを起動するのは `init()` だけ（`context_engine/curator/__init__.py:151-165`）。
 
@@ -104,7 +106,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 
 **LLM 統合。** `curator.consolidate` が有効（既定で有効）なとき、`run_curator_review()` は非 pinned スキルの候補リストを描画し（`context_engine/curator/review.py:69`）、メイン LLM（temperature 0.3）に重複する狭いスキルをクラスレベルの umbrella スキルへ統合させる（`CURATOR_REVIEW_PROMPT`、`context_engine/curator/review.py:16`）。新しい umbrella とそのサポートファイルは `skills/auto/` 配下へ生成・永続化される（`_generate_umbrella_skill`、`context_engine/curator/umbrella.py:86`；`_apply_consolidation`、`context_engine/curator/orchestrator.py:163`）。統合はこのパス唯一の LLM ステップで、失敗は捕捉され実行は継続する。
 
-**4 本の抽出経路との関係。** 経路 2（圧縮時 skill review）が生産者である：`skill_manage` を通じて `skills/auto/` を作成・修正する。Curator はその同じ産出の下流メンテナであり、skill review が作ったスキルを遷移・統合・剪定する。残り 3 経路は `skills/auto/` に一切触れない（それぞれ MEMORY.md / USER.md / FACTS.md、`todos.db`、削除時の memory サルベージに書く）ため、Curator と交差しない。
+**4 本の抽出経路との関係。** 経路 2（圧縮時 skill review）が生産者である：`skill_manage` を通じて `skills/auto/` を作成・修正する。Curator はその同じ産出の下流メンテナであり、skill review が作ったスキルを遷移・統合・剪定する。残り 3 経路は `skills/auto/` に一切触れない（それぞれ MEMORY.md / USER.md / FACTS.md、`registry.db`、削除時の memory サルベージに書く）ため、Curator と交差しない。
 
 **状態と境界。** 実行状態は `skills/.curator_state`（`context_engine/curator/constants.py:3`、`context_engine/curator/state.py` が読み書き）；各実行は `logs/curator/{timestamp}/` 配下に `run.json` + `REPORT.md` を書く（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。範囲は `skills/auto/` のみ——内蔵スキルには決して触れず、pinned スキルはすべての破壊的遷移を迂回し、パス全体はバックグラウンドスレッドで走り会話ターン経路を占めない。詳細：[curator/README.md](../../context_engine/curator/README.ja.md)。
 
@@ -135,7 +137,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 | handoff audit | `workspace/knowledge/plans/<plan_key>/handoff-tree.json` | レビュー前に書く生 handoff tree。prompt block ではない |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/` / `templates/` / `scripts/` のサポートファイル。PTC は `ptc__<plan_key>__<step_id>.py`、LDW は `ldw__<plan_key>.py` |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/`、`templates/`、`scripts/` サポートファイル |
-| todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |
+| todos | `src/data/registry.db` (`todos` table)（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |
 
 ## 設定スイッチ
 

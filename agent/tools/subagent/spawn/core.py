@@ -60,14 +60,14 @@ from .plan import (
     resolve_role_model_profile,
     resolve_run_timeout_for_requester,
 )
-from .task_name import normalize_subagent_task_name
+from .text_helpers import normalize_subagent_task_name
 from .request import SpawnRequest
 from .system_prompt import SubagentPromptContext, build_subagent_system_prompt_from_context
-from .initial_message import build_subagent_initial_user_message
+from .text_helpers import build_subagent_initial_user_message
 from .inherited_tool_policy import apply_tool_policy as apply_tool_policy
 from .attachments import materialize_subagent_attachments
 from .ownership import resolve_spawn_ownership
-from .accepted_note import resolve_spawn_accepted_note
+from .text_helpers import resolve_spawn_accepted_note
 from .runtime_isolation import (
     resolve_runtime_isolation,
     validate_runtime_isolation,

@@ -2,15 +2,17 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 **技能评审**、压缩后 todo fork，以及主会话删除时的 session-end salvage（对捕获的压缩切口运行后台两波 memory review）。产出分别落入四个存储——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`todos.db`——外加原始 `handoff-tree.json` 审计文件；下文 **Curator** 一节记录维护 `skills/auto/`（技能评审 的写入目标）的后台流程。
+本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 **技能评审**、压缩后 todo fork，以及主会话删除时的 session-end salvage（对捕获的压缩切口运行后台两波 memory review）。产出分别落入四个存储——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`registry.db`——外加原始 `handoff-tree.json` 审计文件；下文 **Curator** 一节记录维护 `skills/auto/`（技能评审 的写入目标）的后台流程。
 
 > **存储更新（2026-11-04）：** 下文的 MEMORY.md / USER.md / FACTS.md 三个记忆产出，现已改为 MesMemory `memory_entries` 表中的行，每个 target（`memory` / `user` / `facts`）各占若干行。遗留 Markdown 文件由 `memory_migration.py` 在启动时导入一次并改名为 `*.md.bak`。加载入口是 `MemoryStore.load_from_store()`；每行携带 `origin_session`（来源）与 `usage_count` / `last_used`（用量反馈）。
+
+> **模块拆分（2026-11-13）：** 后台复盘任务现在位于 `agent/middlewares/summarization/` 下的专用文件：`memory_review.py`、`session_end_salvage.py`、`handoff_tree.py`、`skill_review_runner.py`、`ptc_compile.py`、`compression_todo.py`，共享的 `background_scaffold.py` / `_common.py`；`skill_review.py` 仍是质量门。`background_reviews.py` 变成 re-export facade，其模块代理会把属性写入转发到实现模块，因此历史符号与 monkeypatch 接缝保持不变。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
 ## 设计原则
 
-1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md / FACTS.md、`skills/auto/`、或 `todos.db`；原始 handoff tree 只作审计，不作为面向模型的知识存储。没有任何抽取路径另建平行存储。
+1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md / FACTS.md、`skills/auto/`、或 `registry.db`；原始 handoff tree 只作审计，不作为面向模型的知识存储。没有任何抽取路径另建平行存储。
 2. **全部 fail-open。** 每个触发点都记录并吞掉自身失败。todo 存储损坏、plan 文件不可读、LLM 调用失败，都不会阻塞或打断主对话回合。
 3. **回合路径零阻塞。** 压缩后 todo fork 与压缩时后台评审 都是 fire-and-forget 后台任务；memory review 与 技能评审 作为独立子 agent 在 BACKGROUND_REVIEW 车道上运行，绝不阻塞模型调用。
 4. **每条抽取路径都需要工具。** memory review、技能评审 与 todo fork 都是 `create_agent` fork，因为各自都要通过工具写入（`memory`、`skill_manage`、`todowrite`）；不再存在独立的纯抽取调用。
@@ -22,7 +24,7 @@
 |---|---|---|
 | 每次压缩 | 记忆复盘（`_execute_memory_review`）：只收**被丢弃**的那段，**原文**发在"本轮刚用过的"模型配置上（`_build_session_model`），并复刻会话的系统提示词与工具面，使请求命中前缀缓存；`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` 则改为折叠（最近 24 条原文，更早的每条截断成一行） | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 | 计划完成——轮次边界上全部 todo 为 `completed` / `cancelled`（**不在压缩时**） | 技能评审（`_run_skill_review`）：完成钩子（`PlanContinuationEnforcer` → `maybe_trigger_skill_review`）用**辅助模型** fork 专用 agent，使用 `_SKILL_REVIEW_PROMPT`，且**不带任何对话历史** | `skills/auto/`（类级技能 + `<module>-notes`）；允许 judge 认可的 no-op；原始 `handoff-tree.json` 先写盘审计 |
-| 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget 后台评审 agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
+| 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget 后台评审 agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `registry.db` |
 | 删除主会话（purge 之前） | session-end salvage（`salvage_session_memory`）：快照 checkpoint transcript，捕获模型/系统提示词/工具面，只读计算压缩切割线，然后运行两次独立 memory review——第一波处理本会被压缩的前缀，第二波在重载 memory 并重建提示词后处理保留的尾部 | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 
 ## 触发详情
@@ -89,7 +91,7 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 
 **frontmatter 契约（索引就是触发器）。** `<available_skills>` 只渲染技能的 frontmatter —— 正文要加载后才读 —— 所以这些字段就是路由信号：`description`（能力概述）、`when_to_use`（**必填**：这些路径创建或修补的每个技能都要写，写明应该加载它的具体场景／用户意图）与 `when_not_to_use`（可选：排除条件与替代方案）。加载器用 CJK 感知的 token 预算（60 / 50 / 50 token）渲染这两个附加标签并做 XML 转义；前端技能 tooltip 展示同样三个字段。curator 还加了更窄的第二层：伞状技能的 frontmatter 覆盖整个技能，而每个 `##` 子能力段落以自己的一行 `**When to use:**` 开头（确有排除时才加 `**When NOT to use:**`），模型 `skill_view` 后即可选对段落。它的确定性回退写出同样的形状，从合并理由里启发式提取这些条件。
 
-Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md / FACTS.md 与 `todos.db` 都不在其范围内。
+Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md / FACTS.md 与 `registry.db` 都不在其范围内。
 
 **是什么。** 它是空闲触发的编排器，而非定时 cron。服务入口通过 `context_engine.curator.init()` 启动守护线程（`curator-timer`）（`server/__main__.py:140`；HTTP-only 模式下跳过，`server/__main__.py:66-73`）。线程每 3600 秒唤醒一次并调用 `maybe_run_curator(idle_for_seconds=...)`（`context_engine/curator/__init__.py:122-140`）。导入该包无副作用——只有 `init()` 会启动线程（`context_engine/curator/__init__.py:151-165`）。
 
@@ -104,7 +106,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 
 **LLM 合并。** 当 `curator.consolidate` 开启（默认开）时，`run_curator_review()` 渲染非 pinned 技能候选列表（`context_engine/curator/review.py:69`），让主 LLM 以 temperature 0.3 把重叠的窄技能合并为类级 umbrella 技能（`CURATOR_REVIEW_PROMPT`，`context_engine/curator/review.py:16`）。新 umbrella 及其支持文件生成后写入 `skills/auto/`（`_generate_umbrella_skill`，`context_engine/curator/umbrella.py:86`；`_apply_consolidation`，`context_engine/curator/orchestrator.py:163`）。合并是该流程唯一的 LLM 步骤；失败会被捕获，运行继续。
 
-**与四条抽取路径的关系。** 路径 2（压缩时 skill review）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 skill review 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、`todos.db`，以及删除时的 memory 抢救），因此与 Curator 没有交集。
+**与四条抽取路径的关系。** 路径 2（压缩时 skill review）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 skill review 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、`registry.db`，以及删除时的 memory 抢救），因此与 Curator 没有交集。
 
 **状态与边界。** 运行状态存于 `skills/.curator_state`（`context_engine/curator/constants.py:3`，由 `context_engine/curator/state.py` 读写）；每次运行在 `logs/curator/{timestamp}/` 下写出 `run.json` + `REPORT.md`（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。范围仅限 `skills/auto/`——绝不触碰内置技能，pinned 技能跳过所有破坏性流转，整个流程在后台线程运行，不占对话回合路径。完整细节：[curator/README.md](../../context_engine/curator/README.zh.md)。
 
@@ -135,7 +137,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 | legacy plan knowledge | `workspace/knowledge/plans/<plan_key>/` | 已退役：旧 `task-<n>.json` / `wave-<n>.json` / `plan-summary.json` 留在磁盘，但模型面向路径不再写入或读取 |
 | handoff audit | `workspace/knowledge/plans/<plan_key>/handoff-tree.json` | 评审前写入的原始 handoff tree；不是 prompt block |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件；PTC 为 `ptc__<plan_key>__<step_id>.py`，LDW 为 `ldw__<plan_key>.py` |
-| todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |
+| todos | `src/data/registry.db` (`todos` table)（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |
 
 ## 配置开关
 

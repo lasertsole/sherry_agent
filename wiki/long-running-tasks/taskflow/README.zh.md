@@ -829,7 +829,7 @@ resume 会启动整个 ready 集，而不只是它解锁的依赖者（`auto_dis
 
 
 
-- **数据库**：`agent/tools/taskflow/data/taskflow_registry.db`
+- **数据库**：`src/data/registry.db` (`task_flows` table)
 
 - **表**：`task_flows(flow_id TEXT PK, state_json TEXT NOT NULL, wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL, child_session_key TEXT)`
 

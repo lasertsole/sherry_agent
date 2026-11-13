@@ -9,7 +9,7 @@ Pure store: no delivery decisions, no busy/idle logic, no auto-turn triggers.
 
 Table: ``pending_injections(run_id TEXT PRIMARY KEY, status TEXT NOT NULL, data TEXT NOT NULL)``
 where ``data`` is ``PendingInjection.model_dump_json()``. The table lives in the
-subagent registry database (``subagent/data/subagent_registry.db``) and is created
+shared registry database (``src/data/registry.db``) and is created
 via the same aiosqlite infrastructure as ``store_sqlite.py`` — additive only; the
 ``subagent_runs`` / ``settle_wake_state`` tables are never touched.
 
@@ -33,9 +33,10 @@ from pydantic import BaseModel, Field
 
 from config.features import SUBAGENT_INFRA
 from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
+from config.path import resolve_registry_db_path
 
-_DB_DIR = Path(__file__).resolve().parent.parent / "data"
-_DB_PATH = _DB_DIR / "subagent_registry.db"
+_DB_PATH = resolve_registry_db_path()
+_DB_DIR = _DB_PATH.parent
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this

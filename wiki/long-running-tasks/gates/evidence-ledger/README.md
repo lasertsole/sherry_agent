@@ -46,7 +46,7 @@ terminal / python_repl runs a command
 
 ## Storage
 
-**File:** `src/data/evidence-ledger.db` (resolved by `config.path.resolve_evidence_ledger_path`)
+**File:** `src/data/registry.db` (`evidence_events` table) (resolved by `config.path.resolve_evidence_ledger_path`)
 
 | Property | Value |
 |----------|-------|

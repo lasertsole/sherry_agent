@@ -187,6 +187,13 @@ def main() -> None:
         lambda: [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()],
     )
 
+    # One-time legacy -> shared-registry DB migration. Must run before any
+    # store opens its database; the function is idempotent, backs up each
+    # legacy file, and treats a failure as non-fatal.
+    from server.service.registry_migration import migrate_legacy_registry_dbs
+
+    migrate_legacy_registry_dbs()
+
     init_agent_core()
 
     if not tripped:
