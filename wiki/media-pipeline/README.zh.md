@@ -158,7 +158,9 @@ Generated 2 image(s) with gpt-image-1:
 ![generated image 2](sherry-artifact://<session>/image-<sha256[:16]>.png)
 ```
 
-聊天既有的 `resolveArtifactRefsInMarkdown` + 画廊/lightbox 路径会渲染这些引用；前端没有生成专用代码。provider 报错、缺少 key 或 artifact 写入失败都返回 `Error: …` 文本，不会让异常逃出工具。provider 调用在工作线程中执行，不阻塞事件循环。
+聊天既有的 `resolveArtifactRefsInMarkdown` + 画廊/lightbox 路径会渲染最终回答里的引用；**工具结果**现在也走同一条路：`ChatToolCard` 从任意工具结果中提取 `sherry-artifact://` 引用，用 `ArtifactImageGallery` 缩略图网格替代纯文本 `<pre>`（折叠状态下也显示网格，生成的图片不会藏在折叠卡里；点击打开共享的 `useImagePreview` 画廊）。折叠的 turn 也会提示隐藏的图片：`classifyTurnFold` 收集工具行里的引用，`ChatTurnHistoryStatus` 在展开按钮旁最多显示 4 张缩略图。没有生成专用的渲染器——分支只认 URI，不认工具名。
+
+同一个 provider 也支撑 `text_to_image` skill 的 terminal 脚本（`skills/builtin/text_to_image/scripts/core.py`）。terminal 工具向每个子进程环境注入 `SHERRY_SESSION_ID`（同步、异步与后台 spawn 都是），脚本通过 `TTIModel` 生成、用 `write_artifact` 存储、把每个 URI **打印到 stdout**，失败输出 `[error] …`；旧脚本什么也不打印、写到 `STATIC_DIR/images`，agent 根本不知道图在哪。skill 的纯 URI 行与专用工具的 markdown 引用走同一个缩略图分支。provider 报错、缺少 key 或 artifact 写入失败都返回 `Error: …` 文本（工具）或 `[error] …` stdout 行（脚本），不会让异常逃出工具；工具侧的 provider 调用在工作线程中执行，不阻塞事件循环。
 
 阶段 1 只做生成。`inputImageMask` / `inputFidelity`（inpaint）与流式 partial image 事件都未接线；模型能力表（`config/model_capabilities.json`）描述的是输入媒体，因此图片生成模型的上限放在 `models/TTI_model/core.py::IMAGE_GEN_MAX_OUTPUT`，不会作为假的输入能力塞进能力表。
 

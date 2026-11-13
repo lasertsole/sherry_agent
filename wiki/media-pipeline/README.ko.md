@@ -158,7 +158,9 @@ Generated 2 image(s) with gpt-image-1:
 ![generated image 2](sherry-artifact://<session>/image-<sha256[:16]>.png)
 ```
 
-채팅의 기존 `resolveArtifactRefsInMarkdown`과 갤러리 / lightbox 경로가 이 참조를 렌더링합니다. 생성 전용 프런트엔드 코드는 없습니다. provider 오류, 키 누락, artifact 쓰기 실패는 모두 `Error: …` 텍스트로 돌아가며 예외가 도구 밖으로 새지 않습니다. provider 호출은 워커 스레드에서 실행되어 이벤트 루프를 막지 않습니다.
+채팅의 기존 `resolveArtifactRefsInMarkdown`과 갤러리 / lightbox 경로가 최종 답변의 참조를 렌더링합니다. **도구 결과**도 같은 경로입니다: `ChatToolCard`가 임의의 도구 결과에서 `sherry-artifact://` 참조를 추출해 `ArtifactImageGallery` 썸네일 그리드를 평문 `<pre>` 대신 표시합니다(접힌 카드에서도 그리드를 보여 주므로 생성 이미지가 접힘 뒤에 숨지 않습니다. 클릭하면 공유 `useImagePreview` 갤러리가 열립니다). 접힌 턴도 숨은 그림을 알립니다: `classifyTurnFold`가 도구 행의 참조를 모으고 `ChatTurnHistoryStatus`가 펼치기 트리거 옆에 최대 4개의 썸네일을 보여 줍니다. 생성 전용 렌더러는 없습니다——분기는 도구 이름이 아니라 URI로 결정됩니다.
+
+같은 provider가 `text_to_image` skill의 terminal 실행 스크립트(`skills/builtin/text_to_image/scripts/core.py`)도 뒷받침합니다. terminal 도구는 모든 자식 프로세스 환경(동기·비동기·백그라운드 spawn)에 `SHERRY_SESSION_ID`를 주입하고, 스크립트는 `TTIModel`로 생성해 `write_artifact`로 저장하며 각 URI를 **stdout에 print**하고 실패 시 `[error] …`를 출력합니다. 예전 스크립트는 아무것도 print하지 않고 `STATIC_DIR/images`에 저장해서 agent가 이미지 위치를 알 수 없었습니다. skill의 순수 URI 줄과 전용 도구의 markdown 참조는 같은 썸네일 분기를 탑니다. provider 오류, 키 누락, artifact 쓰기 실패는 `Error: …` 텍스트(도구) 또는 `[error] …` stdout 줄(스크립트)로 돌아가며 예외가 도구 밖으로 새지 않습니다. 도구 쪽 provider 호출은 워커 스레드에서 실행되어 이벤트 루프를 막지 않습니다.
 
 1단계는 생성만 합니다. `inputImageMask` / `inputFidelity`(inpaint)와 스트리밍 partial image 이벤트는 연결하지 않았습니다. 모델 능력 카탈로그(`config/model_capabilities.json`)는 입력 미디어를 설명하므로 이미지 생성 모델의 상한은 가짜 입력 능력으로 넣지 않고 `models/TTI_model/core.py::IMAGE_GEN_MAX_OUTPUT`에 둡니다.
 

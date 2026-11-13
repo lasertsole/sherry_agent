@@ -158,7 +158,9 @@ Generated 2 image(s) with gpt-image-1:
 ![generated image 2](sherry-artifact://<session>/image-<sha256[:16]>.png)
 ```
 
-チャットの既存の `resolveArtifactRefsInMarkdown` とギャラリー / lightbox 経路がこれらを描画します。生成専用のフロントエンドコードはありません。provider エラー、キー欠落、artifact 書き込み失敗はすべて `Error: …` テキストとして返り、例外がツールの外へ漏れません。provider 呼び出しはワーカースレッドで実行され、イベントループを塞ぎません。
+チャットの既存の `resolveArtifactRefsInMarkdown` とギャラリー / lightbox 経路が最終回答の参照を描画します。**ツール結果**も同じ経路です：`ChatToolCard` が任意のツール結果から `sherry-artifact://` 参照を抽出し、`ArtifactImageGallery` のサムネイルグリッドを素の `<pre>` の代わりに表示します（折りたたまれたカードでもグリッドを表示するため、生成画像が折りたたみの奥に隠れません。クリックで共有の `useImagePreview` ギャラリーが開きます）。折りたたまれたターンも隠れた画像を示します：`classifyTurnFold` がツール行の参照を集め、`ChatTurnHistoryStatus` が展開トリガーの横に最大 4 枚のサムネイルを表示します。生成専用のレンダラーはありません——分岐はツール名ではなく URI で決まります。
+
+同じ provider が `text_to_image` skill の terminal 実行スクリプト（`skills/builtin/text_to_image/scripts/core.py`）も支えます。terminal ツールはすべての子プロセス環境（同期・非同期・バックグラウンド spawn）に `SHERRY_SESSION_ID` を注入し、スクリプトは `TTIModel` で生成して `write_artifact` で保存し、各 URI を **stdout に print** し、失敗時は `[error] …` を出力します。旧スクリプトは何も print せず `STATIC_DIR/images` に書いていたため、agent は画像の場所を知れませんでした。skill の素の URI 行と専用ツールの markdown 参照は同じサムネイル分岐を通ります。provider エラー、キー欠落、artifact 書き込み失敗は `Error: …` テキスト（ツール）または `[error] …` の stdout 行（スクリプト）として返り、例外がツールの外へ漏れません。ツール側の provider 呼び出しはワーカースレッドで実行され、イベントループを塞ぎません。
 
 フェーズ 1 は生成のみです。`inputImageMask` / `inputFidelity`（inpaint）とストリーミングの partial image イベントは配線していません。モデル能力カタログ（`config/model_capabilities.json`）は入力メディアを記述するものなので、画像生成モデルの上限は偽の入力能力として追加せず `models/TTI_model/core.py::IMAGE_GEN_MAX_OUTPUT` に置いています。
 

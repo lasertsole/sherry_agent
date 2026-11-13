@@ -16,8 +16,10 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   set that let ``["echo ok", "rm -rf /"]`` slip through. On hit a
   ``ToolException`` is raised with the historical refusal message format
   (``handle_tool_error=True`` surfaces it as a tool error).
-- env scrub: ``env = scrub_env()`` reaches BOTH sync and async spawns,
-  unconditionally (even for ``sandbox=False`` calls).
+- env scrub: ``_child_env(session_id)`` reaches BOTH sync and async spawns,
+  unconditionally (even for ``sandbox=False`` calls): ``scrub_env()`` plus
+  ``SHERRY_SESSION_ID`` — the session tag a scripted skill uses to address the
+  session-scoped artifact store (the background path inherits the same env).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
   command is exec'd in list form via ``backend.wrap(["/bin/sh", "-c", ...])``
   (semantically identical to POSIX ``shell=True``); backend ``None``
@@ -92,6 +94,20 @@ from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 #: Ceiling for a per-call ``timeout`` (see ``_resolve_timeout``).
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
+
+
+def _child_env(session_id: str) -> dict[str, str]:
+    """Scrubbed child environment, tagged with the session id.
+
+    ``SHERRY_SESSION_ID`` is what lets a scripted skill address the
+    session-scoped artifact store (``sherry-artifact://<session>/<name>``) and
+    any other per-session resource; it is not a secret, so the scrubbed
+    environment is the only base. Mirrors the user-hook spawn's contract.
+    """
+    env = scrub_env()
+    if session_id:
+        env["SHERRY_SESSION_ID"] = session_id
+    return env
 
 
 def _record_shell_writes(session_id: str) -> None:
@@ -651,7 +667,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         # take the turn's shadow snapshot before it runs. Fail-open.
         ensure_checkpoint(bound_session, reason=f"before_write:terminal:{cmd_str[:120]}")
 
-        env = scrub_env()
+        env = _child_env(bound_session)
         if sandbox:
             argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
             if argv is not None:
@@ -842,7 +858,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         # Same fail-open snapshot as the sync path.
         ensure_checkpoint(bound_session, reason=f"before_write:terminal:{cmd_str[:120]}")
 
-        env = scrub_env()
+        env = _child_env(bound_session)
 
         if run_in_background:
             return await self._run_background(

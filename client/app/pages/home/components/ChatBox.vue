@@ -90,6 +90,7 @@
               :expanded="expandedTurnHistory.has(groupFold(vRow.index).key)"
               :expand-label="t('chatBox.turnHistoryExpand')"
               :collapse-label="t('chatBox.turnHistoryCollapse')"
+              :artifact-uris="groupFold(vRow.index).artifactUris"
               class="ml-[52px]"
               @toggle="toggleTurnHistory(groupFold(vRow.index).key)" />
             <div

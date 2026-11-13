@@ -2384,6 +2384,24 @@ text. The provider call runs in `asyncio.to_thread`. Phase 1 is generation only
 input-media capability catalog is deliberately NOT extended — output-model
 limits live in `IMAGE_GEN_MAX_OUTPUT`.
 
+The same provider backs the `text_to_image` skill's terminal-run script
+(`skills/builtin/text_to_image/scripts/core.py`). The terminal tool injects
+`SHERRY_SESSION_ID` into every child environment (sync, async and background
+spawns — `_child_env`), the script generates through `TTIModel`, stores each
+image with `write_artifact`, PRINTS every URI to stdout and reports failures as
+`[error] …`; the previous script printed nothing and saved under
+`STATIC_DIR/images`, so the agent never learned where the image went.
+
+Tool results render through the same artifact store: `ChatToolCard` extracts
+`sherry-artifact://` references from ANY tool result and shows an
+`ArtifactImageGallery` thumbnail grid in place of the plain `<pre>` (the
+collapsed card shows it too, so a generated picture cannot hide behind the
+fold), clicking opens the shared `useImagePreview` gallery, and a collapsed
+TURN (`use-chat-turn-fold.ts::classifyTurnFold` → `ChatTurnHistoryStatus`)
+peeks up to four of the hidden tool rows' thumbnails beside its expand trigger.
+The skill's plain URI lines and the tool's markdown references ride the same
+branch.
+
 The end-to-end surface is `tests/agent/middlewares/test_media_pipeline_e2e.py`:
 a scripted stub model drives the real `create_agent` graph through server
 compression → the artifact store and `GET /artifacts` → `read_file` image/PDF
@@ -3057,6 +3075,7 @@ each suite is the version-controlled reference (threshold + model id).
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
 - the eviction PREVIEW marks a mid-line cut instead of letting it read as a line ending: the in-memory renderer appends `\u2026`, the file-on-disk reader detects the cut by peeking past `_PREVIEW_LINE_MAX_BYTES` (and, for the tail window, by checking whether the byte before the walk's stop is a newline), and either path appends one note naming the same fallback tools — a normal preview is byte-identical to before (the note is absent, never empty).
 - `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`). A 0-byte result becomes `(no output)` before the tool returns — never an empty ToolMessage, which the pairing sanitizer would otherwise turn into a misleading missing placeholder — and the eviction preview starts with `[evicted to: <path>]` plus an explicit `read_file` hint.
+- both spawn sites build the child environment through `_child_env(session_id)`: the scrubbed environment PLUS `SHERRY_SESSION_ID` (the session the tool resolved for this call). A scripted skill reaches the session-scoped artifact store through it (the `text_to_image` script is the first consumer); the variable is not a secret, so `scrub_env` still owns every other filter, and a background command inherits the same env.
 - the sandbox IS the write barrier for `terminal` / `python_repl` / `execute_code`
   (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
 writable_roots)` takes the caller's write surface, which each tool resolves from
