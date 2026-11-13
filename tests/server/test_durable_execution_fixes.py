@@ -566,7 +566,6 @@ class TestRestoredRunShape:
                 "delivery": CompletionDeliveryState(
                     status="failed", last_attempt_at=stale, delivered_at=stale
                 ),
-                "archive_at": stale,
             }
         )
 
@@ -576,38 +575,6 @@ class TestRestoredRunShape:
         assert out.execution.started_at == now
         assert out.delivery.last_attempt_at == now
         assert out.delivery.delivered_at == now
-        assert out.archive_at is not None and out.archive_at > now, "a deadline needs a window"
-
-    def test_an_already_terminal_run_does_not_get_a_new_archive_window(self):
-        """L3: a restart previously extended every terminal run's retention."""
-        import time
-
-        from agent.tools.subagent.registry.state import _rebase_restored_clock
-        from agent.tools.subagent.types.registry import ExecutionStatus
-
-        run = _run_record("r-done", ExecutionStatus.TERMINAL)
-        run = run.model_copy(update={"archive_at": 999_999.0})
-        before = time.monotonic()
-
-        out = _rebase_restored_clock(run, time.monotonic(), terminal_at_restore=True)
-
-        after = time.monotonic()
-        assert out.archive_at is not None
-        assert before <= out.archive_at <= after, "the deadline is due, not re-windowed"
-
-    def test_a_run_the_restore_terminalized_gets_the_full_window(self):
-        import time
-
-        from agent.tools.subagent.registry.state import _rebase_restored_clock
-        from agent.tools.subagent.types.registry import ExecutionStatus
-
-        run = _run_record("r-pending", ExecutionStatus.PENDING)
-        run = run.model_copy(update={"archive_at": 999_999.0})
-        now = time.monotonic()
-
-        out = _rebase_restored_clock(run, now, terminal_at_restore=False)
-
-        assert out.archive_at is not None and out.archive_at > now
 
     def test_a_live_run_ages_from_the_restart(self):
         import time

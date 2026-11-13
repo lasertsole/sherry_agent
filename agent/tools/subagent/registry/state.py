@@ -26,20 +26,13 @@ def _finalize_restored_pending(run: SubagentRunRecord) -> SubagentRunRecord:
     return run.finalize_pending_orphan()
 
 
-def _rebase_restored_clock(
-    run: SubagentRunRecord, now: float, *, terminal_at_restore: bool = False
-) -> SubagentRunRecord:
+def _rebase_restored_clock(run: SubagentRunRecord, now: float) -> SubagentRunRecord:
     """Move every persisted monotonic timestamp onto THIS process's clock.
 
-    The shaping lives on :class:`SubagentRunRecord`; this wrapper only supplies
-    the config-derived archive window. ``terminal_at_restore`` keeps an
-    already-terminal run's archive deadline due instead of granting it a fresh
-    window (see :meth:`SubagentRunRecord.rebase_clock`).
+    The shaping lives on :class:`SubagentRunRecord`; this wrapper exists so the
+    restore path has one named seam.
     """
-    window = get_config().archive_after_minutes * 60
-    return run.rebase_clock(
-        now, archive_window_seconds=window, terminal_at_restore=terminal_at_restore
-    )
+    return run.rebase_clock(now)
 
 
 def _mark_restored_running_terminal(run: SubagentRunRecord, now: float) -> SubagentRunRecord:
@@ -71,16 +64,13 @@ async def restore_runs_from_disk() -> None:
         for run_id, run in runs.items():
             if memory.get(run_id) is not None:
                 continue
-            # Captured BEFORE the forced terminalization below: only a run the
-            # restore itself ended gets a fresh archive window.
-            terminal_at_restore = run.execution.status == ExecutionStatus.TERMINAL
             if run.execution.status == ExecutionStatus.PENDING:
                 run = _finalize_restored_pending(run)
                 restored_pending += 1
             elif run.execution.status == ExecutionStatus.RUNNING:
                 run = _mark_restored_running_terminal(run, now)
                 restored_running += 1
-            run = _rebase_restored_clock(run, now, terminal_at_restore=terminal_at_restore)
+            run = _rebase_restored_clock(run, now)
             memory.set_run(run)
         logger.info("Restored {} subagent runs from SQLite", len(runs))
         if restored_pending:

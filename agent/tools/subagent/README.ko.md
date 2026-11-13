@@ -22,7 +22,6 @@
 - **전역 동시성 상한 추가**: `max_concurrent = 8` — 처음에는 spawn 파이프라인에서 강제되어 초과 spawn은 `forbidden`을 반환했습니다. **전역 SUBAGENT lane으로 대체됨**: 초과 spawn은 이제 `PENDING`으로 대기하다 lane slot이 비면 시작합니다 (이 필드는 하위 호환용으로만 유지됩니다). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가 — 둘 다 `PENDING` run을 활성으로 계산합니다 (대기 중인 자식도 admission slot을 점유하므로).
 - **`max_spawn_depth` 기본값 3 → 2, 하드 상한화**: 2 초과 값은 생성과 할당 모두에서 거부; `delegate_task(max_spawn_depth=...)`는 상한 초과 시 `ValueError` 발생. 깊이 트리: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 - **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망. (**2026-10-15 반전**: 기본값이 다시 600초 — 위 노트 참조.)
-- **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: 호출별 `max_concurrent` 오버라이드는 폐기됨 — 전역 동시성은 SUBAGENT lane이 대기열로 처리하므로, 전달해도 `DeprecationWarning`만 발생합니다 (값은 호출별로 적용·복원됨).
 - 이 문서들(en/zh/ko/ja)과 루트 README의 모든 설정 테이블과 다이어그램이 새 기본값으로 동기화되었습니다.
 
@@ -992,7 +991,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 가동 미종료 run의 stale 임계값 |
 | `recent_ended_window_seconds` | 1800 | 최근 종료 표시 윈도우 |
 | `steer_rate_limit_ms` | 2000 | Steer 레이트 리밋 |
-| `archive_after_minutes` | 60 | 자동 아카이브까지의 분 |
 | `attachments_enabled` | True | 첨부 허용 여부 |
 | `attachments_max_files` | 50 | spawn당 최대 파일 수 |
 | `attachments_max_file_bytes` | 1MB | 단일 파일 크기 상한 |

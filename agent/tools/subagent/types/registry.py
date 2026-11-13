@@ -135,7 +135,6 @@ class SubagentRunRecord(BaseModel):
     ended_reason: str | None = None
     pause_reason: str | None = None
     wake_on_descendant_settle: bool = False
-    archive_at: float | None = None
     cleanup_completed_at: float | None = None
     accumulated_runtime_ms: float = 0.0
     ended_hook_emitted: bool = False
@@ -212,22 +211,8 @@ class SubagentRunRecord(BaseModel):
             }
         )
 
-    def rebase_clock(
-        self,
-        now: float,
-        *,
-        archive_window_seconds: float,
-        terminal_at_restore: bool = False,
-    ) -> SubagentRunRecord:
-        """Move every persisted monotonic timestamp onto THIS process's clock.
-
-        ``terminal_at_restore`` marks a run that was ALREADY terminal before the
-        restart: its ``archive_at`` deadline is not extended by a fresh window
-        (it is due now), so frequent restarts cannot keep old terminal rows
-        alive forever. A run that the restore itself terminalizes (PENDING /
-        RUNNING) still gets the full window, or the first sweep would archive
-        it immediately.
-        """
+    def rebase_clock(self, now: float) -> SubagentRunRecord:
+        """Move every persisted monotonic timestamp onto THIS process's clock."""
 
         def _at(value: float | None) -> float | None:
             return now if value is not None else None
@@ -255,18 +240,6 @@ class SubagentRunRecord(BaseModel):
                     self.kill_reconciliation.model_copy(update={"killed_at": now})
                     if self.kill_reconciliation is not None
                     else None
-                ),
-                # A DEADLINE, not a timestamp. A run the RESTORE terminalized
-                # gets a fresh window (rebasing to "now" would archive it on the
-                # first sweep); a run that was already terminal keeps its
-                # elapsed clock, so it is due immediately instead of being
-                # extended by every restart.
-                "archive_at": (
-                    None
-                    if self.archive_at is None
-                    else now
-                    if terminal_at_restore
-                    else now + archive_window_seconds
                 ),
                 "cleanup_completed_at": _at(self.cleanup_completed_at),
             }

@@ -22,7 +22,6 @@
 - **新增全局并发上限**：`max_concurrent = 8` —— 起初在 spawn 管线中强制执行，超限返回 `forbidden`（"Global concurrent ..."）。**已由全局 SUBAGENT lane 取代**：超限 spawn 现在以 `PENDING` 排队，待 lane 空出 slot 后开始执行（该字段仅为向后兼容保留）。registry 新增查询：`count_all_active_runs` / `count_all_active_runs_readonly` —— 两者都把 `PENDING` run 计入活跃，因为排队中的 child 仍占用准入名额。
 - **`max_spawn_depth` 默认 3 → 2，现为硬上限**：构造与赋值均拒绝 > 2；`delegate_task(max_spawn_depth=...)` 超限抛出 `ValueError`。深度树：MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 - **`run_timeout_seconds` 默认 300 → 0.0（无超时）**：spawn 与 steer 直接调用子代理；followup 超时检查跳过；sweeper 的 2 小时 stale 检测仍是兜底。（**2026-10-15 已反转**：默认值恢复为 600 秒——见上方记录。）
-- **`archive_after_minutes` 1440 → 60**。
 - **`delegate_task`**：per-call `max_concurrent` 覆盖，现已被废弃 —— 全局并发由 SUBAGENT lane 排队，传入该参数只会发出 `DeprecationWarning`（值仍会按调用应用并恢复）。
 - 本目录文档（en/zh/ko/ja）及根 README 的全部配置表与图示已同步新默认值。
 
@@ -988,7 +987,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 存活未结束 run 的 stale 阈值 |
 | `recent_ended_window_seconds` | 1800 | 近期结束展示窗口 |
 | `steer_rate_limit_ms` | 2000 | Steer 限流 |
-| `archive_after_minutes` | 60 | 自动归档分钟数 |
 | `attachments_enabled` | True | 是否允许附件 |
 | `attachments_max_files` | 50 | 每次 spawn 最大文件数 |
 | `attachments_max_file_bytes` | 1MB | 单文件大小上限 |

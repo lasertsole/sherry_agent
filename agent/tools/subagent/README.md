@@ -35,7 +35,6 @@
 - **Global concurrency cap added**: `max_concurrent = 8` — originally enforced in the spawn pipeline; excess spawns returned `forbidden` ("Global concurrent ..."). **Superseded by the global SUBAGENT lane**: over-limit spawns now queue as `PENDING` and start when a lane slot frees (the cap field is retained for backward compatibility only). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly` — both count `PENDING` runs as active, since a queued child still holds an admission slot.
 - **`max_spawn_depth` default 3 → 2, now a hard cap**: values > 2 are rejected at construction and assignment; `delegate_task(max_spawn_depth=...)` raises `ValueError` beyond the cap. Depth tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 - **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net. (**Reversed on 2026-10-15**: the default is 600 s again — see the note above.)
-- **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: per-call `max_concurrent` override, now deprecated — global concurrency is queued by the SUBAGENT lane, so passing it only emits a `DeprecationWarning` (the value is still applied and restored per call).
 - All configuration tables and diagrams in these docs (en/zh/ko/ja) plus the root READMEs were synced to the new defaults.
 
@@ -1019,7 +1018,6 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `stale_unended_threshold_seconds` | 7200 | Stale unended run threshold |
 | `recent_ended_window_seconds` | 1800 | Recent ended window for display |
 | `steer_rate_limit_ms` | 2000 | Steer rate limit |
-| `archive_after_minutes` | 60 | Auto-archive after minutes |
 | `attachments_enabled` | True | Whether attachments are allowed |
 | `attachments_max_files` | 50 | Max files per spawn |
 | `attachments_max_file_bytes` | 1MB | Max single file size |

@@ -22,7 +22,6 @@
 - **グローバル同時実行上限を追加**: `max_concurrent = 8` — 当初は spawn パイプラインで強制し、超過 spawn は `forbidden` を返していました。**グローバル SUBAGENT lane に置き換え**: 超過 spawn は `PENDING` としてキューに入り、lane のスロットが空き次第開始します（このフィールドは後方互換のためだけに残っています）。registry に `count_all_active_runs` / `count_all_active_runs_readonly` を追加 — どちらも `PENDING` run をアクティブとして数えます（キュー内の子も admission スロットを占有するため）。
 - **`max_spawn_depth` デフォルト 3 → 2、ハード上限化**：2 超過の値は構築時と代入時の両方で拒否。`delegate_task(max_spawn_depth=...)` は上限超過で `ValueError` を送出。深度ツリー: MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 - **`run_timeout_seconds` デフォルト 300 → 0.0（タイムアウトなし）**：spawn と steer は子を直接呼び出し。followup のタイムアウト検査はスキップ。sweeper の 2 時間 stale 検出が安全網。（**2026-10-15 に反転**：デフォルトは再び 600 秒——上のノート参照。）
-- **`archive_after_minutes` 1440 → 60**。
 - **`delegate_task`**：呼び出し毎の `max_concurrent` オーバーライドは非推奨 — グローバル同時実行は SUBAGENT lane がキューイングするため、渡すと `DeprecationWarning` を出すだけです（値は呼び出し毎に適用・復元されます）。
 - 本ドキュメント群（en/zh/ko/ja）とルート README の全設定テーブル・図を新デフォルト値に同期済み。
 
@@ -997,7 +996,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 稼働未終了ランの stale 閾値 |
 | `recent_ended_window_seconds` | 1800 | 直近終了の表示ウィンドウ |
 | `steer_rate_limit_ms` | 2000 | Steer のレート制限 |
-| `archive_after_minutes` | 60 | 自動アーカイブまでの分数 |
 | `attachments_enabled` | True | 添付を許可するか |
 | `attachments_max_files` | 50 | spawn あたりの最大ファイル数 |
 | `attachments_max_file_bytes` | 1MB | 単一ファイルのサイズ上限 |

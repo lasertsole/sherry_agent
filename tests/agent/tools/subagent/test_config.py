@@ -24,7 +24,6 @@ class TestSubagentConfig:
         assert c.delivery_suspend_hard_cap == 50
         assert c.sweeper_interval_seconds == 60
         assert c.max_concurrent == 8
-        assert c.archive_after_minutes == 60
 
     def test_custom(self):
         c = SubagentConfig(max_spawn_depth=2, max_children_per_agent=10, max_concurrent=10)

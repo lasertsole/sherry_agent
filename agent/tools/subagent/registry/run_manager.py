@@ -210,8 +210,6 @@ def complete_run(
 
     runtime_ms = _compute_accumulated_runtime_ms(run)
     ended_reason = outcome_to_ended_reason(outcome.status).value
-    config = get_config()
-    archive_at = time.monotonic() + config.archive_after_minutes * 60
 
     updated = run.model_copy(
         update={
@@ -231,7 +229,6 @@ def complete_run(
             ),
             "accumulated_runtime_ms": runtime_ms,
             "ended_reason": ended_reason,
-            "archive_at": archive_at,
         }
     )
     memory.set_run(updated)
@@ -276,7 +273,6 @@ def replace_run_after_steer(
             "ended_reason": None,
             "pause_reason": "steer",
             "cleanup_completed_at": None,
-            "archive_at": None,
             "ended_hook_emitted": False,
         }
     )
