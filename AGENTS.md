@@ -1062,8 +1062,17 @@ gotchas), not project conventions (those go to `memory` or the project's
 AGENTS.md). The memory review states this routing; the plan-completion skill review is
 skill-only and does not write FACTS or knowledge, so it never migrates facts.
 
-**Skill review (plan completion).** `_run_skill_review` reads the plan,
-compact success/failure evidence, loaded skills and bounded user corrections, then
+**Skill review (plan completion).** `_run_skill_review` first screens the plan
+with a task-level pre-check (`_judge_task_generalizability`): one short
+auxiliary call receiving only the goal + completed todo summaries (never the
+handoff evidence) answers `{should_extract, reason}`. A false verdict returns
+BEFORE the handoff tree and the review agent are built, and stores the snapshot
+fingerprint as consumed in `skill_review_snapshot_hash` (the same key the
+success path writes), so the same plan never re-runs the pre-check; a
+malformed/unavailable/failed call fails OPEN to extraction. The pre-check judges
+the TASK class — the gap the judge's `reusable` field (which scores the produced
+skill) does not cover. It then reads the plan, compact success/failure evidence,
+loaded skills and bounded user corrections, and
 asks the auxiliary model to update a class-level skill. Its tool face is only
 `skill_list` / `skill_view` / `skill_manage`; knowledge and memory are absent.
 It snapshots `skills/auto`, runs the review, and sends the changed files plus the

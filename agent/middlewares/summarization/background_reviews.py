@@ -123,6 +123,7 @@ from .ptc_compile import (
     _step_task,
 )
 from .skill_review_runner import (
+    _GeneralizabilityVerdict,
     _SKILL_REVIEW_ENABLED,
     _SKILL_REVIEW_FAILED_AT_KEY,
     _SKILL_REVIEW_FAILED_HASH_KEY,
@@ -134,6 +135,7 @@ from .skill_review_runner import (
     _create_skill_review_agent,
     _detect_todo_all_complete,
     _extract_no_op_reason,
+    _judge_task_generalizability,
     _last_ai_text,
     _mark_skill_review_failed,
     _plan_snapshot_hash,

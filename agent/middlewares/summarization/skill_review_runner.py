@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
@@ -13,6 +14,7 @@ from config.features import BACKGROUND_REVIEW_CONFIG
 from runtime import StateKey, state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
 from .skill_review import (
+    _strip_json,
     changed_skill_paths,
     judge_skill_update,
     restore_auto_skills,
@@ -105,8 +107,41 @@ repeat the rejected approach.
 _SKILL_REVIEW_FIRED_KEY = StateKey.SKILL_REVIEW_FIRED
 
 
-#: Fingerprint of the plan content the last SUCCESSFUL extraction consumed.
+#: Fingerprint of the plan content the last extraction CONSUMED — a successful
+#: pass, or a plan the generalizability pre-check judged non-generalizable.
+#: Either way the same plan content must not trigger another review pass.
 _SKILL_REVIEW_SNAPSHOT_HASH_KEY = StateKey.SKILL_REVIEW_SNAPSHOT_HASH
+
+
+#: One cheap pre-check: is this completed plan's task reusable at all?
+_GENERALIZABILITY_PROMPT = """Judge whether this completed plan likely contains
+reusable CLASS-LEVEL knowledge worth extracting into a skill. Answer only with a
+JSON object.
+
+## Plan goal
+{goal}
+
+## Steps
+{steps}
+
+Return: {{"should_extract": true|false, "reason": "one sentence"}}
+
+- false: a one-off fix, a typo in a specific file, environment setup, a
+  project-specific config change, or a task whose procedure only makes sense
+  inside this one plan/session.
+- true: a reusable procedure, pattern, workflow, or toolchain lesson that would
+  help a future task of the same class.
+
+Judge the TASK, not what a skill might be written about it. When in doubt,
+answer true — the full review and its quality judge are the detailed gate."""
+
+
+@dataclass(frozen=True)
+class _GeneralizabilityVerdict:
+    """The pre-check's answer: extract at all, and why."""
+
+    should_extract: bool
+    reason: str
 
 
 _SKILL_REVIEW_FAILED_HASH_KEY = StateKey.SKILL_REVIEW_FAILED_HASH
@@ -310,6 +345,73 @@ def _clear_skill_review_failed(session_id: str) -> None:
     state_register_db.set_state(session_id, _SKILL_REVIEW_FAILED_AT_KEY, 0)
 
 
+def _generalizability_input(context: dict[str, Any]) -> tuple[str, str]:
+    """The bounded view the pre-check receives: the goal + step summaries.
+
+    Deliberately NOT the review's evidence (handoffs, user corrections, changed
+    files): the question is whether the TASK class is reusable, and a shorter
+    prompt keeps the call cheap.
+    """
+    goal = " ".join(str(context.get("plan_content") or "").split())[:1200]
+    steps = [
+        {
+            "task": " ".join(str(todo.get("content") or "").split())[:200],
+            "status": str(todo.get("status") or ""),
+        }
+        for todo in (context.get("todos") or [])[:12]
+    ]
+    return (
+        goal or "(no plan file; the completed todo list below is the plan)",
+        json.dumps(steps, ensure_ascii=False, indent=2),
+    )
+
+
+def _parse_generalizability(text: str) -> _GeneralizabilityVerdict:
+    """Parse the pre-check's JSON answer (raises on a malformed answer)."""
+    data = _strip_json(text)
+    raw = data.get("should_extract")
+    should_extract = raw is True or str(raw).strip().lower() == "true"
+    reason = " ".join(str(data.get("reason") or "").split())[:300]
+    return _GeneralizabilityVerdict(should_extract, reason or "(no reason given)")
+
+
+async def _judge_task_generalizability(context: dict[str, Any]) -> _GeneralizabilityVerdict:
+    """One short auxiliary call: is this plan worth the full review loop?
+
+    The full review costs a multi-turn tool-using agent plus the quality judge;
+    a one-off task ("fix this typo") should not pay that. This pre-check judges
+    the TASK class (the gap the judge's ``reusable`` field does not cover), and
+    an accepted plan still runs the existing review + judge unchanged.
+
+    Fail-open to True: an unavailable or malformed pre-check must never stop the
+    extraction path. The call runs inside the background-review lane, like the
+    review itself, so it cannot bypass the scheduling cap.
+    """
+    goal, steps = _generalizability_input(context)
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from models import build_auxiliary_llm
+
+        async with lane_slot(LaneType.BACKGROUND_REVIEW):
+            model = build_auxiliary_llm(temperature=0)
+            response = await model.ainvoke(
+                [
+                    SystemMessage(content="Return only the requested JSON object."),
+                    HumanMessage(content=_GENERALIZABILITY_PROMPT.format(goal=goal, steps=steps)),
+                ]
+            )
+        raw = response.content if hasattr(response, "content") else str(response)
+        return _parse_generalizability(str(raw))
+    except Exception as exc:  # noqa: BLE001 - a broken pre-check must not block extraction
+        logger.warning(
+            "skill review: generalizability pre-check unavailable ({}: {}); continuing",
+            type(exc).__name__,
+            exc,
+        )
+        return _GeneralizabilityVerdict(True, f"pre-check unavailable ({type(exc).__name__})")
+
+
 async def _run_skill_review(session_id: str) -> None:
     """Run the skill review with judge/rollback/retry.
 
@@ -340,6 +442,20 @@ async def _run_skill_review(session_id: str) -> None:
         snapshot_hash = _plan_snapshot_hash(list(context.get("todos") or []))
         if _skill_review_failure_active(session_id, snapshot_hash):
             logger.debug("skill review: skill-review failure cooldown active for {}", session_id)
+            return
+
+        # Task-level pre-check BEFORE building the review agent: a one-off plan
+        # should not pay a multi-turn agent + judge. Storing the snapshot as
+        # consumed keeps the same plan content from re-running the pre-check on
+        # every turn (the existing fingerprint gate reads this key).
+        verdict = await _judge_task_generalizability(context)
+        if not verdict.should_extract:
+            logger.info(
+                "skill review: skipped for {} — task judged non-generalizable: {}",
+                session_id,
+                verdict.reason,
+            )
+            state_register_db.set_state(session_id, _SKILL_REVIEW_SNAPSHOT_HASH_KEY, snapshot_hash)
             return
 
         # Raw merged tree first (code), then the compact view for the LLM.

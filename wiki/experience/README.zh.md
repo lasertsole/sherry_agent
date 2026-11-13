@@ -43,7 +43,7 @@
 
 `_detect_todo_all_complete(session_id)` 在计划可能完成的每个回合评估，每个完成周期只触发一次：todos 存在且全部为 `completed` / `cancelled`；`skill_review_fired` 尚未设置。它设置 fired 标志，列表不完整时重置；读取全部 fail-open。完成钩子现在每回合检查，短会话也能抽取。
 
-标志本身看不到 completed todo 的原地修改，因此 trigger 还比较 `_plan_snapshot_hash`（id + content + status + plan_ref）与上次**成功** pass 后存入 `skill_review_snapshot_hash` 的值——内容变化才重新抽取，计划未变则跳过，失败 pass 在 cooldown 后重试。
+标志本身看不到 completed todo 的原地修改，因此 trigger 还比较 `_plan_snapshot_hash`（id + content + status + plan_ref）与上次**已消费** pass 后存入 `skill_review_snapshot_hash` 的值（成功抽取，或预判断判定为不可泛化）——内容变化才重新抽取，计划未变则跳过，失败 pass 在 cooldown 后重试。
 
 `skill_review_enabled` 与 `skill_review_enabled` 都开启时，hook 以 fire-and-forget 方式在 BACKGROUND_REVIEW 车道运行 `_run_skill_review`：
 
@@ -53,6 +53,8 @@
 4. Prompt 明确映射证据：`success_steps` → 步骤/验证，`failed_branches` → pitfalls / `when_not_to_use`，`hard_constraints` → guardrails，`locked_decisions` → rationale，`user_corrections` → body / `when_to_use`。优先 patch 本次加载的 skill，其次已有类级 umbrella，再次支持文件，最后才新建类级 skill。只有带具体理由才允许 no-op。
 
 实现细节：`summarization/background_reviews.py` 的 `_run_skill_review` 使用 `_create_skill_review_agent`，在 `skill_review_lock` 下运行；`state_register_db` 保存指纹，`outcome` 来自 subagent runs，失败标志为 `False`。
+
+在 LLM 工作之前，一次**任务级预判断**（`_judge_task_generalizability`）先筛选计划：一次简短的辅助模型调用只收到计划目标与已完成 todo 摘要（不含 handoff 证据），回答 `{"should_extract": bool, "reason": str}`。返回 `false` 时在构建 handoff tree 与评审 agent 之前直接返回，并把快照指纹记为已消费——即成功路径写的同一个 `skill_review_snapshot_hash`——因此同一计划不会重复预判断。预判断返回格式错误、不可用或调用失败时**fail-open 为继续抽取**：完整评审与质量 judge 仍负责技能内容质量，预判断只决定「任务类别」是否值得评审。
 
 技能评审以 snapshot/judge 事务运行：
 

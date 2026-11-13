@@ -51,6 +51,11 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
+    async def _generalizable(_context):
+        return review_mod._GeneralizabilityVerdict(True, "reusable procedure")
+
+    monkeypatch.setattr(review_mod, "_judge_task_generalizability", _generalizable)
+
 
 class _FakeStateDB:
     """In-memory stand-in for the durable register (``state_register_db``)."""

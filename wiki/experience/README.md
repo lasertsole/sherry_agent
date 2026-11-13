@@ -48,7 +48,7 @@ This document covers the experience system: **when** the agent extracts experien
 
 It sets the fired flag on the transition and resets it to `False` whenever the list is not all-complete, so a later all-complete cycle fires again. Reads are fail-open. Detection runs on EVERY turn whose plan is complete (the completion hook), so a short session extracts too.
 
-The flag alone cannot see an in-place edit of a completed todo, so the trigger also compares a plan **snapshot fingerprint** (`_plan_snapshot_hash`: id + content + status + plan_ref) against the one stored under `skill_review_snapshot_hash` after the last SUCCESSFUL pass — changed content re-extracts, an unchanged plan is skipped, and a failed pass retries after the failure cooldown.
+The flag alone cannot see an in-place edit of a completed todo, so the trigger also compares a plan **snapshot fingerprint** (`_plan_snapshot_hash`: id + content + status + plan_ref) against the one stored under `skill_review_snapshot_hash` after the last CONSUMED pass (a successful extraction, or a plan the generalizability pre-check judged non-generalizable) — changed content re-extracts, an unchanged plan is skipped, and a failed pass retries after the failure cooldown.
 
 When `skill_review_enabled` is on, `_run_skill_review` is dispatched fire-and-forget by the hook and runs under `skill_review_lock` on the BACKGROUND_REVIEW lane:
 
@@ -56,6 +56,8 @@ When `skill_review_enabled` is on, `_run_skill_review` is dispatched fire-and-fo
 2. Before the LLM, the raw merged handoff tree is written atomically to `handoff-tree.json` for audit. It is NOT a model-facing knowledge read path.
 3. The prompt `_SKILL_REVIEW_PROMPT` is rendered with the compact context and sent to a dedicated agent (`_create_skill_review_agent`: the AUXILIARY model at `temperature=0`) — with **no conversation at all**. Its tool face is bound explicitly to `skill_list` / `skill_view` / `skill_manage`; `knowledge` and `memory` are absent, so this pass cannot write knowledge or FACTS.
 4. The prompt maps evidence explicitly: `success_steps` -> procedure / verification steps, `failed_branches` -> pitfalls / `when_not_to_use`, `hard_constraints` -> guardrails, `locked_decisions` -> rationale, `user_corrections` -> body / `when_to_use`. It prefers a loaded skill, then an existing class-level umbrella, then a support file, and only then a new class-level skill. A no-op is allowed only with a concrete reason.
+
+Before the LLM work, a **task-level pre-check** (`_judge_task_generalizability`) screens the plan once: one short auxiliary call receives only the plan goal and the completed todo summaries (never the handoff evidence) and answers `{"should_extract": bool, "reason": str}`. A `false` verdict returns before the handoff tree and the review agent are built and stores the snapshot fingerprint as consumed — the same `skill_review_snapshot_hash` the success path writes — so the same plan never re-runs the pre-check. A malformed, unavailable or failed pre-check fails OPEN to extraction: the full review plus its quality judge still own skill-content quality, and the pre-check only decides whether the TASK class is worth reviewing at all.
 
 The review runs as a snapshot/judge transaction:
 

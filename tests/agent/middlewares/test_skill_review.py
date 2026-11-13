@@ -88,6 +88,13 @@ def loop_env(monkeypatch):
     )
     monkeypatch.setattr(reviews, "_create_skill_review_agent", _create)
     monkeypatch.setattr(reviews, "judge_skill_update", _judge)
+
+    # The task-level pre-check is its own unit (below); the loop tests always
+    # pass it unless the test overrides this seam.
+    async def _generalizable(_context):
+        return reviews._GeneralizabilityVerdict(True, "reusable procedure")
+
+    monkeypatch.setattr(reviews, "_judge_task_generalizability", _generalizable)
     monkeypatch.setattr(reviews, "snapshot_auto_skills", lambda: SkillTreeSnapshot())
     monkeypatch.setattr(
         reviews,
@@ -246,3 +253,123 @@ async def test_a_compile_failure_does_not_fail_the_skill_review(loop_env, monkey
 
     assert loop_env["restores"] == []
     assert loop_env["db"].get_state("s-compile-fail", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY)
+
+
+# ── task-level generalizability pre-check ────────────────────────────────────
+
+
+class _JsonModel:
+    """One auxiliary response (or an exception) for the pre-check."""
+
+    def __init__(self, content: str = "", error: Exception | None = None):
+        self.content = content
+        self.error = error
+
+    async def ainvoke(self, _messages):
+        if self.error is not None:
+            raise self.error
+        return AIMessage(content=self.content)
+
+
+def _patch_precheck_model(monkeypatch, model: _JsonModel) -> None:
+    monkeypatch.setattr("models.build_auxiliary_llm", lambda **_kwargs: model)
+
+
+@pytest.mark.asyncio
+async def test_a_non_generalizable_task_skips_the_agent_and_the_judge(loop_env, monkeypatch):
+    async def _no(_context):
+        return reviews._GeneralizabilityVerdict(False, "one-off README typo")
+
+    monkeypatch.setattr(reviews, "_judge_task_generalizability", _no)
+
+    await reviews._run_skill_review("s-skip")
+
+    assert loop_env["prompts"] == [], "no review agent may be built"
+    assert loop_env["judgements"] == [], "no judge call may run"
+    # The plan is consumed: the same content must not re-run the pre-check.
+    assert loop_env["db"].get_state("s-skip", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY) == (
+        reviews._plan_snapshot_hash([])
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_generalizable_task_still_runs_the_review(loop_env):
+    """The pre-check passing must leave the existing review + judge flow intact."""
+    loop_env["payloads"].append('{"status":"no_op","reason":"nothing new"}')
+    loop_env["judgements"].append(
+        SkillJudgement(
+            passed=True,
+            verdict="pass",
+            grounded_in_run=True,
+            reusable=True,
+            trigger_quality=8,
+            quality=8,
+            no_op_justified=True,
+            feedback="",
+        )
+    )
+
+    await reviews._run_skill_review("s-generalizable")
+
+    assert len(loop_env["prompts"]) == 1, "the review agent must still run"
+    assert loop_env["db"].get_state(
+        "s-generalizable", reviews._SKILL_REVIEW_SNAPSHOT_HASH_KEY
+    ) == reviews._plan_snapshot_hash([])
+
+
+@pytest.mark.asyncio
+async def test_the_precheck_parses_a_false_verdict(monkeypatch):
+    _patch_precheck_model(
+        monkeypatch,
+        _JsonModel('{"should_extract": false, "reason": "one-off typo fix"}'),
+    )
+
+    verdict = await reviews._judge_task_generalizability(
+        {"plan_content": "Fix the README typo", "todos": []}
+    )
+
+    assert verdict.should_extract is False
+    assert "typo" in verdict.reason
+
+
+@pytest.mark.asyncio
+async def test_the_precheck_fails_open_on_a_malformed_answer(monkeypatch):
+    _patch_precheck_model(monkeypatch, _JsonModel("not json at all"))
+
+    verdict = await reviews._judge_task_generalizability({"plan_content": "x", "todos": []})
+
+    assert verdict.should_extract is True
+    assert "unavailable" in verdict.reason
+
+
+@pytest.mark.asyncio
+async def test_the_precheck_fails_open_when_the_model_raises(monkeypatch):
+    _patch_precheck_model(monkeypatch, _JsonModel(error=RuntimeError("no key")))
+
+    verdict = await reviews._judge_task_generalizability({"plan_content": "x", "todos": []})
+
+    assert verdict.should_extract is True
+
+
+@pytest.mark.asyncio
+async def test_the_precheck_sees_only_the_goal_and_step_summaries(monkeypatch):
+    captured: dict[str, str] = {}
+
+    class _Capture(_JsonModel):
+        async def ainvoke(self, messages):
+            captured["content"] = messages[-1].content
+            return await super().ainvoke(messages)
+
+    _patch_precheck_model(monkeypatch, _Capture())
+
+    await reviews._judge_task_generalizability(
+        {
+            "plan_content": "Build the project CI pipeline",
+            "todos": [{"content": "write the workflow", "status": "completed"}],
+            "aggregated_handoff": {"secret_marker": "SHOULD_NOT_APPEAR"},
+        }
+    )
+
+    assert "Build the project CI pipeline" in captured["content"]
+    assert "write the workflow" in captured["content"]
+    assert "SHOULD_NOT_APPEAR" not in captured["content"]

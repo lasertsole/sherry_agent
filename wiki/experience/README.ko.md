@@ -43,7 +43,7 @@
 
 `_detect_todo_all_complete(session_id)`는 플랜이 완료될 수 있는 각 턴에서 평가되고 완료 사이클마다 한 번 발화합니다: todos가 존재하고 모두 `completed` / `cancelled`이며 `skill_review_fired`가 설정되지 않음. fired 플래그를 세우고 목록이 불완전해지면 리셋합니다. 읽기는 fail-open이며, 완료 훅이 매 턴 확인하므로 짧은 세션도 추출됩니다.
 
-플래그만으로는 completed todo의 in-place 편집을 볼 수 없으므로 `_plan_snapshot_hash`(id + content + status + plan_ref)를 마지막 **성공** pass의 `skill_review_snapshot_hash`와 비교합니다. 내용이 바뀌면 다시 추출하고, 그대로면 건너뛰며, 실패 pass는 cooldown 후 재시도합니다.
+플래그만으로는 completed todo의 in-place 편집을 볼 수 없으므로 `_plan_snapshot_hash`(id + content + status + plan_ref)를 마지막 **소비된** pass(성공한 추출 또는 사전 판단이 비일반화로 판정한 계획)의 `skill_review_snapshot_hash`와 비교합니다. 내용이 바뀌면 다시 추출하고, 그대로면 건너뛰며, 실패 pass는 cooldown 후 재시도합니다.
 
 `skill_review_enabled`와 `skill_review_enabled`가 켜져 있으면 hook이 BACKGROUND_REVIEW 레인에서 `_run_skill_review`을 fire-and-forget으로 실행합니다:
 
@@ -53,6 +53,8 @@
 4. Prompt는 증거를 명시적으로 매핑합니다: `success_steps` → 절차/검증, `failed_branches` → pitfalls / `when_not_to_use`, `hard_constraints` → guardrails, `locked_decisions` → rationale, `user_corrections` → body / `when_to_use`. 이번에 로드한 skill, 기존 class-level umbrella, support file, 마지막으로 새 class-level skill 순서. 구체적 이유가 있는 no-op만 허용합니다.
 
 구현: `summarization/background_reviews.py`의 `_run_skill_review`이 `_create_skill_review_agent`를 `skill_review_lock` 아래에서 사용합니다. `state_register_db`가 지문을 저장하고, `outcome`은 subagent runs에서 오며, 실패 플래그는 `False`입니다.
+
+LLM 작업 전에 **작업 수준 사전 판단**(`_judge_task_generalizability`)이 계획을 한 번 선별합니다. 짧은 보조 모델 호출 한 번에 계획 목표와 완료된 todo 요약만 전달하고(handoff 증거는 제외) `{"should_extract": bool, "reason": str}`를 받습니다. `false`이면 handoff tree와 리뷰 에이전트를 만들기 전에 반환하고 스냅샷 지문을 소비됨으로 기록합니다——성공 경로가 쓰는 것과 같은 `skill_review_snapshot_hash`——따라서 같은 계획에서 사전 판단이 다시 실행되지 않습니다. 응답이 잘못되었거나 사용할 수 없거나 호출이 실패하면 **추출을 계속하는 fail-open**입니다. 스킬 내용 품질은 기존의 전체 리뷰와 judge가 담당하고, 사전 판단은 "작업 종류"가 리뷰할 가치가 있는지만 결정합니다.
 
 스킬 리뷰는 snapshot/judge 트랜잭션으로 실행됩니다:
 
