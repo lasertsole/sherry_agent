@@ -121,8 +121,17 @@ def _hermetic_sandbox_policy(monkeypatch):
     from the environment. Tests that assert a specific policy (the sandbox matrix,
     the REQUIRED denials) patch ``read_policy`` themselves — their patch lands
     after this fixture and wins.
+
+    The suite also pretends a usable OS sandbox exists (``sandbox_degraded``
+    False): most tests predate the H3 approval routing and would otherwise start
+    asking for an operator merely because the CI host cannot run bwrap. The H3
+    tests override these two predicates explicitly.
     """
     monkeypatch.setenv("SANDBOX_POLICY", "auto")
+    import agent.tools.pub_base.sandbox as sandbox
+
+    monkeypatch.setattr(sandbox, "sandbox_degraded", lambda requested=True: False)
+    monkeypatch.setattr(sandbox, "sandbox_effective", lambda requested=True: bool(requested))
 
 
 @pytest.fixture(autouse=True)

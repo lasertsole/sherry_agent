@@ -3074,6 +3074,15 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
+  H3: on an `auto` policy with NO usable backend, a `sandbox=True` terminal /
+  python_repl call is routed through the existing sandbox-bypass HITL card
+  BEFORE the tool runs (`sandbox_degraded()`; the card says OS sandbox
+  unavailable); confirm-all keeps its own card and appends the note; a headless
+  turn auto-denies; YOLO keeps bypassing by design and `set_access_mode` logs a
+  warning when full access is activated without a sandbox. `off` keeps its
+  no-approval semantics and `required` still refuses in the tool layer. The
+  child chain, background graphs and PTC carry no HITL middleware, so they
+  keep the tool-layer warning-degrade path.
   The `sandbox` switch is SERVER-owned since the 2026-11-09 audit (H2): it is
   NOT in the model-facing `SafeShellInput` / `PythonReplInput` schemas (a forged
   argument is dropped by validation), while internal `_run(sandbox=False)`

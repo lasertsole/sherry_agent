@@ -177,11 +177,11 @@ Authoritative table from `agent/tools/pub_base/sandbox.py`, tested cell-by-cell 
 | 2 | `required` | `True` | no | any | `RuntimeError` / tool error; nothing is spawned |
 | 3 | `required` | `False` | (not consulted) | any | Tool-layer `ToolException`, never a `GraphInterrupt`; no spawn |
 | 4 | `auto` | `False` | (not consulted) | main, non-YOLO | HITL interrupt: approve → executes (still scrubbed), reject → error `ToolMessage` |
-| 5 | `auto` | `True` | no | any | Degrade: direct unsandboxed execution, exactly one warning, env still scrubbed |
+| 5 | `auto` | `True` | no | main (non-YOLO) | Degrade: HITL sandbox-bypass card first; approve → unsandboxed execution (env still scrubbed), reject/headless → denied. Exactly one INFO line |
 | 6 | `off` | `True` / `False` | never probed | main | No sandbox, no approval, no warning; executes directly |
 
 Notes:
 
 - `auto` + `True` + available backend behaves like cell 1: sandboxed via the backend wrap.
-- The caller-scope guard is a tool-layer check that runs before policy handling: any non-main scope (`subagent`, `background`) requesting `sandbox=False` is hard-rejected with a `ToolException` under every policy, because no approval interrupt exists in those graphs. Cell 4's interrupt therefore only fires for main-scope calls.
+- The caller-scope guard is a tool-layer check that runs before policy handling: any non-main scope (`subagent`, `background`) requesting `sandbox=False` is hard-rejected with a `ToolException` under every policy, because no approval interrupt exists in those graphs. Cell 4's interrupt therefore only fires for main-scope calls; the cell-5 degradation card does the same, while non-main scope keeps the tool-layer warning-degrade.
 - **PTC (`execute_code`)** is not shown as its own row because it exposes no `sandbox` flag: every run behaves like the `sandbox=True` column. `required` + no backend returns `sandbox_unavailable` (the cell-2 analog, refused before any spawn); `auto` + no backend degrades with one warning (the cell-5 analog); `off` never wraps.

@@ -16,7 +16,8 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   5: inheriting the server's launch directory is a defect).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
   interpreter argv is wrapped via ``backend.wrap`` (list exec form); backend
-  ``None`` degrades to the direct spawn with one loguru warning line.
+  ``None`` degrades to the direct spawn (HITL-gated on the main path) with one
+  loguru info line.
 """
 
 from __future__ import annotations
@@ -162,7 +163,8 @@ def _run_with_timeout(
     - ``sandbox=True`` + policy != OFF: ``get_backend`` resolves the OS
       sandbox — a usable backend wraps the interpreter argv (list exec form,
       no shell); ``None`` degrades to the direct unsandboxed spawn with one
-      loguru warning line. ``REQUIRED`` + unavailable backend raises
+      loguru info line (the HITL middleware already asked for approval when an
+      operator is in scope). ``REQUIRED`` + unavailable backend raises
       ``RuntimeError`` (surfaced as a tool error via ``handle_tool_error``).
 
     Extra ``**kwargs`` are absorbed for forward compatibility (/9 may
@@ -195,9 +197,10 @@ def _run_with_timeout(
                 argv, env = backend.wrap(argv, env, roots)
                 ran_sandboxed = True
             else:
-                logger.warning(
-                    "python_repl: sandbox requested but no backend available "
-                    f"(policy={policy.value}) — degrading to unsandboxed execution"
+                logger.info(
+                    "python_repl: sandbox unavailable "
+                    f"(policy={policy.value}) — running unsandboxed "
+                    "(HITL-gated when an operator is in scope)"
                 )
 
     proc: subprocess.Popen[bytes] | None = None

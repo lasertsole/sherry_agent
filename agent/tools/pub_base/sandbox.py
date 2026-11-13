@@ -63,6 +63,8 @@ __all__ = [
     "read_policy",
     "register_sandbox_backend",
     "get_backend",
+    "sandbox_degraded",
+    "sandbox_effective",
     "with_own_session_root",
 ]
 
@@ -336,3 +338,42 @@ def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     if policy is SandboxPolicy.REQUIRED:
         raise RuntimeError(f"Required sandbox unavailable on {system}")
     return None
+
+
+def sandbox_effective(requested: bool = True) -> bool:
+    """Whether OS sandboxing will actually be used for this call.
+
+    Returns ``False`` when the caller did not request sandboxing, the policy is
+    ``OFF``, or the policy is ``REQUIRED``/``AUTO`` and no usable backend exists
+    on this platform. ``REQUIRED`` + unavailable normally raises from
+    :func:`get_backend`; it is caught here because the middleware only asks
+    whether isolation will happen, not whether the call should be refused (the
+    tool layer still raises the required-policy error).
+
+    The backend's own ``probe()`` is cached per process, so this is cheap on the
+    approval path.
+    """
+    if not requested:
+        return False
+    policy = read_policy()
+    if policy is SandboxPolicy.OFF:
+        return False
+    try:
+        return get_backend(policy) is not None
+    except RuntimeError:
+        return False
+
+
+def sandbox_degraded(requested: bool = True) -> bool:
+    """Whether a REQUESTED sandbox will silently degrade to unsandboxed.
+
+    This is the H3 approval predicate: only ``AUTO`` + no usable backend
+    degrades. It deliberately excludes:
+
+    * ``sandbox=False`` — the explicit bypass has its own approval card;
+    * ``SANDBOX_POLICY=off`` — the operator chose no sandboxing (no approval);
+    * ``SANDBOX_POLICY=required`` — the tool layer refuses the call outright.
+    """
+    if not requested:
+        return False
+    return read_policy() is SandboxPolicy.AUTO and not sandbox_effective(True)

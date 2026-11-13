@@ -126,12 +126,25 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             ctx.outcome.deny(tool_call, tool_name, result.reason)
             return True
 
-        # Sandbox-bypass approval gates ALL sandbox=False executions —
-        # including the dangerous-command interrupt below, whose approve
-        # path would otherwise skip the bypass. The tool layer's
-        # scope/policy denial is NOT repeated here — _deny_sandbox_bypass
-        # in terminal.py owns it and raises ToolException at execution.
-        if not is_yolo_mode(mw.config, ctx.session_id) and not tool_args.get("sandbox", True):
+        # Sandbox-bypass approval gates explicit sandbox=False executions AND
+        # the H3 degradation path: sandbox=True on an AUTO policy with no
+        # usable backend runs unsandboxed, so the operator must approve it
+        # before the tool's silent fallback happens. OFF and REQUIRED are NOT
+        # routed here (OFF is the operator's choice, REQUIRED refuses in the
+        # tool layer). Confirm-all already asks for every command via Layer 4,
+        # so the degraded call falls through and that card carries the note.
+        requested_sandbox = bool(tool_args.get("sandbox", True))
+        from agent.tools.pub_base.sandbox import sandbox_degraded
+
+        sandbox_degraded_to_unsandboxed = sandbox_degraded(requested_sandbox)
+        confirm_all = is_confirm_all_mode(mw.config, ctx.session_id)
+
+        # The tool layer's scope/policy denial is NOT repeated here —
+        # _deny_sandbox_bypass in terminal.py owns it and raises ToolException
+        # at execution.
+        if not is_yolo_mode(mw.config, ctx.session_id) and (
+            not requested_sandbox or (sandbox_degraded_to_unsandboxed and not confirm_all)
+        ):
             if mw._turn_operator(ctx.state) is None:
                 ctx.outcome.deny(tool_call, tool_name, _auto_deny_content())
                 return True
@@ -159,7 +172,7 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             not result.approved
             and mw.config.mode == ApprovalMode.SMART
             and not clawhub_tag
-            and not is_confirm_all_mode(mw.config, ctx.session_id)
+            and not confirm_all
         ):
             smart = mw.approval.smart_approve(command)
             if smart == SmartApprovalResult.APPROVE:
@@ -175,17 +188,16 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             if mw._turn_operator(ctx.state) is None:
                 ctx.outcome.deny(tool_call, tool_name, _auto_deny_content())
                 return True
-            description = (
-                f"clawhub remote npm execution ({clawhub_tag}): {command}"
-                if clawhub_tag
-                else (
-                    f"Confirm-all mode: approval needed before running: {command}"
-                    if is_confirm_all_mode(mw.config, ctx.session_id)
-                    else f"Dangerous command: {command}"
-                )
-            )
+            if clawhub_tag:
+                description = f"clawhub remote npm execution ({clawhub_tag}): {command}"
+            elif confirm_all:
+                description = f"Confirm-all mode: approval needed before running: {command}"
+                if sandbox_degraded_to_unsandboxed:
+                    description += " (sandbox unavailable — runs unsandboxed)"
+            else:
+                description = f"Dangerous command: {command}"
             is_dangerous = bool(detect_dangerous_command(command))
-            is_confirm_all = is_confirm_all_mode(mw.config, ctx.session_id)
+            is_confirm_all = confirm_all
             # Only an ordinary command that reached the card may write a session
             # cache. Dangerous commands, confirm-all and clawhub remote execution
             # always ask again.
@@ -257,11 +269,14 @@ class SandboxBypassApprovalHandler(ToolApprovalHandler):
 
     def matches(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
         mw = ctx.mw
-        return (
-            tool_call.get("name", "") == "python_repl"
-            and not is_yolo_mode(mw.config, ctx.session_id)
-            and not tool_call.get("args", {}).get("sandbox", True)
-        )
+        if tool_call.get("name", "") != "python_repl" or is_yolo_mode(mw.config, ctx.session_id):
+            return False
+        requested = bool(tool_call.get("args", {}).get("sandbox", True))
+        if not requested:
+            return True
+        from agent.tools.pub_base.sandbox import sandbox_degraded
+
+        return sandbox_degraded(requested)
 
     def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
         tool_name: str = tool_call.get("name", "")

@@ -140,9 +140,9 @@ class _FakeBackend:
 
 @pytest.fixture
 def log_capture():
-    """Capture loguru warning lines (loguru does not propagate to stdlib caplog)."""
+    """Capture loguru INFO+ lines (loguru does not propagate to stdlib caplog)."""
     messages: list[str] = []
-    sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    sink_id = logger.add(lambda m: messages.append(str(m)), level="INFO")
     yield messages
     logger.remove(sink_id)
 
@@ -577,7 +577,7 @@ class TestWindowsFallback:
         tool._run(["echo ok"])
         assert len(record) == 1
 
-    def test_auto_degrade_emits_exactly_one_warning(self, monkeypatch, log_capture):
+    def test_auto_degrade_emits_exactly_one_info_line(self, monkeypatch, log_capture):
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
@@ -587,8 +587,9 @@ class TestWindowsFallback:
 
         tool._run(["echo ok"])
 
-        warnings = [m for m in log_capture if "degrad" in m.lower()]
-        assert len(warnings) == 1, f"exactly ONE degrade warning expected, got {warnings!r}"
+        degraded = [m for m in log_capture if "sandbox unavailable" in m.lower()]
+        assert len(degraded) == 1, f"exactly ONE degrade info line expected, got {degraded!r}"
+        assert "unsandboxed" in degraded[0]
         assert len(record) == 1, "degrade still executes via the fallback path"
 
 

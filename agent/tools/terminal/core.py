@@ -21,7 +21,8 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
   command is exec'd in list form via ``backend.wrap(["/bin/sh", "-c", ...])``
   (semantically identical to POSIX ``shell=True``); backend ``None``
-  (Windows / unavailable) degrades to the byte-identical pre-existing path
+  (Windows / unavailable) degrades to the byte-identical pre-existing path;
+  on the HITL path the degradation is approved BEFORE the tool runs
   (str join + ``shell=True`` / ``create_subprocess_shell``) with ONLY
   ``env=`` added, plus one loguru warning line for the AUTO degrade.
 - REQUIRED + unavailable backend: ``get_backend``'s RuntimeError is wrapped
@@ -441,7 +442,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
 
         Returns ``(None, env)`` when the shell fallback must be used: policy
         OFF (get_backend never consulted) or no usable backend (ONE loguru
-        degrade warning line — the tool layer owns it, get_backend stays
+        degrade info line — the tool layer owns it, get_backend stays
         silent). REQUIRED + unavailable raises RuntimeError inside
         get_backend, wrapped here into a ToolException so
         handle_tool_error=True surfaces it as a tool error.
@@ -454,9 +455,10 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         except RuntimeError as exc:
             raise ToolException(str(exc)) from exc
         if backend is None:
-            logger.warning(
-                "terminal: sandbox requested but no backend available "
-                f"(policy={policy.value}) — degrading to unsandboxed shell execution"
+            logger.info(
+                "terminal: sandbox unavailable "
+                f"(policy={policy.value}) — running unsandboxed "
+                "(HITL-gated when an operator is in scope)"
             )
             return None, env
         # List-exec form for the sandbox: ["/bin/sh", "-c", cmd] is

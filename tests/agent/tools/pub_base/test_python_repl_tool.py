@@ -263,21 +263,22 @@ def test_policy_off_never_touches_backend(monkeypatch: pytest.MonkeyPatch):
     assert isinstance(calls[0]["args"][0], list)
 
 
-def test_auto_degrade_emits_one_loguru_warning(monkeypatch: pytest.MonkeyPatch):
+def test_auto_degrade_emits_one_loguru_info_line(monkeypatch: pytest.MonkeyPatch):
     _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
     _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     records: list[str] = []
-    sink_id = python_repl.logger.add(records.append, level="WARNING")
+    sink_id = python_repl.logger.add(records.append, level="INFO")
     try:
         tool = build_python_repl_tool()
         tool.run({"query": "print(1+1)"})
     finally:
         python_repl.logger.remove(sink_id)
 
-    degrade_lines = [r for r in records if "sandbox" in r and "degrad" in r]
+    degrade_lines = [r for r in records if "sandbox unavailable" in r]
     assert len(degrade_lines) == 1
+    assert "unsandboxed" in degrade_lines[0]
 
 
 # ---------------------------------------------------------------------------

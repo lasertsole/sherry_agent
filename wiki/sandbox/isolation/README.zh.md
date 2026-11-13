@@ -177,7 +177,7 @@ bwrap
 | 2 | `required` | `True` | 否 | 任意 | `RuntimeError` / 工具错误；不产生任何子进程 |
 | 3 | `required` | `False` | （不查询） | 任意 | 工具层 `ToolException`，绝不是 `GraphInterrupt`；不产生子进程 |
 | 4 | `auto` | `False` | （不查询） | 主会话，非 YOLO | HITL 中断：批准 → 执行（仍清洗），拒绝 → 错误 `ToolMessage` |
-| 5 | `auto` | `True` | 否 | 任意 | 降级：直接无沙箱执行，恰好一条警告，环境仍然清洗 |
+| 5 | `auto` | `True` | 否 | 主会话（非 YOLO） | 降级：先弹沙箱绕过 HITL 卡；批准 → 无沙箱执行（环境仍清洗），拒绝/headless → 拒绝。恰好一条 INFO 日志 |
 | 6 | `off` | `True` / `False` | 从不探测 | 主会话 | 无沙箱、无审批、无警告；直接执行 |
 
 补充说明：

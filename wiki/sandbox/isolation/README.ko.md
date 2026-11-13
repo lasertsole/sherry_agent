@@ -177,7 +177,7 @@ bwrap
 | 2 | `required` | `True` | 아니오 | 모두 | `RuntimeError` / 도구 오류, 아무것도 생성되지 않음 |
 | 3 | `required` | `False` | (조회 안 함) | 모두 | 도구 계층 `ToolException`, 절대 `GraphInterrupt` 아님, 생성 없음 |
 | 4 | `auto` | `False` | (조회 안 함) | 메인, 비-YOLO | HITL 인터럽트: 승인 → 실행(여전히 세척), 거부 → 오류 `ToolMessage` |
-| 5 | `auto` | `True` | 아니오 | 모두 | 강등: 샌드박스 없이 직접 실행, 정확히 한 번의 경고, env는 여전히 세척 |
+| 5 | `auto` | `True` | 아니오 | 메인(비 YOLO) | 강등: 먼저 샌드박스 우회 HITL 카드; 승인 → 샌드박스 없이 실행(env는 세척), 거부/헤드리스 → 거부. INFO는 정확히 한 줄 |
 | 6 | `off` | `True` / `False` | 프로브 안 함 | 메인 | 샌드박스 없음, 승인 없음, 경고 없음, 그대로 실행 |
 
 참고:

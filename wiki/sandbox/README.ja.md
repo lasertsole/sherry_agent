@@ -50,10 +50,10 @@
 | 値 | 意味 |
 | :- | :--- |
 | `required`（推奨デプロイ値。同梱 `.env` は `auto`） | バックエンド利用不可 ⇒ コマンドを拒否、サンドボックスなしでは決して実行しない |
-| `auto` | バックエンド利用不可 ⇒ 警告1件とともにサンドボックスなし実行へ降格（裸実行。証拠台帳に記録される） |
+| `auto` | バックエンド利用不可 ⇒ メインセッションの対話呼び出しはサンドボックス迂回 HITL カードで承認を求める（ヘッドレスは自動拒否、confirm-all のカードには注記）。PTC は警告付き降格のまま |
 | `off` | サンドボックス完全無効 |
 
-環境変数が未設定のときの `read_policy()` のフォールバックは依然 `auto` です（稼働中のインストールは自分の設定を維持します）。一方、同梱 `.env` の値は `auto` です。デプロイでは `required` を明示してください — バックエンドが動かないホストでは `auto` がすべてのシェルコマンドを黙って非サンドボックス実行に変えてしまうからです。これは仮定ではなく実測です：**カーネルが user namespace をサポートしない**ホスト（Ubuntu 24.04 の既定 AppArmor ポリシー、PRoot/コンテナホスト）では `bwrap` バイナリは存在しても機能しません。起動時に実際のポリシーとバックエンドを出力し（`sandbox: policy=… backend=… available=…`）、`required` が満たされない場合は ERROR と修復コマンドを出し、`SANDBOX_STRICT_BOOT=1` なら起動自体を拒否します。実行中は `GET /sandbox/status` が同じ状態を返します。
+環境変数が未設定のときの `read_policy()` のフォールバックは依然 `auto` です（稼働中のインストールは自分の設定を維持します）。一方、同梱 `.env` の値は `auto` です。デプロイでは `required` を明示してください — バックエンドが動かないホストでは `auto` がすべての対話的シェルコマンドを承認カード経由にし（ヘッドレスは拒否）、PTC は警告付きで降格するからです。これは仮定ではなく実測です：**カーネルが user namespace をサポートしない**ホスト（Ubuntu 24.04 の既定 AppArmor ポリシー、PRoot/コンテナホスト）では `bwrap` バイナリは存在しても機能しません。起動時に実際のポリシーとバックエンドを出力し（`sandbox: policy=… backend=… available=…`）、`required` が満たされない場合は ERROR と修復コマンドを出し、`SANDBOX_STRICT_BOOT=1` なら起動自体を拒否します。実行中は `GET /sandbox/status` が同じ状態を返します。
 
 `parse_policy` は空白を除去し大小文字を無視してマッチし、未知の値には `ValueError` を送出します: 誤入力された安全設定は大きな音で失敗すべきで、黙ってデフォルトにフォールバックしてはいけません。`read_policy()` は**毎回** `os.getenv` を呼びます(インポート時キャッシュなし)。そのためランタイムの変更が即座に反映されます。
 
@@ -76,14 +76,14 @@
 
 - **サンドボックス経路**: terminal は `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True` と意味的に同一)、python_repl と PTC の子も同様です。包まれた argv は list として exec され、シェル kwargs は一切ありません。`roots` は**セッションのプロジェクトディレクトリ**(`current_project_dir(session_id)` / PTC 子の cwd)で、コマンドの cwd と同じ出所です — だから書き込み面と作業ディレクトリが食い違うことはありません。リポジトリ外に束ねたプロジェクトディレクトリは書き込み可能になり(以前は EROFS)、リポジトリ自体は書き込み不可になります(以前は可能で、それが terminal で外部パスゲートを迂回する経路でした)。`terminal` と `python_repl` はさらにそのセッション自身の `SESSIONS_DIR/<session_id>` ツリー(`with_own_session_root`、必要時に作成)を追加します — ファイルツールが HITL なしで読み書きできる私有の実行状態であり、プロジェクトが別の場所に束ねられていても自分のファイルの作成・変更・削除(`rm`)ができます。追加されるのは**その 1 つ**のセッションディレクトリだけで、共有 sessions ルートと他のセッションは読み取り専用のままです。PTC は自身の cwd を保ちます。
 - **裸実行は記録される**: 証拠台帳の行は `sandboxed: false` を運び、サンドボックス迂回の承認カードは `⚠ UNSANDBOXED` とその意味を明示します — 承認する人に見え、後から台帳を監査しても見つかります。
-- **フォールバック経路(Windows / バックエンドなし)**: terminal はコマンドを `" && "` で連結して `shell=True` で起動し、python_repl は `[sys.executable, "-c", script]` を list として起動します。Windows には OS サンドボックスバックエンドが**ありません**。
+- **フォールバック経路(Windows / バックエンドなし)**: terminal はコマンドを `" && "` で連結して `shell=True` で起動し、python_repl は `[sys.executable, "-c", script]` を list として起動します。Windows には OS サンドボックスバックエンドが**ありません**。メインの HITL 経路では、この降格をツール実行**前**に承認します（H3）。ヘッドレスのターンは自動拒否します。
 - **すべての経路で無条件**: `env=scrub_env()` と `cwd=str(ROOT_DIR)`(cwd 固定)。両ツールとも30秒のタイムアウト(`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`)を強制し、期限切れで子を kill します。PTC は自前の `ptc_timeout_seconds` を強制し、子のプロセスグループへ SIGKILL します。
 - **エラーの表面化**: `REQUIRED` でバックエンドがない場合、terminal は `RuntimeError` を `ToolException` に包み(`handle_tool_error=True` がそのまま表面化)、python_repl は生の `RuntimeError` をそのまま投げ、PTC は何も spawn する前に `status: "sandbox_unavailable"` エンベロープを返します。
-- **降格警告**: この呼び出しがサンドボックスを望んでいたのにバックエンドがなく、ポリシーが `off` でない場合、ツール層はちょうど1件の loguru 警告を記録してからサンドボックスなしで実行します:
+- **降格ログ**: この呼び出しがサンドボックスを望んでいたのにバックエンドがなく、ポリシーが `off` でない場合、`terminal` / `python_repl` はちょうど1件の loguru INFO を記録してからサンドボックスなしで実行します — メインの HITL 経路ではサンドボックス迂回カードがすでに表示・承認されています:
 
-  - `terminal: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed shell execution`
-  - `python_repl: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
-  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
+  - `terminal: sandbox unavailable (policy=auto) — running unsandboxed (HITL-gated when an operator is in scope)`
+  - `python_repl: sandbox unavailable (policy=auto) — running unsandboxed (HITL-gated when an operator is in scope)`
+  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`（PTC は HITL なし。WARNING のまま）
 
 ## 🛠️ 設定と使い方
 
@@ -142,7 +142,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 
 | テストスイート | カバー範囲 |
 | :------------- | :--------- |
-| `tests/agent/tools/test_sandbox_matrix.py` | 14テスト、マトリクスのセルごとの動作につき1つ(セル1-5はツールごとに1回、セル6は4回)。実グラフ上の HITL インタラプトと「警告ちょうど1件」の降格アサーションを含む |
+| `tests/agent/tools/test_sandbox_matrix.py` | 14テスト、マトリクスのセルごとの動作につき1つ(セル1-5はツールごとに1回、セル6は4回)。実グラフ上の HITL インタラプトと「INFO ちょうど1件」の降格アサーションを含む |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 洗浄規則、優先順位、保持/拒否の境界 (50テスト) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築(リードシールドのマウントを含む)、プローブキャッシュ (subprocess はすべてモック)、任意実行の実 bwrap リードシールドスモークテスト |
@@ -165,7 +165,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **機密ファイル正規表現は緩和であり、障壁ではありません。** リテラルなコマンド形状にしかマッチせず、`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、変数、グロブは層の設計上迂回できます。バックエンドが存在する場合の実際の読み取り障壁は OS リードシールドです。
 - **`python_repl` には機密ファイル正規表現がありません。** terminal 専用ゲート([分離 §3](isolation/README.ja.md#3-危険コマンドゲート-terminal-のみ))はそれをカバーしません。代わりにラッパースクリプトがビルトインを制限し(`open`/`__import__`/`getattr`/`type`/`dir`/`vars` なし)、`pub_base/safe_exec.py` が子プロセス起動前に dunder 属性アクセスを拒否します — 別の、より狭い制御であり、読み取りに敏感なホストでは引き続き OS サンドボックスが必要です。
 - **PTC は同じバックエンドの注意点を継承します。** `execute_code` は使えるバックエンドがあるとき L2 バックエンドで子を包み、内省による脱出も静的に拒否します(制限付きセットに `getattr`/`type`/`dir`/`vars` なし、dunder 属性禁止)が、`SANDBOX_POLICY=auto`(デフォルト)で使えるバックエンドがないホストでは1件の警告の後にサンドボックスなしで実行され、PTC は `allow_network=True` を渡すため、bwrap は loopback RPC ブリッジを到達可能に保つべく `--unshare-all` の隣に `--share-net` を追加します。`terminal` と `python_repl` はプライベートなネットワーク名前空間のままです。PTC のワンタイム RPC トークンとその `/proc/<pid>/environ` 残余は [PTC ページ](../ptc/README.ja.md)に記しています。
-- **降格経路は設計どおりサンドボックスなしで実行されます。** `auto` + バックエンドなし = 警告1件を記録してから普段どおりサンドボックスなしで実行(証拠台帳には `sandboxed: false` として残り、起動ログにも出ます)。これは意図された「可用性優先」の選択です。同梱 `.env` は `auto` です。デプロイでは `required` を設定し、`SANDBOX_STRICT_BOOT=1` なら起動自体を拒否します。
+- **降格経路はメイン経路では承認制、それ以外はツール層のみ。** `auto` + バックエンドなし: メインセッションの `terminal` / `python_repl` はサンドボックス迂回カードを出してからサンドボックスなしで実行し、ヘッドレスは自動拒否、confirm-all のカードには注記が付き、YOLO は設計どおり迂回します（有効化時に警告）。子エージェント鎖、バックグラウンドグラフ、PTC には HITL ミドルウェアがないため、ログ1行を残して降格するだけです。同梱 `.env` は `auto` です。ハード保証には `required` を設定し、`SANDBOX_STRICT_BOOT=1` なら起動自体を拒否します。
 - **コマンドパスのスクリーンは緩和層であり、障壁ではありません。** ハード拒否パス(資格情報/システムファイル、YOLO 拒否リスト)を**文字どおり名指しした**コマンドだけを拒否し、それ以外はサンドボックスに委ねます。`base64 -d | sh`、断片から組み立てた変数、`cd` + 相対パスはいずれも構造的に回避できます。境界は OS サンドボックスです。
 - **環境変数洗浄は名前ベースです。** ブロック対象の部分文字列を1つも含まない名前(かつ拒否リストにない名前)で保存されたシークレットはそのまま通ります。値のスキャンも動的シークレット検出もなく、それは意図的なものです。
 - **ネットワークサンドボックス、seccomp、AppArmor プロファイルは主張も設定もしていません。** 分離は [分離 §2](isolation/README.ja.md#2-os-ネイティブサンドボックスバックエンド-l2) に示した bwrap / Seatbelt の構築そのものだけです。

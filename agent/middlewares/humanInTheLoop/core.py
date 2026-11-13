@@ -303,26 +303,40 @@ class HumanInTheLoop(AgentMiddleware):
         denial is NOT repeated here — ``_deny_sandbox_bypass`` in terminal.py /
         python_repl.py already raises ``ToolException`` for non-main
         ``caller_scope`` + ``sandbox=False`` and for ``SANDBOX_POLICY=required``
-        + ``sandbox=False``. YOLO mode (``is_yolo_mode``) and ``sandbox=True``
-        calls must never reach the interrupt — callers filter them out BEFORE
-        invoking this helper.
+        + ``sandbox=False``. YOLO mode (``is_yolo_mode``) calls must never reach
+        the interrupt; a ``sandbox=True`` call reaches it ONLY when AUTO has no
+        usable backend (H3 degradation) — callers filter every other case out
+        BEFORE invoking this helper.
 
         Returns:
             ``(approved, deny_message)``: ``approved=True`` → the caller
             proceeds with the original tool_call; ``approved=False`` →
             ``deny_message`` (an error ToolMessage) must be appended by the caller.
         """
-        action_request = ActionRequest(
-            name=tool_name,
-            args=tool_call.get("args", {}),
-            description=(
+        args = tool_call.get("args", {})
+        requested_sandbox = bool(args.get("sandbox", True))
+        from agent.tools.pub_base.sandbox import sandbox_degraded
+
+        degraded = sandbox_degraded(requested_sandbox)
+        if degraded:
+            reason = (
+                "Sandbox degraded approval: ⚠ OS SANDBOX UNAVAILABLE — this call "
+                "requested the OS sandbox, but no usable backend exists on this "
+                "platform, so it will run unsandboxed after env scrubbing. Approving "
+                "lets it read and write anywhere this process can."
+            )
+        else:
+            reason = (
                 "Sandbox bypass approval: ⚠ UNSANDBOXED — this call requests "
                 "sandbox=False, so it executes directly after env scrubbing with no OS "
                 "sandbox isolation. The OS sandbox is the only thing that keeps a shell "
                 "command inside the session's project directory, so approving this call "
                 "lets it read and write anywhere this process can."
-                + (f" {action_desc}" if action_desc else "")
-            ),
+            )
+        action_request = ActionRequest(
+            name=tool_name,
+            args=args,
+            description=reason + (f" {action_desc}" if action_desc else ""),
         )
         review_config = ReviewConfig(
             action_name=tool_name,

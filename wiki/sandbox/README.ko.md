@@ -50,10 +50,10 @@
 | 값 | 의미 |
 | :- | :--- |
 | `required`(권장 배포 값; 번들 `.env`는 `auto`) | 백엔드 사용 불가 ⇒ 명령을 거부, 샌드박스 없이 절대 실행하지 않음 |
-| `auto` | 백엔드 사용 불가 ⇒ 경고 한 줄과 함께 샌드박스 없이 실행으로 강등(베어 실행; 증거 원장에 기록) |
+| `auto` | 백엔드 사용 불가 ⇒ 메인 세션의 대화형 호출은 샌드박스 우회 HITL 카드로 승인을 요청(헤드리스는 자동 거부, confirm-all 카드에는 안내 추가). PTC는 경고 강등 유지 |
 | `off` | 샌드박싱 완전 비활성화 |
 
-환경 변수가 없을 때 `read_policy()`의 폴백은 여전히 `auto`입니다(구동 중인 설치가 자신의 설정을 유지하도록). 반면 번들 `.env`의 값은 `auto`입니다. 배포에서는 `required`를 명시하세요 — 백엔드가 동작하지 않는 호스트에서 `auto`는 모든 셸 명령을 조용히 비샌드박스 실행으로 바꾸기 때문입니다. 이는 가정이 아니라 실측입니다: **커널이 user namespace를 지원하지 않는** 호스트(Ubuntu 24.04 기본 AppArmor 정책, PRoot/컨테이너 호스트)에서는 `bwrap` 바이너리가 있어도 동작하지 않습니다. 부팅 시 실제 정책과 백엔드를 출력하고(`sandbox: policy=… backend=… available=…`), `required`가 충족되지 않으면 ERROR와 함께 수정 명령을 안내하며, `SANDBOX_STRICT_BOOT=1`이면 시작을 거부합니다. 실행 중에는 `GET /sandbox/status`가 같은 상태를 돌려줍니다.
+환경 변수가 없을 때 `read_policy()`의 폴백은 여전히 `auto`입니다(구동 중인 설치가 자신의 설정을 유지하도록). 반면 번들 `.env`의 값은 `auto`입니다. 배포에서는 `required`를 명시하세요 — 백엔드가 동작하지 않는 호스트에서 `auto`는 모든 대화형 셸 명령을 승인 카드로 보내고(헤드리스는 거부), PTC는 경고와 함께 강등하기 때문입니다. 이는 가정이 아니라 실측입니다: **커널이 user namespace를 지원하지 않는** 호스트(Ubuntu 24.04 기본 AppArmor 정책, PRoot/컨테이너 호스트)에서는 `bwrap` 바이너리가 있어도 동작하지 않습니다. 부팅 시 실제 정책과 백엔드를 출력하고(`sandbox: policy=… backend=… available=…`), `required`가 충족되지 않으면 ERROR와 함께 수정 명령을 안내하며, `SANDBOX_STRICT_BOOT=1`이면 시작을 거부합니다. 실행 중에는 `GET /sandbox/status`가 같은 상태를 돌려줍니다.
 
 `parse_policy`는 공백을 제거하고 대소문자를 무시하여 매칭하며, 모르는 값에는 `ValueError`를 던집니다: 잘못 입력된 안전 설정은 반드시 크게 실패해야지 조용히 기본값으로 떨어지면 안 됩니다. `read_policy()`는 **매번** `os.getenv`를 호출합니다(가져오기 시점 캐시 없음), 그래서 런타임 변경이 즉시 반영됩니다.
 
@@ -76,14 +76,14 @@
 
 - **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True`와 의미적으로 동일), python_repl과 PTC 자식도 같습니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다. `roots`는 **세션의 프로젝트 디렉터리**(`current_project_dir(session_id)` / PTC 자식의 cwd)이며 명령의 cwd와 같은 출처입니다 — 그래서 쓰기 면과 작업 디렉터리가 어긋날 수 없습니다. 저장소 밖에 바인딩한 프로젝트 디렉터리는 쓰기 가능해지고(예전에는 EROFS), 저장소 자체는 쓰기 불가가 됩니다(예전에는 가능했고, 그것이 terminal로 외부 경로 게이트를 우회하는 길이었습니다). `terminal`과 `python_repl`은 여기에 그 세션 자신의 `SESSIONS_DIR/<session_id>` 트리(`with_own_session_root`, 필요 시 생성)를 더합니다 — 파일 도구가 HITL 없이 읽고 쓰는 사적 실행 상태이며, 프로젝트가 다른 곳에 바인딩되어 있어도 자기 파일을 만들고 고치고 지울(`rm`) 수 있게 합니다. 추가되는 것은 **그 하나의** 세션 디렉터리뿐이며, 공용 sessions 루트와 다른 세션은 읽기 전용으로 남습니다. PTC는 자신의 cwd를 유지합니다.
 - **베어 실행은 기록됩니다**: 증거 원장 행이 `sandboxed: false`를 담고, 샌드박스 우회 승인 카드가 `⚠ UNSANDBOXED`와 그 의미를 표시합니다 — 승인하는 사람이 읽고, 나중에 원장을 감사해도 찾을 수 있습니다.
-- **폴백 경로(Windows / 백엔드 없음)**: terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**.
+- **폴백 경로(Windows / 백엔드 없음)**: terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**. 메인 HITL 경로에서는 이 강등을 도구 실행 **전에** 승인하며(H3), 헤드리스 턴은 자동 거부합니다.
 - **모든 경로에서 무조건**: `env=scrub_env()`와 `cwd=str(ROOT_DIR)`(cwd 고정). 두 도구 모두 30초 타임아웃(`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`)을 강제하고 만료 시 자식을 죽입니다. PTC는 자체 `ptc_timeout_seconds`를 강제하고 자식의 프로세스 그룹에 SIGKILL합니다.
 - **오류 표면화**: `REQUIRED`인데 백엔드가 없으면 terminal은 `RuntimeError`를 `ToolException`으로 감싸고(`handle_tool_error=True`가 그대로 표면화), python_repl은 원시 `RuntimeError`를 그대로 던지며, PTC는 아무것도 spawn하기 전에 `status: "sandbox_unavailable"` 엔벨로프를 반환합니다.
-- **강등 경고**: 이번 호출이 샌드박스를 원했는데 백엔드가 없고 정책이 `off`가 아니면, 도구 계층이 정확히 한 줄의 loguru 경고를 남긴 뒤 샌드박스 없이 실행합니다:
+- **강등 로그**: 이번 호출이 샌드박스를 원했는데 백엔드가 없고 정책이 `off`가 아니면, `terminal` / `python_repl`은 정확히 한 줄의 loguru INFO를 남긴 뒤 샌드박스 없이 실행합니다 — 메인 HITL 경로에서는 샌드박스 우회 카드가 이미 표시·승인되었습니다:
 
-  - `terminal: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed shell execution`
-  - `python_repl: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
-  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
+  - `terminal: sandbox unavailable (policy=auto) — running unsandboxed (HITL-gated when an operator is in scope)`
+  - `python_repl: sandbox unavailable (policy=auto) — running unsandboxed (HITL-gated when an operator is in scope)`
+  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`(PTC는 HITL 없음. WARNING 유지)
 
 ## 🛠️ 설정과 사용법
 
@@ -142,7 +142,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 
 | 테스트 스위트 | 커버 범위 |
 | :------------ | :-------- |
-| `tests/agent/tools/test_sandbox_matrix.py` | 14개 테스트, 매트릭스 칸별 동작 하나씩(1-5번 칸은 도구별 한 번, 6번 칸은 네 번). 실제 그래프의 HITL 인터럽트와 "경고 정확히 한 번" 강등 단언 포함 |
+| `tests/agent/tools/test_sandbox_matrix.py` | 14개 테스트, 매트릭스 칸별 동작 하나씩(1-5번 칸은 도구별 한 번, 6번 칸은 네 번). 실제 그래프의 HITL 인터럽트와 "INFO 정확히 한 번" 강등 단언 포함 |
 | `tests/agent/tools/pub_base/test_env_scrub.py` | 세척 규칙, 우선순위, 보존/거부 경계 (50개 테스트) |
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성(리드 실드 마운트 포함), 프로브 캐싱 (서브프로세스 전부 mock), 선택 실행되는 실제 bwrap 리드 실드 스모크 테스트 |
@@ -165,7 +165,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭, 히어도큐먼트는 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
 - **`python_repl`에는 민감 파일 정규식이 없습니다.** terminal 전용 게이트([격리 §3](isolation/README.ko.md#3-위험-명령-게이트-terminal-전용))가 그것을 덮지 않습니다. 대신 래퍼 스크립트가 빌트인을 제한하고(`open`/`__import__`/`getattr`/`type`/`dir`/`vars` 없음), `pub_base/safe_exec.py`가 자식 프로세스 시작 전에 dunder 속성 접근을 거부합니다 — 다르고 더 좁은 통제이며, 읽기에 민감한 호스트에서는 여전히 OS 샌드박스가 필요합니다.
 - **PTC는 같은 백엔드의 주의점을 물려받습니다.** `execute_code`는 쓸 수 있는 백엔드가 있으면 L2 백엔드로 자식을 감싸고 내성 탈출도 정적으로 거부하지만(제한 집합에 `getattr`/`type`/`dir`/`vars` 없음, dunder 속성 금지), `SANDBOX_POLICY=auto`(기본)이고 쓸 수 있는 백엔드가 없는 호스트에서는 경고 한 줄 뒤에 샌드박스 없이 실행되며, PTC는 `allow_network=True`를 넘기므로 bwrap은 loopback RPC 브리지를 도달 가능하게 유지하려고 `--unshare-all` 옆에 `--share-net`을 추가합니다. `terminal`과 `python_repl`은 사설 네트워크 네임스페이스를 유지합니다. PTC의 일회용 RPC 토큰과 그 `/proc/<pid>/environ` 잔여 위험은 [PTC 페이지](../ptc/README.ko.md)에 적었습니다.
-- **강등 경로는 설계대로 샌드박스 없이 실행됩니다.** `auto` + 백엔드 없음 = 경고 한 줄 기록 후 평소처럼 샌드박스 없이 실행(증거 원장에 `sandboxed: false`로 남고 부팅 로그에도 나옵니다). 이것은 의도된 "가용성 우선" 선택입니다. 번들 `.env`는 `auto`입니다. 배포에서는 `required`를 설정하고, `SANDBOX_STRICT_BOOT=1`이면 시작 자체를 거부합니다.
+- **강등 경로는 메인 경로에서 승인제, 그 외는 도구 계층뿐입니다.** `auto` + 백엔드 없음: 메인 세션의 `terminal` / `python_repl`은 샌드박스 우회 카드를 먼저 띄운 뒤 샌드박스 없이 실행하고, 헤드리스 턴은 자동 거부하며, confirm-all 카드에는 안내가 붙고, YOLO는 설계대로 우회합니다(활성화 시 경고). 자식 체인, 백그라운드 그래프, PTC에는 HITL 미들웨어가 없어 로그 한 줄만 남기고 강등합니다. 번들 `.env`는 `auto`입니다. 하드 보장이 필요하면 `required`를 설정하고, `SANDBOX_STRICT_BOOT=1`이면 시작 자체를 거부합니다.
 - **명령 경로 스크린은 완화층이며 장벽이 아닙니다.** 하드 거부 경로(자격 증명/시스템 파일, YOLO 거부 목록)를 **문자 그대로 지목한** 명령만 거부하고 나머지는 샌드박스에 맡깁니다. `base64 -d | sh`, 조각으로 만든 변수, `cd` + 상대 경로는 구조적으로 회피됩니다. 경계는 OS 샌드박스입니다.
 - **환경 변수 세척은 이름 기반입니다.** 차단 부분 문자열이 하나도 없는 이름(그리고 거부 목록에 없는 이름)으로 저장된 시크릿은 그대로 통과합니다. 값 스캔도 동적 시크릿 탐지도 없으며, 이는 의도된 것입니다.
 - **네트워크 샌드박싱, seccomp, AppArmor 프로파일은 주장하지도 구성하지도 않았습니다.** 격리는 [격리 §2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2)에 보여준 bwrap / Seatbelt 구성 정확히 그것뿐입니다.
