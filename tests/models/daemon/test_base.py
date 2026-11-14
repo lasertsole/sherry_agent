@@ -225,6 +225,48 @@ class TestEnsureReady:
         assert base.ensure_ready(spec) is base.ReadyState.READY
 
 
+class _FakePsutil:
+    """Minimal ``psutil`` stand-in for the pid-identity check."""
+
+    class Error(Exception):
+        """The subset of psutil.Error the check catches."""
+
+    def __init__(self, cmdline: list[str] | None = None, error: Exception | None = None) -> None:
+        self._cmdline = cmdline or []
+        self._error = error
+
+    def Process(self, _pid: int) -> SimpleNamespace:  # noqa: N802 - mirrors psutil's API
+        if self._error is not None:
+            raise self._error
+        return SimpleNamespace(cmdline=lambda: self._cmdline)
+
+
+class TestPidIdentity:
+    def test_psutil_missing_is_treated_as_foreign(self, tmp_path, monkeypatch):
+        """A pid we cannot inspect must never be signalled (fail closed)."""
+        monkeypatch.setitem(sys.modules, "psutil", None)
+
+        assert base._pid_is_daemon(_spec(tmp_path), 4242) is False
+
+    def test_matching_command_line_is_the_daemon(self, tmp_path, monkeypatch):
+        spec = _spec(tmp_path)
+        monkeypatch.setitem(
+            sys.modules, "psutil", _FakePsutil([sys.executable, "-c", spec.import_fn])
+        )
+
+        assert base._pid_is_daemon(spec, 4242) is True
+
+    def test_another_command_line_is_foreign(self, tmp_path, monkeypatch):
+        monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(["/usr/bin/other", "--flag"]))
+
+        assert base._pid_is_daemon(_spec(tmp_path), 4242) is False
+
+    def test_an_uninspectable_process_is_foreign(self, tmp_path, monkeypatch):
+        monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(error=_FakePsutil.Error("gone")))
+
+        assert base._pid_is_daemon(_spec(tmp_path), 4242) is False
+
+
 class TestKill:
     def test_kill_terminates_a_real_child_and_drops_the_file(self, tmp_path, monkeypatch):
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])

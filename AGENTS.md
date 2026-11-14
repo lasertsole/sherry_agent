@@ -924,10 +924,13 @@ The local GGUF models live in detached child processes, not in the orchestrator.
 `/healthy` must answer `{"ready": true}`), `spawn` (detached, pid file, log file,
 no duplicate when a recorded pid is alive), `wait_until_ready`, `ensure_ready`
 (returns `ReadyState.READY | WARMING | UNAVAILABLE`), `kill` (SIGTERM → SIGKILL,
-reaps its own child) and `IdleWatchdog` (the daemon exits itself after its idle
-window). The STT daemon was refactored onto it (same `.stt_daemon.pid` location
-in a checkout, now under `APP_HOME` so a packaged build can write it); embed,
-reranker and local chat are built on it.
+reaps its own child; it first verifies the recorded pid's command line names
+this daemon through psutil and treats an uninspectable pid as FOREIGN — a stale
+pid file plus PID reuse must never signal an unrelated process) and
+`IdleWatchdog` (the daemon exits itself after its idle window). The STT daemon
+was refactored onto it (same `.stt_daemon.pid` location in a checkout, now under
+`APP_HOME` so a packaged build can write it); embed, reranker and local chat are
+built on it.
 
 Spawn is packaging-aware: a checkout runs `python -c "from <module> import main;
 main()"`; a frozen build re-executes the packaged backend with

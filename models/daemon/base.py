@@ -293,7 +293,9 @@ def _pid_is_daemon(spec: DaemonSpec, pid: int) -> bool:
     try:
         import psutil
     except ImportError:  # pragma: no cover - psutil is a project dependency
-        return True
+        # Fail CLOSED: a pid we cannot inspect is foreign. Returning True here
+        # let an expired pid file plus PID reuse SIGTERM an unrelated process.
+        return False
     try:
         cmdline = psutil.Process(pid).cmdline()
     except (psutil.Error, OSError):
