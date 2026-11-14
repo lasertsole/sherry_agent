@@ -82,6 +82,7 @@ step 失敗時は `repair_extraction` が replay flow の child handoff を読�
 |---|---|---|
 | `LDW["enabled"]` | `True` | マスタースイッチ。False なら全リプレイを TaskFlow のままにします |
 | `LDW["min_replays"]` | `3` | 計画が TaskFlow を離れて LDW スクリプトをコンパイルするまでのリプレイ回数 |
+| `extraction.flow_extraction_enabled`（プリセットキャラクター → 詳細） | `True` | ユーザー向けコンパイルスイッチ（グローバル専用）。オフの間は `action=compile`、未作成スクリプトのコンパイル、修復時の再コンパイルを拒否。既存スクリプトの再生は可能 |
 | `LDW["script_max_bytes"]` | `65536` | 1 つの `ldw__<plan_key>.py` の上限 |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | プロセス間 journal の位置 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 失敗後に TaskFlow replay flow を作成・駆動する |

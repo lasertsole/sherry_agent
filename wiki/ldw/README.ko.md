@@ -82,6 +82,7 @@ step이 실패하면 `repair_extraction`이 replay flow의 child handoff를 읽�
 |---|---|---|
 | `LDW["enabled"]` | `True` | 마스터 스위치. False면 모든 리플레이가 TaskFlow 경로에 머뭅니다 |
 | `LDW["min_replays"]` | `3` | 계획이 TaskFlow를 떠나 LDW 스크립트를 컴파일하기 전 리플레이 횟수 |
+| `extraction.flow_extraction_enabled`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 컴파일 스위치(전역 전용). 꺼져 있으면 `action=compile`, 누락 스크립트 컴파일, 수리 재컴파일을 거부. 기존 스크립트 재생은 가능 |
 | `LDW["script_max_bytes"]` | `65536` | `ldw__<plan_key>.py` 하나의 상한 |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | 프로세스 간 journal 위치 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 실패 후 TaskFlow replay flow를 만들고 구동 |

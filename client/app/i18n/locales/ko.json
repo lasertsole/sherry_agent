@@ -1,4 +1,38 @@
 {
+  "advanced": {
+    "tab": "고급",
+    "globalHint": "이 값은 개별적으로 재정의하지 않은 모든 세션에 적용되며, 변경은 즉시 반영됩니다.",
+    "sessionHint": "변경하지 않은 항목은 전역 값을 상속합니다. 변경은 다음 턴부터 적용됩니다.",
+    "inherited": "전역에서 상속됨",
+    "inheritedWithGlobal": "전역에서 상속됨 ({value})",
+    "overridden": "이 세션에서 재정의됨",
+    "skillExtraction": {
+      "name": "경험 학습",
+      "description": "작업 계획 완료 후 경험을 요약해 스킬 정의를 갱신하여 이후 사용에 제공합니다."
+    },
+    "flowExtraction": {
+      "name": "플로우 재사용 컴파일",
+      "description": "성공한 작업 플로우를 재사용 스크립트(단계 스크립트 + 워크플로 스크립트)로 컴파일하여 반복 작업을 모델 호출 없이 재사용합니다.",
+      "globalOnly": "전역 설정으로 제어됩니다(세션은 읽기 전용 상속).",
+      "requiresSkill": "경험 학습을 먼저 켜세요."
+    },
+    "iterationBudgetMain": {
+      "name": "메인 에이전트 반복 한도",
+      "description": "메인 에이전트의 턴당 도구 호출 반복 상한. 초과 시 요약 압축이 트리거됩니다."
+    },
+    "iterationBudgetSub": {
+      "name": "서브 에이전트 반복 한도",
+      "description": "서브 에이전트의 턴당 도구 호출 반복 상한. 역할 자체의 더 낮은 한도가 우선하며, 초과하면 자식 작업이 종료됩니다."
+    },
+    "resetToGlobal": "전역으로 재설정",
+    "save": "저장",
+    "saved": "추출 설정이 저장되었습니다",
+    "savedPending": "저장됨 — 다음 턴부터 적용",
+    "saveFailed": "추출 설정 저장 실패",
+    "loadFailed": "추출 설정 로드 실패",
+    "invalidBudget": "{min}에서 {max} 사이의 정수를 입력하세요.",
+    "subAboveMain": "서브 에이전트 한도는 메인 에이전트 한도를 넘을 수 없습니다."
+  },
   "a11y": {
     "previewImage": "이미지 미리보기",
     "language": "언어",

@@ -56,13 +56,15 @@
 
 LLM 작업 전에 **작업 수준 사전 판단**(`_judge_task_generalizability`)이 계획을 한 번 선별합니다. 짧은 보조 모델 호출 한 번에 계획 목표와 완료된 todo 요약만 전달하고(handoff 증거는 제외) `{"should_extract": bool, "reason": str}`를 받습니다. `false`이면 handoff tree와 리뷰 에이전트를 만들기 전에 반환하고 스냅샷 지문을 소비됨으로 기록합니다——성공 경로가 쓰는 것과 같은 `skill_review_snapshot_hash`——따라서 같은 계획에서 사전 판단이 다시 실행되지 않습니다. 응답이 잘못되었거나 사용할 수 없거나 호출이 실패하면 **추출을 계속하는 fail-open**입니다. 스킬 내용 품질은 기존의 전체 리뷰와 judge가 담당하고, 사전 판단은 "작업 종류"가 리뷰할 가치가 있는지만 결정합니다.
 
+**사용자 스위치.** 프리셋 캐릭터 → 고급의 경험 학습 스위치(`skill_extraction_enabled`: 전역은 `sherry.jsonc`, 세션에서 재정의 가능)는 완료 감지 전에 읽힙니다. 꺼져 있으면 포크하지 않고 계획도 추출됨으로 표시되지 않으므로, 나중에 다시 켜면 추출됩니다. 같은 패널의 플로우 재사용 컴파일(`flow_extraction_enabled`, 전역 전용——세션 쪽은 읽기 전용)은 아래의 PTC 컴파일과 LDW 컴파일을 제어하며, 경험 학습이 꺼지면 플로우도 강제로 꺼집니다. 유일한 판독 지점은 `runtime/session/extraction.py`입니다.
+
 스킬 리뷰는 snapshot/judge 트랜잭션으로 실행됩니다:
 
 - **snapshot**: `skill_review.snapshot_auto_skills()`가 첫 시도 전에 `skills/auto`(skill, support file, usage sidecar)를 캡처합니다.
 - **write**: 리뷰가 skill을 생성/수정합니다. `set_current_write_origin("background_review")`로 새 skill이 agent-created로 표시되어 curator 관리 대상이 됩니다.
 - **judge**: `skill_review.judge_skill_update()`가 보조 모델에 `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified`, `scope_valid`, `feedback`을 요청합니다. **변경된 skill**은 `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`, `trigger_quality >= 6`, grounded, reusable, `scope_valid`를 모두 만족해야 합니다. **정당화된 no-op**은 `no_op_justified`만으로 통과합니다——파일 변경이 없으면 채점할 내용이 없으므로 judge 호출 한 번으로 끝나고 재시도하지 않습니다.
 - **retry/rollback**: 거부된 시도는 pre-review snapshot으로 복원하고 judge feedback과 함께 재시도합니다(기본 최대 2회). 소진되면 다시 복원하고 `skill_review_failed_hash` + 시각을 기록하며 성공 fingerprint를 진행하지 않습니다. 이후 턴에서 `skill_review_failure_cooldown_s` 후 재시도할 수 있고, plan이 바뀌면 즉시 재시도합니다.
-- **선택적 PTC 컴파일(통과 후)**: `PTC["ptc_prefill_enabled"]`가 켜져 있으면 같은 백그라운드 작업이 성공한 TaskFlow step마다 `scripts/ptc__<plan_key>__<step_id>.py`를 업데이트된 skill에 컴파일합니다. best-effort이며 judge를 다시 실행하지 않고 승인된 skill을 롤백하지 않습니다.
+- **선택적 PTC 컴파일(통과 후)**: `PTC["ptc_prefill_enabled"]`와 프리셋 캐릭터 → 고급의 플로우 재사용 컴파일이 모두 켜져 있으면 같은 백그라운드 작업이 성공한 TaskFlow step마다 `scripts/ptc__<plan_key>__<step_id>.py`를 업데이트된 skill에 컴파일합니다. best-effort이며 judge를 다시 실행하지 않고 승인된 skill을 롤백하지 않습니다. 이 스위치는 컴파일만 제어하며 기존 스크립트의 재생을 막지 않습니다.
 
 이 경로는 knowledge(`task-*.json` / `wave-*.json` / `plan-summary.json`)도 FACTS도 쓰지 않습니다. 기존 knowledge 파일은 디스크에 남지만 legacy이며, 모델 대상 prompt block과 `knowledge` 도구는 retired입니다.
 
@@ -147,6 +149,8 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`(`config/features/agent_side/summarization.py`) | `True` | 압축 후 todo fork 활성화 |
 | `skill_review_enabled` | `BACKGROUND_REVIEW_CONFIG`(`config/features/agent_side/background_review.py`) | `True` | 스킬 리뷰 마스터 스위치(skill-only, knowledge 미기록) |
+| `extraction.skill_extraction_enabled` | `sherry.jsonc`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 경험 학습 스위치, 세션에서 재정의 가능 |
+| `extraction.flow_extraction_enabled` | `sherry.jsonc`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 플로우 재사용 컴파일 스위치(PTC + LDW, 전역 전용). 경험 학습이 꺼지면 강제 오프 |
 | `skill_review_max_attempts` | `BACKGROUND_REVIEW_CONFIG` | `2` | 최초 + judge feedback 재시도 최대 1회 |
 | `skill_review_quality_threshold` | `BACKGROUND_REVIEW_CONFIG` | `6` | 통과 최소 `quality` |
 | `skill_review_feedback_turns` / `_max_items` / `_chars` | `BACKGROUND_REVIEW_CONFIG` | `12` / `8` / `2000` | 제한된 사용자 수정 컨텍스트 |

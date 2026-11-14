@@ -214,7 +214,7 @@ describe('PersonaPanel role tab', () => {
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     // Role first, the two editable persona files, then the agent-config tabs
     // (Agent models / Skills) the preset also carries. AGENTS.md is not a tab.
-    expect(headers).toEqual(['角色配置', '人格灵魂', '用户信息', '代理模型', '技能']);
+    expect(headers).toEqual(['角色配置', '人格灵魂', '用户信息', '代理模型', '技能', '高级']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {

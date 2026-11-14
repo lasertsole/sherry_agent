@@ -1,4 +1,38 @@
 {
+  "advanced": {
+    "tab": "高级",
+    "globalHint": "这些设置作用于所有未单独覆盖的会话，修改后立即生效。",
+    "sessionHint": "未修改的字段继承全局设置；修改从下一轮生效。",
+    "inherited": "继承自全局",
+    "inheritedWithGlobal": "继承自全局（{value}）",
+    "overridden": "本会话已覆盖",
+    "skillExtraction": {
+      "name": "经验学习",
+      "description": "任务计划完成后，自动总结经验更新技能定义，供后续使用。"
+    },
+    "flowExtraction": {
+      "name": "流程复用编译",
+      "description": "把成功的任务流程编译为重放脚本（步骤脚本 + 工作流脚本），重复任务可零调用重放。",
+      "globalOnly": "由全局配置控制（会话只读继承）。",
+      "requiresSkill": "需先开启经验学习。"
+    },
+    "iterationBudgetMain": {
+      "name": "主智能体迭代上限",
+      "description": "主智能体每轮工具调用最大迭代次数，超出触发摘要压缩。"
+    },
+    "iterationBudgetSub": {
+      "name": "子智能体迭代上限",
+      "description": "子智能体每轮工具调用最大迭代次数；角色自身的更低上限仍然生效，超出则子任务结束。"
+    },
+    "resetToGlobal": "重置为全局默认",
+    "save": "保存",
+    "saved": "抽取设置已保存",
+    "savedPending": "已保存，下一轮生效",
+    "saveFailed": "保存抽取设置失败",
+    "loadFailed": "加载抽取设置失败",
+    "invalidBudget": "请输入 {min} 到 {max} 之间的整数。",
+    "subAboveMain": "子智能体上限不应高于主智能体。"
+  },
   "a11y": {
     "previewImage": "预览图片",
     "language": "语言",

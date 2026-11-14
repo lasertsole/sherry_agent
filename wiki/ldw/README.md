@@ -82,6 +82,7 @@ When steps failed, `repair_extraction` reads the replay flow's child handoffs, m
 |---|---|---|
 | `LDW["enabled"]` | `True` | Master switch; False keeps every replay on the TaskFlow path |
 | `LDW["min_replays"]` | `3` | Replays before a plan stops using TaskFlow and compiles an LDW script |
+| `extraction.flow_extraction_enabled` (Presets & Role → Advanced) | `True` | User-facing compile switch, global-only: `action=compile`, compile-on-miss and the repair recompile refuse while it is off. An EXISTING script still replays |
 | `LDW["script_max_bytes"]` | `65536` | Cap for one `ldw__<plan_key>.py` |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | Cross-process journal location |
 | `LDW["auto_degrade_enabled"]` | `True` | Create and drive a TaskFlow replay flow after an LDW failure |

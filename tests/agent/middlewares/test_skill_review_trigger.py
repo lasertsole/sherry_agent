@@ -140,6 +140,42 @@ async def test_plan_completion_forks_extraction(patched, sid):
 
 
 @pytest.mark.asyncio
+async def test_experience_learning_off_never_forks(patched, sid, monkeypatch):
+    """预设角色 → 高级: the user switch gates the plan-completion extraction."""
+    import agent.middlewares.summarization.skill_review_runner as runner_mod
+
+    patched["set_todos"]([_todo("a"), _todo("b")])
+    monkeypatch.setattr(
+        runner_mod,
+        "effective_extraction_config",
+        lambda _sid: {"skill_extraction_enabled": False},
+    )
+
+    await review_mod.maybe_trigger_skill_review(sid)
+    await _settle()
+
+    assert patched["forked"] == []
+
+
+@pytest.mark.asyncio
+async def test_session_override_can_disable_extraction(patched, sid, monkeypatch):
+    """The switch reads the session's own override when one is stored."""
+    import agent.middlewares.summarization.skill_review_runner as runner_mod
+
+    patched["set_todos"]([_todo("a")])
+    monkeypatch.setattr(
+        runner_mod,
+        "effective_extraction_config",
+        lambda session_id: {"skill_extraction_enabled": session_id != sid},
+    )
+
+    await review_mod.maybe_trigger_skill_review(sid)
+    await _settle()
+
+    assert patched["forked"] == []
+
+
+@pytest.mark.asyncio
 async def test_incomplete_plan_never_forks(patched, sid, fake_db):
     patched["set_todos"]([_todo("a"), _todo("b", status="in_progress")])
 

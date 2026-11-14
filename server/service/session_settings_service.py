@@ -84,6 +84,9 @@ _SETTINGS_KEYS: tuple[tuple[StateKey, StateKey], ...] = (
     (StateKey.CUSTOM_THINKING_MAPPING, StateKey.CUSTOM_THINKING_MAPPING_PENDING),
     (StateKey.TOKEN_BUDGET_CAP, StateKey.TOKEN_BUDGET_CAP_PENDING),
     (StateKey.TOKEN_BUDGET_TURN_CAP, StateKey.TOKEN_BUDGET_TURN_CAP_PENDING),
+    # 预设角色 → 高级: experience learning + the two iteration ceilings. Flow
+    # replay compilation is global-only, so it never appears in this payload.
+    (StateKey.EXTRACTION, StateKey.EXTRACTION_PENDING),
 )
 
 

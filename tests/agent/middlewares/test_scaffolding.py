@@ -57,11 +57,14 @@ class _AliasMiddleware:
 
 def _real_subagent_chain(
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
+    *,
+    session_id: str = "",
 ) -> list[Any]:
     return _build_child_middlewares(
         auxiliary_llm=None,
         main_llm_context_window=_CONTEXT_WINDOW,
         functional_role=functional_role,
+        session_id=session_id,
     )
 
 
@@ -223,6 +226,50 @@ class TestActualChainCompliance:
         budget = next(mw for mw in middleware if isinstance(mw, IterationBudget))
 
         assert budget.max_iterations == expected
+
+    def test_the_subagent_ceiling_caps_the_role_limit(self, monkeypatch):
+        """预设角色 → 高级's sub ceiling is a CAP, resolved from the MAIN session."""
+        seen: list[str] = []
+
+        def _effective(session_id: str) -> dict:
+            seen.append(session_id)
+            return {"iteration_budget_sub": 25}
+
+        monkeypatch.setattr("runtime.session.extraction.effective_extraction_config", _effective)
+        middleware = _real_subagent_chain(
+            FunctionalRole.EXECUTOR, session_id="agent:main-1:subagent:run-1"
+        )
+
+        budget = next(mw for mw in middleware if isinstance(mw, IterationBudget))
+        assert budget.max_iterations == 25
+        # The child key was resolved to the main session, which owns the setting.
+        assert seen == ["main-1"]
+
+    @pytest.mark.parametrize(
+        ("role", "expected"),
+        [(FunctionalRole.EXECUTOR, 90), (FunctionalRole.GENERAL, 60)],
+    )
+    def test_the_default_ceiling_keeps_each_role_limit(self, monkeypatch, role, expected):
+        monkeypatch.setattr(
+            "runtime.session.extraction.effective_extraction_config",
+            lambda _sid: {"iteration_budget_sub": 90},
+        )
+        middleware = _real_subagent_chain(role, session_id="agent:main:subagent:x")
+
+        budget = next(mw for mw in middleware if isinstance(mw, IterationBudget))
+        assert budget.max_iterations == expected
+
+    def test_a_broken_settings_read_keeps_the_role_limit(self, monkeypatch):
+        def _boom(_session_id: str) -> dict:
+            raise RuntimeError("settings unavailable")
+
+        monkeypatch.setattr("runtime.session.extraction.effective_extraction_config", _boom)
+        middleware = _real_subagent_chain(
+            FunctionalRole.EXECUTOR, session_id="agent:main:subagent:x"
+        )
+
+        budget = next(mw for mw in middleware if isinstance(mw, IterationBudget))
+        assert budget.max_iterations == 90
 
     def test_compression_llm_is_injected_into_summarization(self):
         """The compression family feeds the summarizer's own model (C1)."""

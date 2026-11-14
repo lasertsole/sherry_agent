@@ -56,13 +56,15 @@
 
 LLM の処理の前に、**タスクレベルの事前判定**（`_judge_task_generalizability`）が計画を 1 回スクリーニングします。短い補助モデル呼び出し 1 回に、計画のゴールと完了済み todo の要約だけ（handoff の証拠は含めない）を渡し、`{"should_extract": bool, "reason": str}` を受け取ります。`false` の場合は handoff tree とレビューエージェントを構築する前に戻り、スナップショット指紋を消費済みとして記録します——成功経路が書くのと同じ `skill_review_snapshot_hash` です——ので、同じ計画で事前判定は再実行されません。回答が不正・利用不可・呼び出し失敗のときは**抽出を継続する fail-open** です。スキル内容の品質は従来どおり完全なレビューと judge が担い、事前判定は「タスクの種類」がレビューに値するかだけを決めます。
 
+**ユーザースイッチ。** プリセットキャラクター → 詳細 の経験学習スイッチ（`skill_extraction_enabled`: グローバルは `sherry.jsonc`、セッションで上書き可能）は完了検出より前に読まれます。オフならフォークせず、計画も抽出済みに印付けされないため、後でオンに戻せば抽出されます。同じパネルのフロー再利用コンパイル（`flow_extraction_enabled`、グローバル専用——セッション側は読み取り専用）は下記の PTC コンパイルと LDW コンパイルを制御し、経験学習がオフならフローも強制的にオフになります。読み取り口は `runtime/session/extraction.py` の 1 か所です。
+
 スキルレビューは snapshot/judge トランザクションで走る：
 
 - **snapshot**：`skill_review.snapshot_auto_skills()` が最初の試行前に `skills/auto`（skill、support file、usage sidecar）を捕捉。
 - **write**：レビューが skill を作成/修補。`set_current_write_origin("background_review")` により新規 skill は agent-created として curator の管理対象になる。
 - **judge**：`skill_review.judge_skill_update()` が補助モデルに `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`scope_valid`、`feedback` を求める。**変更された skill** は `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable、`scope_valid` のすべてが必要です。**正当化された no-op** は `no_op_justified` だけで通過します——ファイル変更がなければ採点する内容がなく、1 回の judge 呼び出しで終了し再試行しません。
 - **retry/rollback**：拒否された試行は pre-review snapshot に戻し、judge feedback 付きで再試行（既定最大 2 回）。使い切ると再度復元し、`skill_review_failed_hash` と時刻を記録して成功 fingerprint を進めない。後続ターンで `skill_review_failure_cooldown_s` 後に再試行でき、plan が変われば即時再試行。
-- **任意の PTC コンパイル（通過後）**：`PTC["ptc_prefill_enabled"]` が有効なとき、同じバックグラウンドタスクが成功した TaskFlow step ごとに `scripts/ptc__<plan_key>__<step_id>.py` を更新済み skill へコンパイルします。best-effort で、judge を再実行せず、成功済み skill をロールバックしません。
+- **任意の PTC コンパイル（通過後）**：`PTC["ptc_prefill_enabled"]` と プリセットキャラクター → 詳細 のフロー再利用コンパイルが有効なとき、同じバックグラウンドタスクが成功した TaskFlow step ごとに `scripts/ptc__<plan_key>__<step_id>.py` を更新済み skill へコンパイルします。best-effort で、judge を再実行せず、成功済み skill をロールバックしません。このスイッチはコンパイルだけを制御し、既存スクリプトの再生は妨げません。
 
 この経路は knowledge（`task-*.json` / `wave-*.json` / `plan-summary.json`）も FACTS も書かない。既存 knowledge ファイルはディスクに残るが legacy 扱い。モデル向け prompt block と `knowledge` ツールは retired。
 
@@ -147,6 +149,8 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 圧縮後 todo fork を有効化 |
 | `skill_review_enabled` | `BACKGROUND_REVIEW_CONFIG`（`config/features/agent_side/background_review.py`） | `True` | スキルレビュー主スイッチ（skill-only、knowledge を書かない） |
+| `extraction.skill_extraction_enabled` | `sherry.jsonc`（プリセットキャラクター → 詳細） | `True` | 経験学習のユーザー向けスイッチ。セッションで上書き可能 |
+| `extraction.flow_extraction_enabled` | `sherry.jsonc`（プリセットキャラクター → 詳細） | `True` | フロー再利用コンパイルのユーザー向けスイッチ（PTC + LDW、グローバル専用）。経験学習オフ時は強制オフ |
 | `skill_review_max_attempts` | `BACKGROUND_REVIEW_CONFIG` | `2` | 初回 + judge feedback 付き最大 1 回 |
 | `skill_review_quality_threshold` | `BACKGROUND_REVIEW_CONFIG` | `6` | 通過に必要な最低 `quality` |
 | `skill_review_feedback_turns` / `_max_items` / `_chars` | `BACKGROUND_REVIEW_CONFIG` | `12` / `8` / `2000` | 有界のユーザー修正コンテキスト |

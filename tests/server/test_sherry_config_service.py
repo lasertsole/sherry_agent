@@ -32,6 +32,12 @@ SAMPLE = """// app settings
   "heartbeat": {
     "enabled": true
   },
+  "extraction": {
+    "skill_extraction_enabled": true,
+    "flow_extraction_enabled": true,
+    "iteration_budget_main": 180,
+    "iteration_budget_sub": 90
+  },
   "curator": {
     "enabled": true,
     "interval_hours": 168,

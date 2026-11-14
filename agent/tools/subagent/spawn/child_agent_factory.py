@@ -167,6 +167,7 @@ def _build_child_middlewares(
     main_llm_context_window: int,
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
     spawn_depth: int = 1,
+    session_id: str = "",
 ) -> list[Any]:
     """Assemble the child-agent middleware pipeline.
 
@@ -179,6 +180,11 @@ def _build_child_middlewares(
     depth-scaled summary budget into a :class:`ChildBuildContext`. The executor
     is the write-capable worker and gets the larger iteration budget; every
     other role keeps the standard worker budget.
+
+    ``session_id`` is the CHILD session key; the main session behind it is what
+    carries the user's 预设角色 → 高级 sub-agent ceiling. The effective value is
+    a CAP (``min(role limit, ceiling)``), so the default 90 leaves a worker's 60
+    and an executor's 90 exactly as they were.
     """
     from agent.middlewares.specs import ChildBuildContext, build_child_middlewares
     from config.features import ITERATION_BUDGET
@@ -188,6 +194,20 @@ def _build_child_middlewares(
         if functional_role == FunctionalRole.EXECUTOR
         else ITERATION_BUDGET["worker_max_iterations"]
     )
+    if session_id:
+        try:
+            from runtime.session.extraction import effective_extraction_config, root_session_id
+
+            sub_ceiling = int(
+                effective_extraction_config(root_session_id(session_id))["iteration_budget_sub"]
+            )
+            iteration_limit = min(iteration_limit, sub_ceiling)
+        except Exception:  # noqa: BLE001 - a settings read must not block a spawn
+            logger.warning(
+                "Subagent: extraction ceiling unavailable for session {}; keeping role limit {}",
+                session_id,
+                iteration_limit,
+            )
     logger.info(
         "Subagent middleware budget: functional_role={} max_iterations={}",
         functional_role,
@@ -744,6 +764,7 @@ async def _build_child_agent(
         main_llm_context_window=main_llm_max_tokens,
         functional_role=functional_role,
         spawn_depth=spawn_depth,
+        session_id=session_id,
     )
     # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
     # middleware must abort the spawn, not ship a weakened child.

@@ -145,6 +145,7 @@ TaskFlow step spawn
 | `ptc_max_stderr_bytes` | 10000 | 절단 전에 자식에서 보존하는 stderr 바이트 수 |
 | `ptc_allowed_tools` | `read_file`, `write_file`, `patch_file`, `terminal`, `search_files`, `web_search` | 자식의 사용 가능 도구와 교집합을 취하는 허용 목록 |
 | `ptc_prefill_enabled` | `False` | skill review 스크립트 컴파일과 spawn 측 PTC 프리필을 활성화. 관찰 기간에는 off |
+| `extraction.flow_extraction_enabled`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 플로우 재사용 스위치. 컴파일 절반(PTC + LDW)을 전역으로 제어하며 세션에서는 읽기 전용. 기존 스크립트 재생은 제한하지 않습니다 |
 | `ptc_script_max_bytes` | `20480` | skill `scripts/`에서 읽는 스크립트 크기 상한 |
 | `ptc_compile_max_attempts` | `2` | JSON/구문 실패 시 컴파일 시도 횟수. 컴파일은 실행하지 않음 |
 

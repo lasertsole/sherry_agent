@@ -360,6 +360,16 @@
                 </div>
               </div>
             </TabPanel>
+            <!-- LAST tab: the extraction switches + iteration ceilings. Global
+                 values apply immediately to every session that has not
+                 overridden a field (the session entry shows the same tab with
+                 flow replay compilation read-only). -->
+            <TabPanel
+              value="advanced"
+              :header="t('advanced.tab')"
+              data-test="persona-advanced-tab">
+              <ExtractionSettingsPanel scope="global" />
+            </TabPanel>
           </TabView>
           <div class="flex min-w-[420px] justify-end">
             <Button
@@ -497,6 +507,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AvatarCropDialog from './AvatarCropDialog.vue';
+import ExtractionSettingsPanel from './ExtractionSettingsPanel.vue';
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
 import type { SessionModelProfile } from '~/composables/bridge/session';
 import { FOLLOW_TIER_ID } from '~/stores/agent-config';

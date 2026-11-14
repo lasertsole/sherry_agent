@@ -59,13 +59,15 @@ When `skill_review_enabled` is on, `_run_skill_review` is dispatched fire-and-fo
 
 Before the LLM work, a **task-level pre-check** (`_judge_task_generalizability`) screens the plan once: one short auxiliary call receives only the plan goal and the completed todo summaries (never the handoff evidence) and answers `{"should_extract": bool, "reason": str}`. A `false` verdict returns before the handoff tree and the review agent are built and stores the snapshot fingerprint as consumed — the same `skill_review_snapshot_hash` the success path writes — so the same plan never re-runs the pre-check. A malformed, unavailable or failed pre-check fails OPEN to extraction: the full review plus its quality judge still own skill-content quality, and the pre-check only decides whether the TASK class is worth reviewing at all.
 
+**User switch.** Presets & Role → Advanced's experience-learning switch (`skill_extraction_enabled`: a global `sherry.jsonc` value with a per-session override) is checked BEFORE the completion detector. Off means the pass never forks and the plan is not marked extracted, so turning it back on later still extracts. The same panel's flow-replay switch (`flow_extraction_enabled`, GLOBAL-ONLY — the session row is read-only) gates the PTC compile below and LDW compilation; experience learning off forces flow off too. The single reader is `runtime/session/extraction.py`.
+
 The review runs as a snapshot/judge transaction:
 
 - **snapshot**: `skill_review.snapshot_auto_skills()` captures `skills/auto` (skills, support files and the usage sidecar) before the first attempt.
 - **write**: the review creates/patches skills. `set_current_write_origin("background_review")` marks newly created skills as agent-created for the curator.
 - **judge**: `skill_review.judge_skill_update()` asks the auxiliary model for `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified`, `scope_valid` and `feedback`. A change passes only with `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`, `trigger_quality >= 6`, grounded and reusable; a no-op needs `no_op_justified`.
 - **retry/rollback**: a rejected attempt restores the pre-review snapshot, then retries with the judge feedback (default max 2 attempts). Exhaustion restores again, records `skill_review_failed_hash` + timestamp, and does not advance the success fingerprint; a later turn can retry after `skill_review_failure_cooldown_s`, and a changed plan retries immediately.
-- **optional PTC compile (after a pass)**: when `PTC["ptc_prefill_enabled"]` is on, the same background task compiles one `scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step into the updated skill. Compilation is best-effort and never reruns the judge or rolls back the accepted skill.
+- **optional PTC compile (after a pass)**: when `PTC["ptc_prefill_enabled"]` is on, the same background task compiles one `scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step into the updated skill. Compilation is best-effort and never reruns the judge or rolls back the accepted skill. The Presets & Role → Advanced flow-replay switch must also be on; it gates compilation, never replaying an existing script.
 
 Knowledge files (`task-*.json` / `wave-*.json` / `plan-summary.json`) and the FACTS target are no longer written by this path. Existing knowledge files remain on disk but are legacy; the model-facing prompt block and the `knowledge` tool are retired.
 
@@ -150,6 +152,8 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION` (`config/features/agent_side/summarization.py`) | `True` | Enables the post-compression todo fork |
 | `skill_review_enabled` | `BACKGROUND_REVIEW_CONFIG` (`config/features/agent_side/background_review.py`) | `True` | Master switch for the plan-completion skill review (skill-only; no knowledge writes) |
+| `extraction.skill_extraction_enabled` | `sherry.jsonc` (Presets & Role → Advanced) | `True` | User-facing experience-learning switch; a session may override it |
+| `extraction.flow_extraction_enabled` | `sherry.jsonc` (Presets & Role → Advanced) | `True` | User-facing flow-replay compile switch (PTC + LDW), global-only; forced off when experience learning is off |
 | `skill_review_max_attempts` | `BACKGROUND_REVIEW_CONFIG` | `2` | Initial attempt + at most one judge-feedback retry |
 | `skill_review_quality_threshold` | `BACKGROUND_REVIEW_CONFIG` | `6` | Minimum `quality` score for a pass |
 | `skill_review_feedback_turns` / `_max_items` / `_chars` | `BACKGROUND_REVIEW_CONFIG` | `12` / `8` / `2000` | Bounded user-correction context |

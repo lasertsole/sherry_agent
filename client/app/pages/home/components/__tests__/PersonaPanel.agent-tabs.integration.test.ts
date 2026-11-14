@@ -203,11 +203,11 @@ describe('PersonaPanel agent-config tabs', () => {
     agentStore.state = makeAgentStore().store;
   });
 
-  it('renders the two remaining tabs and drops the tool / middleware ones', async () => {
+  it('renders the agent + advanced tabs and drops the tool / middleware ones', async () => {
     const panel = await mountPanel();
 
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers.slice(-2)).toEqual(['代理模型', '技能']);
+    expect(headers.slice(-3)).toEqual(['代理模型', '技能', '高级']);
     expect(headers).not.toContain('工具');
     expect(headers).not.toContain('中间件');
     expect(panel.find('[data-test="agent-tools-tab"]').exists()).toBe(false);

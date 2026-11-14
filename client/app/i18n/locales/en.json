@@ -1,4 +1,38 @@
 {
+  "advanced": {
+    "tab": "Advanced",
+    "globalHint": "These values apply to every session that has not overridden them, and changes take effect immediately.",
+    "sessionHint": "Unchanged fields inherit the global values. Changes apply from the next turn.",
+    "inherited": "Inherited from global",
+    "inheritedWithGlobal": "Inherited from global ({value})",
+    "overridden": "Overridden for this session",
+    "skillExtraction": {
+      "name": "Experience Learning",
+      "description": "After a task plan completes, automatically summarize lessons into skill definitions for future use."
+    },
+    "flowExtraction": {
+      "name": "Flow Replay Compilation",
+      "description": "Compile successful task flows into replay scripts (step scripts + workflow scripts) so repeated tasks replay with zero model calls.",
+      "globalOnly": "Controlled by the global setting (sessions inherit it read-only).",
+      "requiresSkill": "Requires Experience Learning."
+    },
+    "iterationBudgetMain": {
+      "name": "Main Agent Iteration Limit",
+      "description": "Max tool-call iterations per turn for the main agent. Exceeding it triggers summarization/compaction."
+    },
+    "iterationBudgetSub": {
+      "name": "Subagent Iteration Limit",
+      "description": "Max tool-call iterations per turn for subagents. A role's own lower limit still applies; exceeding it ends the child run."
+    },
+    "resetToGlobal": "Reset to global",
+    "save": "Save",
+    "saved": "Extraction settings saved",
+    "savedPending": "Saved - applies from the next turn",
+    "saveFailed": "Failed to save extraction settings",
+    "loadFailed": "Failed to load extraction settings",
+    "invalidBudget": "Enter a whole number between {min} and {max}.",
+    "subAboveMain": "The subagent limit must not exceed the main agent limit."
+  },
   "a11y": {
     "previewImage": "Preview image",
     "language": "Language",

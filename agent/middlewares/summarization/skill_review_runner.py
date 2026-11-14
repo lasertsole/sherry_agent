@@ -13,6 +13,7 @@ from loguru import logger
 from config.features import BACKGROUND_REVIEW_CONFIG
 from runtime import StateKey, state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
+from runtime.session.extraction import effective_extraction_config
 from .skill_review import (
     _strip_json,
     changed_skill_paths,
@@ -533,7 +534,7 @@ async def _run_skill_review(session_id: str) -> None:
                 # PTC compilation is a separate, best-effort phase: it must
                 # never turn an accepted skill update into a failed review.
                 try:
-                    await _compile_ptc_scripts(context, before, after, text)
+                    await _compile_ptc_scripts(context, before, after, text, session_id=session_id)
                 except Exception:
                     logger.exception("PTC compile failed (fail-open) for session {}", session_id)
                 return
@@ -565,6 +566,13 @@ async def maybe_trigger_skill_review(session_id: str) -> None:
     once-per-cycle flag) so a bail-out never marks a plan as extracted.
     """
     if not session_id or not _SKILL_REVIEW_ENABLED:
+        return
+    # 预设角色 → 高级: experience learning may be off globally or overridden
+    # off for this session. Checked before the completion detector (which
+    # consumes the once-per-cycle flag), so a disabled pass never marks the
+    # plan as extracted — turning the switch back on extracts it later.
+    if not effective_extraction_config(session_id)["skill_extraction_enabled"]:
+        logger.debug("skill review: disabled by extraction settings for {}", session_id)
         return
     if state_register_mem.get_state(session_id, _SKILL_REVIEW_LOCK_KEY, False):
         return

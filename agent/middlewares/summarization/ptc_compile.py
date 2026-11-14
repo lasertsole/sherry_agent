@@ -99,16 +99,27 @@ async def _compile_ptc_scripts(
     before: Any,
     after: Any,
     review_text: str,
+    *,
+    session_id: str = "",
 ) -> None:
     """Best-effort: compile one replay script per successful TaskFlow step.
 
     Runs AFTER the skill judge has accepted the skill update, so a compile miss
     never rolls the skill back. The compiler returns source; this function
     validates the filename and writes it through ``skill_manage``.
+
+    ``session_id`` is the main session whose 预设角色 → 高级 settings decide
+    whether flow replay compilation happens at all. The check is fail-open
+    (a settings read that raises keeps the historical compile), and it sits
+    BEFORE the owning-skill work so a disabled switch costs no scanning.
     """
     from agent.tools.ptc.compiler import compile_step_script
     from agent.tools.ptc.scripts import script_filename
+    from runtime.session.extraction import flow_extraction_enabled
 
+    if not flow_extraction_enabled(session_id):
+        logger.debug("PTC compile: flow extraction is disabled for {}", session_id or "<global>")
+        return
     if not PTC["ptc_prefill_enabled"]:
         return
     plan_key = str(context.get("plan_key") or "").strip()

@@ -235,11 +235,29 @@ def _build_child_summarization(ctx: ChildBuildContext) -> Summarization:
     )
 
 
+def _main_iteration_cap(session_id: str) -> int:
+    """The session's effective main-agent ceiling (预设角色 → 高级).
+
+    Imported lazily: the resolver runs once per turn, not at chain build, so
+    the settings module (and the config file it reads) stays off the import
+    path. ``IterationBudget`` treats a raise as "keep the static default".
+    """
+    from runtime.session.extraction import effective_extraction_config
+
+    return int(effective_extraction_config(session_id)["iteration_budget_main"])
+
+
 def _build_main_iteration_budget(_ctx: MainBuildContext) -> IterationBudget:
-    return IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"])
+    return IterationBudget(
+        ITERATION_BUDGET["main_agent_max_iterations"], cap_resolver=_main_iteration_cap
+    )
 
 
 def _build_child_iteration_budget(ctx: ChildBuildContext) -> IterationBudget:
+    # The child factory already resolved the role limit AND the effective sub
+    # ceiling into ``iteration_limit`` (min of the two), so the instance is
+    # static here — a child agent is built per spawn, not shared across
+    # sessions.
     return IterationBudget(ctx.iteration_limit)
 
 

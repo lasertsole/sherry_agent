@@ -102,6 +102,17 @@ class StateKey(StrEnum):
     # started with; promoted at the turn boundary (same twin pattern).
     AGENT_CONFIG_PENDING = "agent_config_pending"
 
+    # Per-session EXTRACTION overrides (预设角色 → 高级): experience learning and
+    # the two iteration ceilings. Only explicitly overridden fields are stored;
+    # absent = inherit the global sherry.jsonc ``extraction`` value. Flow replay
+    # compilation is GLOBAL-ONLY and never stored here (a session payload naming
+    # it is rejected by the API). Read by the skill-review / PTC / LDW gates and
+    # by IterationBudget.
+    EXTRACTION = "extraction_overrides"
+    # Choice made mid-turn: parked so the in-flight turn keeps the values it
+    # started with; promoted at the turn boundary (same twin pattern).
+    EXTRACTION_PENDING = "extraction_overrides_pending"
+
     # Per-session web-search backend (client UI → /sessions/search_backend):
     # "tavily" | "searxng", absent = the global default (availability-aware).
     # Read per call by the web_search tool, so a change applies immediately.

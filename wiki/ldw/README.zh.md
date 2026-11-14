@@ -82,6 +82,7 @@ LDW 运行失败且 `LDW["auto_degrade_enabled"]` 打开时，适配器会从**�
 |---|---|---|
 | `LDW["enabled"]` | `True` | 总开关；False 让所有重放继续走 TaskFlow |
 | `LDW["min_replays"]` | `3` | 计划停止走 TaskFlow 并编译 LDW 脚本前的重放次数 |
+| `extraction.flow_extraction_enabled`（预设角色 → 高级） | `True` | 面向用户的编译开关，全局只读：关闭时 `action=compile`、编译缺失脚本与修复重编译都被拒绝。已存在的脚本仍可重放 |
 | `LDW["script_max_bytes"]` | `65536` | 单个 `ldw__<plan_key>.py` 的上限 |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | 跨进程 journal 位置 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 失败后创建并驱动 TaskFlow replay flow |

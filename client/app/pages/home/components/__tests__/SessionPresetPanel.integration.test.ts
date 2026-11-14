@@ -267,7 +267,7 @@ describe('SessionPresetButton', () => {
     // Agent models leads the whole strip (the session's own model pair is what the
     // viewer is opened for), ahead of the persona tabs too.
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers).toEqual(['代理模型', '角色配置', '人格灵魂', '用户信息', '技能']);
+    expect(headers).toEqual(['代理模型', '角色配置', '人格灵魂', '用户信息', '技能', '高级']);
 
     // Main agent is the SAME control as the toolbar's model switch: a picker bound to
     // the session-model store (the stub reports "env" with no model configured).

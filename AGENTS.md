@@ -506,7 +506,7 @@ real user message and never rewriting the checkpoint.
 
 `execute_code` is the manual PTC tool (executor-only; the LLM writes and calls the script). The replay path is a second, **system-triggered** use of `run_ptc`, gated by `PTC["ptc_prefill_enabled"]` (shipped `False` for observation):
 
-- After a skill review passes, the same background task may compile one `skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step (`compiler.py`; source is validated statically and written through `skill_manage`, never executed there). Compile failure never rolls back the accepted skill.
+- After a skill review passes, the same background task may compile one `skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step (`compiler.py`; source is validated statically and written through `skill_manage`, never executed there). Compile failure never rolls back the accepted skill. Compilation additionally requires the user-facing `flow_extraction_enabled` switch (see Extraction Settings); the switch never gates REPLAYING an existing script.
 - On a step subagent spawn, `_execute_subagent_scoped` (before `_build_child_agent`) resolves the plan key from the normalized root main session and asks `scripts.py` for the unique script. Only `PTC_ROLES` (executor) runs the prefill, so the role boundary is not widened.
 - The call is `run_ptc` directly with a role-filtered tool map (`PTC["ptc_allowed_tools"]` ∩ the spawn's policy) and the child session id; it is not a tool call.
 - Success = `status=ok`, exit 0, non-empty stdout, a non-empty `calls_log` with every call `ok`, and the step's `output_schema` passing when present. A hit skips child build / LLM / goal loop and returns stdout as `result_text` (`handoff=None`).
@@ -518,13 +518,65 @@ real user message and never rewriting the checkpoint.
 
 The LDW core is vendored whole under `vendor/ldw/` (no `deepagents` dependency): `vendor/ldw/_bootstrap.py` installs a minimal stub before the package imports, and `agent/tools/subagent/ldw_shim.py` is the stable import seam. The main agent has a main-only `workflow_replay` tool (`action=status|compile|replay`); it is not a subagent tool.
 
-- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored.
+- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored.
 - `compile_plan_to_workflow` consumes the current TaskFlow flow DAG and preserves the step contract (`response_schema`, `step_model`, judge/validation criteria, retry policy, skills, timeout); `build_orchestrate` injects `variant_input`, hard constraints and each predecessor's result into the step prompt, so the journal key partitions by variant and upstream output. `agent_type` carries the step suffix because PTC scripts are step-scoped. A schema-bound step calls `ctx.agent(..., schema=...)`.
 - `register_roster` registers one BUILDER per step (so LDW can request a schema-bound runnable). Leaves reuse `_assemble_child_tools`: the role allow-list plus code intelligence, ast-grep and executor-only PTC. `session_id` travels in the runnable config, not a baked graph. An executor leaf may run its PTC script first (hard gate; failure appends `[PTC Pre-run Progress]` and falls back to ReAct; a PTC schema miss is failure). A schema leaf forces thinking off.
 - `SqliteWorkflowStore` at `src/data/workflow_runs.db` backs cross-process resume; repeated replay with the same prompt/agent_type/model/schema is zero-call (`journal_hits` / `leaf_calls` are reported). Per-plan locks serialize concurrent replay; `LDW["real_replay_timeout_s"]` bounds one run.
 - LDW has no step retry/judge. A failed node is `None` and skips dependents. `taskflow_adapter.run_taskflow_fallback` is the automatic L2: it creates a NEW `ldw-<first 8 chars of plan_key>-<8-char uuid>` flow from the same verified DAG (never resets the old flow), seeds every succeeded LDW result as DONE with a synthetic `ldw-journal:<flow>:<step>` child key (so those steps spawn nothing), dispatches only failed/unfinished steps through normal TaskFlow (retry/schema/StepJudge/child semantics intact), polls `taskflow_wait_all`, injects each settled child through `taskflow_resume`, and terminalizes a rejected/unfinished flow instead of leaving an active orphan. It writes successful TaskFlow results back to the LDW journal, so the next same-variant replay is zero-call; `auto_degrade_enabled` / `repair_enabled` / `max_failed_steps` gate the path.
 - Repair: when steps failed, `repair_extraction` reads the replay flow's child handoffs, merges the actual success path and failure branches into plan knowledge, persists `success-steps.json` via `KnowledgeStore`, and recompiles the LDW script. Persistence/recompile errors are returned, never raised. PTC scripts remain owned by the skill-review compiler; LDW repair only recompiles its own artifact.
 - Tests: `tests/agent/tools/subagent/test_ldw_shim.py`, `tests/agent/tools/ldw/test_compiler.py`, `test_scripts.py`, `test_replay.py`, `test_leaf.py`, `test_taskflow_adapter.py`, `test_repair.py`, `test_tool.py`, `tests/full/test_ldw_replay_e2e.py`, and the real TaskFlow/model e2e `tests/full/test_ldw_real_plan_e2e.py`; four-language docs in `wiki/ldw/`.
+
+## Extraction Settings (`预设角色 → 高级`, `runtime/session/extraction.py`)
+
+One user-facing surface controls four values at two scopes. The single reader is
+`runtime/session/extraction.py::effective_extraction_config(session_id)`; every
+gate calls it, and every read is fail-open.
+
+| value | UI label | global | session | default |
+|---|---|---|---|---|
+| `skill_extraction_enabled` | 经验学习 / Experience Learning | yes | override | `True` |
+| `flow_extraction_enabled` | 流程复用编译 / Flow Replay Compilation | yes | **read-only** | `True` |
+| `iteration_budget_main` | 主智能体迭代上限 | yes | override | 180 |
+| `iteration_budget_sub` | 子智能体迭代上限 | yes | override | 90 (a cap) |
+
+- **Global** lives in `sherry.jsonc`'s `extraction` group (`extraction.*` dotted
+  keys registered in `config/sherry_settings.py`), is read LIVE on each call and
+  written through `PUT /extraction/global` → `write_sherry_config` (typed,
+  comment-preserving).
+- **Session** lives in `StateKey.EXTRACTION` with the parked twin
+  `EXTRACTION_PENDING` (promoted at the turn boundary by
+  `promote_pending_settings_sync`), written through `PUT /sessions/extraction`.
+  Only experience learning and the two ceilings are accepted; a payload naming
+  `flow_extraction_enabled` is refused by name (global-only). The panel persists
+  ONLY the fields that differ from the global values, so a field left alone
+  keeps inheriting later global changes.
+- Resolution is session → global → default. `skill_extraction_enabled=False`
+  forces flow off (parent-off forces child-off); `iteration_budget_sub` is
+  clamped to `iteration_budget_main`, and both to 1..1000.
+- Gates: `maybe_trigger_skill_review` checks `skill_extraction_enabled` BEFORE
+  the completion detector (a disabled pass never marks the plan extracted);
+  `_compile_ptc_scripts`, `workflow_replay(action="compile")`,
+  `replay_plan`'s compile-on-miss and the TaskFlow repair recompile check
+  `flow_extraction_enabled`. Replaying an EXISTING script is never gated — the
+  switch governs compilation, not playback.
+- `IterationBudget` (main) takes a per-session `cap_resolver` and stores each
+  turn's cap beside the counter in `before_agent`, so one process-level instance
+  serves sessions with different ceilings. A child's role limit is
+  `min(role_limit, iteration_budget_sub)` resolved from the child session's ROOT
+  main session (`root_session_id`); the 180/90 defaults reproduce the previous
+  180 / 60-90 limits exactly.
+- UI: `ExtractionSettingsPanel.vue` is the LAST tab of both the global persona
+  panel (`PersonaPanel.vue`) and the session preset panel
+  (`SessionPresetPanel.vue`); the session entry renders the flow row locked with
+  a "controlled by global" hint. Labels are the central four-language
+  `advanced.*` keys. API surface: `GET|PUT /extraction/global`,
+  `GET|PUT /sessions/extraction`.
+- Tests: `tests/runtime/test_extraction_settings.py`,
+  `tests/server/trigger/http/test_extraction_api.py`,
+  `test_iteration_budget.py`, `test_scaffolding.py` (child cap),
+  `test_skill_review_trigger.py`, `test_skill_review_ptc_compile.py`,
+  `tests/agent/tools/ldw/test_tool.py` / `test_replay.py`, and the client
+  `extraction-bridge.test.ts` + `ExtractionSettingsPanel.integration.test.ts`.
 
 ## Queued User Input (`server/service/input_queue_service.py`)
 

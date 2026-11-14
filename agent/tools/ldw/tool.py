@@ -84,12 +84,15 @@ class WorkflowReplayTool(BaseTool):
             return json.dumps({"ok": False, "error": "no plan identity"}, ensure_ascii=False)
 
         if action == "status":
+            from runtime.session.extraction import flow_extraction_enabled
+
             script = find_ldw_script(plan_key)
             knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
             return json.dumps(
                 {
                     "ok": True,
                     "enabled": bool(LDW["enabled"]),
+                    "flow_extraction_enabled": flow_extraction_enabled(sid),
                     "plan_key": plan_key,
                     "replay_count": replay_count(plan_key),
                     "min_replays": int(LDW["min_replays"]),
@@ -100,6 +103,21 @@ class WorkflowReplayTool(BaseTool):
                 ensure_ascii=False,
             )
         if action == "compile":
+            # 预设角色 → 高级: flow replay compilation is global-only. Refuse a
+            # manual compile while it is off; an existing script still replays.
+            from runtime.session.extraction import flow_extraction_enabled
+
+            if not flow_extraction_enabled(sid):
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "error": (
+                            "flow extraction is disabled in settings; "
+                            "enable it in Presets & Role → Advanced"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
             knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
             if knowledge is None:
                 return json.dumps(

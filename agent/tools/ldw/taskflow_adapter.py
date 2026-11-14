@@ -514,6 +514,15 @@ async def run_taskflow_fallback(
     repair_error = ""
     repaired_failures = [*failed, *unfinished]
     if repair and repaired_failures:
+        from runtime.session.extraction import flow_extraction_enabled
+
+        if not flow_extraction_enabled(session_id):
+            # 预设角色 → 高级: the repair loop recompiles the LDW artifact, so it
+            # is flow-extraction work. Skip it silently while the switch is off;
+            # the TaskFlow outcome itself is unaffected.
+            repair_error = "flow_extraction_disabled"
+            repaired_failures = []
+    if repair and repaired_failures:
         original = _original_knowledge(meta)
         handoffs = _collect_handoffs(flow)
         repaired_input = merge_knowledge(

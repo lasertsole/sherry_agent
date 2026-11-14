@@ -56,13 +56,15 @@
 
 在 LLM 工作之前，一次**任务级预判断**（`_judge_task_generalizability`）先筛选计划：一次简短的辅助模型调用只收到计划目标与已完成 todo 摘要（不含 handoff 证据），回答 `{"should_extract": bool, "reason": str}`。返回 `false` 时在构建 handoff tree 与评审 agent 之前直接返回，并把快照指纹记为已消费——即成功路径写的同一个 `skill_review_snapshot_hash`——因此同一计划不会重复预判断。预判断返回格式错误、不可用或调用失败时**fail-open 为继续抽取**：完整评审与质量 judge 仍负责技能内容质量，预判断只决定「任务类别」是否值得评审。
 
+**用户开关。** 菜单-预设角色 → 高级 的「经验学习」开关（`skill_extraction_enabled`：全局写在 `sherry.jsonc`，可按会话覆盖）在完成检测之前读取。关闭时本轮不 fork，计划也不会被标记为已抽取，之后再打开仍可抽取。同一面板的「流程复用编译」（`flow_extraction_enabled`，全局只读——会话侧显示为锁定）控制下文的 PTC 编译与 LDW 编译；经验学习关闭时流程复用强制视为关闭。唯一读取入口是 `runtime/session/extraction.py`。
+
 技能评审以 snapshot/judge 事务运行：
 
 - **snapshot**：`skill_review.snapshot_auto_skills()` 在首次尝试前捕获 `skills/auto`（技能、支持文件、usage sidecar）。
 - **write**：评审创建/修补 skill；`set_current_write_origin("background_review")` 使新 skill 标记为 agent-created，供 curator 管理。
 - **judge**：`skill_review.judge_skill_update()` 用辅助模型返回 `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`scope_valid`、`feedback`。**改动过的 skill** 只有 `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable、`scope_valid` 全过才通过；**有理由的 no-op** 只凭 `no_op_justified` 即通过——没有文件变更就没有内容可评分，因此一次 judge 调用后直接结束，不进入重试。
 - **retry/rollback**：失败尝试恢复 pre-review snapshot，带 judge feedback 重试（默认最多 2 次）。耗尽后再次恢复，记录 `skill_review_failed_hash` + 时间戳，不推进成功指纹；后续回合在 `skill_review_failure_cooldown_s` 后可重试，计划变化立即重试。
-- **可选 PTC 编译（通过后）**：当 `PTC["ptc_prefill_enabled"]` 开启时，同一后台任务会为每个成功的 TaskFlow step 向更新后的 skill 编译 `scripts/ptc__<plan_key>__<step_id>.py`。编译是 best-effort，绝不重跑 judge，也不回滚已通过的 skill。
+- **可选 PTC 编译（通过后）**：当 `PTC["ptc_prefill_enabled"]` 与 预设角色 → 高级 的「流程复用编译」开关都开启时，同一后台任务会为每个成功的 TaskFlow step 向更新后的 skill 编译 `scripts/ptc__<plan_key>__<step_id>.py`。编译是 best-effort，绝不重跑 judge，也不回滚已通过的 skill；该开关只控制编译，不会阻止重放已存在的脚本。
 
 此路径不再写 knowledge（`task-*.json` / `wave-*.json` / `plan-summary.json`）或 FACTS。旧 knowledge 文件留在磁盘但属于 legacy；面向模型的 prompt block 和 `knowledge` 工具已退役。
 
@@ -147,6 +149,8 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 启用压缩后 todo fork |
 | `skill_review_enabled` | `BACKGROUND_REVIEW_CONFIG`（`config/features/agent_side/background_review.py`） | `True` | 技能评审主开关（skill-only，不写 knowledge） |
+| `extraction.skill_extraction_enabled` | `sherry.jsonc`（预设角色 → 高级） | `True` | 面向用户的经验学习开关，可按会话覆盖 |
+| `extraction.flow_extraction_enabled` | `sherry.jsonc`（预设角色 → 高级） | `True` | 面向用户的流程复用编译开关（PTC + LDW），全局只读；经验学习关闭时强制关闭 |
 | `skill_review_max_attempts` | `BACKGROUND_REVIEW_CONFIG` | `2` | 初次尝试 + 最多一次 judge feedback 重试 |
 | `skill_review_quality_threshold` | `BACKGROUND_REVIEW_CONFIG` | `6` | 通过所需最低 `quality` |
 | `skill_review_feedback_turns` / `_max_items` / `_chars` | `BACKGROUND_REVIEW_CONFIG` | `12` / `8` / `2000` | 有界用户纠正上下文 |
