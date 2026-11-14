@@ -38,7 +38,7 @@
 - **L1. 环境变量清洗**（`scrub_env`）：无条件、在每个子进程创建点执行，即使人工批准了 `sandbox=False` 也不例外。它除了按名称剔除密钥变量，还会以高于自身白名单的优先级**阻止启动钩子变量**（`PYTHONPATH`、`BASH_ENV`、`ENV` 等），使子进程永远不会加载由父环境设置者指定的脚本或模块；加载器变量（`LD_PRELOAD`、`LD_LIBRARY_PATH` 等）仅在 `SHERRY_STRICT_ENV_HIJACK=1` 下阻止——容器运行时会真的设置它们，剔除后所有子进程都起不来。
 - **L2. 操作系统原生沙箱**：Linux 用 bubblewrap，macOS 用 Seatbelt——写入围堵之外还有敏感路径读遮蔽（见[§2](isolation/README.zh.md#2-操作系统原生沙箱后端l2)）。Windows 没有操作系统级后端（见[诚实声明与局限](#️-诚实声明与局限)）。
 - **人工审批门**：服务端 `sandbox=False` 的绕过只可能发生在主会话，且必须经过 HITL 中断审批。模型无法主动请求：`terminal` 与 `python_repl` 的调用 schema 已不含 `sandbox` 字段（2026-11-09 审计 H2），策略由服务端掌握。
-- **PTC（`execute_code`）**：仅 executor 可用且不暴露 `sandbox` 开关，因此始终请求沙箱——子进程 argv 由同一套 L2 后端包装。`SANDBOX_POLICY=required` 拒绝该次运行，`auto` 降级时恰好一条警告（见[隔离 §2](isolation/README.zh.md#2-操作系统原生沙箱后端l2)）。
+- **PTC（`execute_code`）**：仅 executor 可用且不暴露 `sandbox` 开关，因此始终请求沙箱——子进程 argv 由同一套 L2 后端包装。`SANDBOX_POLICY=required` 与 `auto` 在后端不可用时都会拒绝该次运行——PTC 没有 HITL 路径，因此绝不降级（只有显式 `off` 才无沙箱运行；见[隔离 §2](isolation/README.zh.md#2-操作系统原生沙箱后端l2)）。
 - **文件工具路径门禁**（[隔离 §5–§7](isolation/README.zh.md#5-外部文件路径门禁文件工具)）：`resolve_project_path()` 的三道结构门与 `O_NOFOLLOW` I/O、虚拟路径回显、搜索 containment、六层外部路径审批流，以及 `PathGuard` 中间件筛选。
 
 ## ⚙️ 实现与架构
@@ -50,10 +50,10 @@
 | 取值 | 含义 |
 | :--- | :--- |
 | `required`（推荐部署值；随包 `.env` 是 `auto`） | 后端不可用 ⇒ 拒绝命令，绝不无沙箱运行 |
-| `auto` | 后端不可用 ⇒ 主会话的交互调用先走沙箱绕过 HITL 审批卡（headless 回合自动拒绝；confirm-all 的卡片会附带说明）。PTC 仍按警告降级 |
+| `auto` | 后端不可用 ⇒ 主会话的交互调用先走沙箱绕过 HITL 审批卡（headless 回合自动拒绝；confirm-all 的卡片会附带说明）。子代理/后台调用与 PTC 直接拒绝（无 HITL 路径）；只有显式 `off` 才无沙箱运行 |
 | `off` | 完全关闭沙箱 |
 
-`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但随包 `.env` 的值是 `auto`；部署时应显式设为 `required`，因为 在后端根本无法运行的主机上，`auto` 会让每一条交互式 shell 命令先弹审批卡（headless 命令被拒绝），而 PTC 仍按警告降级。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
+`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但随包 `.env` 的值是 `auto`；部署时应显式设为 `required`，因为 在后端根本无法运行的主机上，`auto` 会让每一条交互式 shell 命令先弹审批卡（headless 命令被拒绝），而 PTC 直接拒绝运行（无 HITL 路径）。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
 
 `parse_policy` 先去空白、再大小写不敏感匹配，未知取值抛 `ValueError`：安全配置写错了必须大声失败，绝不静默回退。`read_policy()` **每次**调用都执行 `os.getenv`（不做导入期缓存），运行期修改变量立即生效。
 
@@ -76,14 +76,14 @@
 
 - **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`（语义上等价于 POSIX `shell=True`），python_repl 与 PTC 子进程同理。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。`roots` 来自**会话的项目目录**（`current_project_dir(session_id)` / PTC 子进程的 cwd）—— 与命令的 cwd 同源，因此可写面与工作目录永不打架；绑定在仓库之外的项目目录可写（此前是 EROFS），而仓库本身不可写（此前可写，那正是 terminal 绕过外部路径门禁的通道）。`terminal` 与 `python_repl` 还会追加该会话自己的 `SESSIONS_DIR/<session_id>` 私有目录（`with_own_session_root`，按需创建）：它是文件工具本就可免 HITL 读写的私有运行态，使会话即使绑定了别的项目目录，也能创建、修改、删除（`rm`）自己的文件。只追加这**一个**会话目录 —— 共享的 sessions 根目录与其他会话仍只读。PTC 保持其 cwd。
 - **裸跑会被记录**：证据账本里的命令行携带 `sandboxed: false`，而沙箱绕过审批卡片会标注 `⚠ UNSANDBOXED` 并说明含义 —— 人工审批时看得到，事后审计也查得到。
-- **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。主 HITL 路径会在工具执行**之前**批准这次降级；headless 回合则自动拒绝。
+- **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。主 HITL 路径会在工具执行**之前**批准这次降级；headless 回合则自动拒绝，子代理/后台调用与 PTC 直接拒绝（无审批路径）。
 - **所有路径都无条件执行**：`env=scrub_env()` 与 `cwd=str(ROOT_DIR)`（cwd 钳制）。两个工具都强制 30 秒超时（`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`），超时即杀死子进程；PTC 强制执行自己的 `ptc_timeout_seconds` 并对子进程组发 SIGKILL。
 - **错误呈现**：`REQUIRED` 且无后端时，terminal 把 `RuntimeError` 包成 `ToolException`（经 `handle_tool_error=True` 原样呈现）；python_repl 直接抛出原始 `RuntimeError`；PTC 在派生子进程之前返回 `status: "sandbox_unavailable"` 信封。
 - **降级日志**：当这次调用想要沙箱、但后端不存在且策略不是 `off` 时，`terminal` / `python_repl` 记录恰好一条 loguru INFO，然后无沙箱执行——主 HITL 路径此前已经展示并批准了沙箱绕过卡：
 
   - `terminal: sandbox unavailable (policy=auto) — running unsandboxed (HITL-gated when an operator is in scope)`
   - `python_repl: sandbox unavailable (policy=auto) — running unsandboxed (HITL-gated when an operator is in scope)`
-  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`（PTC 无 HITL，仍是 WARNING）
+  - PTC 在结果信封中返回 `status: sandbox_unavailable` 且不启动子进程；只有 `SANDBOX_POLICY=off` 才无沙箱运行
 
   裸跑会被记录：该命令的证据账本行携带 `sandboxed: false`，而沙箱绕过审批卡片会把请求标注为 `⚠ UNSANDBOXED`（降级变体为 `⚠ OS SANDBOX UNAVAILABLE`）并写明含义。于是这个事实在两个方向上都留痕 —— 审批的人看得到，事后审计账本也查得到。
 
@@ -162,11 +162,11 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 ## ⚠️ 诚实声明与局限
 
 - **bwrap 与 Seatbelt 的构造逻辑只做了单元测试，未在真实 Linux/macOS 机器上验证。** 后端源码的 docstring 明确写了这一点（"仅验证构造逻辑，未在 Linux/macOS 实机验证"）；所有后端测试都 mock 了 subprocess，读遮蔽另有 1 条可选的真实 bwrap 冒烟测试（探测失败即跳过）。可以信任包装出的 argv，但还不构成真实的隔离保证。
-- **Windows 没有操作系统沙箱后端。** 那里的防护是环境变量清洗 + cwd 钳制 + 危险命令正则 + 敏感文件正则 + HITL 审批门。没有任何机制阻止写到项目根目录之外，而且**读保护不可用**：没有操作系统后端就没有读遮蔽，应用层正则只是唯一的读取门禁。
+- **Windows 没有操作系统沙箱后端。** 那里的防护是环境变量清洗 + cwd 钳制 + 危险命令正则 + 敏感文件正则 + HITL 审批门——并且在 `auto` 下，子代理/后台的 `terminal`/`python_repl` 调用与 PTC 直接拒绝，而不是降级。没有任何机制阻止写到项目根目录之外，而且**读保护不可用**：没有操作系统后端就没有读遮蔽，应用层正则只是唯一的读取门禁。
 - **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
 - **`python_repl` 没有对应的敏感文件正则。** terminal 专属门禁（[隔离 §3](isolation/README.zh.md#3-危险命令拦截仅-terminal)）不覆盖它；它的包装脚本限制内建（不含 `open`/`__import__`/`getattr`/`type`/`dir`/`vars`），并且 `pub_base/safe_exec.py` 会在子进程启动前拒绝 dunder 属性访问——这是一道不同且更窄的控制，读敏感环境仍需 OS 沙箱兜底。
-- **PTC 继承同一套后端的局限。** `execute_code` 现在会在后端可用时用 L2 后端包装子进程，并静态拒绝自省逃逸（受限内建不含 `getattr`/`type`/`dir`/`vars`，且禁止 dunder 属性），但在 `SANDBOX_POLICY=auto`（默认）且无可用后端的主机上，仍会在一条警告后无沙箱运行；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net` 以保持 loopback RPC 桥可达；`terminal` 与 `python_repl` 仍使用私有网络命名空间。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
-- **降级路径在主路径上需审批，其余路径仅靠工具层。** `auto` + 无后端：主会话的 `terminal` / `python_repl` 先弹沙箱绕过卡再无沙箱执行；headless 回合自动拒绝；confirm-all 的卡片附带说明；YOLO 按设计绕过（激活时会记警告）。子代理链、后台图与 PTC 没有 HITL 中间件，因此仍只记录日志后降级。随包 `.env` 是 `auto`；需要硬保证请设 `required`，`SANDBOX_STRICT_BOOT=1` 还会拒绝启动。
+- **PTC 继承同一套后端的局限。** `execute_code` 在后端可用时用 L2 后端包装子进程，并静态拒绝自省逃逸（受限内建不含 `getattr`/`type`/`dir`/`vars`，且禁止 dunder 属性）；在 `SANDBOX_POLICY=auto` 且无可用后端时现在会**拒绝运行**（PTC 无 HITL 中间件，降级从来不是审批制的）——只有显式 `off` 才无沙箱运行；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net` 以保持 loopback RPC 桥可达；`terminal` 与 `python_repl` 仍使用私有网络命名空间。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
+- **降级路径在主路径上需审批，其余路径仅靠工具层。** `auto` + 无后端：主会话的 `terminal` / `python_repl` 先弹沙箱绕过卡再无沙箱执行；headless 回合自动拒绝；confirm-all 的卡片附带说明；YOLO 按设计绕过（激活时会记警告）。子代理链、后台图与 PTC 没有 HITL 中间件，因此在 `auto` 且无后端时会在启动前直接拒绝（`_deny_unsandboxed_degrade`）；只有显式 `off` 保留无沙箱路径。随包 `.env` 是 `auto`；需要硬保证请设 `required`，`SANDBOX_STRICT_BOOT=1` 还会拒绝启动。
 - **命令路径筛查是缓解层，不是屏障。** 它只拒绝**字面点名**硬拒路径（凭据/系统文件、YOLO 拒绝名单）的命令，其余一律交给沙箱；`base64 -d | sh`、用碎片拼出的变量、以及 `cd` + 相对路径都天然绕过它。真正的边界是 OS 沙箱。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。
 - **不宣称、也未配置任何网络隔离、seccomp 或 AppArmor profile。** 隔离能力就是 [隔离 §2](isolation/README.zh.md#2-操作系统原生沙箱后端l2) 展示的 bwrap / Seatbelt 构造，仅此而已。

@@ -310,6 +310,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         session_id: SessionId = "",
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
+        self._deny_unsandboxed_degrade(sandbox)
         # Python can write files without the file tools; take the turn's shadow
         # snapshot first (fail-open).
         ensure_checkpoint(
@@ -347,6 +348,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
+        self._deny_unsandboxed_degrade(sandbox)
         # Same fail-open snapshot as the sync path.
         ensure_checkpoint(
             resolve_tool_session_id(session_id, run_manager),

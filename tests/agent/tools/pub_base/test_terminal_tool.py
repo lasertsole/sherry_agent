@@ -331,6 +331,43 @@ class TestSandboxBypassGuards:
         assert out == "ok"
         assert len(record) == 1
 
+    def test_subagent_sandbox_true_without_a_backend_is_refused(self, monkeypatch):
+        """H3: AUTO degrades only where HITL can approve; a subagent has no card."""
+        record: list[dict[str, Any]] = []
+        monkeypatch.setattr(subprocess, "Popen", _sentinel_popen(record))
+        monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
+        monkeypatch.setattr(terminal, "get_backend", lambda _policy: None)
+        import agent.tools.pub_base.sandbox as sandbox_mod
+
+        monkeypatch.setattr(sandbox_mod, "sandbox_effective", lambda requested=True: False)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
+        tool = _tool(caller_scope="subagent")
+
+        with pytest.raises(ToolException) as excinfo:
+            tool._run(["echo ok"], sandbox=True)
+
+        message = str(excinfo.value)
+        assert "no operator approval path" in message
+        assert "subagent" in message
+        assert record == [], "a refused degrade must not spawn"
+
+    def test_main_scope_sandbox_true_still_degrades(self, monkeypatch):
+        """The main turn keeps the old degrade: its HITL card owns the decision."""
+        record: list[dict[str, Any]] = []
+        monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
+        monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
+        monkeypatch.setattr(terminal, "get_backend", lambda _policy: None)
+        import agent.tools.pub_base.sandbox as sandbox_mod
+
+        monkeypatch.setattr(sandbox_mod, "sandbox_effective", lambda requested=True: False)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
+        tool = _tool()
+
+        out = tool._run(["echo ok"], sandbox=True)
+
+        assert out == "ok"
+        assert len(record) == 1
+
     def test_async_subagent_scope_sandbox_false_denied(self, monkeypatch):
         record: list[dict[str, Any]] = []
 

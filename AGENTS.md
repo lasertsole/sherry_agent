@@ -3252,8 +3252,10 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   turn auto-denies; YOLO keeps bypassing by design and `set_access_mode` logs a
   warning when full access is activated without a sandbox. `off` keeps its
   no-approval semantics and `required` still refuses in the tool layer. The
-  child chain, background graphs and PTC carry no HITL middleware, so they
-  keep the tool-layer warning-degrade path.
+  child chain, background graphs and PTC carry no HITL middleware, so under
+  `auto` without a backend they now REFUSE before the spawn
+  (`_deny_unsandboxed_degrade`; PTC returns `status: sandbox_unavailable`); only
+  an explicit `off` keeps the unsandboxed path.
   The `sandbox` switch is SERVER-owned since the 2026-11-09 audit (H2): it is
   NOT in the model-facing `SafeShellInput` / `PythonReplInput` schemas (a forged
   argument is dropped by validation), while internal `_run(sandbox=False)`

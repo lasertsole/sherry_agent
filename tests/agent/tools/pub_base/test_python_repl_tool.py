@@ -320,6 +320,44 @@ def test_required_policy_deny_sandbox_false(monkeypatch: pytest.MonkeyPatch):
     assert "main-session" in msg or "main" in msg
 
 
+def test_subagent_sandbox_true_without_a_backend_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """H3: a subagent has no HITL card, so the AUTO degrade must refuse."""
+    calls = _install_fake_popen(monkeypatch)
+    monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
+    import agent.tools.pub_base.sandbox as sandbox_mod
+
+    monkeypatch.setattr(sandbox_mod, "sandbox_effective", lambda requested=True: False)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
+    tool = _subagent_tool()
+
+    with pytest.raises(ToolException) as excinfo:
+        tool._run("print(1)", sandbox=True)
+
+    message = str(excinfo.value)
+    assert "no operator approval path" in message
+    assert "subagent" in message
+    assert calls == [], "a refused degrade must not spawn"
+
+
+def test_main_sandbox_true_without_a_backend_still_degrades(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = _install_fake_popen(monkeypatch)
+    monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
+    import agent.tools.pub_base.sandbox as sandbox_mod
+
+    monkeypatch.setattr(sandbox_mod, "sandbox_effective", lambda requested=True: False)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
+    tool = build_python_repl_tool()
+
+    out = tool._run("print(1)", sandbox=True)
+
+    assert out == "2\n"
+    assert len(calls) == 1
+
+
 def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch):
     calls = _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)

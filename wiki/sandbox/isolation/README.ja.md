@@ -70,7 +70,7 @@ bwrap
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true` を3秒のタイムアウトでスモーク実行。バイナリの存在だけでは不十分です。Ubuntu 24.04+ の AppArmor 非特権 user namespace 制限は uid-map 段階ですべての bwrap を殺せます。だからこそ実際のスモーク実行だけが誠実な確認です。
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")` のみ。sbpl には終了コードベースのスモークプローブがありません。
 
-**PTC はこのバックエンドを再利用します。** `execute_code`(プログラム的ツール呼び出し)は `sandbox` フラグを持たないため、どのポリシーでも `sandbox=True` 呼び出しと同様に振る舞います: 使えるバックエンドは `[sys.executable, script_path]` を包み、`SANDBOX_POLICY=required` でバックエンドが無い場合は spawn せずに `status: "sandbox_unavailable"` エンベロープを返し、`auto` はちょうど1件の警告を記録してサンドボックスなし実行へ降格します。PTC は `allow_network=True` を渡すため、bwrap は `--unshare-all` の隣に `--share-net` を追加します：子は親の loopback RPC リスナーに到達する必要があり、書き込み/読み取りのサンドボックスは変わりません。[PTC ページ](../../ptc/README.ja.md)を参照してください。
+**PTC はこのバックエンドを再利用します。** `execute_code`(プログラム的ツール呼び出し)は `sandbox` フラグを持たないため、どのポリシーでも `sandbox=True` 呼び出しと同様に振る舞います: 使えるバックエンドは `[sys.executable, script_path]` を包み、`SANDBOX_POLICY=required` でバックエンドが無い場合は spawn せずに `status: "sandbox_unavailable"` エンベロープを返し、`SANDBOX_POLICY=auto` でバックエンドが無い場合も spawn せず `status: "sandbox_unavailable"` を返します(PTC には HITL 経路がないため降格しません)。`off` のときだけサンドボックスなしで実行します。PTC は `allow_network=True` を渡すため、bwrap は `--unshare-all` の隣に `--share-net` を追加します：子は親の loopback RPC リスナーに到達する必要があり、書き込み/読み取りのサンドボックスは変わりません。[PTC ページ](../../ptc/README.ja.md)を参照してください。
 
 ### 3. 危険コマンドゲート (terminal のみ)
 
