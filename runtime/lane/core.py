@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from enum import StrEnum
@@ -54,11 +55,20 @@ def set_drain_check(fn: Callable[[], bool] | None) -> None:
 
 
 class Lane:
-    """Single concurrency lane: asyncio.Semaphore + counters.
+    """Single concurrency lane: an explicit waiter queue with a live limit.
 
-    The Semaphore is lazily created on first acquire() to ensure it binds
-    to the running event loop. If the loop changes (shouldn't happen in
-    production — single main loop), ``_ensure_sem()`` rebinds it.
+    The limit is read at every admission, so ``set_max`` applies IMMEDIATELY —
+    including while the lane is saturated and waiters are parked (the old
+    semaphore swap had to wait for ``_queued == 0``, so a full lane could keep
+    running the stale limit indefinitely, and a lowered limit could even grant
+    one extra slot through the ``max(1, ...)`` rebind floor).
+
+    FIFO and cancellation-safe: a parked acquirer is one future in ``_waiters``;
+    ``release`` hands the freed slot to the oldest live waiter, and a task
+    cancelled after its future was granted returns that slot instead of
+    leaking it. The loop binding is retained for the cross-loop misuse warning
+    (production runs one loop); a loop change drops the old futures, which no
+    live loop could ever wake.
     """
 
     def __init__(self, name: str, max_concurrent: int) -> None:
@@ -68,38 +78,30 @@ class Lane:
         self._max = max_concurrent
         self._active = 0
         self._queued = 0
-        #: A limit update that waits for an empty queue (see set_max).
-        self._rebind_pending = False
-        self._sem: asyncio.Semaphore | None = None
+        self._waiters: deque[asyncio.Future[None]] = deque()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def _ensure_sem(self) -> asyncio.Semaphore:
-        """Return the lane semaphore, creating or rebinding it for the running loop."""
+    def _bind_loop(self) -> None:
+        """Bind on first use; a loop change drops waiters the new loop cannot wake."""
         loop = asyncio.get_running_loop()
-        if self._sem is None:
-            self._sem = asyncio.Semaphore(self._max)
+        if self._loop is None:
             self._loop = loop
-        elif self._loop is not loop:
-            logger.warning(
-                "Lane {} acquired from a different event loop; rebinding semaphore "
-                "(active={}, max={})",
-                self.name,
-                self._active,
-                self._max,
-            )
-            self._rebind(loop)
-        return self._sem
-
-    def _rebind(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Replace the semaphore with a fresh one bound to ``loop``.
-
-        The fresh semaphore starts with ``max(1, max_concurrent - active)``
-        permits: slots already active keep running but are deducted so they
-        cannot be issued twice, and the ``max(1, ...)`` floor keeps the lane
-        able to make progress even when it was full.
-        """
-        permits = max(1, self._max - self._active)
-        self._sem = asyncio.Semaphore(permits)
+            return
+        if self._loop is loop:
+            return
+        logger.warning(
+            "Lane {} acquired from a different event loop; dropping {} parked waiter(s) "
+            "(active={}, max={})",
+            self.name,
+            len(self._waiters),
+            self._active,
+            self._max,
+        )
+        for future in self._waiters:
+            if not future.done():
+                future.cancel()
+        self._waiters.clear()
+        self._queued = 0
         self._loop = loop
 
     async def acquire(self, warn_ms: int = 5000) -> None:
@@ -107,23 +109,35 @@ class Lane:
 
         Refuses (``RuntimeError``, no permit consumed) while a registered
         drain check reports draining. Cancellation while queueing propagates
-        without consuming a permit.
+        without consuming a permit; cancellation after the grant releases it.
         """
         check = _drain_check
         if check is not None and check():
             raise RuntimeError(f"Lane {self.name} acquire refused: gateway is draining")
-        # A limit update deferred by an occupied queue lands here, before this
-        # caller parks on the semaphore.
-        self._apply_pending_rebind()
-        sem = self._ensure_sem()
-        self._queued += 1
+        self._bind_loop()
+        if self._active < self._max:
+            self._active += 1
+            logger.debug("Lane {} acquired (active={}, queued=0)", self.name, self._active)
+            return
+
+        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._waiters.append(future)
+        self._queued = len(self._waiters)
         wait_start = time.monotonic()
         try:
-            await sem.acquire()
+            await future
         except asyncio.CancelledError:
-            self._queued -= 1
-            raise  # never acquired — do not release
-        self._queued -= 1
+            if future.done() and not future.cancelled() and future.exception() is None:
+                # The slot was granted before the cancellation landed.
+                self.release()
+            else:
+                try:
+                    self._waiters.remove(future)
+                except ValueError:
+                    pass
+                self._queued = len(self._waiters)
+            raise
+        self._queued = len(self._waiters)
         waited_ms = (time.monotonic() - wait_start) * 1000
         if waited_ms > warn_ms:
             logger.warning(
@@ -133,7 +147,6 @@ class Lane:
                 self._active,
                 self._queued,
             )
-        self._active += 1
         logger.debug(
             "Lane {} acquired (active={}, queued={}, waited={:.0f}ms)",
             self.name,
@@ -148,27 +161,29 @@ class Lane:
             logger.warning("Lane {} release() called with no active slot", self.name)
             return
         self._active -= 1
-        if self._sem is not None:
-            self._sem.release()
-        self._apply_pending_rebind()
+        self._wake_waiters()
+
+    def _wake_waiters(self) -> None:
+        """Grant slots to the oldest waiters while capacity remains."""
+        while self._active < self._max and self._waiters:
+            future = self._waiters.popleft()
+            self._queued = len(self._waiters)
+            if future.done():
+                continue
+            self._active += 1
+            future.set_result(None)
 
     def set_max(self, max_concurrent: int) -> None:
         """Hot-update the limit; in-flight slots are unaffected.
 
-        Existing slots keep their permit and the fresh semaphore is seeded
-        with the remaining capacity, so only new acquires see the new limit.
-
-        The swap is DEFERRED while tasks are parked on the current semaphore:
-        those waiters hold a reference to the old object, so replacing it would
-        leave them waiting on a semaphore nobody releases — ``_queued`` would
-        never drain. The pending rebind is applied by the next acquire/release
-        that sees an empty queue.
+        Raising admits parked waiters immediately; lowering stops new grants
+        until releases bring ``_active`` back under the new limit.
         """
         if max_concurrent < 1:
             raise ValueError(f"Lane {self.name!r} max_concurrent must be >= 1")
-        previous = getattr(self, "_max", None)
+        previous = self._max
         self._max = max_concurrent
-        if previous is not None and previous != max_concurrent:
+        if previous != max_concurrent:
             logger.info(
                 "Lane {}: max_concurrency {} -> {} (active={}, queued={})",
                 self.name,
@@ -177,24 +192,7 @@ class Lane:
                 self._active,
                 self._queued,
             )
-        if self._sem is None or self._loop is None:
-            return
-        if self._queued > 0:
-            self._rebind_pending = True
-            logger.debug(
-                "Lane {}: limit update deferred ({} waiter(s) parked on the current semaphore)",
-                self.name,
-                self._queued,
-            )
-            return
-        self._rebind(self._loop)
-
-    def _apply_pending_rebind(self) -> None:
-        """Swap in a deferred limit once nothing is parked on the old semaphore."""
-        if not self._rebind_pending or self._queued > 0 or self._loop is None:
-            return
-        self._rebind_pending = False
-        self._rebind(self._loop)
+        self._wake_waiters()
 
     async def drain(self, timeout: float = 30.0) -> bool:
         """Wait for all active slots to release. Returns True if drained in time."""

@@ -68,16 +68,20 @@ class EffectWorker:
             await asyncio.sleep(max(1, poll_interval_s()))
 
     async def _tick(self) -> None:
-        for row in intent_log.fetch_pending(limit=50):
+        # Every intent-log call is blocking sqlite3: run each on a worker
+        # thread so a slow/contended DB cannot stall the event loop (the tick
+        # runs inside the process's single loop).
+        rows = await asyncio.to_thread(intent_log.fetch_pending, 50)
+        for row in rows:
             handler = self._handlers.get(row.kind)
             if handler is None:
                 # A handler may be registered later (boot ordering); leave the
                 # row pending rather than burning it.
                 continue
-            if not intent_log.mark_in_flight(row.id, row.generation):
+            if not await asyncio.to_thread(intent_log.mark_in_flight, row.id, row.generation):
                 continue  # another worker claimed it, or a new generation exists
             if row.attempts >= max_attempts():
-                intent_log.mark_abandoned(row.id, row.generation)
+                await asyncio.to_thread(intent_log.mark_abandoned, row.id, row.generation)
                 logger.warning(
                     "effects: abandoned {}:{} after {} attempts",
                     row.kind,
@@ -94,23 +98,25 @@ class EffectWorker:
                     row.key,
                     row.attempts + 1,
                 )
-                self._retry(row, None)
+                await self._retry(row, None)
                 continue
 
             if result.done:
-                intent_log.mark_done(row.id, row.generation)
+                await asyncio.to_thread(intent_log.mark_done, row.id, row.generation)
             elif result.abandon:
-                intent_log.mark_abandoned(row.id, row.generation)
+                await asyncio.to_thread(intent_log.mark_abandoned, row.id, row.generation)
             else:
-                self._retry(row, result.retry_after_s)
+                await self._retry(row, result.retry_after_s)
 
     @staticmethod
-    def _retry(row: intent_log.IntentRow, retry_after_s: float | None) -> None:
+    async def _retry(row: intent_log.IntentRow, retry_after_s: float | None) -> None:
         delay = retry_after_s
         if delay is None:
             delay = retry_initial_s() * (2**row.attempts)
         delay = min(float(delay), float(retry_max_s()))
-        intent_log.mark_retry(row.id, row.generation, time.time() + max(0.0, delay))
+        await asyncio.to_thread(
+            intent_log.mark_retry, row.id, row.generation, time.time() + max(0.0, delay)
+        )
 
 
 _worker: EffectWorker | None = None
