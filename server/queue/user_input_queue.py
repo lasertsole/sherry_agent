@@ -581,6 +581,14 @@ class QueueRepository:
         return int(cursor.rowcount)
 
     @staticmethod
+    async def claimed_session_ids(db: aiosqlite.Connection) -> list[str]:
+        """Session ids holding at least one CLAIMED row (boot repair needs ALL)."""
+        async with db.execute(
+            "SELECT DISTINCT session_id FROM user_input_queue WHERE status = 'CLAIMED'"
+        ) as cursor:
+            return [str(row[0]) async for row in cursor]
+
+    @staticmethod
     async def list_active(db: aiosqlite.Connection, session_id: str) -> list[UserInputQueueRow]:
         rows: list[UserInputQueueRow] = []
         async with db.execute(
@@ -767,6 +775,12 @@ class UserInputQueue:
         await self._ensure_db()
         async with self._conn.connect() as db:
             return await QueueRepository.count_active(db, session_id)
+
+    async def claimed_session_ids(self) -> list[str]:
+        """Every session holding a CLAIMED row, independent of any scan cap."""
+        await self._ensure_db()
+        async with self._conn.connect() as db:
+            return await QueueRepository.claimed_session_ids(db)
 
     async def list_active(self, session_id: str) -> list[UserInputQueueRow]:
         """All ACTIVE (QUEUED + CLAIMED) rows for ``session_id``, FIFO order (created_at ASC)."""
