@@ -133,3 +133,49 @@ class TestLaneSlot:
         async with lane_slot(LaneType.SUBAGENT):
             assert lane.active_count == 1
         assert lane.active_count == 0
+
+
+class TestLiveLimit:
+    """M8: the limit is live at admission, not a semaphore swap on an empty queue."""
+
+    @pytest.mark.asyncio
+    async def test_raising_the_limit_under_saturation_admits_a_waiter(self, manager: LaneManager):
+        manager.set_concurrency(LaneType.SUBAGENT, 1)
+        lane = manager.get_lane(LaneType.SUBAGENT)
+        await lane.acquire()
+        waiter = asyncio.create_task(lane.acquire())
+        await _wait_until(lambda: lane.queued_count == 1)
+
+        manager.set_concurrency(LaneType.SUBAGENT, 2)
+
+        await asyncio.wait_for(waiter, timeout=1.0)
+        assert lane.active_count == 2
+        assert lane.max_concurrent == 2
+        lane.release()
+        lane.release()
+
+    @pytest.mark.asyncio
+    async def test_lowering_the_limit_under_saturation_never_over_grants(
+        self, manager: LaneManager
+    ):
+        manager.set_concurrency(LaneType.SUBAGENT, 2)
+        lane = manager.get_lane(LaneType.SUBAGENT)
+        await lane.acquire()
+        await lane.acquire()
+        waiter = asyncio.create_task(lane.acquire())
+        await _wait_until(lambda: lane.queued_count == 1)
+
+        manager.set_concurrency(LaneType.SUBAGENT, 1)
+        await asyncio.sleep(0.05)
+        assert not waiter.done(), "the lower limit must stop new grants immediately"
+
+        lane.release()  # active 1 == new max: the waiter still cannot enter
+        await asyncio.sleep(0.05)
+        assert lane.active_count == 1
+        assert not waiter.done()
+
+        lane.release()  # active 0 < max 1: the oldest waiter may enter
+        await asyncio.wait_for(waiter, timeout=1.0)
+        assert lane.active_count == 1
+        lane.release()
+        assert lane.active_count == 0

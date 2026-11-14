@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-The LDW script stores `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, and `WORKFLOW_META` as Python module constants. It does not store closures, source strings, or `workflow.json` sidecars. The writer uses Python literals, not JSON text, because `json.dumps` emits lowercase `true` / `false` / `null` and a schema containing `additionalProperties: false` otherwise makes the script unloadable.
+The LDW script stores `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, and `WORKFLOW_META` as Python module constants. It does not store closures, source strings, or `workflow.json` sidecars. The writer uses Python literals, not JSON text, because `json.dumps` emits lowercase `true` / `false` / `null` and a schema containing `additionalProperties: false` otherwise makes the script unloadable. The loader never `exec_module`s the file: it AST-parses those three literal assignments and refuses anything else (an import, a call, an extra name), so a tampered script cannot run with the orchestrator's permissions.
 
 ## ⚙️ Runtime and Journal
 
@@ -82,6 +82,7 @@ When steps failed, `repair_extraction` reads the replay flow's child handoffs, m
 |---|---|---|
 | `LDW["enabled"]` | `True` | Master switch; False keeps every replay on the TaskFlow path |
 | `LDW["min_replays"]` | `3` | Replays before a plan stops using TaskFlow and compiles an LDW script |
+| `extraction.flow_extraction_enabled` (Presets & Role → Advanced) | `True` | User-facing compile switch, global-only: `action=compile`, compile-on-miss and the repair recompile refuse while it is off. An EXISTING script still replays |
 | `LDW["script_max_bytes"]` | `65536` | Cap for one `ldw__<plan_key>.py` |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | Cross-process journal location |
 | `LDW["auto_degrade_enabled"]` | `True` | Create and drive a TaskFlow replay flow after an LDW failure |
@@ -94,6 +95,7 @@ When steps failed, `repair_extraction` reads the replay flow's child handoffs, m
 
 - This is a replay accelerator, not a sandbox or a retry engine.
 - LDW leaves inherit the role tool policy; the LDW sandbox/deepagents path is deliberately unused.
+- The journal matches EXACTLY: `prompt` / `agent_type` / `model` / `schema` / `isolation` are hashed, and a changed variant re-executes. Fuzzy matching and whitespace/Unicode normalization of the prompt are deliberately absent — a step prompt can embed code or structured upstream results where whitespace is semantic, so a near-match cached result could seed downstream steps with the wrong output. A miss costs one real execution and writes the success back.
 - A changed plan or variant produces a different journal key and re-executes; a stale script is never trusted over the current prompt.
 - Side effects of a re-run failed step are not rolled back; the journal skips only steps that previously succeeded.
 - Successful steps are never spawned again in a fallback. Failed steps use TaskFlow retry/judge behavior; there is no separate LDW retry loop.

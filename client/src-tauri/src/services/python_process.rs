@@ -184,6 +184,16 @@ impl PythonProcessManager {
                 tracing::info!(python, root = %root.display(), home = %self.app_home.display(), "Spawning checkout Python backend: python -m server");
                 let mut c = Command::new(python);
                 c.args(["-m", "server"]);
+                // Dev-only origin allowlist (audit M4): the checkout backend is
+                // the Tauri DEV backend, and its webview loads the Nuxt dev
+                // server. A packaged backend keeps the Tauri-only default. An
+                // explicit parent value wins.
+                if std::env::var_os("SHERRY_ALLOWED_ORIGINS").is_none() {
+                    c.env(
+                        "SHERRY_ALLOWED_ORIGINS",
+                        "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000",
+                    );
+                }
                 c
             }
         };

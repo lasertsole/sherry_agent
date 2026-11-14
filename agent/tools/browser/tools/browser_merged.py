@@ -1,11 +1,11 @@
-"""The merged browser surface: one ``browser`` tool over seven verbs.
+"""The merged browser surface: one ``browser`` tool over nine verbs.
 
-The eight ``browser_*`` tools are thin shells over the same ``BrowserManager``.
-The model now sees one ``browser`` tool for the seven everyday verbs
-(``navigate`` / ``snapshot`` / ``click`` / ``type`` / ``press`` / ``scroll`` /
-``screenshot``); ``browser_evaluate`` stays a SEPARATE, opt-in tool because it
-registers only under ``allow_evaluate`` and must keep disappearing entirely
-while the escape hatch is off.
+The per-verb classes are thin shells over the same ``BrowserManager``. The model
+sees one ``browser`` tool for the nine everyday verbs (``navigate`` /
+``snapshot`` / ``click`` / ``type`` / ``press`` / ``scroll`` / ``screenshot`` /
+``console`` / ``network``); ``browser_evaluate`` stays a SEPARATE, opt-in tool
+because it registers only under ``allow_evaluate`` and must keep disappearing
+entirely while the escape hatch is off.
 
 The original per-verb classes remain the handlers (their text formatting and
 ``guard`` error contract are the behavior under test); this module only
@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 
 from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool
 from .browser_click import BrowserClickTool
+from .browser_console import BrowserConsoleTool
 from .browser_navigate import BrowserNavigateTool
+from .browser_network import BrowserNetworkTool
 from .browser_press import BrowserPressTool
 from .browser_screenshot import BrowserScreenshotTool
 from .browser_scroll import BrowserScrollTool
@@ -38,6 +40,8 @@ BROWSER_ACTIONS: tuple[str, ...] = (
     "press",
     "scroll",
     "screenshot",
+    "console",
+    "network",
 )
 
 _HANDLERS: dict[str, BrowserTool] = {
@@ -48,6 +52,8 @@ _HANDLERS: dict[str, BrowserTool] = {
     "press": BrowserPressTool(),
     "scroll": BrowserScrollTool(),
     "screenshot": BrowserScreenshotTool(),
+    "console": BrowserConsoleTool(),
+    "network": BrowserNetworkTool(),
 }
 
 # The action's own required fields; click is special (ref OR x+y).
@@ -63,9 +69,10 @@ class BrowserInput(BrowserPageInput):
 
     action: str = Field(
         description=(
-            "One of: navigate, snapshot, click, type, press, scroll, screenshot. "
-            "Required: navigate→url; click→ref or both x,y; type→text; press→keys; "
-            "snapshot/scroll/screenshot→no required fields."
+            "One of: navigate, snapshot, click, type, press, scroll, screenshot, "
+            "console, network. Required: navigate→url; click→ref or both x,y; "
+            "type→text; press→keys; snapshot/scroll/screenshot/console/network→"
+            "no required fields."
         ),
         json_schema_extra={"enum": list(BROWSER_ACTIONS)},
     )
@@ -104,6 +111,18 @@ class BrowserInput(BrowserPageInput):
     full_page: bool = Field(
         default=False, description="Capture beyond the viewport (whole page); screenshot."
     )
+    level: str = Field(
+        "all",
+        description="Console level filter: all / error / warn / info / debug; console.",
+    )
+    include_exceptions: bool = Field(
+        True, description="Include uncaught JS exceptions with their stack; console."
+    )
+    min_status: int = Field(400, ge=0, le=599, description="Lowest HTTP status to report; network.")
+    include_failures: bool = Field(
+        True, description="Include requests that never completed; network."
+    )
+    limit: int = Field(100, ge=1, le=200, description="Newest entries to return; console/network.")
 
 
 def _accepted(handler: BrowserTool) -> set[str]:
@@ -129,7 +148,8 @@ class BrowserToolMerged(BrowserTool):
     description: str = (
         "Control the session's live browser page. Choose action, then pass that action's fields: "
         "navigate→url; snapshot→read page text plus [e5]-style refs; click→ref or both x,y; "
-        "type→text (optional ref/submit); press→keys; scroll→delta_y; screenshot→full_page. "
+        "type→text (optional ref/submit); press→keys; scroll→delta_y; screenshot→full_page; "
+        "console→read console + JS exceptions; network→read failed requests. "
         "Snapshot before acting; refs die on navigation."
     )
     args_schema: type[BaseModel] = BrowserInput

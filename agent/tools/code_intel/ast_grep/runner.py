@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import BaseTool
+from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from config.features import AST_GREP
@@ -445,6 +446,17 @@ class AstGrepRewriteTool(_AstGrepTool):
         # ``sg -U`` reports its change count on stderr ("Applied N changes").
         applied_match = _APPLIED_RE.search(result["stdout"] + result["stderr"])
         applied_count = int(applied_match.group(1)) if applied_match else 0
+        # Only DIRECT file arguments are synced: a directory apply does not
+        # report which files it touched, and walking it here would duplicate the
+        # tool's own work for a best-effort notification.
+        try:
+            from agent.tools.pub_base.lsp_sync import sync_edited_path
+
+            for path in resolved or []:
+                if Path(path).is_file():
+                    sync_edited_path(str(path), self._session_id)
+        except Exception:  # noqa: BLE001 - advisory only
+            logger.debug("LSP edit sync skipped", exc_info=True)
         return self._json({"changes": [], "applied": True, "count": applied_count})
 
 

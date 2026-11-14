@@ -104,7 +104,6 @@ def test_count_all_active_runs_global():
     from agent.tools.subagent.registry import (  # package-root import also proves re-export
         register_run,
         count_all_active_runs,
-        count_all_active_runs_readonly,
         clear as clear_registry,
     )
     from agent.tools.subagent.types.registry import ExecutionStatus
@@ -125,7 +124,9 @@ def test_count_all_active_runs_global():
         )
         r2.execution.status = ExecutionStatus.INTERRUPTED
         assert count_all_active_runs() == 1
-        assert count_all_active_runs_readonly() == 1
+        from agent.tools.subagent.registry import queries
+
+        assert queries.count_all_active_runs() == 1
     finally:
         clear_registry()
 

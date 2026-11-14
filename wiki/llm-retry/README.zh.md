@@ -40,6 +40,10 @@ WS 事件携带四个数字，前端不需要自行推导：
 
 fallback 候选会发起新的模型请求，所以它的重试预算从零开始。没有上限时，N 个候选可能发出 `11 × N` 次物理请求。Sherry 因此按回合记录 `llm_fallback_switches`，达到 `max_fallback_switches`（默认 `1`）后拒绝继续切换；`0` 同时禁用已经粘滞的候选。会话级的 fallback 索引不变：后续回合仍从已经胜出的候选开始。
 
+## 每回合物理调用上限
+
+上面的预算都是**每次模型调用**的，而同一用户消息可能让多层重新进入本中间件（MaxTokensBoost、溢出恢复循环、流中断 stub 重呼）。`max_physical_calls_per_turn`（默认 `200`；`0` 关闭）在会话 state register 中统计每一次物理请求，所有层共享同一计数；额度用尽时抛 `CallBudgetExceededError`，不再让嵌套预算相乘。`before_agent` 会重置计数。该上限高于主链 `IterationBudget`（180 次逻辑调用），正常的长回合不受影响，同时把重试放大限死。
+
 ## 超时熔断范围
 
 `llm_stale_streak` 统计连续 timeout 失败。`stale_giveup_scope = "turn"`（默认）时，`before_agent` 在每个主 agent 回合开始时清零；熔断仍会在 `stale_giveup_threshold = 5` 时中止当前回合。`"session"` 恢复旧的跨回合行为。ZCode 没有等价的跨回合熔断；这是 Sherry 有意的保护，不是 parity 声明。

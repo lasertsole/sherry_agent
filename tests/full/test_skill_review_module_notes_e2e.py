@@ -168,12 +168,21 @@ async def _seed_completed_plan(sid: str, tag: str) -> str:
 async def _run_skill_review(session_id: str, instruction: str = "") -> None:
     state_register_mem.set_state(session_id, "system_prompt", _TEST_SYSTEM_PROMPT)
     original_prompt = review_mod._SKILL_REVIEW_PROMPT
+    original_generalizability = review_mod._judge_task_generalizability
+
+    async def _generalizable(_context):
+        # This suite tests the review's own behavior; the task-level pre-check
+        # has its own unit tests and would only spend another live call here.
+        return review_mod._GeneralizabilityVerdict(True, "e2e: reusable module lesson")
+
+    review_mod._judge_task_generalizability = _generalizable
     if instruction:
         review_mod._SKILL_REVIEW_PROMPT = f"{original_prompt}\n\n{instruction}"
     try:
         await review_mod._run_skill_review(session_id)
     finally:
         review_mod._SKILL_REVIEW_PROMPT = original_prompt
+        review_mod._judge_task_generalizability = original_generalizability
 
 
 def _notes_has_module_lesson(content: str) -> bool:

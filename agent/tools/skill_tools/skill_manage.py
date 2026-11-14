@@ -14,7 +14,7 @@ from typing import override
 from langchain_core.tools import BaseTool
 from config import AUTO_SKILLS_DIR, app_relative
 from config.features import TOOLS_TIMEOUTS
-from agent.tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
+from agent.tools.pub_base import fuzzy_find_and_replace, format_no_match_hint, VALID_SKILL_ROLES
 from pub.func import atomic_replace, has_traversal_component, validate_within_dir
 
 # Bound to the feature registry (single source of truth); names preserved.
@@ -546,6 +546,20 @@ def _validate_frontmatter(content: str) -> str | None:
         scope = str(scope_value).strip().lower() if scope_value is not None else ""
         if scope not in ("all", "main_only", "subagent_only"):
             return f"Invalid scope '{scope_value}'. Must be one of: all, main_only, subagent_only."
+    if "roles" in parsed:
+        # Orthogonal to scope: restricts the skill to specific subagent
+        # functional roles. Absent = every role (the backward-compatible
+        # default); a present value must be a list of valid role names.
+        roles_value = parsed["roles"]
+        if not isinstance(roles_value, list):
+            return "Invalid roles: must be a list of role names (e.g. roles: [executor])."
+        for item in roles_value:
+            role = str(item).strip().lower()
+            if role not in VALID_SKILL_ROLES:
+                return (
+                    f"Invalid role '{item}'. Must be one of: "
+                    f"{', '.join(sorted(VALID_SKILL_ROLES))}."
+                )
 
     body = content[end_match.end() + 3 :].strip()
     if not body:

@@ -54,6 +54,16 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
 
+@pytest.fixture(autouse=True)
+def _generalizable_plan(monkeypatch: pytest.MonkeyPatch):
+    """This file tests the fork plumbing; the pre-check has its own unit tests."""
+
+    async def _yes(_context):
+        return review_mod._GeneralizabilityVerdict(True, "test plan")
+
+    monkeypatch.setattr(review_mod, "_judge_task_generalizability", _yes)
+
+
 class _FakeStateRegister:
     """Minimal in-memory stand-in for state_register_db / state_register_mem."""
 

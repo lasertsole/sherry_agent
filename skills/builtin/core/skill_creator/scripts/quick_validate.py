@@ -152,6 +152,10 @@ def validate_skill(skill_path: str | Path):
     skill_md = skill_path / "SKILL.md"
     if not skill_md.exists():
         return False, "SKILL.md not found"
+    if skill_md.is_symlink():
+        # The validator must agree with package_skill.py, which refuses a link
+        # outright: a symlinked SKILL.md can point outside the skill tree.
+        return False, "Skill directory contains a symlink: SKILL.md"
 
     try:
         content = skill_md.read_text(encoding="utf-8")
@@ -204,7 +208,7 @@ def validate_skill(skill_path: str | Path):
         if child.is_dir() and child.name in ALLOWED_RESOURCE_DIRS:
             continue
         if child.is_symlink():
-            continue
+            return False, f"Skill directory contains a symlink: {child.name}"
         return (
             False,
             f"Unexpected file or directory in skill root: {child.name}. "

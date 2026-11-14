@@ -13,7 +13,8 @@ import type { PersonaPreset } from '@/composables/db';
 const bridge = vi.hoisted(() => ({
   readSystemPrompt: vi.fn(),
   readSystemPromptTemplate: vi.fn(),
-  writeSystemPrompt: vi.fn()
+  writeSystemPrompt: vi.fn(),
+  writePresetSystemPrompt: vi.fn()
 }));
 vi.mock('~/composables/bridge', () => bridge);
 
@@ -86,10 +87,13 @@ const stubs = {
  */
 async function mountDialog() {
   const written: Record<string, string> = {};
+  bridge.writePresetSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
+    Object.assign(written, map);
+  });
   bridge.writeSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
     Object.assign(written, map);
   });
-  bridge.readSystemPrompt.mockImplementation(async () => ({ ...written, ...TEMPLATE }));
+  bridge.readSystemPrompt.mockImplementation(async () => ({ ...TEMPLATE, ...written }));
   bridge.readSystemPromptTemplate.mockResolvedValue(TEMPLATE);
   const wrapper = mount(NewSessionPresetDialog, {
     props: { visible: true },
@@ -117,7 +121,7 @@ describe('NewSessionPresetDialog', () => {
     vi.clearAllMocks();
   });
 
-  it('lists the three built-ins with 全量 preselected', async () => {
+  it('lists the two built-ins with 橘雪莉 preselected', async () => {
     db.presets.push({
       id: 7,
       name: '我的预设',
@@ -130,12 +134,11 @@ describe('NewSessionPresetDialog', () => {
     const rows = wrapper.findAll('[data-test^="new-session-preset-option-"]');
     expect(rows.map(row => row.attributes('data-test'))).toEqual([
       'new-session-preset-option-pure',
-      'new-session-preset-option-companion',
       'new-session-preset-option-sherry',
       'new-session-preset-option-user:7'
     ]);
     // The default preset is preselected, so the 创建会话 ("Create session") button is immediately actionable.
-    expect(rows[2]!.find('i.pi-check').exists()).toBe(true);
+    expect(rows[1]!.find('i.pi-check').exists()).toBe(true);
     expect(buttonByText(wrapper, '创建会话').attributes('disabled')).toBeUndefined();
   });
 
@@ -150,7 +153,8 @@ describe('NewSessionPresetDialog', () => {
     // 1. The preset was applied (files written + verified) …
     expect(written['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
     expect(written['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
-    expect(written['USER.md']).toBe(TEMPLATE['USER.md']);
+    // The full preset ships no USER profile.
+    expect(written['USER.md']).toBe('');
     expect(written['ROLE.md']).toBe('# ROLE.md\n\n你将扮演橘雪莉。\n用户将扮演远野汉娜。\n');
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
@@ -167,7 +171,7 @@ describe('NewSessionPresetDialog', () => {
     expect(db.cacheSessionPreset).toHaveBeenCalledWith({
       session_id: sessionId,
       preset_id: 'sherry',
-      preset_name: '全量'
+      preset_name: '橘雪莉'
     });
     expect(sidebar.ensureSessionCharacter).toHaveBeenCalledWith(sessionId);
     expect((db.cacheSessionMeta.mock.calls[0]![0] as { id: string }).id).toBe(sessionId);
@@ -178,7 +182,7 @@ describe('NewSessionPresetDialog', () => {
     expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false]);
   });
 
-  it('applies 纯净 as an empty persona with the required skills only', async () => {
+  it('applies 纯净 with the full rules and no persona', async () => {
     // Its agent block is derived from the backend catalogue, so the dialog needs
     // one: the store stub carries the skill list a real response would.
     vi.stubGlobal('useAgentConfigStore', () =>
@@ -199,8 +203,13 @@ describe('NewSessionPresetDialog', () => {
     // Debounced confirm.
     await vi.waitFor(() => expect(db.cacheSessionPreset).toHaveBeenCalled());
 
-    // Nobody named, nothing written — the operating rules included.
-    expect(written).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
+    // Rules match Full; only the persona files and the role statement stay empty.
+    expect(written).toEqual({
+      'AGENTS.md': TEMPLATE['AGENTS.md'],
+      'SOUL.md': '',
+      'USER.md': '',
+      'ROLE.md': ''
+    });
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
       aiName: '',
@@ -208,11 +217,9 @@ describe('NewSessionPresetDialog', () => {
       userName: '',
       userAvatar: ''
     });
-    // …and the session is left with the catalogue's locked skill set and nothing else.
+    // …and the session pins no skill list: 纯净 and 橘雪莉 share one tool surface.
     const sessionId = (db.cacheSessionPreset.mock.calls[0]![0] as { session_id: string }).session_id;
-    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, {
-      skills: ['image_to_text']
-    });
+    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, {});
     // No built-in pins a main model: the apply writes "follow the env config".
     expect(sessionBridge.setSessionModel).toHaveBeenCalledWith(sessionId, null);
     expect(db.cacheSessionPreset).toHaveBeenCalledWith({

@@ -1,8 +1,8 @@
-# 📦 TodoList データレイヤー — プラン、Boulder、台帳、todos.db
+# 📦 TodoList データレイヤー — プラン、Boulder、台帳、registry.db
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> [TodoList](../README.ja.md) の一部：計画レイヤーを支えるセッションスコープのデータストア — プランファイル、Boulder 状態、エビデンス台帳、todos.db スキーマ。
+> [TodoList](../README.ja.md) の一部：計画レイヤーを支えるセッションスコープのデータストア — プランファイル、Boulder 状態、エビデンス台帳、registry.db スキーマ。
 
 ---
 
@@ -66,11 +66,11 @@
 }
 ```
 
-### エビデンス台帳 (src/data/evidence-ledger.db)
+### エビデンス台帳 (`src/data/registry.db` (`evidence_events` table))
 
 SQLite テーブル `evidence_events`（WAL）：共有の検証監査トレイルです。行は INSERT のみで UPDATE されず、保持期間が古い行を削除します。書き込み側は `agent/tools/pub_base/evidence_recorder.py`、読み取り側は `agent/tools/taskflow/evidence_collector.py` で、書き込み側・行スキーマ・導出される古さのルール・要約形式・保持期間・これを消費するゲートは[エビデンス台帳](../../gates/evidence-ledger/README.ja.md)にまとめています。
 
-### todos.db — セッションレベル TODO ストレージ
+### registry.db — セッションレベル TODO ストレージ
 
 ```sql
 CREATE TABLE IF NOT EXISTS todos (
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `step_id`  | リンクされた TaskFlow step id（例：`step-2`）、DAG ステータス再読取用 |
 | `todo_id`  | セッションごとの安定した識別子（`#N`）。ローカル patch/remove/reattach の対象指定に使う。`position` は表示順のみ |
 
-> **設計境界**：`todos.db` は `depends_on` / ウェーブ / step ステータスを保持しません。依存グラフ、`blocked/ready/dispatched/done` とアンロックロジックはすべて TaskFlow が提供します。todo は `flow_id`/`step_id` で対応する flow step を指すだけで、DAG ステータスは `taskflow_inspect(action="summary", flow_id)` で再読取します。
+> **設計境界**：`registry.db` は `depends_on` / ウェーブ / step ステータスを保持しません。依存グラフ、`blocked/ready/dispatched/done` とアンロックロジックはすべて TaskFlow が提供します。todo は `flow_id`/`step_id` で対応する flow step を指すだけで、DAG ステータスは `taskflow_inspect(action="summary", flow_id)` で再読取します。
 
 CRUD インターフェース：
 

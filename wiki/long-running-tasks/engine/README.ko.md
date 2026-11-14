@@ -65,7 +65,7 @@ blocked ──(의존 충족)──▶ ready ──(디스패치)──▶ dispa
 
 | 상태 | 의미 | 설정 주체 |
 | :--- | :--- | :--- |
-| `blocked` | 최소 하나의 `depends_on`이 `done`이 아님; 자식이 생성되지 않음 | `taskflow_step(action="run_task")` |
+| `blocked` | 자식이 진행할 수 없음: 최소 하나의 `depends_on`이 `done`이 아님(자식 생성 없음), **또는** 결과가 증명되지 않음(`step_outcome="blocked"` / StepJudge BLOCK). 하류는 blocked 유지 | `taskflow_step(action="run_task")` / `taskflow_step(action="resume")` / `taskflow_step(action="update_steps")` |
 | `ready` | 모든 의존이 충족되어 디스패치 대기 | 등록 시, 또는 재개 후 `unlock_dependents` |
 | `dispatched` | 분리된 자식 세션이 생성됨; `child_session_key`와 `dispatched_at` 기록 | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | `taskflow_step(action="resume")`가 결과를 주입함 | `taskflow_step(action="resume")` |

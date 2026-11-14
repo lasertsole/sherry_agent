@@ -14,13 +14,18 @@ actively steering by is expensive and high (todo list, plan mode).
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from config.features import TASKFLOW_INFRA
+from config.features import LSP, TASKFLOW_INFRA
+from config.path import resolve_default_project_dir
 
 from workspace.prompt_builder import (
+    _ATTENTION_AUTO_PENDING,
+    _ATTENTION_BLOCKED,
+    _ATTENTION_FAILED_SPAWN,
     _build_boulder_block,
     _build_continuity_block,
     _build_plan_mode_block,
@@ -28,7 +33,8 @@ from workspace.prompt_builder import (
     _build_project_instructions_block,
     _build_taskflow_block,
     _build_todo_block,
-    has_undispatched_ready_steps,
+    auto_dispatch_waves_enabled,
+    taskflow_attention,
 )
 
 from .core import ReminderChannel, ReminderSource, register
@@ -129,19 +135,74 @@ async def _memory_recall_builder(session_id: str, state: dict[str, Any]) -> str 
     return "\n".join(lines)
 
 
-#: The board's normal throttle when no dispatch decision is outstanding.
+def _relative_label(path: str, root: Path) -> str:
+    try:
+        return str(Path(path).relative_to(root))
+    except (OSError, ValueError):
+        return path
+
+
+def _lsp_diagnostics_builder(session_id: str, _state: dict[str, Any]) -> str | None:
+    """Errors the language server published for this session's edited files.
+
+    Delivery is one-shot per diagnostic generation: the registry marks the
+    files delivered once they ride a reminder, and a later publish (another
+    edit) makes them eligible again. Only error severity is injected — warnings
+    would turn every turn into a lint report.
+    """
+    from agent.tools.code_intel.lsp.diagnostics import (
+        mark_delivered,
+        undelivered_errors,
+    )
+    from agent.tools.pub_base import session_workspace_root
+
+    root = session_workspace_root(session_id) or resolve_default_project_dir()
+    entries = undelivered_errors(
+        session_id,
+        Path(root),
+        max_files=max(1, int(LSP["lsp_diagnostics_inject_max_files"])),
+        max_errors=max(1, int(LSP["lsp_diagnostics_inject_max_errors"])),
+    )
+    if not entries:
+        return None
+    lines = [
+        "[LSP DIAGNOSTICS — the language server reported ERRORS in files edited this "
+        "session. Fix them (or explain why they are expected) before finishing.]"
+    ]
+    for path, diagnostics in entries:
+        label = _relative_label(path, Path(root))
+        for diagnostic in diagnostics:
+            rng = diagnostic.get("range") or {}
+            line = int(rng.get("start_line", 1) or 1)
+            column = int(rng.get("start_character", 1) or 1)
+            source = str(diagnostic.get("source") or "").strip()
+            code = str(diagnostic.get("code") or "").strip()
+            tag = f" [{source}{':' + code if code else ''}]" if source else ""
+            lines.append(f"- {label}:{line}:{column} {diagnostic.get('message', '')}{tag}")
+    mark_delivered(session_id, [path for path, _diagnostics in entries])
+    return "\n".join(lines)
+
+
+#: The board's normal throttle when nothing needs a model decision.
 _TASKFLOW_IDLE_COOLDOWN = 5
 
 
 def _taskflow_cooldown(session_id: str, _state: dict[str, Any]) -> int:
-    """Shorten the board cooldown while ready work is waiting for dispatch.
+    """Shorten the board cooldown only while the model owes a TaskFlow action.
 
-    A ready-but-undispatched step is a decision the model must make now; a
-    running board with nothing to start keeps the historical 5-turn throttle.
-    ``only_if_changed`` still suppresses a byte-identical board, so this changes
-    WHEN a changed board is eligible, not whether duplicates are repeated.
+    A BLOCKED step needs a decision (replan / cancel / resolve) and a
+    failed-spawn step needs a retry call, so both re-show the board every
+    ``taskflow_reminder_cooldown_when_ready`` turns. Ordinary ready work does
+    not: with both auto-dispatch waves on, the next wave starts it without the
+    model. When a wave is disabled, ready work IS the model's to start and the
+    old short cooldown returns. ``only_if_changed`` still suppresses a
+    byte-identical board, so this changes WHEN a changed board is eligible, not
+    whether duplicates are repeated.
     """
-    if has_undispatched_ready_steps(session_id):
+    attention = taskflow_attention(session_id)
+    if attention in (_ATTENTION_BLOCKED, _ATTENTION_FAILED_SPAWN):
+        return int(TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"])
+    if attention == _ATTENTION_AUTO_PENDING and not auto_dispatch_waves_enabled():
         return int(TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"])
     return _TASKFLOW_IDLE_COOLDOWN
 
@@ -231,6 +292,19 @@ def register_default_sources() -> None:
             # changed (directory switch / first turn / post-compaction), then
             # strip it from the message list on later turns. The model reads it
             # once; keeping it resident would waste every subsequent context.
+            transient=True,
+        )
+    )
+    # Language-server errors on files edited THIS session (edit sync publishes
+    # them; the registry delivers each generation once). Above the TaskFlow
+    # board: a compile error is more immediate than a planning nudge.
+    register(
+        ReminderSource(
+            source_id="lsp_diagnostics",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=_lsp_diagnostics_builder,
+            budget_chars=3000,
+            priority=84,
             transient=True,
         )
     )

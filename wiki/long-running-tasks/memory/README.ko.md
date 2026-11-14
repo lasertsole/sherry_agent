@@ -17,7 +17,7 @@
 
 항목은 `memory_entries`의 **SQLite 행 하나**입니다. `§` 구분자는 레거시 가져오기와 `GET/PUT /memory` 호환 경로에만 남습니다. 항목은 여러 줄일 수 있고 YAML frontmatter나 불릿 접두사는 없습니다.
 
-계층 1은 `MemoryStore`(`agent/tools/memory.py::load_from_store`)가 관리합니다: 대상별 문자 한도 `2200`(memory), `1375`(user), `1375`(facts), 프롬프트 주입과 자격 증명 유출을 거부하는 주입 스캔(`_MEMORY_THREAT_PATTERNS`), 정확 일치 중복 제거를 갖추고, 동시성 안전은 파일 잠금이나 원자적 재작성이 아니라 SQLite WAL이 담당합니다. 행은 `origin_session`, `usage_count`, `last_used`를 기록하며 렌더링 블록은 출처를 아는 경우에만 `[origin: …, created: …, used: Nx]`를 덧붙입니다. `memory(action="read")`는 사용 횟수를 늘립니다. 라이브 행은 즉시 변경되는 반면, 프롬프트는 `load_from_store()`에서 캡처한 **동결 스냅샷**을 사용해 세션 동안 프리픽스 캐시를 안정적으로 유지합니다. 이전 `MEMORY.md`/`USER.md`/`FACTS.md`는 부팅 시 한 번 가져오고(`context_engine/store/memory_migration.py`) `*.md.bak`으로 이름이 바뀝니다. 기존 행이 하나라도 있으면 가져오기는 건너뜁니다.
+계층 1은 `MemoryStore`(`agent/tools/memory.py::load_from_store`)가 관리합니다: 대상별 문자 한도 `2200`(memory), `1375`(user), `1375`(facts)와 대상별 활성 `200`개 상한(문자 예산만으로는 작은 행이 무한히 쌓입니다), 프롬프트 주입과 자격 증명 유출을 거부하는 주입 스캔(`_MEMORY_THREAT_PATTERNS`), 정확 일치 중복 제거를 갖추고, 동시성 안전은 파일 잠금이나 원자적 재작성이 아니라 SQLite WAL이 담당합니다. 행은 `origin_session`, `usage_count`, `last_used`를 기록하며 렌더링 블록은 출처를 아는 경우에만 `[origin: …, created: …, used: Nx]`를 덧붙입니다. `memory(action="read")`는 사용 횟수를 늘립니다. 라이브 행은 즉시 변경되는 반면, 프롬프트는 `load_from_store()`에서 캡처한 **동결 스냅샷**을 사용해 세션 동안 프리픽스 캐시를 안정적으로 유지합니다. 이전 `MEMORY.md`/`USER.md`/`FACTS.md`는 부팅 시 한 번 가져오고(`context_engine/store/memory_migration.py`) `*.md.bak`으로 이름이 바뀝니다. 기존 행이 하나라도 있으면 가져오기는 건너뜁니다.
 
 `memory` 도구는 `scope="main_only"`로 태그되어 서브에이전트는 절대 볼 수 없습니다.
 

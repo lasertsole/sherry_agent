@@ -42,3 +42,33 @@ def test_script_round_trips_python_literals(tmp_path: Path) -> None:
 def test_script_name_is_sanitized(tmp_path: Path) -> None:
     assert write_ldw_script("../escape", {"steps": []}, root=tmp_path) is None
     assert find_ldw_script("../escape", root=tmp_path) is None
+
+
+def test_a_tampered_script_is_refused_without_executing_it(tmp_path: Path) -> None:
+    """M15: the loader parses data, it never ``exec_module``s the file."""
+    scripts = tmp_path / "learned" / "scripts"
+    scripts.mkdir(parents=True)
+    marker = tmp_path / "pwned"
+    (scripts / "ldw__k1.py").write_text(
+        "import pathlib\n"
+        f"pathlib.Path({str(marker)!r}).write_text('pwned')\n"
+        "WORKFLOW_META = {'plan_key': 'k1'}\n",
+        encoding="utf-8",
+    )
+
+    assert load_ldw_script("k1", root=tmp_path) is None
+    assert not marker.exists(), "the loader must never execute the script"
+
+
+def test_only_literal_constant_assignments_load(tmp_path: Path) -> None:
+    scripts = tmp_path / "learned" / "scripts"
+    scripts.mkdir(parents=True)
+    target = scripts / "ldw__k1.py"
+    target.write_text("WORKFLOW_META = dict(plan_key='k1')\n", encoding="utf-8")
+    assert load_ldw_script("k1", root=tmp_path) is None
+
+    target.write_text("EVIL = 1\nWORKFLOW_META = {'plan_key': 'k1'}\n", encoding="utf-8")
+    assert load_ldw_script("k1", root=tmp_path) is None
+
+    target.write_text("WORKFLOW_META = {'plan_key': 'k1'}\n", encoding="utf-8")
+    assert load_ldw_script("k1", root=tmp_path) == {"plan_key": "k1"}

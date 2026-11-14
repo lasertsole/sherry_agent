@@ -115,8 +115,10 @@ def resolve_child_max_output_tokens(
     1. a per-role model profile — its OWN ``max_output_tokens`` field, default
        8192 (the profile builder uses the same value for the request);
     2. a named ``model_override`` — its budget is unknown, so ``None``;
-    3. a specialized role's ``model_tier`` (main / auxiliary);
-    4. the depth role: ORCHESTRATOR → main, LEAF → auxiliary.
+    3. a CONFIGURED per-role family (``EXECUTOR_LLM_*`` …) — that family's
+       ``MAX_OUTPUT_TOKEN`` (empty = provider default, hence ``None``);
+    4. a specialized role's ``model_tier`` (main / auxiliary);
+    5. the depth role: ORCHESTRATOR → main, LEAF → auxiliary.
 
     A missing/blank env setting for the tier branches returns ``None`` (legacy
     caps). Invalid values are treated the same way: the guard already blocks
@@ -131,7 +133,16 @@ def resolve_child_max_output_tokens(
         return resolve_profile_max_output_tokens(model_profile)
     if model_override:
         return None
-    elif functional_role != FunctionalRole.GENERAL and model_tier == "main":
+    if functional_role != FunctionalRole.GENERAL:
+        from models.LLMs.role_llm import role_family, role_llm_configured
+
+        if role_llm_configured(str(functional_role)):
+            family = role_family(str(functional_role)) or ""
+            try:
+                return configured_max_output(f"{family}_MAX_OUTPUT_TOKEN")
+            except ValueError:
+                return None
+    if functional_role != FunctionalRole.GENERAL and model_tier == "main":
         key = "MAIN_LLM_MAX_OUTPUT_TOKEN"
     elif functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
         key = "AUXILIARY_LLM_MAX_OUTPUT_TOKEN"

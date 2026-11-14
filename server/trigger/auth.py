@@ -18,12 +18,14 @@ Policy
    without an ``Origin`` (curl, scripts, the webview's same-origin calls) pass
    — this gate targets web pages, not local tooling.
 2. **Token** — a per-boot secret (``SHERRY_GATEWAY_TOKEN`` pins it for tooling
-   and tests). Every response carries it in the ``token`` header (exported via
-   ``Access-Control-Expose-Headers`` so the app's cross-origin fetch can read
-   it); the desktop client keeps it in memory and echoes it as the ``token``
-   request header. A WRONG token is refused (401) — the credential is never
-   silently replaced. WebSocket handshakes cannot carry custom headers from a
-   browser, so they present ``?token=`` and the token is REQUIRED there.
+   and tests). The bootstrap endpoint ``/auth/token`` returns it in the body
+   (plus a one-shot ``token`` response header for a legacy cross-origin
+   reader); ordinary responses never carry it, so an unrelated fetch cannot
+   hand a same-origin script the credential. The desktop client keeps it in
+   memory and echoes it as the ``token`` request header. A WRONG token is
+   refused (401) — the credential is never silently replaced. WebSocket
+   handshakes cannot carry custom headers from a browser, so they present
+   ``?token=`` and the token is REQUIRED there.
 3. **Strict mode** — ``GATEWAY["require_token"]`` (env
    ``SHERRY_GATEWAY_REQUIRE_TOKEN``) refuses token-less HTTP requests as well;
    ``GET /auth/token`` stays reachable so a client can still bootstrap.

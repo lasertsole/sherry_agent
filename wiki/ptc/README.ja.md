@@ -145,6 +145,7 @@ TaskFlow step spawn
 | `ptc_max_stderr_bytes` | 10000 | 切り詰め前に子から保持する stderr バイト数 |
 | `ptc_allowed_tools` | `read_file`、`write_file`、`patch_file`、`terminal`、`search_files`、`web_search` | 子の利用可能ツールと積を取る許可リスト |
 | `ptc_prefill_enabled` | `False` | skill review のスクリプトコンパイルと spawn 側 PTC プリフィルを有効化。観測期間は off |
+| `extraction.flow_extraction_enabled`（プリセットキャラクター → 詳細） | `True` | ユーザー向けフロー再利用スイッチ。コンパイル側（PTC + LDW）をグローバルに制御し、セッションでは読み取り専用。既存スクリプトの再生は制限しません |
 | `ptc_script_max_bytes` | `20480` | skill `scripts/` から読むスクリプトの上限 |
 | `ptc_compile_max_attempts` | `2` | JSON/構文失敗時のコンパイル試行回数。コンパイルは実行しない |
 

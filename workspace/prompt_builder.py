@@ -29,6 +29,9 @@ _TODO_ICONS: dict[str, str] = {
     "cancelled": "✕",
 }
 
+#: Blocked steps listed per flow in the board before the rest are counted.
+_BLOCKED_DETAILS_MAX = 5
+
 # First miss per provider method is logged once (mirrors runtime.hooks consumers).
 _provider_misses_logged: set[str] = set()
 
@@ -321,26 +324,105 @@ def _taskflow_ready_steps(steps: list[dict], status_of) -> list[dict]:
     return ready
 
 
-def has_undispatched_ready_steps(session_id: str) -> bool:
-    """Whether this session has at least one ready, not-yet-dispatched step.
+def _taskflow_blocked_steps(steps: list[dict], status_of) -> list[dict]:
+    """Steps the DAG (or a judge) stopped; both kinds are reported, only one acts."""
+    return [step for step in steps if status_of(step) == "blocked"]
 
-    Used by the reminder catalogue to shorten the TaskFlow board's cooldown: a
-    ready set is a dispatch decision the model must make now, unlike a stable
-    running board. Returns False on any failure (the caller then keeps the
-    normal cooldown).
+
+def _spawn_failed(step: dict) -> bool:
+    """Whether this ready step's last dispatch attempt could not spawn a child."""
+    return bool(str(step.get("last_spawn_error") or "").strip())
+
+
+def auto_dispatch_waves_enabled() -> bool:
+    """Whether the SYSTEM starts every ready step (both waves enabled).
+
+    The board's "you must dispatch" wording is only correct when a ready step
+    can actually wait unnoticed. With either wave disabled some ready steps are
+    the model's to start, so the conservative fallback is the old wording.
+    """
+    from config.features import TASKFLOW_INFRA
+
+    return bool(TASKFLOW_INFRA["auto_dispatch_initial_ready"]) and bool(
+        TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]
+    )
+
+
+def _ready_step_items(ready: list[dict]) -> str:
+    """``s1(task), s2(task)`` — the board's compact step list."""
+    return ", ".join(
+        f"{step.get('step_id', '?')}({' '.join(str(step.get('task') or '').split())[:40]})"
+        for step in ready
+    )
+
+
+def _blocked_needs_decision(step: dict, statuses: dict[str, str]) -> bool:
+    """A blocked step the model must act on, not merely one waiting on the DAG.
+
+    Dependency-blocked steps are the normal mid-run state of every downstream
+    step; treating them as an attention signal would re-inject the board every
+    turn. A recorded ``block_reason`` (StepJudge BLOCK / a caller-declared
+    blocked outcome) or blocked-with-no-dependencies is a real decision.
+    """
+    if str(step.get("block_reason") or "").strip():
+        return True
+    depends_on = step.get("depends_on") or []
+    if not depends_on:
+        return True
+    if any(dep not in statuses for dep in depends_on):
+        return True  # an unknown dependency can never unlock this step
+    return all(statuses.get(dep) == "done" for dep in depends_on)
+
+
+#: Attention levels, strongest first. The reminder catalogue shortens the board
+#: cooldown on anything above ``auto_pending``.
+_ATTENTION_NONE = "none"
+_ATTENTION_AUTO_PENDING = "auto_pending"
+_ATTENTION_FAILED_SPAWN = "failed_spawn"
+_ATTENTION_BLOCKED = "blocked"
+
+
+def taskflow_attention(session_id: str) -> str:
+    """The strongest outstanding TaskFlow signal for this session.
+
+    * ``blocked`` — a step needs a model decision (replan / cancel / resolve);
+    * ``failed_spawn`` — a step's auto-dispatch could not spawn, retry it;
+    * ``auto_pending`` — ready work the next automatic wave will start (no
+      action for the model);
+    * ``none`` — nothing outstanding.
+
+    The strongest signal wins across all active flows. Fail-open: any read
+    failure reads as ``none`` so the caller keeps its normal cooldown.
     """
     try:
         provider = _resolve_provider("get_active_flows")
         if provider is None:
-            return False
+            return _ATTENTION_NONE
+        strongest = _ATTENTION_NONE
         for flow in provider.get_active_flows(session_id):
             steps = (flow.get("state") or {}).get("steps") or []
-            if _taskflow_ready_steps(steps, provider.step_status):
-                return True
-        return False
+            statuses = {step.get("step_id"): provider.step_status(step) for step in steps}
+            for step in steps:
+                status = provider.step_status(step)
+                if status == "blocked" and _blocked_needs_decision(step, statuses):
+                    return _ATTENTION_BLOCKED
+            for step in _taskflow_ready_steps(steps, provider.step_status):
+                if _spawn_failed(step):
+                    strongest = _ATTENTION_FAILED_SPAWN
+                elif strongest == _ATTENTION_NONE:
+                    strongest = _ATTENTION_AUTO_PENDING
+        return strongest
     except Exception as error:  # a broken read must not break the reminder layer
-        logger.debug("prompt builder: TaskFlow readiness probe failed ({}); assuming none", error)
-        return False
+        logger.debug("prompt builder: TaskFlow attention probe failed ({}); assuming none", error)
+        return _ATTENTION_NONE
+
+
+def has_undispatched_ready_steps(session_id: str) -> bool:
+    """Whether a ready, not-yet-dispatched step exists (either kind)."""
+    return taskflow_attention(session_id) in (
+        _ATTENTION_AUTO_PENDING,
+        _ATTENTION_FAILED_SPAWN,
+    )
 
 
 def _build_taskflow_block(session_id: str) -> str:
@@ -349,8 +431,9 @@ def _build_taskflow_block(session_id: str) -> str:
     Reads the session's non-terminal flows from the taskflow registry (the
     registry filters by session id in SQL) and injects a concise summary
     (max 3 flows) so the agent can proactively continue unfinished work on
-    session start. Every ready step is named, not only the first pending one:
-    the ready set is the parallel branch set a single-branch run forgets.
+    session start. Ready steps are named by kind: an auto-pending step needs
+    nothing from the model, a failed spawn is a retry call, and a blocked step
+    carries its reason (plus the upstream it waits on, when that is the cause).
     """
     try:
         provider = _resolve_provider("get_active_flows")
@@ -361,6 +444,7 @@ def _build_taskflow_block(session_id: str) -> str:
         if not mine:
             return ""
 
+        autodispatch = auto_dispatch_waves_enabled()
         lines = ["## Pending TaskFlows"]
         for flow in mine[:3]:  # max 3 flows
             state = flow.get("state") or {}
@@ -372,30 +456,59 @@ def _build_taskflow_block(session_id: str) -> str:
             status = flow.get("status", "?")
 
             ready = _taskflow_ready_steps(steps, provider.step_status)
+            blocked = _taskflow_blocked_steps(steps, provider.step_status)
+            hints: list[str] = []
+            if blocked:
+                hints.append(f"blocked: {len(blocked)}")
             if ready:
-                items = ", ".join(
-                    f"{step.get('step_id', '?')}("
-                    f"{' '.join(str(step.get('task') or '').split())[:40]})"
-                    for step in ready
-                )
-                ready_hint = f" | ready_to_dispatch: {items}"
-                if len(ready) > 1:
-                    ready_hint += (
-                        f" [{len(ready)} steps ready — parallelize via taskflow_dispatch!]"
-                    )
+                if autodispatch:
+                    failed = [step for step in ready if _spawn_failed(step)]
+                    pending = [step for step in ready if not _spawn_failed(step)]
+                    if failed:
+                        ids = ",".join(f"'{step.get('step_id', '?')}'" for step in failed)
+                        hints.append(
+                            f"dispatch failed: {_ready_step_items(failed)} — retry via "
+                            f"taskflow_step(action='dispatch', step_ids=[{ids}])"
+                        )
+                    if pending:
+                        hints.append(f"pending auto-dispatch: {len(pending)} step(s)")
+                else:
+                    hints.append(f"ready_to_dispatch: {_ready_step_items(ready)}")
+                    if len(ready) > 1:
+                        hints.append(
+                            f"[{len(ready)} steps ready — parallelize via taskflow_dispatch!]"
+                        )
             else:
-                # No dispatch decision outstanding: keep the old next-step hint.
-                pending = [s for s in steps if provider.step_status(s) != "done"]
-                ready_hint = ""
-                if pending:
-                    next_step = pending[0]
+                pending_steps = [s for s in steps if provider.step_status(s) != "done"]
+                if pending_steps:
+                    next_step = pending_steps[0]
                     next_id = next_step.get("step_id", "?")
-                    next_task = (next_step.get("task", "") or "")[:40]
-                    ready_hint = f' | next: {next_id} "{next_task}"'
+                    next_task = " ".join(str(next_step.get("task") or "").split())[:40]
+                    next_status = provider.step_status(next_step)
+                    hints.append(f'next: {next_id} "{next_task}" ({next_status})')
 
-            lines.append(
-                f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done{ready_hint}'
-            )
+            line = f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done'
+            if hints:
+                line += "".join(f" | {hint}" for hint in hints)
+            lines.append(line)
+
+            by_id = {step.get("step_id"): step for step in steps}
+            statuses = {step.get("step_id"): provider.step_status(step) for step in steps}
+            for step in blocked[:_BLOCKED_DETAILS_MAX]:
+                step_id = step.get("step_id", "?")
+                task = " ".join(str(step.get("task") or "").split())[:40]
+                reason = " ".join(str(step.get("block_reason") or "").split())[:120]
+                unmet = [
+                    str(dep)
+                    for dep in (step.get("depends_on") or [])
+                    if by_id.get(dep) is None or statuses.get(dep) != "done"
+                ]
+                if unmet:
+                    upstream = f"waiting on upstream: {', '.join(unmet)}"
+                    reason = f"{reason} ({upstream})" if reason else upstream
+                lines.append(f"  - blocked {step_id} ({task}) — {reason or 'no reason recorded'}")
+            if len(blocked) > _BLOCKED_DETAILS_MAX:
+                lines.append(f"  - blocked: +{len(blocked) - _BLOCKED_DETAILS_MAX} more")
 
         lines.append(
             "Use taskflow_inspect(action='summary') to inspect a flow and continue execution."

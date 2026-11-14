@@ -16,6 +16,26 @@ from config.features import PTC
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
 
+class _NoopBackend:
+    """A usable backend double: these tests cover the runner, not sandbox policy."""
+
+    def wrap(
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: list | None = None,
+        *,
+        allow_network: bool = False,
+    ) -> tuple[list[str], dict]:
+        return list(cmd), env
+
+
+@pytest.fixture(autouse=True)
+def _usable_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AUTO without a backend now REFUSES (H3); runner mechanics need one usable."""
+    monkeypatch.setattr(runner, "get_backend", lambda _policy: _NoopBackend())
+
+
 def _config(**overrides) -> dict:
     cfg = dict(PTC)
     cfg.update(overrides)

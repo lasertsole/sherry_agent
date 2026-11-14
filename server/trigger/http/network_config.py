@@ -1,5 +1,6 @@
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request, read_body
 from server.service import read_network_config, write_network_config
 
 
@@ -28,7 +29,9 @@ async def write_network_config_handler(request):
     declared types). Body: {"changes": {"KEY": "new value", ...}}
     The Tavily / SearXNG search keys are written through this same endpoint.
     """
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
 
     changes: dict[str, str] = request_json.get("changes", {}) or {}
     if not isinstance(changes, dict):

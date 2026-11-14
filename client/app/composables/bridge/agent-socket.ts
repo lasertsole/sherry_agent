@@ -219,7 +219,7 @@ class SessionAgentSocket implements AgentSocket {
       return;
     }
     try {
-      const urls = await uploadRequestMedia(pending.request);
+      const urls = await uploadRequestMedia(pending.request, this.sessionId);
       if (pending.settled || this.disposed) return;
       this.finishPreparation(pending, urls);
     } catch (e) {

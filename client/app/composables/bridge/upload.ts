@@ -35,63 +35,93 @@ export const KIND_LABEL: Record<UploadMediaKind, string> = {
   video: 'Video'
 };
 
+/** One decoded media payload plus the content type its upload should carry. */
+export interface ParsedMedia {
+  bytes: Uint8Array<ArrayBuffer>;
+  contentType: string;
+}
+
 /**
- * Upload base64 media (image/audio/video) to the backend's corresponding
- * `/images|/audio|/video/upload` endpoint and return the URL list.
+ * Decode one base64 entry (with or without a `data:<mime>;base64,` prefix).
+ * @param kind Media kind, used for the fallback MIME and the prefix match
+ * @param base64 Base64 string, optionally carrying a data-URI prefix
+ */
+export function parseBase64Media(kind: UploadMediaKind, base64: string): ParsedMedia {
+  let contentType = KIND_DEFAULT_CONTENT_TYPE[kind];
+  let pureBase64 = base64;
+
+  // If a data:<mime>;base64, prefix is present, strip it and extract the MIME type
+  const match = pureBase64.match(new RegExp(`^data:(${KIND_MIME_PREFIX[kind]}[w.+-]+);base64,(.+)$`));
+  if (match) {
+    contentType = match[1] ?? contentType;
+    pureBase64 = match[2] ?? pureBase64;
+  }
+  return {
+    bytes: Uint8Array.from(atob(pureBase64), c => c.charCodeAt(0)),
+    contentType
+  };
+}
+
+/**
+ * Upload one raw media payload through the whole-body endpoint.
  *
  * The request goes through the shared API client (`fetchApiRaw`): same base URL
  * and token policy as the JSON calls, but intentionally raw — this function owns
  * the failure contract (HTTP status / non-JSON body inspection) and throws
  * labelled errors, so no retry and no user-visible toast may be added here.
  *
+ * @param kind        Media kind (image | audio | video)
+ * @param bytes       Raw bytes to upload
+ * @param contentType MIME type sent as the request Content-Type
+ * @returns           The uploaded URL
+ */
+export async function uploadBytesToUrl(
+  kind: UploadMediaKind,
+  bytes: Uint8Array<ArrayBuffer>,
+  contentType: string
+): Promise<string> {
+  const label = KIND_LABEL[kind];
+  let resp: Response;
+  try {
+    resp = await fetchApiRaw({
+      url: KIND_ENDPOINT[kind],
+      method: 'post',
+      body: bytes,
+      contentType
+    });
+  } catch (e) {
+    throw new Error(`${label} upload network error: ${e}`, { cause: e });
+  }
+
+  if (!resp.ok) {
+    throw new Error(`${label} upload failed: HTTP ${resp.status}`);
+  }
+
+  let json: { success?: boolean; url?: string; filename?: string };
+  try {
+    json = await resp.json();
+  } catch {
+    throw new Error(`${label} upload failed: server returned non-JSON response`);
+  }
+
+  if (!json.success || !json.url) {
+    throw new Error(`${label} upload failed: ${JSON.stringify(json)}`);
+  }
+  return json.url;
+}
+
+/**
+ * Upload base64 media (image/audio/video) and return the URL list.
+ *
  * @param kind       Media kind (image | audio | video); determines the upload endpoint and MIME parsing rules
  * @param base64List List of base64-encoded strings (may carry a data:<mime>;base64, prefix)
  * @returns          Array of uploaded URLs (same order as the input)
  */
 export async function uploadBase64ToUrls(kind: UploadMediaKind, base64List: string[]): Promise<string[]> {
-  const label = KIND_LABEL[kind];
   const urls: string[] = [];
   for (const base64 of base64List) {
-    let contentType = KIND_DEFAULT_CONTENT_TYPE[kind];
-    let pureBase64 = base64;
-
-    // If a data:<mime>;base64, prefix is present, strip it and extract the MIME type
-    const match = pureBase64.match(new RegExp(`^data:(${KIND_MIME_PREFIX[kind]}[w.+-]+);base64,(.+)$`));
-    if (match) {
-      contentType = match[1] ?? contentType;
-      pureBase64 = match[2] ?? pureBase64;
-    }
-
-    const bytes = Uint8Array.from(atob(pureBase64), c => c.charCodeAt(0));
-
-    let resp: Response;
-    try {
-      resp = await fetchApiRaw({
-        url: KIND_ENDPOINT[kind],
-        method: 'post',
-        body: bytes,
-        contentType
-      });
-    } catch (e) {
-      throw new Error(`${label} upload network error: ${e}`, { cause: e });
-    }
-
-    if (!resp.ok) {
-      throw new Error(`${label} upload failed: HTTP ${resp.status}`);
-    }
-
-    let json: { success?: boolean; url?: string; filename?: string };
-    try {
-      json = await resp.json();
-    } catch {
-      throw new Error(`${label} upload failed: server returned non-JSON response`);
-    }
-
-    if (!json.success || !json.url) {
-      throw new Error(`${label} upload failed: ${JSON.stringify(json)}`);
-    }
-
-    urls.push(json.url);
+    const { bytes, contentType } = parseBase64Media(kind, base64);
+    urls.push(await uploadBytesToUrl(kind, bytes, contentType));
   }
   return urls;
 }

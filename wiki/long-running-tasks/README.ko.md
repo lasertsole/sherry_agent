@@ -2,6 +2,8 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
+> **저장소(2026-11-13):** TaskFlow, todos, 서브에이전트 레지스트리, 증거 원장은 이제 `src/data/registry.db`(`task_flows` / `todos` / `subagent_runs` / `evidence_events` 테이블)를 공유합니다. 부팅 시 일회성 마이그레이션이 기존 저장소 DB를 복사하고 `*.bak`으로 이름을 바꿉니다.
+
 > 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_flow` / `taskflow_step` / `taskflow_inspect`, 16개 action을 다루는 3개 그룹화 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 수용 기준을 가진 단계 결과를 TaskFlow 결정 모델(`TASKFLOW_LLM_*`, 미설정 시 보조 LLM)이 심사하고(`pass` / `retry` / `block`), 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
 사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
@@ -42,7 +44,7 @@
 
 | # | 하위 시스템 | 진입점 | 영속 위치 |
 | :- | :--- | :--- | :--- |
-| 1 | **TaskFlow DAG 엔진** | `agent/tools/taskflow/` | `data/taskflow_registry.db`(SQLite, WAL) |
+| 1 | **TaskFlow DAG 엔진** | `agent/tools/taskflow/` | `src/data/registry.db`(SQLite, WAL) |
 | 2 | **토큰 / 비용 예산** | `taskflow_flow(action="budget")`, `taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **데드라인** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **유휴 감지** | sweeper `_scan_stale_waiting_taskflows` | `wait_json`의 오래된 마커 |
@@ -64,7 +66,7 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 | 좀비 todo | 활성 todo가 failed/cancelled 플로우를 참조 | todo를 `cancelled` |
 | prune | 터미널/superseded 행이 `max_total_flows_per_session`(200) 초과 | 가장 오래된 행 삭제 |
 
-라이브 자식은 수집을 거부합니다. grace는 `todos.db`와 `taskflow_registry.db` 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록하며, `auto_kill_on_detach`가 켜져 있으면 **kill**합니다——실패한 flow는 결과를 받을 수 없으므로 살려 두면 레인만 차지합니다. `depends_on` 순환은 생성/갱신 시 거부되며(깊이 우선, id는 이미 검증됨) 비활성 스윕까지 flow를 붙잡지 않습니다. `supersede`는 `expected_revision`을 올리므로 이전 리비전을 가진 작성자는 취소된 flow를 되살리는 대신 CAS에 실패합니다. stale-WAITING 마커는 `updated_at`을 건드리지 않고 페이로드를 씁니다——그 컬럼이 바로 스윕이 읽는 비활성 시계입니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 루트 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
+라이브 자식은 수집을 거부합니다. grace는 `todos`와 `task_flows` 테이블 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록하며, `auto_kill_on_detach`가 켜져 있으면 **kill**합니다——실패한 flow는 결과를 받을 수 없으므로 살려 두면 레인만 차지합니다. `depends_on` 순환은 생성/갱신 시 거부되며(깊이 우선, id는 이미 검증됨) 비활성 스윕까지 flow를 붙잡지 않습니다. `supersede`는 `expected_revision`을 올리므로 이전 리비전을 가진 작성자는 취소된 flow를 되살리는 대신 CAS에 실패합니다. stale-WAITING 마커는 `updated_at`을 건드리지 않고 페이로드를 씁니다——그 컬럼이 바로 스윕이 읽는 비활성 시계입니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 루트 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
 
 전체 교체가 루트 todo를 버리면 유예 기간을 기다리지 않고 `update_todos`가 고아 flow를 즉시 보상한다(정책: `TODOLIST_INFRA["orphan_flow_on_drop"]`). 곧바로 세션 범위 sweep이 실행되고, flow가 종료 상태가 되면 루트 todo에 즉시 알린다. 활성 flow와 비슷한 목표의 생성은 `ack_dup`이 없으면 경고한다.
 
@@ -74,12 +76,19 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 
 - `taskflow_flow(action="plan")`이 자동 생성하는 id가 이제 **안정적**입니다: `plan-<sha256(session_id + goal)[:10]>`. 같은 세션에서 같은 goal을 다시 계획하면 기존 **비터미널** 플로우를 멱등 성공으로 반환하고 두 번째 플로우를 만들지 않습니다. 터미널 플로우는 여전히 오류입니다(다른 id 또는 후속 플로우 사용). `flow_id`는 전역 기본 키이고 소유권은 세션 단위이므로 seed에 session id를 포함합니다. 생성 후 **모든 초기 ready step**을 자동 dispatch합니다(의존성 없는 형제들). `TASKFLOW_INFRA["auto_dispatch_initial_ready"]`(기본 true)로 기존의 "검토 후 dispatch" 동작으로 되돌릴 수 있고, 개별 spawn 실패는 fail-open(해당 step은 `ready` 유지)입니다. 출력되는 plan은 dispatch 이후 상태를 보여줍니다.
 - `taskflow_step(action="resume")`의 auto-dispatch는 **플로우 전체**를 스캔합니다(이번에 unlock한 하류만이 아님): `newly_ready ∪ all_ready`를 하나의 제한된 동시 wave로 dispatch합니다. 이로써 예전부터 ready였지만 이름이 지정되지 않은 형제 브랜치도 시작됩니다. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`(기본 true)로 이번 unlock 집합만으로 제한할 수 있습니다. 이미 dispatched된 step은 걸러지고 플로우 락 안에서 다시 확인되므로 이중 spawn은 없습니다.
-- TaskFlow board reminder는 **모든 ready step**을 나열하고(`ready_to_dispatch: s3(...), s4(...)`), 둘 이상이면 `[N steps ready — parallelize via taskflow_dispatch!]`를 붙입니다. 미dispatch ready가 있는 동안 cooldown은 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`(1), 없으면 평소 5턴입니다(`only_if_changed`는 동일한 board의 재주입을 계속 억제합니다).
+- TaskFlow board reminder는 ready 작업을 "모델이 무엇을 해야 하는가"로 구분합니다. 영속화된 `last_spawn_error`가 있는 step은 `dispatch failed: s1(...) — retry via taskflow_step(action='dispatch', step_ids=['s1'])`로 나열하고, 일반 ready는 `pending auto-dispatch: N step(s)`로 개수만 표시합니다(다음 자동 wave가 시작함). blocked step은 개수와 `block_reason`을 보여 주고(DAG 의존이 원인이면 `waiting on upstream: <dep>` 추가), `next:` 힌트에도 상태가 붙습니다. cooldown이 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`(1)로 짧아지는 것은 spawn 실패 또는 결정이 필요한 blocked step(`block_reason` 기록됨. 상류 대기만이면 실행 중 정상 상태)이 있을 때뿐입니다. 그 외에는 평소 5턴이며 `only_if_changed`는 동일한 board의 재주입을 계속 억제합니다. 자동 dispatch wave 중 하나라도 꺼져 있으면 ready는 다시 모델 담당이 되어 기존 `ready_to_dispatch` / `parallelize` 문구가 돌아옵니다.
 - `taskflow_flow(action="create")`는 중복된 **비터미널** `flow_id`를 멱등 성공(revision + status)으로 반환합니다. 터미널 플로우나 다른 세션이 소유한 id는 계속 오류입니다.
 - 수동 `taskflow_step(action="dispatch")`, plan의 초기 ready wave, `taskflow_step(action="resume")`의 auto-dispatch wave는 `_dispatch.flow_dispatch_lock(flow_id)`를 공유합니다: read → validate → spawn → persist 전체를 플로우 단위로 직렬화하고, wave는 락 획득 후 각 step이 여전히 `ready`인지 다시 확인합니다. 락은 **프로세스 로컬**입니다(단일 백엔드 프로세스, TaskFlow는 main-only). 다중 프로세스 배포에는 DB lease가 필요합니다.
 - **mutating 반복 측정(2026-10-22):** 225개 checkpoint 스레드, 204개 도구 호출 — 122 `ast_grep_search`, 34 `terminal`, 23 `execute_code`, 10 `explore`, 5 `ast_grep_rewrite`, 5 `question`, 3 `write_file`, 1 `python_repl`, 1 `sessions_spawn` — 연속 동일 이름 + 동일 인자의 성공 mutating 호출은 **0건**이었습니다. 따라서 `ToolCallSignature` 미들웨어를 추가하지 않았고, `ToolGuardrails`가 계속 루프 감지를 담당합니다. 실제 반복이 텔레메트리로 확인될 때만 mutating 카운터를 재검토합니다.
 
 출처: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`, `workspace/prompt_builder.py`, `agent/middlewares/reminder_catalog/`; 테스트: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`, `tests/agent/middlewares/test_taskflow_reminder_ready.py`.
+
+## 🧩 역할별 모델과 이기종 judge
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*`는 기능 역할별 옵트인 패밀리입니다. 패밀리를 설정하면(provider 또는 api_base, 또는 `MODEL_LOCAL=true`로 MAIN 모델의 로컬 GGUF 재사용) 해당 역할의 모든 자식 에이전트가 그 패밀리를 쓰고, **비어 있으면** 역할 정의 자체의 티어(내장 역할은 `model_tier: auxiliary`)를 유지합니다. 따라서 새 키를 건드리지 않으면 동작이 그대로입니다.
+- 자식 모델 우선순위는 세션의 역할별 모델 profile → 이름 지정 model override → **설정된** 역할 패밀리 → 역할 모델 티어 → depth 역할입니다. 출력 상한 해석과 영속화되는 구조화 출력 열화 키도 이 순서를 반영하며, spawn 로그와 1개의 `subagent_model` trajectory 이벤트가 실제 모델과 출처(`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`)를 기록합니다.
+- `GET /sherry-config/model-roles`는 각 judge/역할의 `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}`를 반환합니다. 모델 설정 탭은 네 역할 패밀리를 일반 모델 profile 카드로 렌더링하고(연결 테스트 포함) "역할 기본 티어 유지" 배지와 유효 모델 줄을 보여 줍니다.
+- 이기종 judge: StepJudge는 `TASKFLOW_LLM_*`(미설정 시 보조), 완료 judge는 `AUXILIARY_LLM_*`(CJ_LLM 패밀리 없음), 실행자는 역할 패밀리 또는 티어를 씁니다. judge를 실행자와 다른 패밀리로 두면 동일 원인의 맹점(같은 모델이 같은 입력에서 같은 방식으로 틀림)을 줄일 수 있습니다. 강제는 없으며, 비어 있으면 상속 관계는 이전과 같습니다.
 
 ## ⚙️ 설정 레지스트리
 
@@ -87,13 +96,13 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 
 | 부분 | 내용 |
 | :--- | :--- |
-| `config/features/agent_side/` | **59**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
-| `config/features/infra_side/` | **30**개 인프라 측 설정 모듈(서버, 로그인, 큐, 스킬, 컨텍스트 엔진, 런타임, 웹 검색, 모델 가격, 로컬 모델 다운로드, 로그 보존, WS 속도 제한) |
+| `config/features/agent_side/` | **60**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
+| `config/features/infra_side/` | **31**개 인프라 측 설정 모듈(서버, 로그인, 큐, 스킬, 컨텍스트 엔진, 런타임, 웹 검색, 모델 가격, 로컬 모델 다운로드, 로컬 모델 daemon, 로그 보존, WS 속도 제한) |
 | `config/features/_env.py` | 유일한 공유 환경 헬퍼 |
 
 각 모듈은 `class XxxConfig(TypedDict)`와 모듈 수준 상수 `XXX: XxxConfig = {…}`를 정의합니다. 환경 인식 모듈은 빌더 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`를 정의하고 `env or os.environ`을 읽어 임포트 시 상수를 구체화합니다. 환경 헬퍼는 `_env_int(name, default, env)`(`config/features/_env.py:9`)이며, `1/true/yes/on`과 `0/false/no/off/""`를 받아들이고 예외를 던지지 않습니다.
 
-레지스트리는 현재 **89개 feature 객체**를 보유합니다 — 에이전트 측 59 + 인프라 측 30 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
+레지스트리는 현재 **91개 feature 객체**를 보유합니다 — 에이전트 측 60 + 인프라 측 31 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
 
 이 문서와 가장 관련 있는 상수:
 
@@ -287,7 +296,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **유휴 감지는 권고용입니다.** sweeper는 `stale_detected_at` / `stale_child_session_key`를 `wait_json`에 찍지만 오래된 `waiting` flow를 자동 실패시키지 않습니다. 사람이나 모델이 마커에 따라 조치해야 합니다.
 - **연속성은 채널 의존입니다.** `build_continuity_prompt`는 channel id와 chat id를 모두 요구하므로, 채널 바인딩이 없는 세션은 연속성 블록을 받지 못합니다. 저장소는 디스크의 키별 JSON이며 데이터베이스가 아닙니다.
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.
-- **레지스트리 규모는 89입니다.** 설정 레지스트리는 89개 feature 객체(에이전트 측 59 + 인프라 측 30)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`, `LOGS`, `WS_RATE_LIMIT`를 빠뜨립니다(기본값은 전용 테스트 또는 각 feature의 테스트 스위트가 커버합니다).
+- **레지스트리 규모는 91입니다.** 설정 레지스트리는 91개 feature 객체(에이전트 측 60 + 인프라 측 31)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`, `LOCAL_DAEMONS`, `LOGS`, `WS_RATE_LIMIT`를 빠뜨립니다(기본값은 전용 테스트 또는 각 feature의 테스트 스위트가 커버합니다).
 - **패키지 재수출 누락.** `agent/tools/taskflow/__init__.py`는 11개 이름만 재수출합니다. `taskflow_step(action="dispatch")`와 `taskflow_step(action="wait_all")`은 `build_taskflow_tools()`로 도달할 수 있지만 패키지 `__all__`에서 빠져 있습니다.
 - **TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_step(action="resume")`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.

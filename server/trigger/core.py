@@ -23,12 +23,12 @@ app = Robyn(__file__)
 # ``token`` header must be listed or the browser's preflight would refuse it.
 ALLOW_CORS(app, origins=auth.allowed_origins(), headers=[auth.TOKEN_HEADER])
 
-# Issue the gateway token on every response and expose it to the app's
-# cross-origin fetch (without Expose-Headers the browser hides the value). The
-# desktop client caches it in memory and echoes it as the ``token`` request
-# header / WS ``?token=`` parameter — see server/trigger/auth.py for the policy.
-app.set_response_header("Access-Control-Expose-Headers", auth.TOKEN_HEADER)
-app.set_response_header(auth.TOKEN_HEADER, auth.gateway_token())
+# The gateway token is NOT a global response header. Stamping it on every
+# response (static assets and error bodies included) let any same-origin script
+# read the credential from an unrelated fetch. The bootstrap endpoint is the
+# one authorized channel: it returns the token in its body and a one-shot
+# ``token`` header (with Expose-Headers, for a cross-origin fetch), and the
+# client holds it in memory. Ordinary responses carry no credential.
 
 
 @app.get(auth.BOOTSTRAP_PATH)
@@ -36,9 +36,20 @@ async def gateway_token_handler(request):
     """Hand the gateway token to a token-less caller (client bootstrap).
 
     Reachable without a token in strict mode too — it is how the desktop client
-    learns the per-boot secret. The Origin allowlist still applies.
+    learns the per-boot secret. The Origin allowlist still applies. The body is
+    the transport; the response header is kept for the legacy one-shot reader.
     """
-    return {"token": auth.gateway_token()}
+    token = auth.gateway_token()
+    return Response(
+        status_code=200,
+        headers={
+            "Content-Type": "application/json",
+            "Access-Control-Expose-Headers": auth.TOKEN_HEADER,
+            auth.TOKEN_HEADER: token,
+            **security_headers(),
+        },
+        description=json.dumps({"token": token}),
+    )
 
 
 def gateway_auth_middleware(request):

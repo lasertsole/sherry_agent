@@ -264,7 +264,10 @@ class TaskflowStepInput(BaseModel):
     )
     step_outcome: str | None = Field(
         default=None,
-        description="success / failure / partial / skipped; outranks the result gates (resume).",
+        description=(
+            "success / failure / partial / skipped / blocked; outranks the result gates "
+            "(resume). blocked keeps the partial result and the dependents blocked."
+        ),
     )
     auto_dispatch: bool | None = Field(
         default=None,

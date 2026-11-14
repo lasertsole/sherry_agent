@@ -16,6 +16,7 @@ from agent.tools.pub_base import (
     skill_matches_platform,
     skill_visible_to,
     normalize_skill_scope,
+    normalize_skill_roles,
     EXCLUDED_SKILL_DIRS,
 )
 
@@ -77,7 +78,12 @@ def _parse_tags(tags_value) -> list[str]:
     return [t.strip().strip("\"'") for t in tags_value.split(",") if t.strip()]
 
 
-def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "main") -> str:
+def _skill_view(
+    name: str,
+    file_path: str | None = None,
+    caller_scope: str = "main",
+    caller_role: str | None = None,
+) -> str:
     try:
         lookup_error = _skill_lookup_path_error(name)
         if lookup_error:
@@ -178,7 +184,11 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
         if not skill_md or not skill_md.exists():
             from skills.loader import scan_skills
 
-            available = [s["name"] for s in sort_skills(scan_skills())[:20]]
+            available = [
+                s["name"]
+                for s in sort_skills(scan_skills())
+                if skill_visible_to(s, caller_scope, caller_role)
+            ][:20]
             return json.dumps(
                 {
                     "success": False,
@@ -237,6 +247,22 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
                     "success": False,
                     "error": (
                         f"Skill '{name}' is not visible to this caller (scope: {skill_scope})."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        # Role visibility (orthogonal to scope): a skill tagged with
+        # ``roles: [...]`` is viewable only by those functional roles. The
+        # roles come from the TARGET SKILL.md frontmatter — the skill may not
+        # appear in the scan snapshot at all.
+        skill_roles = normalize_skill_roles(frontmatter.get("roles"))
+        if not skill_visible_to({"roles": skill_roles}, caller_scope, caller_role):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        f"Skill '{name}' is not visible to this role "
+                        f"(roles: {', '.join(skill_roles or [])})."
                     ),
                 },
                 ensure_ascii=False,
@@ -455,7 +481,8 @@ class SkillView(BaseTool):
         caller_scope = (
             metadata.get("caller_scope", "main") if isinstance(metadata, dict) else "main"
         )
-        return _skill_view(name, file_path, caller_scope=caller_scope)
+        caller_role = metadata.get("caller_role") if isinstance(metadata, dict) else None
+        return _skill_view(name, file_path, caller_scope=caller_scope, caller_role=caller_role)
 
     @override
     async def _arun(self, name: str, file_path: str | None = None) -> str:

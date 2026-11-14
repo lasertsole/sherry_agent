@@ -72,7 +72,9 @@ from .skill_utils import (
     skill_matches_platform,
     skill_visible_to,
     normalize_skill_scope,
+    normalize_skill_roles,
     VALID_SKILL_SCOPES,
+    VALID_SKILL_ROLES,
     EXCLUDED_SKILL_DIRS,
 )
 
@@ -147,6 +149,8 @@ __all__ = [
     "skill_matches_platform",
     "skill_visible_to",
     "normalize_skill_scope",
+    "normalize_skill_roles",
     "VALID_SKILL_SCOPES",
+    "VALID_SKILL_ROLES",
     "EXCLUDED_SKILL_DIRS",
 ]

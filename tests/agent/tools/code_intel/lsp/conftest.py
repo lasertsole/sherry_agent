@@ -83,6 +83,18 @@ while True:
                   "params": {"uri": uri,
                              "diagnostics": [{"message": "fake diagnostic", "severity": 1,
                                               "source": "fake", "code": "F001"}]}})
+    elif method == "textDocument/didChange":
+        # Real servers re-analyze after didChange; publish so a generation wait
+        # can observe the new round (and prove the new content arrived).
+        if MODE != "nodiag":
+            uri = msg["params"]["textDocument"]["uri"]
+            changes = msg["params"].get("contentChanges") or [{}]
+            text = changes[0].get("text", "") if isinstance(changes[0], dict) else ""
+            message = "changed content analyzed" if "broken" in text else "fake diagnostic"
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+                  "params": {"uri": uri,
+                             "diagnostics": [{"message": message, "severity": 1,
+                                              "source": "fake", "code": "F001"}]}})
     elif mid is None:
         pass
     elif MODE == "slow":
@@ -106,6 +118,10 @@ while True:
                                     "end": {"line": 0, "character": 0}}, "newText": "# fmt\n"}])
     elif method == "textDocument/definition":
         result(mid, [{"uri": msg["params"]["textDocument"]["uri"], "range": fakerange()}])
+    elif method == "textDocument/hover":
+        result(mid, {"contents": {"kind": "markdown",
+                                  "value": "```python\ndef helper(x: int) -> int\n```"},
+                     "range": fakerange()})
     elif method == "textDocument/references":
         uri = msg["params"]["textDocument"]["uri"]
         result(mid, [{"uri": uri, "range": fakerange()}, {"uri": uri, "range": fakerange()}])

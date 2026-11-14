@@ -11,7 +11,18 @@
         :aria-label="t('title')"
         @click="closePreview"
         @keydown.esc="closePreview"
+        @keydown.left.prevent="galleryItems.length > 1 && prevImage()"
+        @keydown.right.prevent="galleryItems.length > 1 && nextImage()"
         @keydown.tab.prevent="trapTab">
+        <button
+          v-if="galleryItems.length > 1"
+          type="button"
+          ref="prevBtnRef"
+          class="image-preview-nav image-preview-prev"
+          :aria-label="t('previous')"
+          @click.stop="prevImage">
+          <i class="pi pi-chevron-left"></i>
+        </button>
         <img
           :src="previewSrc"
           class="image-preview-img"
@@ -20,6 +31,20 @@
           @wheel.prevent="onWheel"
           @mousedown="onMouseDown"
           @load="onImageLoad" />
+        <button
+          v-if="galleryItems.length > 1"
+          type="button"
+          ref="nextBtnRef"
+          class="image-preview-nav image-preview-next"
+          :aria-label="t('next')"
+          @click.stop="nextImage">
+          <i class="pi pi-chevron-right"></i>
+        </button>
+        <div
+          v-if="galleryItems.length > 1"
+          class="image-preview-counter">
+          {{ currentIndex + 1 }} / {{ galleryItems.length }}
+        </div>
         <div class="image-preview-hint">{{ t('hint') }}</div>
         <button
           type="button"
@@ -39,22 +64,30 @@
   "en": {
     "hint": "Scroll to zoom · Drag to move · ESC or click blank to close",
     "title": "Image preview",
-    "close": "Close"
+    "close": "Close",
+    "previous": "Previous image",
+    "next": "Next image"
   },
   "ja": {
     "hint": "スクロールでズーム ・ ドラッグで移動 ・ ESC または空白クリックで閉じる",
     "title": "画像プレビュー",
-    "close": "閉じる"
+    "close": "閉じる",
+    "previous": "前の画像",
+    "next": "次の画像"
   },
   "ko": {
     "hint": "스크롤로 확대 · 드래그로 이동 · ESC 또는 빈 곳 클릭으로 닫기",
     "title": "이미지 미리보기",
-    "close": "닫기"
+    "close": "닫기",
+    "previous": "이전 이미지",
+    "next": "다음 이미지"
   },
   "zh": {
     "hint": "滚动缩放 · 拖拽移动 · ESC 或点击空白关闭",
     "title": "图片预览",
-    "close": "关闭"
+    "close": "关闭",
+    "previous": "上一张",
+    "next": "下一张"
   }
 }
 </i18n>
@@ -62,13 +95,16 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 
-const { isPreviewVisible, previewSrc, closePreview } = useImagePreview();
+const { isPreviewVisible, previewSrc, galleryItems, currentIndex, closePreview, nextImage, prevImage } =
+  useImagePreview();
 
 const { t } = useI18n({ useScope: 'local' });
 
-/** DOM references for the overlay and close button (used for focus management / Tab trap) */
+/** DOM references for the overlay and its controls (focus management / Tab trap) */
 const overlayRef = ref<HTMLElement | null>(null);
 const closeBtnRef = ref<HTMLButtonElement | null>(null);
+const prevBtnRef = ref<HTMLButtonElement | null>(null);
+const nextBtnRef = ref<HTMLButtonElement | null>(null);
 /** The element that held focus before the preview opened; focus is restored to it on close */
 let previouslyFocusedEl: HTMLElement | null = null;
 
@@ -118,14 +154,20 @@ const onMouseUp = () => {
   document.removeEventListener('mouseup', onMouseUp);
 };
 
-/** Tab trap: only two focus stops inside the overlay (the overlay itself + the close button), toggling in a loop */
+/** Tab trap: cycle through the overlay and its visible controls, in DOM order. */
 const trapTab = () => {
-  if (document.activeElement === overlayRef.value) {
-    closeBtnRef.value?.focus();
-  } else {
-    overlayRef.value?.focus();
-  }
+  const stops = [overlayRef.value, prevBtnRef.value, nextBtnRef.value, closeBtnRef.value].filter(
+    (element): element is HTMLElement => element !== null
+  );
+  if (stops.length === 0) return;
+  const active = document.activeElement as HTMLElement | null;
+  const index = stops.indexOf(active as HTMLElement);
+  stops[(index + 1) % stops.length]?.focus();
 };
+
+// A gallery step swaps the image: the zoom/pan of the previous frame must not
+// carry over to the next one.
+watch(previewSrc, resetTransform);
 
 watch(isPreviewVisible, async visible => {
   if (visible) {
@@ -203,6 +245,48 @@ onUnmounted(() => {
   &:hover {
     background: rgba(255, 255, 255, 0.3);
   }
+}
+
+/* Previous / next controls: same translucent round base as the close button. */
+.image-preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3rem;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.image-preview-prev {
+  left: 1.5rem;
+}
+
+.image-preview-next {
+  right: 1.5rem;
+}
+
+.image-preview-counter {
+  position: absolute;
+  top: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+  font-size: 0.875rem;
+  pointer-events: none;
 }
 
 .image-preview-fade-enter-active,

@@ -186,8 +186,16 @@ async def requeue_claimed_inputs() -> int:
     from server.queue.user_input_queue import UserInputQueue
 
     queue = UserInputQueue()
+    # Enumerate the CLAIMED rows themselves: ``candidate_session_ids`` is capped
+    # at the 50 newest directories for the graph-costly HITL scan, so a crashed
+    # turn in session #51 used to hold its message until the 24 h expiry.
+    try:
+        sessions = await queue.claimed_session_ids()
+    except Exception:  # noqa: BLE001 - optional probe; never block startup
+        logger.debug("boot recovery: claimed-session read failed", exc_info=True)
+        sessions = []
     total = 0
-    for session_id in candidate_session_ids():
+    for session_id in sessions:
         try:
             total += await queue.requeue_claimed(session_id)
         except Exception:  # noqa: BLE001 - optional probe; never block startup

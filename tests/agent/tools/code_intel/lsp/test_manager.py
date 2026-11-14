@@ -129,3 +129,53 @@ class TestShutdownAll:
         assert manager.active_count() == 0
         for pid in pids:
             _assert_reaped(pid)
+
+
+class TestCrashRestartCap:
+    def test_restarts_are_capped(
+        self, tmp_path: Path, point_to_fake, fake_lsp_server: Path, monkeypatch
+    ) -> None:
+        from config.features import LSP
+
+        point_to_fake("python")
+        monkeypatch.setitem(LSP, "lsp_max_restarts", 2)
+        manager = LspServerManager(max_servers=2, idle_shutdown_s=0)
+        cwd = tmp_path / "a"
+        cwd.mkdir()
+        try:
+            client, error = manager.acquire("python", str(cwd), str(fake_lsp_server))
+            assert client is not None and error == ""
+            for _ in range(2):
+                client.force_kill()
+                client, error = manager.acquire("python", str(cwd), str(fake_lsp_server))
+                assert client is not None and error == "", "a restart below the cap succeeds"
+
+            client.force_kill()
+            refused, error = manager.acquire("python", str(cwd), str(fake_lsp_server))
+            assert refused is None
+            assert "crashed 3 times" in error
+            assert "max 2" in error
+
+            # The cap survives the refused dead client: a later acquire must
+            # not silently start a fresh server.
+            again, error = manager.acquire("python", str(cwd), str(fake_lsp_server))
+            assert again is None and "crashed 3 times" in error
+        finally:
+            manager._clear_for_tests()
+
+    def test_peek_never_starts_a_server(
+        self, tmp_path: Path, point_to_fake, fake_lsp_server: Path
+    ) -> None:
+        point_to_fake("python")
+        manager = LspServerManager(max_servers=2, idle_shutdown_s=0)
+        cwd = tmp_path / "a"
+        cwd.mkdir()
+        try:
+            assert manager.peek("python", str(cwd)) is None
+            client, _ = manager.acquire("python", str(cwd), str(fake_lsp_server))
+            assert manager.peek("python", str(cwd)) is client
+            assert manager.peek("python", str(tmp_path / "other")) is None
+            client.force_kill()
+            assert manager.peek("python", str(cwd)) is None
+        finally:
+            manager._clear_for_tests()

@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -151,6 +152,8 @@ middleware = [
     IterationBudget(executor ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -170,7 +173,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - より厳しい反復予算（90 ではなく 60）。
 - `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`WorkspaceNoticeMiddleware`、`PlanContinuationEnforcer` もなし。
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
-- `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
+- 子エージェントチェーンも `ContextEvictionMiddleware` をメインチェーンと**同じ設定**で登録します：20 000 文字を超えるツール結果は子自身の `SESSIONS_DIR/<session_id>/evicted/` に書き込まれ、`read_file` 結果もスライスされます。人間メッセージ退避は `origin="user"` のみに一致し、子のタスク/継続メッセージはそれを持ちません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
 - `MaxTokensBoostMiddleware` は非ストリーミング経路を取ります。子は
   `ainvoke` で実行されるため、子セッション id に `is_stream_turn` フラグが立つことはありません。
@@ -185,7 +188,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent`（リスト順）           | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                    |
 | `before_model`（リスト順）           | ContextEvictionMiddleware（P1-9：末尾の巨大な HumanMessage にタグ付け。`before_agent` チェーンが先に走るため、メディアヒントは既にテキストへ統合済み） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（2 つのインジェクタはいずれもサニタイズ書き換えの後に位置するため、注入ターンでもメッセージが剥がされない）                                       |
-| `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
+| `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
 | `after_model`（逆順）                | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない）                                                                                                                                                                                     |
 | `wrap_tool_call`（最外層 → 最内層）  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
 | `after_agent`（逆順）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する）                                                                                                                                                                     |
@@ -261,11 +264,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - モデルが `multimodal_not_supported` として分類される拒否を返すと、`LLMRetryMiddleware` がメッセージに実際に含まれるメディア種別を `"unsupported"` として記録し、リクエストをスキルパスへ書き換えます。同じプロセス内の以降のセッションとターンはネイティブ試行を省略します。拒否は**実際に処理した**モデルに記録されます：呼び出しがフォールバック候補へ再バインドされていた場合、`LLMRetryMiddleware` はキャッシュ書き込み前に `_multimodal_native_model` をその候補へ書き換えます（同セクション参照）。
 - **サイレント劣化の検知**（`main_llm_silent_degradation_detection`、既定で有効）：ネイティブ試行が**成功**したのに、返信がメディアを認識できないと自ら述べたり、添付の説明をユーザーに求めたりした場合、`LLMRetryMiddleware` はリクエストに含まれる全メディア種別を実際に処理したモデルに対して `"unsupported"` としてキャッシュし、以降のターンは失敗必至のネイティブ試行を行いません。検出器（`media_pipeline/degradation.py::detect_media_blindness`）は EN/ZH/JA/KO 対応の高精度正規表現で、失明/説明要求フレーズの近くにメディア語がある場合のみ一致します。「返信がメディアに言及しない」という字面のヒューリスティックは意図的に採用していません — 有能なモデルはメディア語を一切使わずに画像を説明でき、誤検知は遅いスキルパスを恒久化してしまうためです。
 - 永続化された画像参照（`sherry-artifact://<session_id>/<name>`、または従来の media パス）と音声・動画パスは `additional_kwargs["images"]` / `["audios"]` / `["videos"]` に格納され、後から MesMemory に書き込まれ履歴レンダリングに使われます。
-- `image_url` ブロックはターンごとに剥ぎ取られません：`wrap_model_call` が履歴メディアを `history_media_budget_bytes`（75 MiB）に対して新しい順に投影し、最新の実ユーザーメッセージを保護して、収まらないブロックだけを置換します。チェックポイントは決して書き換えません。
+- 履歴メディアの投影は `MediaBudgetProjectionMiddleware` に移りました（main と child の両チェーンに登録）：このプロセッサはアップロード / 永続化 / 能力スクラブの半分だけを持ち、共有予算層がすべての model request で履歴メディアを投影します。
 
 `wrap_model_call` / `awrap_model_call` は**すべてのモデルリクエスト**で（`"auto"` モードのみ）実行され、リクエストのコピーをスクラブします：種別が `"unsupported"` キャッシュのメディアブロックは、剥ぎ取られたメディア・そのディスク上のパス・対応スキル（`image_to_text` / `speech_to_text` / `video_text_to_text`）を示すテキストプレースホルダーに置換されます。supported と未検証のブロックはそのまま通ります。書き換えは `request.override(messages=...)` で行い、state・checkpointer・MesMemory には一切触れず、スクラブ不要なら元のリクエストオブジェクトをそのまま返します。能力参照には環境のメインモデルキー（`get_model_key()`）を使います：本層は `LLMRetryMiddleware` の外側を包むため、チェーン内層で再バインドされたスティッキー・フォールバック候補を観測できません。その候補の拒否は `multimodal_not_supported` → スキルパス書き換えが引き続き担い、キャッシュ書き込み前に実際に処理した候補を `_multimodal_native_model` へ記録します。
 
 `after_agent` は `mutil_temp` を清掃します：ファイル名の本体が純粋な数値タイムスタンプでないもの、または 7 日より古いものを削除します。
+
+### MediaBudgetProjectionMiddleware
+
+**モジュール：** `agent/middlewares/media_pipeline/budget_projection.py` · **クラス：** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**フック：** `wrap_model_call` / `awrap_model_call`
+
+main と child の両チェーンで、履歴メディアを `history_media_budget_bytes`（75 MiB）に対して新しい順に保ちます。`image_url` / `audio_url` / `video_url` の data URL ペイロードを測定し、最新の実ユーザーメッセージのメディアを保護して、収まらないブロックだけを種類名付きのテキスト プレースホルダーに置換します。リモート URL はコスト 0 として保持され、予算 `0` は非保護ブロックをすべて落とします（明示的な skill パスでは最新ユーザーメディアも落とします）。チェックポイントは決して書き換えません。`required_in=_BOTH`：`MultimodalProcessor` が main 専用でも、子エージェントが複数の画像を読んでも履歴メディアは無限に蓄積しません。
 
 ### IterationBudget
 
@@ -374,6 +384,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **継続バジェット**：`mark_injected` はその turn もカウントするため、このカウンタは実際に**配信された**連続継続 turn 数です（trigger に拒否された指令——`busy` / `already_pending`——はカウントされず、次の turn 終了時に再試行されます。リカバリ指令もカウント対象です）。`TODOLIST_INFRA["max_continuation_turns"]`（15）に達すると、ゲートは最後の `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令を配信し、セッションをラッチして、自分が注入していない turn——実際のユーザーメッセージ、または subagent 完了——がバジェットとラッチをリセットするまで沈黙します。これは停滞チェックが見逃す形（モデルが毎回わずかに計画を編集してスナップショットを動かし続ける場合）を制限します。
 - fail-open：例外はログに記録され、ターンは通常どおり終了します。
 - **todowrite ナッジ**: フックは `todowrite` を呼ばないターン数を数え（`stagnation_tracker.record_turn` / `record_todowrite`。そのターンに `todowrite` を呼べばリセット）、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` ブロックを**追記**します——スナップショット停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。リカバリモードは独自のより強い todowrite ガイダンスを持ち、ナッジは付きません。
+- **blocked のみの専用指令**: 残りの TaskFlow step がすべて `blocked` で、実行できる todo もない場合、ゲートは継続プロンプトではなく `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]` を送ります——「次の pending タスクを続ける」では blocked の作業を進められません。step を done にしてはいけないこと、そして 3 つの判断（再計画 `taskflow_flow(action='replan')`、そのブランチ/step またはフロー全体の取り消し `taskflow_step(action='update_steps')` / `taskflow_flow(action='cancel')`、不足結果の注入 `taskflow_step(action='resume')`）を明示します。ready/dispatched の兄弟 step や pending todo が残っていれば通常の継続指令のままです。
 
 ### DynamicReminderMiddleware
 
@@ -382,7 +393,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `TaskIntentMiddleware` の直後に登録されます（そのターン内重複排除は、実行時にユーザーメッセージが最後のままである必要があります）。ターンの**最初のモデル呼び出し**で、**ライブビュー**を `<system-reminder source="…">` HumanMessage として注入します: プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引。システムプロンプト自体は安定した内容（persona + memory + スキル索引）だけを載せます——最初のトークンが毎ターン変わるプロンプトは、以降すべての prefix キャッシュを無効化します; 設定変更 / 圧縮でしか再構築されないプロンプトは、その間**古い** todo リストを見せ続けます。
 
-- **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（TaskFlow ボード / boulder: 5 ターンに 1 回まで）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
+- **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（boulder: 5 ターンに 1 回まで。TaskFlow ボードは spawn 失敗または判断が必要な blocked step がある間だけ `taskflow_reminder_cooldown_when_ready` に短縮し、それ以外は 5 のまま）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
 - **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約のラベル。
 - **圧縮後**はカタログがリセットされ、次のターンにすべてのソースが live state から再導出されます——この層は古いリマインダーの生存に依存しません。
 - 全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません（チェーンにセッション単位のスイッチはありません）。
@@ -476,7 +487,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/context_eviction/core.py` · **クラス：** `ContextEvictionMiddleware(AgentMiddleware)`
 **フック：** `wrap_tool_call` / `awrap_tool_call`（P0-2/P2-4）と `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`（P1-9）
 
-メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、ツール結果については内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインには登録されません（子トランスクリプトは完全なツール結果を保持）。
+メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、ツール結果については内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインにも同じ設定で登録されます：退避ファイルは子自身の `SESSIONS_DIR/<session_id>/evicted/` に置かれ、セッションは HITL なしで読み戻せます。人間メッセージ退避は `origin="user"` のみに一致し、子のタスクメッセージはそれを持ちません。
 
 **信頼できないツール結果はフェンスされます。** 退避の後、攻撃者が制御しうるツールの結果（`web_search`——バックエンドがどちらでも同じ 1 つのツール。改名前の名前 `tavily_search` も一覧に含みます——`message_search`、および `mcp_` ツール）は `<untrusted_tool_result source="…" id="…">` ブロックで包まれ、その勧告文が内容は指示ではなくデータだと述べます。ペイロード内の閉じタグは包む前に `</untrusted-tool-result>` へ書き換えられ、ブロックを早期に閉じられません。フェンスされるのはこのモデル表示だけで、内側が永続化した原文は変わりません。スイッチと文言は `config/features/agent_side/untrusted_output.py` にあります。
 同じパスが、漏洩しやすいツール（`terminal`、`python_repl`、信頼できないツール群、`mcp_*`）の結果中の資格情報もマスクします——順序は **evict → redact → fence**。ファイルツールは原文のまま（読み書き往復で設定を壊さないため）。スイッチは `REDACTION["tool_output_enabled"]`。
@@ -1067,7 +1078,15 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
 │   ├── media_offload.py         # 圧縮時のインラインメディア退避
-│   ├── background_reviews.py    # 圧縮時バックグラウンドレビューのスケジューリング + プロンプト
+│   ├── background_reviews.py    # 分割後のレビューモジュールの再エクスポート facade
+│   ├── _common.py               # 共有テキスト/レンダリングヘルパー
+│   ├── background_scaffold.py   # 共有レビュー agent スキャフォールド
+│   ├── memory_review.py         # 圧縮時メモリレビュー + consolidation
+│   ├── session_end_salvage.py   # セッション終了時メモリサルベージ
+│   ├── handoff_tree.py          # handoff 集約 + plan コンテキスト
+│   ├── skill_review_runner.py   # プラン完了時スキルレビュー
+│   ├── ptc_compile.py           # PTC replay スクリプトのコンパイル
+│   └── compression_todo.py      # 圧縮後 todo 調整
 │   ├── plan_context.py          # スキルレビューのアクティブプラン検出
 │   └── summary_doc.py           # SummaryDoc スキーマ + 決定論的 Markdown レンダラー
 ├── task_intent/                 # TaskIntentMiddleware

@@ -1,12 +1,14 @@
 """LangChain tool wrappers for LSP precise retrieval — CODE_INTEL_ROLES only.
 
-The eight tools (``lsp_goto_definition`` / ``lsp_find_references`` /
-``lsp_workspace_symbol`` / ``lsp_call_hierarchy`` / ``lsp_rename`` /
-``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are never registered in
+The nine tools (``lsp_goto_definition`` / ``lsp_find_references`` /
+``lsp_workspace_symbol`` / ``lsp_call_hierarchy`` / ``lsp_hover`` /
+``lsp_rename`` / ``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are
+never registered in
 ``_MAIN_TOOLS_BUILDERS``; ``agent/tools/subagent/spawn/core.py`` injects them into
 a child agent only when its functional role is in ``CODE_INTEL_ROLES``
-(researcher / librarian). Both roles are read-only, so the prompt keeps
-``lsp_rename`` / ``lsp_format`` in preview mode.
+(researcher / librarian / executor / general). The tools default to preview mode
+for ``lsp_rename`` / ``lsp_format``; the role prompt lets the write roles apply
+them while the read-only roles stay in preview.
 
 Every tool is **fail-open**: before any request it checks server availability via
 :mod:`fallback`, and a missing server / failed start / timed-out request degrades
@@ -31,8 +33,10 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from config.features import LSP
+from config.path import resolve_default_project_dir
 
 from .client import LSPClient
+from .config_merge import LspConfigView, effective_lsp_servers
 from .fallback import LspAvailability, build_fallback_message, check_lsp_availability
 from .manager import get_manager
 from .protocol import (
@@ -48,7 +52,7 @@ from .protocol import (
     to_position,
 )
 
-_SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
+_SCOPE_METADATA: dict[str, Any] = {"scope": "code_intel", "idempotent": True}
 _ROOT_ENV_KEY = "SHERRY_LSP_ROOT"
 
 
@@ -58,11 +62,6 @@ _ROOT_ENV_KEY = "SHERRY_LSP_ROOT"
 def _override_root() -> Path | None:
     raw = os.environ.get(_ROOT_ENV_KEY, "").strip()
     return Path(raw).expanduser().resolve() if raw else None
-
-
-def _lsp_cwd() -> str:
-    override = _override_root()
-    return str(override) if override is not None else str(Path.cwd().resolve())
 
 
 def _resolve_file(raw: str, root: Path | None = None) -> tuple[Path | None, str | None]:
@@ -139,13 +138,28 @@ class _LspTool(BaseTool):
             }
         )
 
-    def _resolve_language(self, language: str, file_path: str) -> tuple[str | None, str | None]:
+    def _resolve_language(
+        self,
+        language: str,
+        file_path: str,
+        servers: dict[str, dict] | None = None,
+    ) -> tuple[str | None, str | None]:
         """Resolve (language, cwd) from an explicit language or a file path."""
         if not language and file_path:
-            language = detect_language(file_path) or ""
+            language = detect_language(file_path, servers) or ""
         if not language:
             return None, "could not determine the language; pass a supported file_path"
         return language, None
+
+    def _effective_config(self) -> tuple[LspConfigView, str]:
+        """The session's merged server table + the cwd its servers run in.
+
+        A bound session's project root is the acquisition key, so its
+        ``.sherry/lsp.json`` overrides apply to the tools it calls; an unbound
+        session falls back to the process default (the historical behaviour).
+        """
+        root = _override_root() or self._session_root() or resolve_default_project_dir()
+        return effective_lsp_servers(root), str(root)
 
     def _open(self, client: LSPClient, file_path: str | None) -> str | None:
         if not file_path:
@@ -165,6 +179,14 @@ class _LspTool(BaseTool):
 
 class GotoDefinitionInput(BaseModel):
     """Input for ``lsp_goto_definition``."""
+
+    file_path: str = Field(description="File containing the symbol.")
+    line: int = Field(description="1-based line number of the symbol.")
+    character: int = Field(description="1-based column of the symbol.")
+
+
+class HoverInput(BaseModel):
+    """Input for ``lsp_hover``."""
 
     file_path: str = Field(description="File containing the symbol.")
     line: int = Field(description="1-based line number of the symbol.")
@@ -251,15 +273,20 @@ class LspGotoDefinitionTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -272,6 +299,72 @@ class LspGotoDefinitionTool(_LspTool):
             return self._json({"error": error, "available": True})
         locations = _as_locations(result)
         return self._json({"definitions": locations, "count": len(locations)})
+
+
+def _hover_text(contents: object) -> str:
+    """Flatten LSP ``Hover.contents`` (MarkupContent / MarkedString / list)."""
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, dict):
+        value = contents.get("value")
+        return str(value) if value is not None else ""
+    if isinstance(contents, list):
+        parts = [_hover_text(item) for item in contents]
+        return "\n\n".join(part for part in parts if part)
+    return ""
+
+
+class LspHoverTool(_LspTool):
+    """Read the type signature / documentation of a symbol."""
+
+    name: str = "lsp_hover"
+    description: str = (
+        "Get the language server's hover information for a symbol: its type "
+        "signature and documentation. line/character are 1-based. Fail-open: a "
+        "missing server returns an install hint instead of raising. "
+        'Example: lsp_hover("agent/core.py", 42, 5)'
+    )
+    args_schema: type[BaseModel] = HoverInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, file_path: str, line: int, character: int) -> str:
+        resolved, error = _resolve_file(file_path, self._session_root())
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert resolved is not None
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert language is not None
+
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
+        if availability != "available":
+            return self._unavailable(language, availability, message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
+        if client is None:
+            return self._unavailable(language, "not_installed", error)
+
+        open_error = self._open(client, str(resolved))
+        if open_error is not None:
+            return self._json({"error": open_error, "available": True})
+        params = client.position_params(str(resolved), line, character)
+        result, error = self._result(client, "textDocument/hover", params)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        if not isinstance(result, dict):
+            return self._json({"contents": "", "range": None, "available": True})
+        return self._json(
+            {
+                "contents": _hover_text(result.get("contents")),
+                "range": format_range(result.get("range")),
+                "available": True,
+            }
+        )
 
 
 class LspFindReferencesTool(_LspTool):
@@ -291,15 +384,20 @@ class LspFindReferencesTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -334,15 +432,22 @@ class LspWorkspaceSymbolTool(_LspTool):
             resolved, error = _resolve_file(file_path, self._session_root())
             if error is not None:
                 return self._json({"error": error, "available": True})
-        language, error = self._resolve_language(language, str(resolved) if resolved else "")
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language(
+            language, str(resolved) if resolved else "", servers_view.servers
+        )
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -378,7 +483,8 @@ class LspCallHierarchyTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
@@ -389,10 +495,14 @@ class LspCallHierarchyTool(_LspTool):
                 {"error": "direction must be 'incoming' or 'outgoing'", "available": True}
             )
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -441,15 +551,20 @@ class LspRenameTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -498,15 +613,20 @@ class LspDiagnosticsTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -514,9 +634,15 @@ class LspDiagnosticsTool(_LspTool):
         if open_error is not None:
             return self._json({"error": open_error, "available": True})
         uri = path_to_uri(str(resolved))
+        cached_before = client.cached_diagnostics(uri)
+        generation = client.diagnostics_generation(uri)
+        sync_error, changed = client.refresh_from_disk(str(resolved))
+        if sync_error is not None:
+            return self._json({"error": sync_error, "available": True})
         window = timeout_s if timeout_s is not None else LSP["lsp_diagnostics_timeout_s"]
-        client.wait_diagnostics(uri, window)
-        cached = client.cached_diagnostics(uri)
+        waited = changed or cached_before is None or client.diagnostics_pending(uri)
+        published = client.wait_diagnostics_since(uri, generation, window) if waited else None
+        cached = published if published is not None else client.cached_diagnostics(uri)
         raw = cached or []
         diagnostics = [item for d in raw if (item := format_diagnostic(d)) is not None]
         summary = {"error": 0, "warning": 0, "information": 0, "hint": 0, "unknown": 0}
@@ -527,7 +653,7 @@ class LspDiagnosticsTool(_LspTool):
                 "diagnostics": diagnostics,
                 "count": len(diagnostics),
                 "summary": summary,
-                "timed_out": cached is None,
+                "timed_out": waited and published is None,
             }
         )
 
@@ -560,15 +686,20 @@ class LspFormatTool(_LspTool):
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
-        language, error = self._resolve_language("", str(resolved))
+        servers_view, cwd = self._effective_config()
+        language, error = self._resolve_language("", str(resolved), servers_view.servers)
         if error is not None:
             return self._json({"error": error, "available": True})
         assert language is not None
 
-        availability, message = check_lsp_availability(language, _lsp_cwd())
+        availability, message = check_lsp_availability(
+            language, cwd, servers_view.servers, servers_view.enabled
+        )
         if availability != "available":
             return self._unavailable(language, availability, message)
-        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        client, error = get_manager().acquire(
+            language, cwd, message, spec=servers_view.servers.get(language)
+        )
         if client is None:
             return self._unavailable(language, "not_installed", error)
 
@@ -624,6 +755,14 @@ class LspFormatTool(_LspTool):
         if error is not None:
             payload["error"] = error
             return self._json(payload)
+        # The server still holds the pre-format text; push the written file so
+        # the next diagnostics pass analyzes what is actually on disk.
+        try:
+            from agent.tools.pub_base.lsp_sync import sync_edited_path
+
+            sync_edited_path(str(resolved), self._session_id)
+        except Exception:  # noqa: BLE001 - advisory only
+            logger.debug("LSP edit sync skipped", exc_info=True)
         payload.update({"applied": True, "applied_edits": count, "file": str(resolved)})
         return self._json(payload)
 
@@ -643,18 +782,20 @@ class LspStatusTool(_LspTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self) -> str:
-        cwd = _lsp_cwd()
+        view, cwd = self._effective_config()
         active = get_manager().stats()
         active_languages = {entry["language"] for entry in active if entry.get("alive")}
         servers: list[dict] = []
         summary = {"available": 0, "not_installed": 0, "not_configured": 0}
-        for language, spec in LSP["lsp_supported_servers"].items():
-            availability, message = check_lsp_availability(language, cwd)
+        for language, spec in view.servers.items():
+            availability, message = check_lsp_availability(
+                language, cwd, view.servers, view.enabled
+            )
             summary[availability] = summary.get(availability, 0) + 1
             entry: dict[str, Any] = {
                 "language": language,
                 "server": spec["command"][0],
-                "language_id": language_id(language),
+                "language_id": language_id(language, view.servers),
                 "status": availability,
                 "active": language in active_languages,
             }
@@ -773,13 +914,14 @@ def _format_calls(calls: Any, direction: str) -> list[dict]:
 
 
 def build_lsp_tools(session_id: str) -> list[BaseTool]:
-    """Build the eight RESEARCHER-only LSP tools (never raise; fail-open)."""
+    """Build the nine CODE_INTEL_ROLES LSP tools (never raise; fail-open)."""
     try:
         return [
             LspGotoDefinitionTool(session_id=session_id),
             LspFindReferencesTool(session_id=session_id),
             LspWorkspaceSymbolTool(session_id=session_id),
             LspCallHierarchyTool(session_id=session_id),
+            LspHoverTool(session_id=session_id),
             LspRenameTool(session_id=session_id),
             LspDiagnosticsTool(session_id=session_id),
             LspFormatTool(session_id=session_id),

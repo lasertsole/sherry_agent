@@ -59,6 +59,34 @@ def isolated_store(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_a_failed_restore_retries_on_the_next_call(isolated_store, monkeypatch):
+    """M6: the once-per-process flag is only set after a SUCCESSFUL restore."""
+    run = _make_run("restore-retry-1", ExecutionStatus.PENDING)
+    store_sqlite.upsert_run_sync(run)
+    attempts = {"n": 0}
+    original = store_sqlite.load_runs_from_sqlite
+
+    async def _flaky():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("database is locked")
+        return await original()
+
+    monkeypatch.setattr(store_sqlite, "load_runs_from_sqlite", _flaky)
+
+    await registry_state.restore_runs_from_disk()
+    assert get_run(run.run_id) is None
+    assert registry_state._restore_done is False
+
+    await registry_state.restore_runs_from_disk()
+
+    restored = get_run(run.run_id)
+    assert restored is not None
+    assert restored.execution.status == ExecutionStatus.TERMINAL
+    assert registry_state._restore_done is True
+
+
+@pytest.mark.asyncio
 async def test_restore_finalizes_leftover_pending_runs_silently(isolated_store, monkeypatch):
     announce = AsyncMock()
     monkeypatch.setattr(announce_core, "run_subagent_announce_flow", announce)

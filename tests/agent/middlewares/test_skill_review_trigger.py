@@ -51,6 +51,11 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
+    async def _generalizable(_context):
+        return review_mod._GeneralizabilityVerdict(True, "reusable procedure")
+
+    monkeypatch.setattr(review_mod, "_judge_task_generalizability", _generalizable)
+
 
 class _FakeStateDB:
     """In-memory stand-in for the durable register (``state_register_db``)."""
@@ -132,6 +137,42 @@ async def test_plan_completion_forks_extraction(patched, sid):
     await _settle()
 
     assert patched["forked"] == [sid]
+
+
+@pytest.mark.asyncio
+async def test_experience_learning_off_never_forks(patched, sid, monkeypatch):
+    """预设角色 → 高级: the user switch gates the plan-completion extraction."""
+    import agent.middlewares.summarization.skill_review_runner as runner_mod
+
+    patched["set_todos"]([_todo("a"), _todo("b")])
+    monkeypatch.setattr(
+        runner_mod,
+        "effective_extraction_config",
+        lambda _sid: {"skill_extraction_enabled": False},
+    )
+
+    await review_mod.maybe_trigger_skill_review(sid)
+    await _settle()
+
+    assert patched["forked"] == []
+
+
+@pytest.mark.asyncio
+async def test_session_override_can_disable_extraction(patched, sid, monkeypatch):
+    """The switch reads the session's own override when one is stored."""
+    import agent.middlewares.summarization.skill_review_runner as runner_mod
+
+    patched["set_todos"]([_todo("a")])
+    monkeypatch.setattr(
+        runner_mod,
+        "effective_extraction_config",
+        lambda session_id: {"skill_extraction_enabled": session_id != sid},
+    )
+
+    await review_mod.maybe_trigger_skill_review(sid)
+    await _settle()
+
+    assert patched["forked"] == []
 
 
 @pytest.mark.asyncio

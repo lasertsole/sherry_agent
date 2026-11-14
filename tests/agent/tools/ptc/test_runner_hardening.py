@@ -85,9 +85,24 @@ def _run_spy(code: str, config: dict, monkeypatch: pytest.MonkeyPatch) -> dict[s
     return captured
 
 
+class _NoopBackend:
+    """A usable backend double: the child still spawns (wrapped unchanged)."""
+
+    def wrap(
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: list | None = None,
+        *,
+        allow_network: bool = False,
+    ) -> tuple[list[str], dict]:
+        return list(cmd), env
+
+
 def test_child_env_carries_token_but_stub_file_never_contains_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(runner, "get_backend", lambda _policy: _NoopBackend())
     captured = _run_spy("print('x')", dict(PTC), monkeypatch)
     assert captured["result"]["status"] == "ok"
     token = captured["env"][PTC_RPC_TOKEN_ENV]
@@ -98,6 +113,7 @@ def test_child_env_carries_token_but_stub_file_never_contains_it(
 
 
 def test_token_is_unique_per_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "get_backend", lambda _policy: _NoopBackend())
     first = _run_spy("print('x')", dict(PTC), monkeypatch)
     second = _run_spy("print('x')", dict(PTC), monkeypatch)
     first_token = first["env"][PTC_RPC_TOKEN_ENV]
@@ -130,14 +146,22 @@ def test_available_backend_wraps_the_child_argv(monkeypatch: pytest.MonkeyPatch)
     assert wrap_calls == [[sys.executable, argv[-1]]]
 
 
-def test_auto_degrade_emits_exactly_one_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_without_backend_refuses_without_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUTO + no backend is a refusal envelope for PTC, not a bare run."""
     monkeypatch.setattr(runner, "get_backend", lambda _policy: None)
-    with _loguru_warnings() as records:
-        captured = _run_spy("print('x')", dict(PTC), monkeypatch)
-    assert captured["result"]["status"] == "ok"
-    degrade_warnings = [record for record in records if "execute_code" in record]
-    assert len(degrade_warnings) == 1
-    assert "policy=auto" in degrade_warnings[0]
+
+    def _no_spawn(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("PTC must not spawn without an OS sandbox backend")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", _no_spawn)
+    raw = asyncio.run(runner.run_ptc("print('x')", {}, "child:sess", dict(PTC)))
+    result = json.loads(raw)
+
+    assert result["status"] == "sandbox_unavailable"
+    assert "SANDBOX_POLICY=auto" in result["error"]
+    assert "no operator approval path" in result["error"]
 
 
 class TestGrandchildDoesNotHang:

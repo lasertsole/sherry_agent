@@ -190,13 +190,43 @@ class TestLLMModeration:
         assert filters == [("llm_moderation", "block", 1)]
 
     @pytest.mark.asyncio
-    async def test_an_unavailable_review_fails_open(self, filters, monkeypatch):
+    async def test_an_unavailable_review_blocks_in_always_mode(self, filters, monkeypatch):
+        # ``always`` asked for every message to be reviewed, so an
+        # unreachable judge must not silently pass the turn.
         monkeypatch.setattr(mw, "llm_moderation_active", lambda: True)
         monkeypatch.setattr(
             mw,
             "safety_filter_config",
             lambda: _settings(llm_moderation_mode="always", llm_moderation_model="judge"),
         )
+
+        async def _review(_text, _model):
+            return None, "review failed"
+
+        monkeypatch.setattr(mw, "_review", _review)
+        called: list[bool] = []
+
+        async def handler(_request):
+            called.append(True)
+            return AIMessage(content="ok")
+
+        result = await mw.LLMModerationMiddleware().awrap_model_call(
+            _request(_state(HumanMessage(content="q"))), handler
+        )
+        assert result.content == "NO" and called == []
+        assert filters == [("llm_moderation", "block", 1)]
+
+    @pytest.mark.asyncio
+    async def test_an_unavailable_review_fails_open_on_keyword_hit(self, filters, monkeypatch):
+        # ``on_keyword_hit`` already has the keyword layer's verdict; the
+        # optional second opinion stays fail-open.
+        monkeypatch.setattr(mw, "llm_moderation_active", lambda: True)
+        monkeypatch.setattr(
+            mw,
+            "safety_filter_config",
+            lambda: _settings(llm_moderation_mode="on_keyword_hit", llm_moderation_model="judge"),
+        )
+        monkeypatch.setattr(mw, "scan", lambda text, scope: [_hit("warn")])
 
         async def _review(_text, _model):
             return None, "review failed"

@@ -1,6 +1,6 @@
-"""LSP precise retrieval — RESEARCHER subagent only.
+"""LSP precise retrieval — CODE_INTEL_ROLES subagents only.
 
-Public surface: the eight LangChain tools, the JSON-RPC client, the process-level
+Public surface: the nine LangChain tools, the JSON-RPC client, the process-level
 server manager, the binary resolver/installer, and the fallback helpers.
 """
 
@@ -31,6 +31,7 @@ from .tools import (
     LspFindReferencesTool,
     LspFormatTool,
     LspGotoDefinitionTool,
+    LspHoverTool,
     LspRenameTool,
     LspStatusTool,
     LspWorkspaceSymbolTool,
@@ -45,6 +46,7 @@ __all__ = [
     "LspFindReferencesTool",
     "LspFormatTool",
     "LspGotoDefinitionTool",
+    "LspHoverTool",
     "LspRenameTool",
     "LspServerManager",
     "LspStatusTool",

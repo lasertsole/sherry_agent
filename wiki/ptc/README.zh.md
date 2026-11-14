@@ -145,6 +145,7 @@ TaskFlow step spawn
 | `ptc_max_stderr_bytes` | 10000 | 截断之前保留的子进程 stderr 字节数 |
 | `ptc_allowed_tools` | `read_file`、`write_file`、`patch_file`、`terminal`、`search_files`、`web_search` | 与子进程可用工具求交的白名单 |
 | `ptc_prefill_enabled` | `False` | 启用 skill review 脚本编译与 spawn 侧 PTC 预跑；观察期保持关闭 |
+| `extraction.flow_extraction_enabled`（预设角色 → 高级） | `True` | 面向用户的流程复用开关；全局控制编译半边（PTC + LDW），会话侧只读。重放已存在的脚本不受此开关限制 |
 | `ptc_script_max_bytes` | `20480` | 从 skill `scripts/` 读取的脚本大小上限 |
 | `ptc_compile_max_attempts` | `2` | JSON/语法失败时的编译尝试次数；编译绝不执行脚本 |
 

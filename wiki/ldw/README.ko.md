@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-LDW 스크립트는 `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, `WORKFLOW_META`를 Python 모듈 상수로 저장합니다. 클로저, 소스 문자열, `workflow.json` 사이드카는 저장하지 않습니다. 작성기는 JSON 텍스트가 아니라 Python 리터럴을 사용합니다. `json.dumps`는 소문자 `true` / `false` / `null`을 출력하므로 `additionalProperties: false`가 있는 schema는 스크립트를 읽을 수 없게 만들기 때문입니다.
+LDW 스크립트는 `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, `WORKFLOW_META`를 Python 모듈 상수로 저장합니다. 클로저, 소스 문자열, `workflow.json` 사이드카는 저장하지 않습니다. 작성기는 JSON 텍스트가 아니라 Python 리터럴을 사용합니다. `json.dumps`는 소문자 `true` / `false` / `null`을 출력하므로 `additionalProperties: false`가 있는 schema는 스크립트를 읽을 수 없게 만들기 때문입니다. 로더는 파일을 `exec_module`하지 않습니다: 세 개의 리터럴 대입만 AST로 파싱하고 그 외(임포트, 호출, 추가 이름)는 거부하므로, 변조된 스크립트가 오케스트레이터 권한으로 실행되지 않습니다.
 
 ## ⚙️ 런타임과 Journal
 
@@ -82,6 +82,7 @@ step이 실패하면 `repair_extraction`이 replay flow의 child handoff를 읽�
 |---|---|---|
 | `LDW["enabled"]` | `True` | 마스터 스위치. False면 모든 리플레이가 TaskFlow 경로에 머뭅니다 |
 | `LDW["min_replays"]` | `3` | 계획이 TaskFlow를 떠나 LDW 스크립트를 컴파일하기 전 리플레이 횟수 |
+| `extraction.flow_extraction_enabled`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 컴파일 스위치(전역 전용). 꺼져 있으면 `action=compile`, 누락 스크립트 컴파일, 수리 재컴파일을 거부. 기존 스크립트 재생은 가능 |
 | `LDW["script_max_bytes"]` | `65536` | `ldw__<plan_key>.py` 하나의 상한 |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | 프로세스 간 journal 위치 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 실패 후 TaskFlow replay flow를 만들고 구동 |
@@ -94,6 +95,7 @@ step이 실패하면 `repair_extraction`이 replay flow의 child handoff를 읽�
 
 - 이것은 리플레이 가속기이며 sandbox도 재시도 엔진도 아닙니다.
 - LDW leaf는 역할 도구 정책을 상속합니다. LDW의 sandbox/deepagents 경로는 의도적으로 사용하지 않습니다.
+- journal은 **정확 일치**입니다: `prompt` / `agent_type` / `model` / `schema` / `isolation`를 해시하고 변형이 바뀌면 다시 실행합니다. fuzzy 매칭과 prompt의 공백/Unicode 정규화는 의도적으로 하지 않습니다——step prompt에는 공백이 의미를 갖는 코드나 구조화된 상류 결과가 포함될 수 있어, 근접 일치 캐시는 잘못된 출력을 하류로 넘길 수 있습니다. miss 비용은 실제 실행 한 번이며 성공 후 기록됩니다.
 - 계획이나 변형이 바뀌면 다른 journal key가 되어 다시 실행됩니다. 오래된 스크립트가 현재 prompt보다 우선하지 않습니다.
 - 다시 실행한 실패 step의 부작용은 롤백되지 않습니다. journal은 이전에 성공한 step만 건너뜁니다.
 - 강등 시 성공 step은 절대 다시 spawn되지 않습니다. 실패 step은 TaskFlow의 retry/judge를 따르며 LDW만의 재시도 루프는 없습니다.

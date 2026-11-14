@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -151,6 +152,8 @@ middleware = [
     IterationBudget(executor ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -170,7 +173,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 더 타이트한 반복 예산(90 대신 60).
 - `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `WorkspaceNoticeMiddleware`, `PlanContinuationEnforcer`도 없음.
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
-- `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
+- 자식 체인도 `ContextEvictionMiddleware`를 메인 체인과 **같은 설정**으로 등록합니다: 20 000자를 넘는 도구 결과는 자식 자신의 `SESSIONS_DIR/<session_id>/evicted/`에 기록되고 `read_file` 결과도 슬라이스됩니다. 인간 메시지 축출은 `origin="user"`만 일치하며 자식 작업/연속 메시지는 이를 갖지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - `MaxTokensBoostMiddleware`는 비스트리밍 경로를 탑니다. 자식은
   `ainvoke`로 실행되므로 자식 세션 id에는 `is_stream_turn` 플래그가 절대 설정되지 않습니다.
@@ -185,7 +188,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent` (리스트 순서)        | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                       |
 | `before_model`(목록 순서)           | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음)                                                                |
-| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
+| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
 | `after_model` (역순)                | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음)                                                                                                                                                                              |
 | `wrap_tool_call` (최외곽 → 최내곽)  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
 | `after_agent` (역순)                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄)                                                                                                                                                           |
@@ -261,11 +264,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 모델이 `multimodal_not_supported`로 분류되는 거부를 반환하면 `LLMRetryMiddleware`가 메시지에 실제로 존재하는 미디어 종류를 `"unsupported"`로 기록하고 요청을 스킬 경로로 다시 씁니다. 같은 프로세스의 이후 세션과 턴은 네이티브 시도를 건너뜁니다. 거부는 **실제로 서빙한** 모델에 기록됩니다: 호출이 폴백 후보로 재바인딩된 경우 `LLMRetryMiddleware`가 캐시를 쓰기 전에 `_multimodal_native_model`을 그 후보로 다시 씁니다(해당 섹션 참조).
 - **사일런트 열화 감지**(`main_llm_silent_degradation_detection`, 기본 켜짐): 네이티브 시도가 **성공**했는데 응답이 스스로 미디어를 인지할 수 없다고 밝히거나 사용자에게 첨부 설명을 요청하면, `LLMRetryMiddleware`가 요청에 존재하는 모든 미디어 종류를 실제 서빙한 모델에 대해 `"unsupported"`로 캐시하여 이후 턴이 실패할 네이티브 시도를 건너뜁니다. 검출기(`media_pipeline/degradation.py::detect_media_blindness`)는 EN/ZH/JA/KO를 지원하는 고정밀 정규식으로, 실명/설명 요청 구문 근처에 미디어 단어가 있을 때만 일치합니다. "응답이 미디어를 언급하지 않는다"는 문자적 휴리스틱은 의도적으로 채택하지 않았습니다 — 유능한 모델은 미디어 키워드 없이도 이미지를 설명할 수 있고, 오탐은 느린 스킬 경로를 영구화하기 때문입니다.
 - 영속화된 이미지 참조(`sherry-artifact://<session_id>/<name>` 또는 기존 media 경로)와 오디오·비디오 경로는 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`에 저장되고, 이후 MesMemory에 기록되어 히스토리 렌더링에 사용됩니다.
-- `image_url` 블록은 턴마다 제거되지 않습니다: `wrap_model_call`이 히스토리 미디어를 `history_media_budget_bytes`(75 MiB)에 대해 최신순으로 투영하고 최신 실제 사용자 메시지를 보호하며, 들어가지 않는 블록만 교체합니다. 체크포인트는 절대 변경되지 않습니다.
+- 히스토리 미디어 투영은 `MediaBudgetProjectionMiddleware`로 이동했습니다(main과 child 두 체인 모두 등록): 이 프로세서는 업로드/영속화/능력 스크럽 절반만 유지하고, 공유 예산 계층이 모든 model request에서 히스토리 미디어를 투영합니다.
 
 `wrap_model_call` / `awrap_model_call`은 **모든 모델 요청**에서(`"auto"` 모드에서만) 실행되어 요청 복사본을 스크럽합니다: 종류가 `"unsupported"`로 캐시된 미디어 블록은 제거된 미디어, 디스크 경로, 대응 스킬(`image_to_text` / `speech_to_text` / `video_text_to_text`)을 명시한 텍스트 자리표시자로 교체됩니다. supported 및 미검증 블록은 그대로 통과합니다. 재작성은 `request.override(messages=...)`로 이루어지며 state / checkpointer / MesMemory는 전혀 건드리지 않고, 스크럽할 것이 없으면 원래 요청 객체를 그대로 반환합니다. 능력 조회는 환경 메인 모델 키(`get_model_key()`)를 사용합니다: 이 계층은 `LLMRetryMiddleware` 바깥을 감싸므로 체인 안쪽에서 재바인딩된 스티키 폴백 후보를 관측할 수 없습니다. 그 후보의 거부는 `multimodal_not_supported` → 스킬 경로 재작성이 여전히 담당하며, 캐시를 쓰기 전에 실제 서빙한 후보를 `_multimodal_native_model`에 기록합니다.
 
 `after_agent`는 `mutil_temp`를 청소합니다: 파일명 본체가 순수 숫자 타임스탬프가 아니거나 7일보다 오래된 파일을 삭제합니다.
+
+### MediaBudgetProjectionMiddleware
+
+**모듈:** `agent/middlewares/media_pipeline/budget_projection.py` · **클래스:** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call`
+
+main과 child 두 체인 모두에서 히스토리 미디어를 `history_media_budget_bytes`(75 MiB)에 대해 최신순으로 유지합니다. `image_url` / `audio_url` / `video_url` data URL 페이로드를 측정하고 최신 실제 사용자 메시지의 미디어를 보호하며, 들어가지 않는 블록만 유형 이름이 붙은 텍스트 자리표시자로 교체합니다. 원격 URL은 비용이 0이라 유지되고, 예산 `0`은 비보호 블록을 모두 제거합니다(명시적 skill 경로는 최신 사용자 미디어도 제거). 체크포인트는 절대 변경되지 않습니다. `required_in=_BOTH`: `MultimodalProcessor`가 main 전용이어도 하위 에이전트가 여러 이미지를 읽어도 히스토리 미디어가 무한히 쌓이지 않습니다.
 
 ### IterationBudget
 
@@ -374,6 +384,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **계속 예산**: `mark_injected`가 그 turn도 세므로, 이 카운터는 실제로 **전달된** 연속 계속 turn 수입니다 (trigger가 거부한 지시 — `busy` / `already_pending` — 는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). `TODOLIST_INFRA["max_continuation_turns"]`(15)에 도달하면 게이트는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 전달하고 세션을 래치한 뒤, 자신이 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 — 이 예산과 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 검사가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 스냅샷을 계속 움직이는 경우)를 제한합니다.
 - fail-open: 예외는 로그로 남기고 턴은 정상 종료됩니다.
 - **todowrite 넛지**: 훅은 `todowrite`를 호출하지 않은 턴 수를 세고(`stagnation_tracker.record_turn` / `record_todowrite`, 그 턴에 `todowrite`를 호출하면 0으로), `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 블록을 **덧붙입니다** — 스냅샷 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다). 복구 모드는 자체의 더 강한 todowrite 안내를 가지며 넛지는 붙지 않습니다.
+- **blocked 전용 지시문**: 남은 TaskFlow step이 모두 `blocked`이고 실행할 todo도 없으면, 게이트는 계속 프롬프트 대신 `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]`를 보냅니다 — "다음 pending 작업을 계속"으로는 blocked 작업을 진행할 수 없습니다. step을 done으로 표시하지 말 것과 세 가지 결정(재계획 `taskflow_flow(action='replan')`, 해당 브랜치/step 또는 플로우 전체 취소 `taskflow_step(action='update_steps')` / `taskflow_flow(action='cancel')`, 누락 결과 주입 `taskflow_step(action='resume')`)을 명시합니다. ready/dispatched 형제 step이나 pending todo가 남아 있으면 평소 계속 지시문을 씁니다.
 
 ### DynamicReminderMiddleware
 
@@ -382,7 +393,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `TaskIntentMiddleware` 바로 뒤에 등록됩니다(그 턴 내 중복 제거는 실행 시 사용자 메시지가 마지막이어야 합니다). 턴의 **첫 모델 호출**에 **라이브 뷰**를 `<system-reminder source="…">` HumanMessage로 주입합니다: 플랜 모드, 작업 디렉터리, todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스. 시스템 프롬프트 자체는 이제 안정적 내용(persona + memory + 스킬 인덱스)만 담습니다 — 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것의 prefix 캐시를 무효화합니다; 설정 변경/압축 때만 재구성되는 프롬프트는 그 사이 **오래된** todo 목록을 보여줍니다.
 
-- **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(TaskFlow 보드 / boulder: 5턴에 한 번), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
+- **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(boulder: 5턴에 한 번; TaskFlow 보드는 spawn 실패 또는 결정이 필요한 blocked step이 있는 동안만 `taskflow_reminder_cooldown_when_ready`로 단축하고 그 외에는 5 유지), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
 - **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 라벨.
 - **압축 후** 카탈로그가 리셋되어 다음 턴에 모든 소스가 live state에서 재도출됩니다 — 이 층은 오래된 리마인더의 생존에 의존하지 않습니다.
 - 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다(체인에 세션별 스위치가 없습니다).
@@ -476,7 +487,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/context_eviction/core.py` · **클래스:** `ContextEvictionMiddleware(AgentMiddleware)`
 **후크:** `wrap_tool_call` / `awrap_tool_call`(P0-2/P2-4) 및 `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`(P1-9)
 
-메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 도구 결과의 경우 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에는 등록되지 않습니다(자식 트랜스크립트는 완전한 도구 결과를 유지).
+메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 도구 결과의 경우 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에도 같은 설정으로 등록됩니다: 축출 파일은 자식 자신의 `SESSIONS_DIR/<session_id>/evicted/`에 놓이고 세션은 HITL 없이 다시 읽을 수 있습니다. 인간 메시지 축출은 `origin="user"`만 일치하며 자식의 작업 메시지는 이를 갖지 않습니다.
 
 **신뢰할 수 없는 도구 결과는 펜스됩니다.** 축출 후 공격자가 제어할 수 있는 도구의 결과(`web_search`——백엔드가 무엇이든 같은 하나의 도구이며 이름 변경 전의 `tavily_search`도 목록에 포함——`message_search`, 그리고 모든 `mcp_` 도구)는 `<untrusted_tool_result source="…" id="…">` 블록으로 감싸지고, 그 권고문이 내용은 지시가 아니라 데이터라고 밝힙니다. 페이로드 안의 닫는 태그는 감싸기 전에 `</untrusted-tool-result>` 로 바뀌어 블록을 일찍 닫을 수 없습니다. 펜스되는 것은 이 모델 표시뿐이며, 내부가 영속화한 원문은 변하지 않습니다. 스위치와 문구는 `config/features/agent_side/untrusted_output.py` 에 있습니다.
 같은 패스가 유출되기 쉬운 도구(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`) 결과의 자격 증명도 마스킹합니다——순서는 **evict → redact → fence**. 파일 도구는 원문 그대로 두어 읽고 되쓰는 왕복이 설정을 망가뜨리지 않습니다. 스위치는 `REDACTION["tool_output_enabled"]`.
@@ -1062,7 +1073,15 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── media_offload.py         # 압축 시 인라인 미디어 오프로드
-│   ├── background_reviews.py    # 압축 시점 백그라운드 리뷰 스케줄링 + 프롬프트
+│   ├── background_reviews.py    # 분할된 리뷰 모듈의 재수출 facade
+│   ├── _common.py               # 공용 텍스트/렌더링 도우미
+│   ├── background_scaffold.py   # 공용 리뷰 agent 스캐폴드
+│   ├── memory_review.py         # 압축 시점 메모리 리뷰 + consolidation
+│   ├── session_end_salvage.py   # 세션 종료 메모리 salvage
+│   ├── handoff_tree.py          # handoff 집계 + plan 컨텍스트
+│   ├── skill_review_runner.py   # 플랜 완료 스킬 리뷰
+│   ├── ptc_compile.py           # PTC replay 스크립트 컴파일
+│   └── compression_todo.py      # 압축 후 todo 조정
 │   ├── plan_context.py          # 스킬 리뷰의 활성 플랜 감지
 │   └── summary_doc.py           # SummaryDoc 스키마 + 결정적 Markdown 렌더러
 ├── task_intent/                 # TaskIntentMiddleware

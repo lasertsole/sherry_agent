@@ -523,6 +523,9 @@ class TestBootRecovery:
         seen: list[str] = []
 
         class _FakeQueue:
+            async def claimed_session_ids(self) -> list[str]:
+                return ["s1", "s2"]
+
             async def requeue_claimed(self, session_id: str) -> int:
                 seen.append(session_id)
                 return 1 if session_id == "s2" else 0
@@ -531,6 +534,28 @@ class TestBootRecovery:
 
         assert await boot_recovery.requeue_claimed_inputs() == 1
         assert seen == ["s1", "s2"]
+
+    @pytest.mark.asyncio
+    async def test_requeue_ignores_the_boot_scan_cap(self, monkeypatch):
+        """M7: a CLAIMED row in session #51 is still requeued."""
+        from server.service import boot_recovery
+
+        # The capped candidate list would never contain this session.
+        monkeypatch.setattr(boot_recovery, "candidate_session_ids", lambda: [])
+        seen: list[str] = []
+
+        class _FakeQueue:
+            async def claimed_session_ids(self) -> list[str]:
+                return ["offscreen-session"]
+
+            async def requeue_claimed(self, session_id: str) -> int:
+                seen.append(session_id)
+                return 1
+
+        monkeypatch.setattr("server.queue.user_input_queue.UserInputQueue", _FakeQueue)
+
+        assert await boot_recovery.requeue_claimed_inputs() == 1
+        assert seen == ["offscreen-session"]
 
 
 class TestRestoredRunShape:
@@ -566,7 +591,6 @@ class TestRestoredRunShape:
                 "delivery": CompletionDeliveryState(
                     status="failed", last_attempt_at=stale, delivered_at=stale
                 ),
-                "archive_at": stale,
             }
         )
 
@@ -576,7 +600,6 @@ class TestRestoredRunShape:
         assert out.execution.started_at == now
         assert out.delivery.last_attempt_at == now
         assert out.delivery.delivered_at == now
-        assert out.archive_at is not None and out.archive_at > now, "a deadline needs a window"
 
     def test_a_live_run_ages_from_the_restart(self):
         import time

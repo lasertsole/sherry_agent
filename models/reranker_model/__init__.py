@@ -14,6 +14,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from loguru import logger
+
+from config import APP_HOME, LOG_DIR
+from config.features import LOCAL_DAEMONS
+from models.daemon.base import (
+    DaemonError,
+    DaemonSpec,
+    ReadyState,
+    ensure_ready,
+    request_json,
+)
+
 from .core import (
     CloudReranker,
     CrossEncoderGGUF,
@@ -27,16 +39,87 @@ from .core import (
 _MODEL_DIR = Path(__file__).parent.resolve() / "model_weight"
 _DEFAULT_MODEL_PATH = str(_MODEL_DIR / "bge-reranker-v2-m3-Q8_0.gguf")
 
+# The daemon owns the GGUF; the orchestrator sends a query + documents and gets
+# scores back. Ports and budgets are central feature config.
+_RERANKER_DAEMON = DaemonSpec(
+    name="reranker",
+    host=LOCAL_DAEMONS["host"],
+    port=LOCAL_DAEMONS["reranker_port"],
+    pid_path=APP_HOME / ".reranker_daemon.pid",
+    import_fn="models.reranker_model.daemon",
+    ready_wait_s=LOCAL_DAEMONS["reranker_ready_wait_s"],
+    liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],
+)
+_DAEMON_LOG = LOG_DIR / "daemons" / "reranker.log"
+
+
+class _RerankerDaemonUnavailableError(RuntimeError):
+    """No daemon process exists and one could not be started."""
+
 
 class _LocalGgufBackend:
-    """Local GGUF strategy: loads the model per call, caches its metadata."""
+    """Local GGUF strategy: a warm daemon, with the in-process loader as fallback.
+
+    The daemon keeps one ``CrossEncoderGGUF`` alive; the in-process path (load +
+    metadata cache + close per call) stays behind ``RERANKER_DAEMON_ENABLED=false``
+    and as the fallback when no daemon process can be started at all.
+    """
 
     label = "gguf"
 
     def __init__(self) -> None:
         self._meta = None
+        self._daemon_ready = False
+        self._daemon_usable = bool(LOCAL_DAEMONS["reranker_daemon_enabled"])
 
-    def _call(self, method: str, *args, **kwargs):
+    # ---- daemon path -------------------------------------------------
+
+    def _request(self, path: str, payload: dict) -> dict:
+        if not self._daemon_ready:
+            state = ensure_ready(_RERANKER_DAEMON, log_path=_DAEMON_LOG)
+            if state is ReadyState.UNAVAILABLE:
+                raise _RerankerDaemonUnavailableError("could not start the reranker daemon")
+            if state is not ReadyState.READY:
+                raise DaemonError("reranker daemon is still warming up")
+            self._daemon_ready = True
+        body = request_json(
+            _RERANKER_DAEMON,
+            path,
+            payload,
+            timeout_s=LOCAL_DAEMONS["reranker_http_timeout_s"],
+        )
+        if not isinstance(body, dict):
+            raise DaemonError("reranker daemon returned a malformed body")
+        return body
+
+    def _daemon_call(self, path: str, payload: dict, key: str):
+        try:
+            body = self._request(path, payload)
+        except DaemonError:
+            # An idle-exit or crash between calls: one respawn attempt.
+            self._daemon_ready = False
+            body = self._request(path, payload)
+        if not isinstance(body, dict) or key not in body:
+            raise DaemonError(f"reranker daemon returned a body without {key!r}")
+        return body[key]
+
+    def _with_fallback(self, path: str, payload: dict, key: str, method: str, *args, **kwargs):
+        if not self._daemon_usable:
+            return self._in_process(method, *args, **kwargs)
+        try:
+            return self._daemon_call(path, payload, key)
+        except _RerankerDaemonUnavailableError as error:
+            logger.warning(
+                "reranker daemon unavailable ({}); falling back to the in-process GGUF "
+                "loader for this process",
+                error,
+            )
+            self._daemon_usable = False
+            return self._in_process(method, *args, **kwargs)
+
+    # ---- in-process fallback ----------------------------------------
+
+    def _in_process(self, method: str, *args, **kwargs):
         if self._meta is None:
             self._meta = _get_meta(_DEFAULT_MODEL_PATH)
         model = CrossEncoderGGUF(
@@ -49,17 +132,53 @@ class _LocalGgufBackend:
         finally:
             model.close()
 
+    # ---- public API --------------------------------------------------
+
     def rank(self, query: str, documents: list[str], **kwargs):
-        return self._call("rank", query, documents, **kwargs)
+        return self._with_fallback(
+            "/rerank",
+            {
+                "query": query,
+                "documents": documents,
+                "top_k": kwargs.get("top_k"),
+                "gap_score": kwargs.get("gap_score"),
+            },
+            "result",
+            "rank",
+            query,
+            documents,
+            **kwargs,
+        )
 
     def filter(self, query: str, documents: list[str], **kwargs):
-        return self._call("filter", query, documents, **kwargs)
+        return self._with_fallback(
+            "/filter",
+            {
+                "query": query,
+                "documents": documents,
+                "gap_score": kwargs.get("gap_score", 0.5),
+            },
+            "result",
+            "filter",
+            query,
+            documents,
+            **kwargs,
+        )
 
     def predict(self, query: str, passage: str) -> float:
-        return self._call("predict", query, passage)
+        scores = self.predict_scores([(query, passage)])
+        return scores[0]
 
     def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
-        return [self.predict(query, passage) for query, passage in pairs]
+        if not pairs:
+            return []
+        return self._with_fallback(
+            "/predict",
+            {"pairs": [[query, passage] for query, passage in pairs]},
+            "scores",
+            "predict_scores",
+            pairs,
+        )
 
     def close(self) -> None:
         self._meta = None

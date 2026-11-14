@@ -7,9 +7,10 @@ The finish path is gated before the DONE transition:
 * Gate C — the flow's AGGREGATED evidence (its steps' child sessions plus the
   creator's) has no failing/stale rows;
 
-The tests exercise both the pass and reject branches, the omitted-params path
-and the fail-open contract (an unavailable evidence
-collector or judge never blocks a finish).
+The tests exercise both the pass and reject branches, the omitted-params path,
+Gate E's fail-open contract (a broken judge never blocks a finish) and Gate C's
+different rule (an unreadable evidence store is recorded on the flow and
+rejects, while an EMPTY store passes).
 """
 
 from __future__ import annotations
@@ -291,9 +292,10 @@ async def test_finish_reads_only_flow_stamped_evidence(isolated_db: Path, ledger
 
 
 @pytest.mark.asyncio
-async def test_finish_fail_open_when_evidence_collector_raises(
+async def test_an_unreadable_evidence_collector_rejects_and_records_unavailable(
     isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
 ):
+    """The evidence read is not fail-open — an unverifiable finish is rejected."""
     await _seed_flow([_step("s1", "done")])
     from agent.tools.taskflow import evidence_collector
 
@@ -301,6 +303,21 @@ async def test_finish_fail_open_when_evidence_collector_raises(
         raise RuntimeError("ledger unavailable")
 
     monkeypatch.setattr(evidence_collector, "collect_evidence_summary", boom)
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "evidence ledger is unavailable" in out
+    assert "TaskFlow finished" not in out
+    stored = await store_sqlite.get_flow(FLOW, SESSION)
+    assert stored is not None
+    assert "ledger unavailable" in stored["state"]["evidence_unavailable"]
+    assert stored["status"] != "done"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_evidence_ledger_still_passes(isolated_db: Path, ledger: EvidenceLedger):
+    """No rows is not the same as an unreadable store: nothing contradicts the finish."""
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 

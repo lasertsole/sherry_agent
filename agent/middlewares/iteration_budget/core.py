@@ -49,32 +49,65 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
     Parameters
     ----------
     max_iterations : int
-        Maximum number of model calls allowed in a single turn. Default **50**.
+        Maximum number of model calls allowed in a single turn. Default **50**
+        (the built-in fallback; the main and child chains pass their own).
+    cap_resolver : Callable[[str], int] | None
+        Optional per-session ceiling resolver (预设角色 → 高级's iteration
+        limit). ``before_agent`` asks it for the turn's cap and stores that
+        value beside the counter, so one process-level middleware instance can
+        serve sessions with different limits; the constructor's static
+        ``max_iterations`` remains the fallback for a resolver miss or error.
     """
 
     _BUDGET_KEY = StateKey.ITERATION_BUDGET
     _USED_KEY = StateKey.ITERATION_BUDGET_USED
 
-    def __init__(self, max_iterations: int = ITERATION_BUDGET["default_max_iterations"]):
+    def __init__(
+        self,
+        max_iterations: int = ITERATION_BUDGET["default_max_iterations"],
+        cap_resolver: Callable[[str], int] | None = None,
+    ):
         super().__init__()
         self.max_iterations = max_iterations
+        self._cap_resolver = cap_resolver
+
+    def _resolve_cap(self, session_id: str) -> int:
+        """This turn's ceiling: the resolver's value, else the static default."""
+        if self._cap_resolver is None:
+            return self.max_iterations
+        try:
+            resolved = int(self._cap_resolver(session_id))
+        except Exception:  # noqa: BLE001 - a settings read must not stop a turn
+            logger.warning(
+                "IterationBudget: cap resolution failed for session {}; keeping {}",
+                session_id,
+                self.max_iterations,
+            )
+            return self.max_iterations
+        return resolved if resolved >= 1 else self.max_iterations
+
+    def _turn_cap(self, session_id: str) -> int:
+        """The cap ``before_agent`` stored for the current turn."""
+        value = state_register_mem.get_state(session_id, self._BUDGET_KEY, self.max_iterations)
+        return int(value) if isinstance(value, int) and value >= 1 else self.max_iterations
 
     def _get_session_id(self, state: AgentState) -> str:
         return require_session_id(state, "IterationBudget: session_id is required")
 
     def _consume(self, session_id: str) -> bool:
         logger.debug("[IB_TRACE] _consume enter session_id={}", session_id)
+        cap = self._turn_cap(session_id)
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
-        if used >= self.max_iterations:
+        if used >= cap:
             logger.debug(
                 "[IB_TRACE] _consume exhausted session_id={} used={} max={}",
                 session_id,
                 used,
-                self.max_iterations,
+                cap,
             )
             return False
         used += 1
-        remaining = self.max_iterations - used
+        remaining = cap - used
         state_register_mem.set_state(session_id, self._USED_KEY, used)
         logger.debug(
             "session_id {} consume {} times, {} remaining before halt", session_id, used, remaining
@@ -88,12 +121,14 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         return True
 
     def _remaining(self, session_id: str) -> int:
+        cap = self._turn_cap(session_id)
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
-        return max(0, self.max_iterations - used)
+        return max(0, cap - used)
 
     def _before_agent_impl(self, state: AgentState) -> None:
         session_id = self._get_session_id(state)
-        state_register_mem.set_state(session_id, self._BUDGET_KEY, self.max_iterations)
+        cap = self._resolve_cap(session_id)
+        state_register_mem.set_state(session_id, self._BUDGET_KEY, cap)
         state_register_mem.set_state(session_id, self._USED_KEY, 0)
 
     def _wrap_model_call_impl(
@@ -108,16 +143,17 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
 
         if not self._consume(session_id):
             remaining = self._remaining(session_id)
+            cap = self._turn_cap(session_id)
             logger.warning(
                 "IterationBudget exhausted for session {} (remaining={}, max={}). "
                 "Returning terminal message instead of calling model.",
                 session_id,
                 remaining,
-                self.max_iterations,
+                cap,
             )
             return AIMessage(
                 content=(
-                    f"The iteration budget ({self.max_iterations}) has been exhausted. "
+                    f"The iteration budget ({cap}) has been exhausted. "
                     "I must stop here. Please summarize what has been accomplished "
                     "and what remains to be done."
                 )

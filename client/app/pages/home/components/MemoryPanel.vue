@@ -2,30 +2,7 @@
   <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
        tab label and the close button), so the mount drives the load. -->
   <div class="flex flex-col gap-3 h-full min-h-0 p-4 min-w-[280px]">
-    <!-- Loading skeleton: target tabs + capacity bar + entry cards, matching
-         the loaded layout instead of a lone spinner. -->
-    <div
-      v-if="loading && !entries.length"
-      class="flex flex-col gap-3"
-      data-test="memory-skeleton">
-      <div class="flex gap-1">
-        <Skeleton
-          v-for="n in 3"
-          :key="n"
-          width="4rem"
-          height="1.8rem" />
-      </div>
-      <Skeleton
-        width="100%"
-        height="0.4rem"
-        border-radius="9999px" />
-      <Skeleton
-        v-for="n in 4"
-        :key="n"
-        height="3.5rem"
-        border-radius="0.5rem" />
-    </div>
-    <template v-else>
+    <div class="contents">
       <!-- Target tabs (记忆 / 用户画像 / 系统事实). A plain button row keeps the
            list mounted across targets instead of one TabPanel tree per target. -->
       <div class="flex shrink-0 gap-1 border-b border-gray-200 dark:border-gray-700">
@@ -402,7 +379,7 @@
           data-test="memory-add"
           @click="adding = true" />
       </div>
-    </template>
+    </div>
   </div>
 </template>
 

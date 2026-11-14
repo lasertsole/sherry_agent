@@ -91,6 +91,47 @@ async def kill_subagent_run(
     return updated
 
 
+async def kill_descendants_of_run(run_id: str, reason: str) -> list[SubagentRunRecord]:
+    """Cascade-kill every live descendant of *run_id*, sparing the run itself.
+
+    Used when a parent run ends without OK (timeout/kill/error): its children
+    and grandchildren can never have their results collected, and each live one
+    holds a SUBAGENT lane slot. Same guards as the cascade path — latest
+    generation only, terminal runs skipped, control scope enforced — and
+    fail-open per child is the caller's concern.
+    """
+    run = get_run(run_id)
+    if run is None:
+        return []
+    killed: list[SubagentRunRecord] = []
+    seen_keys: set[str] = set()
+    for child in list_runs_for_requester(run.child_session_key):
+        if child.child_session_key in seen_keys:
+            continue
+        latest = get_latest_run_by_child_session_key(child.child_session_key)
+        if latest is None or latest.run_id != child.run_id:
+            continue  # Skip stale generations — only cascade-kill the latest generation
+        seen_keys.add(child.child_session_key)
+
+        if child.execution.status == ExecutionStatus.TERMINAL:
+            continue
+
+        allowed, _ = can_control_run(child, run.child_session_key)
+        if not allowed:
+            logger.debug("cascade kill: skipping child {} — no control permission", child.run_id)
+            continue
+
+        killed.extend(
+            await kill_subagent_run_with_cascade(
+                child.run_id,
+                reason=reason,
+                cascade=True,
+                requester_session_key=child.controller_session_key,
+            )
+        )
+    return killed
+
+
 async def kill_subagent_run_with_cascade(
     run_id: str,
     reason: str = "killed",
@@ -105,33 +146,7 @@ async def kill_subagent_run_with_cascade(
         return killed
 
     if cascade:
-        seen_keys: set[str] = set()
-        children = list_runs_for_requester(run.child_session_key)
-        for child in children:
-            if child.child_session_key in seen_keys:
-                continue
-            latest = get_latest_run_by_child_session_key(child.child_session_key)
-            if latest is None or latest.run_id != child.run_id:
-                continue  # Skip stale generations — only cascade-kill the latest generation
-            seen_keys.add(child.child_session_key)
-
-            if child.execution.status == ExecutionStatus.TERMINAL:
-                continue
-
-            allowed, _ = can_control_run(child, run.child_session_key)
-            if not allowed:
-                logger.debug(
-                    "cascade kill: skipping child {} — no control permission", child.run_id
-                )
-                continue
-
-            child_killed = await kill_subagent_run_with_cascade(
-                child.run_id,
-                reason=f"parent killed: {reason}",
-                cascade=True,
-                requester_session_key=child.controller_session_key,
-            )
-            killed.extend(child_killed)
+        killed.extend(await kill_descendants_of_run(run_id, f"parent killed: {reason}"))
 
     result = await kill_subagent_run(run_id, reason, requester_session_key)
     if result is not None:

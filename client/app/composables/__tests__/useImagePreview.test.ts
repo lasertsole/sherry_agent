@@ -14,9 +14,14 @@ vi.stubGlobal('computed', computed);
 
 type ImagePreview = {
   previewSrc: { value: string };
+  galleryItems: { value: string[] };
+  currentIndex: { value: number };
   isPreviewVisible: { value: boolean };
   openPreview: (src: string) => void;
+  openGallery: (items: string[], startIndex?: number) => void;
   closePreview: () => void;
+  nextImage: () => void;
+  prevImage: () => void;
 };
 
 let useImagePreview: () => ImagePreview;
@@ -26,22 +31,18 @@ beforeAll(async () => {
   useImagePreview = mod.useImagePreview as () => ImagePreview;
 });
 
-// Module-level singleton: the three refs are shared across all calls.
+// Module-level singleton: the gallery state is shared across all calls.
 describe('useImagePreview', () => {
   beforeEach(() => {
-    // Reset singleton state between tests so `previewSrc`/`isPreviewVisible`
-    // don't leak from one case to the next. `closePreview()` only flips
-    // `isPreviewVisible` (it does NOT clear `previewSrc`), so we must also
-    // clear the src ref manually.
-    const api = useImagePreview();
-    api.previewSrc.value = '';
-    api.closePreview();
+    // closePreview resets visibility, the gallery list and the index.
+    useImagePreview().closePreview();
   });
 
   it('starts hidden with an empty preview source', () => {
-    const { previewSrc, isPreviewVisible } = useImagePreview();
+    const { previewSrc, isPreviewVisible, galleryItems } = useImagePreview();
     expect(previewSrc.value).toBe('');
     expect(isPreviewVisible.value).toBe(false);
+    expect(galleryItems.value).toEqual([]);
   });
 
   it('openPreview shows a valid src and closes hides it again', () => {
@@ -79,5 +80,54 @@ describe('useImagePreview', () => {
 
     b.closePreview();
     expect(a.isPreviewVisible.value).toBe(false);
+  });
+
+  it('opens a gallery at the requested index and clamps it', () => {
+    const { openGallery, currentIndex, previewSrc, isPreviewVisible } = useImagePreview();
+
+    openGallery(['a', 'b', 'c'], 1);
+    expect(isPreviewVisible.value).toBe(true);
+    expect(currentIndex.value).toBe(1);
+    expect(previewSrc.value).toBe('b');
+
+    openGallery(['a', 'b'], 99);
+    expect(currentIndex.value).toBe(1);
+  });
+
+  it('drops empty entries and refuses an empty gallery', () => {
+    const { openGallery, galleryItems, isPreviewVisible } = useImagePreview();
+
+    openGallery(['', 'a'], 0);
+    expect(galleryItems.value).toEqual(['a']);
+
+    useImagePreview().closePreview();
+    openGallery([], 0);
+    expect(isPreviewVisible.value).toBe(false);
+  });
+
+  it('wraps next/prev and leaves a single image fixed', () => {
+    const { openGallery, openPreview, nextImage, prevImage, currentIndex } = useImagePreview();
+
+    openGallery(['a', 'b', 'c'], 2);
+    nextImage();
+    expect(currentIndex.value).toBe(0);
+    prevImage();
+    expect(currentIndex.value).toBe(2);
+
+    openPreview('only');
+    nextImage();
+    prevImage();
+    expect(currentIndex.value).toBe(0);
+  });
+
+  it('closePreview resets the gallery', () => {
+    const { openGallery, closePreview, galleryItems, currentIndex, previewSrc, isPreviewVisible } = useImagePreview();
+
+    openGallery(['a', 'b'], 1);
+    closePreview();
+    expect(isPreviewVisible.value).toBe(false);
+    expect(galleryItems.value).toEqual([]);
+    expect(currentIndex.value).toBe(0);
+    expect(previewSrc.value).toBe('');
   });
 });

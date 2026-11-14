@@ -17,7 +17,7 @@
 
 一个条目是 `memory_entries` 中的**一行 SQLite 记录**；`§` 分隔符只保留在遗留导入与 `GET/PUT /memory` 兼容路径中。条目可以跨多行，没有 YAML frontmatter，也没有项目符号前缀。
 
-第 1 层由 `MemoryStore` 管理（`agent/tools/memory.py::load_from_store`）：每个目标的字符上限为 `2200`（memory）、`1375`（user）和 `1375`（facts），注入扫描（`_MEMORY_THREAT_PATTERNS`）会拒绝提示词注入与凭证外泄内容，配合精确匹配去重；并发安全由 SQLite WAL 提供，不再使用文件锁和原子重写。行上记录 `origin_session`、`usage_count` 和 `last_used`；渲染块仅在来源已知时追加 `[origin: …, created: …, used: Nx]`，`memory(action="read")` 会累加使用次数。实时行会立即改动，而提示词使用的是一份在 `load_from_store()` 时捕获的**冻结快照**，以保持会话期内前缀缓存稳定。遗留的 `MEMORY.md`/`USER.md`/`FACTS.md` 会在启动时导入一次（`context_engine/store/memory_migration.py`）并改名为 `*.md.bak`；只要表里已有任意一行，导入即跳过。
+第 1 层由 `MemoryStore` 管理（`agent/tools/memory.py::load_from_store`）：每个目标的字符上限为 `2200`（memory）、`1375`（user）和 `1375`（facts），并有每目标 `200` 条活跃条目上限（否则小条目会在字符预算内无限累积），注入扫描（`_MEMORY_THREAT_PATTERNS`）会拒绝提示词注入与凭证外泄内容，配合精确匹配去重；并发安全由 SQLite WAL 提供，不再使用文件锁和原子重写。行上记录 `origin_session`、`usage_count` 和 `last_used`；渲染块仅在来源已知时追加 `[origin: …, created: …, used: Nx]`，`memory(action="read")` 会累加使用次数。实时行会立即改动，而提示词使用的是一份在 `load_from_store()` 时捕获的**冻结快照**，以保持会话期内前缀缓存稳定。遗留的 `MEMORY.md`/`USER.md`/`FACTS.md` 会在启动时导入一次（`context_engine/store/memory_migration.py`）并改名为 `*.md.bak`；只要表里已有任意一行，导入即跳过。
 
 `memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 

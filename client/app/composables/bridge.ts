@@ -93,16 +93,12 @@ export {
   readSystemPrompt,
   readSystemPromptTemplate,
   writeSystemPrompt,
+  writePresetSystemPrompt,
   updateSystemPrompt
 } from './bridge/system-prompt';
 
 // ── Memory & heartbeat ──────────────────────────────────
-export {
-  readHeartbeat,
-  writeHeartbeat,
-  fetchHeartbeatStatus,
-  setHeartbeatEnabled
-} from './bridge/memory';
+export { readHeartbeat, writeHeartbeat, fetchHeartbeatStatus, setHeartbeatEnabled } from './bridge/memory';
 export type { HeartbeatStatus } from './bridge/memory';
 export {
   archiveMemoryEntry,

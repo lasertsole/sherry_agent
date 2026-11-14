@@ -263,21 +263,22 @@ def test_policy_off_never_touches_backend(monkeypatch: pytest.MonkeyPatch):
     assert isinstance(calls[0]["args"][0], list)
 
 
-def test_auto_degrade_emits_one_loguru_warning(monkeypatch: pytest.MonkeyPatch):
+def test_auto_degrade_emits_one_loguru_info_line(monkeypatch: pytest.MonkeyPatch):
     _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
     _set_policy(monkeypatch, SandboxPolicy.AUTO)
 
     records: list[str] = []
-    sink_id = python_repl.logger.add(records.append, level="WARNING")
+    sink_id = python_repl.logger.add(records.append, level="INFO")
     try:
         tool = build_python_repl_tool()
         tool.run({"query": "print(1+1)"})
     finally:
         python_repl.logger.remove(sink_id)
 
-    degrade_lines = [r for r in records if "sandbox" in r and "degrad" in r]
+    degrade_lines = [r for r in records if "sandbox unavailable" in r]
     assert len(degrade_lines) == 1
+    assert "unsandboxed" in degrade_lines[0]
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +320,44 @@ def test_required_policy_deny_sandbox_false(monkeypatch: pytest.MonkeyPatch):
     assert "main-session" in msg or "main" in msg
 
 
+def test_subagent_sandbox_true_without_a_backend_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """H3: a subagent has no HITL card, so the AUTO degrade must refuse."""
+    calls = _install_fake_popen(monkeypatch)
+    monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
+    import agent.tools.pub_base.sandbox as sandbox_mod
+
+    monkeypatch.setattr(sandbox_mod, "sandbox_effective", lambda requested=True: False)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
+    tool = _subagent_tool()
+
+    with pytest.raises(ToolException) as excinfo:
+        tool._run("print(1)", sandbox=True)
+
+    message = str(excinfo.value)
+    assert "no operator approval path" in message
+    assert "subagent" in message
+    assert calls == [], "a refused degrade must not spawn"
+
+
+def test_main_sandbox_true_without_a_backend_still_degrades(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = _install_fake_popen(monkeypatch)
+    monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
+    import agent.tools.pub_base.sandbox as sandbox_mod
+
+    monkeypatch.setattr(sandbox_mod, "sandbox_effective", lambda requested=True: False)
+    _set_policy(monkeypatch, SandboxPolicy.AUTO)
+    tool = build_python_repl_tool()
+
+    out = tool._run("print(1)", sandbox=True)
+
+    assert out == "2\n"
+    assert len(calls) == 1
+
+
 def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch):
     calls = _install_fake_popen(monkeypatch)
     monkeypatch.setattr(python_repl, "get_backend", lambda policy: None)
@@ -328,6 +367,49 @@ def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch)
     out = tool._run("print(1)", sandbox=True)
     assert out == "2\n"
     assert len(calls) == 1
+
+
+def _install_payload_popen(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> None:
+    """A Popen double that writes *payload* into the fd-direct stdout handle."""
+
+    class _Proc:
+        returncode = 0
+
+        def __init__(self, *args: object, **kwargs: object):
+            handle = kwargs.get("stdout")
+            if hasattr(handle, "write"):
+                handle.write(payload)
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(python_repl.subprocess, "Popen", lambda *a, **kw: _Proc(*a, **kw))
+
+
+def test_a_malformed_envelope_is_a_clean_tool_error(monkeypatch: pytest.MonkeyPatch):
+    """M19: valid JSON without ``exc`` must not raise KeyError out of the tool."""
+    _install_payload_popen(monkeypatch, b'{"out": "partial"}')
+
+    result = build_python_repl_tool()._run("print(1)")
+
+    assert result.startswith("Error: malformed REPL output")
+
+
+def test_an_undecodable_stdout_is_a_clean_tool_error(monkeypatch: pytest.MonkeyPatch):
+    _install_payload_popen(monkeypatch, b"not json at all")
+
+    result = build_python_repl_tool()._run("print(1)")
+
+    assert result.startswith("Error: failed to parse output")
+
+
+def test_a_missing_out_key_reads_as_empty_output(monkeypatch: pytest.MonkeyPatch):
+    _install_payload_popen(monkeypatch, b'{"exc": null}')
+
+    assert build_python_repl_tool()._run("print(1)") == "(no output)"
 
 
 def test_public_run_discards_model_supplied_sandbox_false(monkeypatch: pytest.MonkeyPatch):

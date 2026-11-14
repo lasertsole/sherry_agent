@@ -248,3 +248,71 @@ class TestTheAllowlistIsConfigurable:
             "test",
         ]
         assert regression_gate._safe_argv("npx definitely-not-a-verifier") is None
+
+
+# ------------------------------------------------- auto-diagnostics (LSP) rows
+
+_LSP_COMMAND = "lsp_diagnostics app.py"
+
+
+def _lsp_evidence(session: str, status: str = "passed") -> None:
+    EvidenceLedger.for_session(session).append(
+        kind="lsp_diagnostics", command=_LSP_COMMAND, status=status, auto=True
+    )
+
+
+def _fake_lsp(exit_code: int | None, output: str = ""):
+    async def run(_command, _root, _timeout):
+        return exit_code, output
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_an_auto_diagnostics_row_is_replayed_by_the_lsp_executor(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _lsp_evidence("session-a", "passed")
+    monkeypatch.setattr(regression_gate, "_run_lsp_diagnostics", _fake_lsp(1, "1 error"))
+    monkeypatch.setattr(
+        regression_gate,
+        "_run",
+        await _fake_run(0, ""),  # must not be used
+    )
+
+    results = await regression_gate.reverify_flow_evidence(["session-a"])
+
+    assert [result.outcome for result in results] == ["failed"]
+    assert "[broken]" in (collect_evidence_summary(session_key="session-a") or "")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_auto_diagnostics_row_is_replayed_too(monkeypatch: pytest.MonkeyPatch):
+    _lsp_evidence("session-a", "failed")
+    monkeypatch.setattr(regression_gate, "_run_lsp_diagnostics", _fake_lsp(0, "no errors"))
+
+    results = await regression_gate.reverify_flow_evidence(["session-a"])
+
+    assert [result.outcome for result in results] == ["passed"]
+    assert EvidenceLedger.read_for_session("session-a")[-1]["event"] == "unmark"
+
+
+@pytest.mark.asyncio
+async def test_other_failed_rows_are_still_not_replayed(monkeypatch: pytest.MonkeyPatch):
+    EvidenceLedger.for_session("session-a").append(
+        kind="test", command="python -m pytest x.py", status="failed"
+    )
+    monkeypatch.setattr(regression_gate, "_run", await _fake_run(0, ""))
+
+    assert await regression_gate.reverify_flow_evidence(["session-a"]) == []
+
+
+@pytest.mark.asyncio
+async def test_the_lsp_executor_skips_a_missing_server(monkeypatch: pytest.MonkeyPatch):
+    _lsp_evidence("session-a", "passed")
+    monkeypatch.setattr(regression_gate, "_run_lsp_diagnostics", _fake_lsp(None, "missing"))
+
+    results = await regression_gate.reverify_flow_evidence(["session-a"])
+
+    assert [result.outcome for result in results] == ["skipped"]
+    assert all(row.get("event") != "broken" for row in EvidenceLedger.read_for_session("session-a"))

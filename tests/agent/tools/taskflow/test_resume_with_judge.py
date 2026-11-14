@@ -117,10 +117,13 @@ async def test_pass_marks_step_done_and_unlocks_dependents(
     assert seen[0][1] == _CRITERIA
 
     flow = await _flow("flow-1")
-    # Persisted: the resume write bumped the revision and the step is done.
-    assert flow["expected_revision"] == before["expected_revision"] + 1
+    # Two writes: the resume itself, then the failed-spawn marker for the
+    # unlocked dependent (this fake's key list is exhausted, so its automatic
+    # dispatch cannot spawn — the board must be able to name it as retryable).
+    assert flow["expected_revision"] == before["expected_revision"] + 2
     assert flow["state"]["steps"][0]["status"] == StepStatus.DONE
     assert flow["state"]["steps"][1]["status"] == StepStatus.READY
+    assert flow["state"]["steps"][1].get("last_spawn_error")
 
 
 # ---------------------------------------------------------------------------

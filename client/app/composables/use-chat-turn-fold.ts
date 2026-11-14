@@ -39,6 +39,8 @@ export interface TurnFoldView {
   durationMs: number | null;
   /** Whether the final answer or any hidden row carries reasoning. */
   hasReasoning: boolean;
+  /** Distinct `sherry-artifact://` images the hidden tool rows produced. */
+  artifactUris: string[];
 }
 
 /**
@@ -76,7 +78,8 @@ export function classifyTurnFold(group: MessageItem[]): TurnFoldView {
     finalMessage: null,
     toolCount: 0,
     durationMs: null,
-    hasReasoning: false
+    hasReasoning: false,
+    artifactUris: []
   };
   if (!last) return empty;
 
@@ -104,6 +107,9 @@ export function classifyTurnFold(group: MessageItem[]): TurnFoldView {
     .map(row => row.toolDurationMs)
     .filter((value): value is number => typeof value === 'number');
   const durationMs = measured.length > 0 ? measured.reduce((total, value) => total + value, 0) : null;
+  // A generated picture lives in a tool card the fold hides: the header peeks
+  // its thumbnails so the reader can see that expanding is worth it.
+  const artifactUris = [...new Set(toolRows.flatMap(row => extractArtifactUris(row.toolResult)))];
   return {
     key,
     eligible: true,
@@ -111,6 +117,7 @@ export function classifyTurnFold(group: MessageItem[]): TurnFoldView {
     finalMessage: last,
     toolCount: toolRows.length,
     durationMs,
-    hasReasoning
+    hasReasoning,
+    artifactUris
   };
 }

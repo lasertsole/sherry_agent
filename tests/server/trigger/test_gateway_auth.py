@@ -72,12 +72,11 @@ def _body(response) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_default_allowlist_covers_tauri_and_dev_origins():
+def test_default_allowlist_covers_the_tauri_origins():
     origins = auth.allowed_origins()
     assert "*" not in origins, "the wildcard CORS origin must stay gone"
     assert "tauri://localhost" in origins
     assert "http://tauri.localhost" in origins
-    assert "http://localhost:3000" in origins
 
 
 def test_check_http_matrix():

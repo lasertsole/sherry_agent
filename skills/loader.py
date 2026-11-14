@@ -99,12 +99,46 @@ def _normalize_scope(raw: Any) -> str:
     return value if value in _SKILL_SCOPES else "all"
 
 
-def _skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
+# Functional-role values for the ``roles:`` frontmatter field. Canonical
+# implementation: agent/tools/pub_base/skill_utils.py (VALID_SKILL_ROLES).
+# Duplicated for the same import-cycle reason as _SKILL_SCOPES.
+_SKILL_ROLES = ("general", "researcher", "executor", "reviewer", "librarian")
+
+
+def _normalize_roles(raw: Any) -> list[str] | None:
+    """Normalize a ``roles:`` frontmatter value; absent/all-invalid -> None.
+
+    ``None`` means "visible to every role" (the backward-compatible default).
+    A scalar string is accepted as one role; duplicates collapse; a present
+    value with no valid entry falls back to ``None`` (fail-open visibility —
+    the write path is what refuses an invalid value).
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return None
+    roles: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if value in _SKILL_ROLES and value not in roles:
+            roles.append(value)
+    return roles or None
+
+
+def _skill_visible_to(
+    skill: dict[str, Any], caller_scope: str, caller_role: str | None = None
+) -> bool:
     """Return True when *skill* is visible to a caller with *caller_scope*.
 
     Visibility contract: "main" sees skills whose scope != "subagent_only";
     "subagent" sees skills whose scope != "main_only". Unknown caller scopes
     degrade to "main"; unknown skill scopes default to "all" (both callers).
+
+    A ``roles: [...]`` skill is additionally visible only to those functional
+    roles; an absent field (or a caller without a role: the main agent, or the
+    identity GENERAL role) skips the role check.
 
     Canonical implementation: agent/tools/pub_base/skill_utils.py
     (see the comment on _SKILL_SCOPES above for why this is duplicated).
@@ -114,8 +148,16 @@ def _skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
     if caller not in ("main", "subagent"):
         caller = "main"
     if caller == "subagent":
-        return scope != "main_only"
-    return scope != "subagent_only"
+        if scope == "main_only":
+            return False
+    elif scope == "subagent_only":
+        return False
+    roles = _normalize_roles(skill.get("roles") if isinstance(skill, dict) else None)
+    if roles is not None and caller_role is not None:
+        role = str(caller_role).strip().lower()
+        if role and role not in roles:
+            return False
+    return True
 
 
 def _feature_off_skill_names() -> set[str]:
@@ -169,6 +211,7 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
             when_to_use = str(meta.get("when_to_use", "") or "").strip()
             when_not_to_use = str(meta.get("when_not_to_use", "") or "").strip()
             scope = _normalize_scope(meta.get("scope"))
+            roles = _normalize_roles(meta.get("roles"))
             # Relative to the HOME the tree lives in (``root.parent`` is
             # ``skills/``), so both trees report the checkout shape —
             # ``./skills/builtin/...`` / ``./skills/auto/...`` /
@@ -193,6 +236,7 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
                     "when_not_to_use": when_not_to_use,
                     "location": location,
                     "scope": scope,
+                    "roles": roles,
                     "active": active,
                 }
             )
@@ -256,24 +300,29 @@ def skill_required(name: str) -> bool:
     return name in REQUIRED_SKILLS
 
 
-def skills_catalog(caller_scope: str = "main") -> list[dict[str, Any]]:
+def skills_catalog(
+    caller_scope: str = "main", caller_role: str | None = None
+) -> list[dict[str, Any]]:
     """The skills the 技能 tab lists: ``[{name, description, builtin, required}, ...]``.
 
     Only what the index can actually contain: skills VISIBLE to *caller_scope*
-    and currently active (an inactive uploaded skill is toggled in 菜单-技能, and
-    listing it here would let a preset select something the index never shows).
-    ``builtin`` is the 第三方 split — everything outside ``skills/plugins/`` —
-    and ``required`` mirrors :data:`REQUIRED_SKILLS`.
+    (and *caller_role*, when given) and currently active (an inactive uploaded
+    skill is toggled in 菜单-技能, and listing it here would let a preset select
+    something the index never shows). ``builtin`` is the 第三方 split —
+    everything outside ``skills/plugins/`` — and ``required`` mirrors
+    :data:`REQUIRED_SKILLS`.
 
     Required skills come FIRST: the UI renders this order, and the locked
     multimedia rows belong at the top where they read as the baseline.
 
     @param caller_scope The perspective the list is filtered for (main/subagent).
+    @param caller_role Optional functional role (a ``roles: [...]`` skill hides
+        from every role not listed).
     @returns The catalogue, required-first, then by name.
     """
     catalog: list[dict[str, Any]] = []
     for skill in scan_skills():
-        if not skill.get("active", True) or not _skill_visible_to(skill, caller_scope):
+        if not skill.get("active", True) or not _skill_visible_to(skill, caller_scope, caller_role):
             continue
         name = str(skill.get("name", ""))
         catalog.append(
@@ -297,6 +346,7 @@ def get_skills_text(
     caller_scope: str = "main",
     *,
     exact: bool = False,
+    caller_role: str | None = None,
 ) -> str:
     """
     Get the skills XML.
@@ -310,6 +360,8 @@ def get_skills_text(
         may legitimately hold every skill unchecked. When False (the historical
         contract) an empty/absent list means "every visible skill", which the
         delegate path relies on for its own empty fallback.
+    :param caller_role: optional functional role; a skill whose ``roles: [...]``
+        omits it is hidden. ``None`` (main / identity role) skips the check.
     :return: skills xml
     """
     skills: list[dict[str, Any]] = scan_skills()
@@ -318,7 +370,7 @@ def get_skills_text(
     selected = None if select_all else set(selected_skill_names)
     final_skills: list[dict[str, Any]] = []
     for s in skills:
-        if not _skill_visible_to(s, caller_scope):
+        if not _skill_visible_to(s, caller_scope, caller_role):
             continue
         if selected is None or s["name"] in selected:
             final_skills.append(s)

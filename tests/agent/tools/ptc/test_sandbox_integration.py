@@ -121,22 +121,22 @@ def test_required_without_backend_refuses_with_actionable_hint(
         _resolve_sandboxed_argv(["/usr/bin/python", "/tmp/script.py"], {"PATH": "/bin"}, ROOTS)
     message = str(excinfo.value)
     assert "SANDBOX_POLICY=required" in message
-    assert "SANDBOX_POLICY=auto" in message
+    assert "SANDBOX_POLICY=off" in message
 
 
-def test_auto_without_backend_degrades_with_exactly_one_warning(
+def test_auto_without_backend_refuses_instead_of_degrading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """PTC has no HITL middleware: AUTO must fail closed, never run bare."""
     _policy(monkeypatch, SandboxPolicy.AUTO)
     monkeypatch.setattr(runner, "get_backend", lambda _policy: None)
     argv = ["/usr/bin/python", "/tmp/script.py"]
-    with _loguru_warnings() as records:
-        resolved, env = _resolve_sandboxed_argv(argv, {"PATH": "/bin"}, ROOTS)
-    assert resolved == argv
-    assert env == {"PATH": "/bin"}
-    assert len(records) == 1
-    assert "execute_code" in records[0]
-    assert "policy=auto" in records[0]
+    with pytest.raises(PtcSandboxUnavailableError) as excinfo:
+        _resolve_sandboxed_argv(argv, {"PATH": "/bin"}, ROOTS)
+    message = str(excinfo.value)
+    assert "SANDBOX_POLICY=auto" in message
+    assert "no operator approval path" in message
+    assert "SANDBOX_POLICY=off" in message
 
 
 def test_runner_refusal_returns_envelope_without_spawning(

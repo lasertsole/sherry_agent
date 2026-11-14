@@ -18,6 +18,27 @@ const NoirPreset = definePreset(Aura, {
       800: '{slate.800}',
       900: '{slate.900}',
       950: '{slate.950}'
+    },
+    // PrimeVue 4.5's Aura dark surface carries a warm/red tint. Pin the dark
+    // surface scale to neutral zinc (surface 0 near-black) so the shell and
+    // every teleported overlay share the same neutral background.
+    colorScheme: {
+      dark: {
+        surface: {
+          0: '#0a0a0a',
+          50: '{zinc.50}',
+          100: '{zinc.100}',
+          200: '{zinc.200}',
+          300: '{zinc.300}',
+          400: '{zinc.400}',
+          500: '{zinc.500}',
+          600: '{zinc.600}',
+          700: '{zinc.700}',
+          800: '{zinc.800}',
+          900: '{zinc.900}',
+          950: '{zinc.950}'
+        }
+      }
     }
   }
 });

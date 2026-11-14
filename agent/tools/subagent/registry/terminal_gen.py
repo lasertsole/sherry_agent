@@ -3,6 +3,8 @@
 Tracks expected generation per run → guards completion callbacks → self-invalidates older generations → cleans up on completion.
 """
 
+from collections.abc import Callable
+
 
 class TerminalGenerationTracker:
     """Tracks the expected generation for each run to gate stale completion callbacks."""
@@ -31,6 +33,19 @@ class TerminalGenerationTracker:
     def retire(self, run_id: str) -> None:
         """Remove the expected generation entry after the run completes."""
         self._expected.pop(run_id, None)
+
+    def prune_missing(self, exists: "Callable[[str], bool]") -> int:
+        """Drop entries whose run is no longer in the registry; returns pruned count.
+
+        A run deleted by orphan cleanup never reaches ``retire``, so without this
+        sweep the tracker retains one dead run id per such run.
+        """
+        removed = 0
+        for run_id in list(self._expected):
+            if not exists(run_id):
+                self._expected.pop(run_id, None)
+                removed += 1
+        return removed
 
 
 _terminal_gen_tracker = TerminalGenerationTracker()

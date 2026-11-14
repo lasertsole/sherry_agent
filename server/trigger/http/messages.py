@@ -6,7 +6,7 @@ from loguru import logger
 from pub.func.validator import is_safe_session_id
 
 from server.trigger.core import app
-from server.trigger.http.helpers import bad_request
+from server.trigger.http.helpers import bad_request, read_body
 from server.service import (
     clear_session,
     get_history_by_turn_page as _get_history_by_turn_page,
@@ -31,11 +31,8 @@ async def get_sessions_handler(request):
 
 @app.delete("/sessions")
 async def clear_session_handler(request):
-    try:
-        request_json = request.json()
-    except Exception:
-        return bad_request("JSON body required")
-    if not isinstance(request_json, dict):
+    request_json = read_body(request)
+    if request_json is None:
         return bad_request("JSON body required")
 
     session_id: str | None = request_json.get("session_id", None)

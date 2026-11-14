@@ -178,9 +178,15 @@ def test_mark_stale_returns_matching_count_scoped_to_session(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ):
     _redirect(tmp_path, monkeypatch)
-    EvidenceLedger.for_session("s1").append(kind="test", command="pytest foo.py")
-    EvidenceLedger.for_session("s1").append(kind="lint", command="ruff check bar.py")
-    EvidenceLedger.for_session("s2").append(kind="test", command="pytest foo.py")
+    EvidenceLedger.for_session("s1").append(
+        kind="test", command="pytest foo.py", modified_files=["foo.py"]
+    )
+    EvidenceLedger.for_session("s1").append(
+        kind="lint", command="ruff check bar.py", modified_files=["bar.py"]
+    )
+    EvidenceLedger.for_session("s2").append(
+        kind="test", command="pytest foo.py", modified_files=["foo.py"]
+    )
 
     assert EvidenceLedger.for_session("s1").mark_stale_for_path("foo.py") == 1
     assert EvidenceLedger.mark_stale_for_path("foo.py") == 2
@@ -188,7 +194,9 @@ def test_mark_stale_returns_matching_count_scoped_to_session(
 
 def test_mark_stale_ignores_prior_stale_events(tmp_path, monkeypatch: pytest.MonkeyPatch):
     _redirect(tmp_path, monkeypatch)
-    EvidenceLedger.for_session("s1").append(kind="test", command="pytest foo.py")
+    EvidenceLedger.for_session("s1").append(
+        kind="test", command="pytest foo.py", modified_files=["foo.py"]
+    )
     EvidenceLedger.for_session("s1").mark_stale_for_path("foo.py")
 
     assert EvidenceLedger.for_session("s1").mark_stale_for_path("foo.py") == 1

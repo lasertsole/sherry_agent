@@ -299,6 +299,21 @@ class TestGatewayBuilder:
         built = _build_gateway({})
         assert (built["api_host"], built["api_port"]) == ("127.0.0.1", 8080)
 
+    def test_default_origins_are_tauri_only(self) -> None:
+        built = _build_gateway({})
+
+        assert "tauri://localhost" in built["allowed_origins"]
+        # Dev-server origins are opt-in (audit M4): a packaged backend must not
+        # let a local page on :3000 fetch /auth/token.
+        assert not any(":3000" in origin for origin in built["allowed_origins"])
+
+    def test_dev_origins_are_an_explicit_override(self) -> None:
+        built = _build_gateway(
+            {"SHERRY_ALLOWED_ORIGINS": "tauri://localhost,http://localhost:3000"}
+        )
+
+        assert built["allowed_origins"] == ["tauri://localhost", "http://localhost:3000"]
+
     def test_auth_env_injection(self) -> None:
         built = build_auth(
             {
@@ -363,6 +378,11 @@ class TestBrowserAgentBuilder:
 
     def test_browser_keys_match_annotations(self) -> None:
         assert set(fs.BROWSER_AGENT) == set(fs.BrowserAgentConfig.__annotations__)
+
+    def test_debug_capture_defaults_on_and_is_env_switchable(self) -> None:
+        assert _build_browser_agent({})["debug_capture"] == 1
+        assert _build_browser_agent({})["debug_buffer_max"] == 200
+        assert _build_browser_agent({"SHERRY_BROWSER_DEBUG_CAPTURE": "0"})["debug_capture"] == 0
 
 
 class TestCollectionFieldTypes:
@@ -522,3 +542,61 @@ class TestWebSearchBuilder:
         built = build_web_search_config({"WEB_SEARCH_DEFAULT_BACKEND": "google"})
 
         assert built["default_backend"] == "tavily"
+
+
+class TestLocalDaemonsBuilder:
+    """``LOCAL_DAEMONS`` is env-sourced; verify defaults and overrides.
+
+    Excluded from ``CASES`` for the same reason as ``GATEWAY`` / ``WEB_SEARCH``:
+    a developer's environment may legitimately override a port or budget, so the
+    contract is pinned through the injected-env builder instead of the process
+    snapshot.
+    """
+
+    def test_defaults_without_env(self) -> None:
+        built = fs.build_local_daemons({})
+
+        assert built["host"] == "127.0.0.1"
+        assert built["embed_port"] == 9012
+        assert built["reranker_port"] == 9013
+        assert built["auxiliary_port"] == 9014
+        assert built["vision_port"] == 9015
+        assert built["embed_idle_timeout_s"] == 600.0
+        assert built["auxiliary_n_ctx"] == 40960
+        assert built["embed_daemon_enabled"] is True
+        assert built["auxiliary_daemon_enabled"] is True
+        assert built["vision_daemon_enabled"] is True
+        assert built["max_batch_inputs"] == 256
+
+    def test_env_overrides(self) -> None:
+        built = fs.build_local_daemons(
+            {
+                "EMBEDDING_DAEMON_PORT": "19012",
+                "AUXILIARY_LLM_N_CTX": "8192",
+                "EMBEDDING_DAEMON_IDLE_TIMEOUT_S": "60",
+                "AUXILIARY_LLM_DAEMON_ENABLED": "false",
+                "VISION_LLM_DAEMON_PORT": "19015",
+            }
+        )
+
+        assert built["embed_port"] == 19012
+        assert built["auxiliary_n_ctx"] == 8192
+        assert built["embed_idle_timeout_s"] == 60.0
+        assert built["auxiliary_daemon_enabled"] is False
+        assert built["vision_port"] == 19015
+
+    def test_invalid_values_fall_back_to_defaults(self) -> None:
+        built = fs.build_local_daemons(
+            {
+                "EMBEDDING_DAEMON_PORT": "not-a-port",
+                "AUXILIARY_LLM_N_CTX": "1024",
+                "EMBEDDING_DAEMON_IDLE_TIMEOUT_S": "1",
+            }
+        )
+
+        assert built["embed_port"] == 9012
+        assert built["auxiliary_n_ctx"] == 40960  # below the 2048 floor
+        assert built["embed_idle_timeout_s"] == 600.0  # below the 5 s floor
+
+    def test_instance_carries_every_declared_key(self) -> None:
+        assert set(fs.LOCAL_DAEMONS) == set(fs.LocalDaemonsConfig.__annotations__)

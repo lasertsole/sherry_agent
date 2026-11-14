@@ -3,8 +3,9 @@
 ``tests/server/trigger/test_gateway_auth.py`` drives the helpers and the
 middleware function directly; this file drives the REAL request pipeline
 (global before-middlewares → handler → global response headers) so the CORS
-allowlist, the middleware order and the ``token`` response header are verified
-as the server actually assembles them — no socket needed.
+allowlist, the middleware order and the bootstrap endpoint's one-shot ``token``
+header are verified as the server actually assembles them — no socket needed.
+Ordinary responses must NOT carry that header (2026-11-09 audit M3).
 """
 
 from __future__ import annotations
@@ -19,6 +20,13 @@ from server.trigger.core import app
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
+
+@app.get("/__m3_token_probe")
+async def _m3_token_probe(request):
+    """Ordinary route used to prove global responses carry no token header."""
+    return {"ok": True}
+
+
 client = _TestClient(app)
 
 
@@ -27,8 +35,15 @@ def test_bootstrap_endpoint_serves_the_token_and_its_header():
 
     assert response.status_code == 200
     assert response.json() == {"token": gateway_token()}
-    # The token header is what the client's ofetch wrapper caches in memory.
+    # One-shot bootstrap header; ordinary responses must not carry it.
     assert response.headers.get(TOKEN_HEADER) == gateway_token()
+
+
+def test_ordinary_responses_do_not_leak_the_token_header():
+    response = client.get("/__m3_token_probe")
+
+    assert response.status_code == 200
+    assert response.headers.get(TOKEN_HEADER) is None
 
 
 def test_unlisted_origin_is_refused_by_the_pipeline():

@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | `MAIN` | メインエージェントのターン（`server/service/input_queue_service.py::_run_executor`） | `min(16, max(8, CPU))`、`SUBAGENT + BACKGROUND_REVIEW` 以上へ切り上げ → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 子エージェントの実行（`spawn/core.py`、`control/steer.py`） | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `BACKGROUND_REVIEW` | メモリレビュー / スキルレビュー / 圧縮後 todo 更新（`agent/middlewares/summarization/background_reviews.py` の 3 箇所） | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
+| `BACKGROUND_REVIEW` | メモリレビュー / スキルレビュー / 圧縮後 todo 更新（`agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` の 4 箇所） | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
 | `NESTED` | `sessions_send` の返信ターン（直列） | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 設定と検証
@@ -115,7 +115,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `server/service/lane_lifecycle.py` | 起動時検証、drain ゲート登録、有界終了 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT レーンラッパー + PENDING → RUNNING 昇格 |
-| `agent/middlewares/summarization/background_reviews.py` | BACKGROUND_REVIEW レーンの 3 呼び出し箇所 |
+| `agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` | BACKGROUND_REVIEW レーンの 4 呼び出し箇所 |
 | `agent/tools/subagent/tools/sessions_send.py` | 返信ターンを包む NESTED レーン |
 | `server/service/input_queue_service.py` | `_run_executor` を包む MAIN レーン |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤児の `pending_orphaned` 確定 |

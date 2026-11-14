@@ -147,8 +147,15 @@ export function useSessionActivation(deps: SessionActivationDeps) {
     // One round trip: history + the running turn's snapshot. Frames arriving
     // during the request are held and flushed after the snapshot is applied.
     const seq = ++historyLoadSeq;
-    isHistoryLoading.value = true;
+    // A new session's history request resolves almost instantly with an empty
+    // list; flashing the skeleton for it promises a load that never happened.
+    // Only a request still pending after the grace period shows one.
+    isHistoryLoading.value = false;
+    const skeletonTimer = setTimeout(() => {
+      if (seq === historyLoadSeq) isHistoryLoading.value = true;
+    }, 200);
     void Promise.resolve(deps.syncHistory(sid)).finally(() => {
+      clearTimeout(skeletonTimer);
       // A newer load may already own the flag; only the latest settles it.
       if (seq === historyLoadSeq) isHistoryLoading.value = false;
     });

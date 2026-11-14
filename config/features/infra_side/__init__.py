@@ -126,3 +126,8 @@ from .model_downloads import (
     ModelDownloadsConfig as ModelDownloadsConfig,
     MODEL_DOWNLOADS as MODEL_DOWNLOADS,
 )
+from .local_daemons import (
+    LocalDaemonsConfig as LocalDaemonsConfig,
+    LOCAL_DAEMONS as LOCAL_DAEMONS,
+    build_local_daemons as build_local_daemons,
+)

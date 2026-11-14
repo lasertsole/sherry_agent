@@ -6,6 +6,7 @@ from typing import Any
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import (
     CODE_INTEL_ROLES,
+    CODE_INTEL_WRITE_ROLES,
     PTC_ROLES,
     SPAWN_ALLOWED_CHILD_ROLES,
     FunctionalRole,
@@ -183,7 +184,7 @@ def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str
                 role.value for role in sorted(allowed, key=lambda item: item.value)
             )
         read_only_note = ""
-        if functional_role in CODE_INTEL_ROLES:
+        if functional_role in CODE_INTEL_ROLES and functional_role not in CODE_INTEL_WRITE_ROLES:
             read_only_note = (
                 "\n- Your children are read-only research workers; you still do not edit files."
             )
@@ -204,14 +205,46 @@ def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str
         )
         sections.append(spawn_guidance)
 
-    # Section 5.5: Code Intelligence (CODE_INTEL_ROLES only — matches the tool
+    # Section 5.5: Code Intelligence (CODE_INTEL_ROLES — matches the tool
     # injection in spawn/core.py; other roles receive neither the tools nor this
-    # guidance).
+    # guidance). The tool LIST is shared; the rename/format guidance branches:
+    # read-only roles stay in preview mode, write roles may apply.
     if functional_role in CODE_INTEL_ROLES:
-        sections.append(
+        can_write = functional_role in CODE_INTEL_WRITE_ROLES
+        intro = (
             "## Code Intelligence Tools\n"
+            "You have code retrieval tools for fast repo navigation and impact analysis "
+            "BEFORE editing:\n"
+            if can_write
+            else "## Code Intelligence Tools\n"
             "You have code retrieval tools for fast repo navigation:\n"
-            "- `explore` — fuzzy intent → symbol source + call paths. USE FIRST.\n"
+        )
+        rename_line = (
+            "- `lsp_rename` — workspace rename; PREVIEWS by default (dry_run=true). "
+            "You MAY pass dry_run=false to apply a cross-file symbol rename when it is "
+            "the right edit — it is semantically safer than a manual patch.\n"
+            if can_write
+            else "- `lsp_rename` — workspace rename; PREVIEWS by default (dry_run=true). "
+            "Never pass dry_run=false: your role is read-only.\n"
+        )
+        format_line = (
+            "- `lsp_format` — formatting edits; PREVIEWS by default (write=false). You "
+            "MAY pass write=true to apply formatting after an edit.\n"
+            if can_write
+            else "- `lsp_format` — formatting edits; PREVIEWS by default (write=false), "
+            "reports supported=false rather than faking success. Never pass "
+            "write=true: your role is read-only.\n"
+        )
+        workflow = (
+            "Workflow: explore(query) / callers / impact / lsp_find_references to "
+            "understand the blast radius, then edit. Do LIGHTWEIGHT lookups directly; "
+            "spawn a researcher for a heavy multi-step investigation.\n"
+            if can_write
+            else "Workflow: explore(query) → lsp_find_references / callers for precision → "
+            "terminal (rg/grep) as keyword fallback.\n"
+        )
+        sections.append(
+            intro + "- `explore` — fuzzy intent → symbol source + call paths. USE FIRST.\n"
             "- `callers` — who calls this symbol\n"
             "- `callees` — what does this symbol call\n"
             "- `impact` — blast radius of modifying a symbol\n"
@@ -222,18 +255,16 @@ def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str
             "jump/refs via the language server (1-based line/character)\n"
             "- `lsp_workspace_symbol` — fuzzy workspace symbol search\n"
             "- `lsp_call_hierarchy` — callers (incoming) / callees (outgoing) of a symbol\n"
-            "- `lsp_rename` — workspace rename; PREVIEWS by default (dry_run=true). "
-            "Never pass dry_run=false: your role is read-only.\n"
-            "- `lsp_diagnostics` — errors/warnings for a file (waits for the async "
-            "publishDiagnostics notification)\n"
-            "- `lsp_format` — formatting edits; PREVIEWS by default (write=false), "
-            "reports supported=false rather than faking success. Never pass "
-            "write=true: your role is read-only.\n"
-            "- `lsp_status` — honest availability of every configured language server "
+            "- `lsp_hover` — type signature / documentation at a position\n"
+            + rename_line
+            + "- `lsp_diagnostics` — errors/warnings for a file (waits for the async "
+            "publishDiagnostics notification; your writes are synced to a running "
+            "server automatically and new errors arrive as a system reminder)\n"
+            + format_line
+            + "- `lsp_status` — honest availability of every configured language server "
             "(available / not_installed); starts nothing\n"
-            "Workflow: explore(query) → lsp_find_references / callers for precision → "
-            "terminal (rg/grep) as keyword fallback.\n"
-            "Index is built on first use; subsequent queries are fast. LSP servers "
+            + workflow
+            + "Index is built on first use; subsequent queries are fast. LSP servers "
             "start on demand and are reaped when idle; if a server is missing you get "
             "an install hint and the explore/terminal fallback."
         )

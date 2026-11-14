@@ -11,7 +11,9 @@ from agent.tools.pub_base.skill_utils import (
     sort_skills,
     skill_visible_to,
     normalize_skill_scope,
+    normalize_skill_roles,
     VALID_SKILL_SCOPES,
+    VALID_SKILL_ROLES,
     PLATFORM_MAP,
 )
 
@@ -232,3 +234,71 @@ class TestSkillVisibleTo:
 
     def test_valid_scopes_constant(self):
         assert VALID_SKILL_SCOPES == frozenset({"all", "main_only", "subagent_only"})
+
+
+class TestNormalizeSkillRoles:
+    def test_absent_is_none(self):
+        assert normalize_skill_roles(None) is None
+
+    def test_valid_list_normalized(self):
+        assert normalize_skill_roles(["Executor", " researcher "]) == ["executor", "researcher"]
+
+    def test_scalar_string_accepted(self):
+        assert normalize_skill_roles("executor") == ["executor"]
+
+    def test_duplicates_collapse(self):
+        assert normalize_skill_roles(["executor", "EXECUTOR"]) == ["executor"]
+
+    def test_invalid_entries_dropped(self):
+        assert normalize_skill_roles(["executor", "banana"]) == ["executor"]
+
+    def test_all_invalid_falls_back_to_none(self):
+        assert normalize_skill_roles(["banana"]) is None
+        assert normalize_skill_roles([]) is None
+
+    def test_non_list_type_falls_back_to_none(self):
+        assert normalize_skill_roles(123) is None
+        assert normalize_skill_roles({"roles": ["executor"]}) is None
+
+    def test_valid_roles_constant(self):
+        assert VALID_SKILL_ROLES == frozenset(
+            {"general", "researcher", "executor", "reviewer", "librarian"}
+        )
+
+
+class TestSkillVisibleToRoles:
+    """The roles dimension is orthogonal to scope."""
+
+    def test_absent_roles_visible_to_every_role(self):
+        skill = {"scope": "all"}
+        for role in ("general", "researcher", "executor", "reviewer", "librarian"):
+            assert skill_visible_to(skill, "subagent", role) is True
+
+    def test_present_roles_allow_listed_role(self):
+        assert skill_visible_to({"roles": ["executor"]}, "subagent", "executor") is True
+
+    def test_present_roles_hide_unlisted_role(self):
+        assert skill_visible_to({"roles": ["executor"]}, "subagent", "researcher") is False
+
+    def test_no_caller_role_skips_the_check(self):
+        # main agent / identity GENERAL role
+        assert skill_visible_to({"roles": ["executor"]}, "main", None) is True
+        assert skill_visible_to({"roles": ["executor"]}, "subagent", None) is True
+
+    def test_roles_and_scope_both_apply(self):
+        assert (
+            skill_visible_to({"scope": "main_only", "roles": ["executor"]}, "subagent", "executor")
+            is False
+        )
+        assert (
+            skill_visible_to(
+                {"scope": "subagent_only", "roles": ["executor"]}, "subagent", "executor"
+            )
+            is True
+        )
+
+    def test_unknown_role_matches_nothing(self):
+        assert skill_visible_to({"roles": ["executor"]}, "subagent", "banana") is False
+
+    def test_invalid_roles_value_is_fail_open(self):
+        assert skill_visible_to({"roles": ["banana"]}, "subagent", "executor") is True

@@ -16,8 +16,12 @@ import path from 'node:path';
 /** CJK ideographs (the English rule bans all of them). */
 export const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
 
-/** Language names a value may spell in its own script (the switcher labels). */
-export const ALLOWED_TOKENS: ReadonlyArray<string> = ['简体中文', '中文', '日本語', '한국어'];
+/**
+ * Tokens allowed in ANY locale: the switcher's language names plus 橘雪莉 — the
+ * shipped character's proper name, deliberately untranslated in all four
+ * locales (it is a name, not a label).
+ */
+export const ALLOWED_TOKENS: ReadonlyArray<string> = ['简体中文', '中文', '日本語', '한국어', '橘雪莉'];
 
 /** The shared list: Simplified-only characters (never used in Japanese/Korean). */
 export const SIMPLIFIED_ONLY: ReadonlySet<string> = (() => {

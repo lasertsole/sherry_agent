@@ -2,6 +2,8 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
+> **ストレージ(2026-11-13):** TaskFlow、todos、サブエージェントレジストリ、エビデンス台帳は `src/data/registry.db`(`task_flows` / `todos` / `subagent_runs` / `evidence_events` テーブル)を共有します。起動時の一度きりの移行が旧ストア DB をコピーし、`*.bak` に改名します。
+
 > エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_flow` / `taskflow_step` / `taskflow_inspect`、16 action を覆う 3 つのグループ化ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
@@ -42,7 +44,7 @@
 
 | # | サブシステム | 入口 | 永続化先 |
 | :- | :--- | :--- | :--- |
-| 1 | **TaskFlow DAG エンジン** | `agent/tools/taskflow/` | `data/taskflow_registry.db`（SQLite、WAL） |
+| 1 | **TaskFlow DAG エンジン** | `agent/tools/taskflow/` | `src/data/registry.db`（SQLite、WAL） |
 | 2 | **トークン / コスト予算** | `taskflow_flow(action="budget")`、`taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **締め切り** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
@@ -64,7 +66,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | ゾンビ todo | アクティブな todo が failed/cancelled フローを参照 | todo を `cancelled` |
 | prune | 終端/superseded 行が `max_total_flows_per_session`（200）超過 | 最も古い行を削除 |
 
-ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録し、`auto_kill_on_detach` が有効なら**kill** します——失敗した flow は結果を回収できないため、生かしておくとレーンを占有するだけです。`depends_on` の循環は作成/更新時に拒否され（深さ優先、id は先に検証済み）、フローを非活動スイープまで固定しません。`supersede` は `expected_revision` を進めるため、旧リビジョンを持つ書き手はキャンセル済みフローを復活させるのではなく CAS に失敗します。stale-WAITING マーカーは `updated_at` に触れずにペイロードを書き込みます——その列はスイープが読む非活動時計そのものだからです。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
+ライブ子は回収を拒否します。grace は `todos` と `task_flows` テーブルの間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録し、`auto_kill_on_detach` が有効なら**kill** します——失敗した flow は結果を回収できないため、生かしておくとレーンを占有するだけです。`depends_on` の循環は作成/更新時に拒否され（深さ優先、id は先に検証済み）、フローを非活動スイープまで固定しません。`supersede` は `expected_revision` を進めるため、旧リビジョンを持つ書き手はキャンセル済みフローを復活させるのではなく CAS に失敗します。stale-WAITING マーカーは `updated_at` に触れずにペイロードを書き込みます——その列はスイープが読む非活動時計そのものだからです。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
 
 全置換がルート todo を落とした場合、猶予期間を待たずに `update_todos` が孤立 flow を即座に補償する（方針: `TODOLIST_INFRA["orphan_flow_on_drop"]`）。直後にセッション限定の sweep が走り、flow が終端に達するとルート todo へ即座に通知する。稼働中 flow と似た目標の作成は `ack_dup` がない限り警告される。
 
@@ -74,12 +76,19 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 - `taskflow_flow(action="plan")` の自動生成 id は**安定**になりました：`plan-<sha256(session_id + goal)[:10]>`。同じセッションで同じ goal を再計画すると、既存の**非終端**フローを冪等成功として返し、2 つ目を作りません。終端フローは引き続きエラーです（別 id か後継フローを使います）。`flow_id` はグローバル主キーで所有はセッション単位のため、seed に session id を含めます。作成後は**初期 ready step をすべて自動 dispatch** します（依存のない兄弟）。`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（既定 true）で従来の「レビューしてから dispatch」に戻せ、個々の spawn 失敗は fail-open（その step は `ready` のまま）です。表示される plan は dispatch 後の状態です。
 - `taskflow_step(action="resume")` の auto-dispatch は**フロー全体**を走査します（今回 unlock した下流だけではありません）：`newly_ready ∪ all_ready` を 1 つの有界並列 wave で dispatch します。これにより、以前から ready なのに名前を挙げられていなかった兄弟ブランチも起動します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）で今回 unlock した集合だけに制限できます。既に dispatched の step は除外され、フローロック内で再確認されるため二重 spawn はしません。
-- TaskFlow board reminder は**すべての ready step** を列挙し（`ready_to_dispatch: s3(...), s4(...)`）、複数あるときは `[N steps ready — parallelize via taskflow_dispatch!]` を付けます。未 dispatch の ready がある間の cooldown は `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）、なければ通常の 5 ターンです（`only_if_changed` は同一 board の再注入を引き続き抑制します）。
+- TaskFlow board reminder は ready の作業を「モデルが何をすべきか」で分けます。永続化された `last_spawn_error` を持つ step は `dispatch failed: s1(...) — retry via taskflow_step(action='dispatch', step_ids=['s1'])` として列挙し、通常の ready は `pending auto-dispatch: N step(s)` と数えるだけです（次の自動 wave が起動します）。blocked step は件数と `block_reason` を表示し（DAG 依存が原因なら `waiting on upstream: <dep>` を付記）、`next:` ヒントにも状態が付きます。cooldown が `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）に短縮されるのは、spawn 失敗または判断が必要な blocked step（`block_reason` が記録済み。上流待ちだけなら実行中の正常状態）がある間だけです。それ以外は通常の 5 ターンで、`only_if_changed` は同一 board の再注入を引き続き抑制します。どちらかの自動 dispatch wave が無効な場合、ready は再びモデルの担当となり、従来の `ready_to_dispatch` / `parallelize` 文言が戻ります。
 - `taskflow_flow(action="create")` は重複した**非終端** `flow_id` を冪等成功（revision + status）として返します。終端フロー、または他セッション所有の id はエラーのままです。
 - 手動 `taskflow_step(action="dispatch")`、plan の初期 ready wave、`taskflow_step(action="resume")` の auto-dispatch wave は `_dispatch.flow_dispatch_lock(flow_id)` を共有します：read → validate → spawn → persist の全体をフロー単位で直列化し、wave はロック取得後に各 step がまだ `ready` か再確認します。ロックは**プロセス内**です（単一バックエンド、TaskFlow は main-only）。マルチプロセス配置では DB lease が必要です。
 - **mutating 重複計測（2026-10-22）：** 225 checkpoint スレッド、204 ツール呼び出し——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——連続する同名 + 同引数の成功 mutating 呼び出しは**0 件**でした。そのため `ToolCallSignature` ミドルウェアは追加せず、`ToolGuardrails` が引き続きループ検出を担当します。実際の繰り返しがテレメトリで確認された場合のみ mutating カウンタを再検討します。
 
 出典：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；テスト：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
+
+## 🧩 役割別モデルと異種 judge
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` は機能役割ごとのオプトインなファミリです。設定したファミリ（provider か api_base、または `MODEL_LOCAL=true` で MAIN モデルのローカル GGUF を再利用）はその役割の全子エージェントに適用され、**空**のファミリは役割定義自身のティア（同梱ロールは `model_tier: auxiliary`）を維持します。したがって新しいキーに触れなければ挙動は変わりません。
+- 子エージェントのモデル選択順は、セッションの役割別モデル profile → 名前付き model override → **設定済み**の役割ファミリ → 役割のモデルティア → depth ロールです。出力上限の解決と永続化される構造化出力の劣化キーもこの順序を反映し、spawn ログと 1 件の `subagent_model` trajectory イベントが実際のモデルと取得元（`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`）を記録します。
+- `GET /sherry-config/model-roles` は各 judge/役割の `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}` を返します。モデル設定タブは 4 つの役割ファミリを通常のモデル profile カードとして表示し（接続テストも可）、「役割の既定ティアを維持」バッジと有効モデル行を出します。
+- 異種 judge：StepJudge は `TASKFLOW_LLM_*`（未設定なら補助）、完了 judge は `AUXILIARY_LLM_*`（CJ_LLM ファミリはありません）、実行者は役割ファミリまたはティアです。judge を実行者と別ファミリにすると同源の盲点（同じモデルが同じ入力で同じように誤る）を減らせます。強制はなく、空設定なら継承関係は従来どおりです。
 
 ## ⚙️ 設定レジストリ
 
@@ -87,13 +96,13 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **59** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow、ツール並列安全） |
-| `config/features/infra_side/` | **30** 個のインフラ側設定モジュール（サーバー、ログイン、キュー、スキル、コンテキストエンジン、ランタイム、ウェブ検索、モデル価格、ローカルモデルダウンロード、ログ保持、WS レート制限） |
+| `config/features/agent_side/` | **60** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow、ツール並列安全） |
+| `config/features/infra_side/` | **31** 個のインフラ側設定モジュール（サーバー、ログイン、キュー、スキル、コンテキストエンジン、ランタイム、ウェブ検索、モデル価格、ローカルモデルのダウンロード、ローカルモデル daemon、ログ保持、WS レート制限） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **89 個の feature オブジェクト**を保持します——エージェント側 59 + インフラ側 30——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **91 個の feature オブジェクト**を保持します——エージェント側 60 + インフラ側 31——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -287,7 +296,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 89。** 設定レジストリは 89 個の feature オブジェクト（エージェント側 59 + インフラ側 30）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOGS`、`WS_RATE_LIMIT` を省いています（既定値は専用のテストまたは各 feature のテストスイートがカバーします）。
+- **レジストリ規模は 91。** 設定レジストリは 91 個の feature オブジェクト（エージェント側 60 + インフラ側 31）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOCAL_DAEMONS`、`LOGS`、`WS_RATE_LIMIT` を省いています（既定値は専用のテストまたは各 feature のテストスイートがカバーします）。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_step(action="dispatch")` と `taskflow_step(action="wait_all")` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_step(action="resume")` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。

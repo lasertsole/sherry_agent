@@ -16,6 +16,7 @@ import asyncio
 import time
 
 from langchain_core.tools import tool
+from loguru import logger
 
 from config.features import TASKFLOW_INFRA
 from ..config import StepStatus
@@ -30,13 +31,15 @@ from ._retry import (
 )
 from agent.tools.pub_base import SessionId
 from ._shared import (
-    build_task_with_bindings,
     apply_dispatched_steps,
+    apply_spawn_failures,
+    build_task_with_bindings,
     build_task_with_dep_results,
     deps_satisfied,
     is_terminal,
     not_found_error,
     requester_session_key,
+    spawn_failure_record,
     step_status,
     terminal_error,
     update_flow_with_conflict_retry,
@@ -212,9 +215,16 @@ async def _taskflow_dispatch_locked(
 
     spawned = await asyncio.gather(*(_bounded(sid) for sid in requested))
 
+    failed_records: list[dict] = []
     for sid, child_key, exc in spawned:
         if exc is not None or child_key is None:
-            failures.append((sid, exc or RuntimeError("dispatch returned no child key")))
+            error = exc or RuntimeError("dispatch returned no child key")
+            failures.append((sid, error))
+            # Persisted so the board can tell "waiting for the automatic wave"
+            # from "this step's spawn failed and needs a manual retry".
+            failed_records.append(
+                spawn_failure_record(sid, f"{type(error).__name__}: {error}", time.time())
+            )
             continue
         step = by_id[sid]
         feedback = str(step.get("judge_feedback") or "").strip()
@@ -233,15 +243,21 @@ async def _taskflow_dispatch_locked(
     if not records:
         failed_ids = [sid for sid, _ in failures]
         first = failures[0][1]
+        persist_error = await _persist_spawn_failures(
+            flow_id, revision, flow, failed_records, session_id
+        )
+        suffix = f"; marker_write_failed={persist_error}" if persist_error else ""
         return (
             f"Error: dispatch failed for step_id(s) {failed_ids} "
-            f"({type(first).__name__}: {first}); dispatched={dispatched_ids}"
+            f"({type(first).__name__}: {first}); dispatched={dispatched_ids}{suffix}"
         )
 
     def build_state(fresh_flow: dict, _attempt: int) -> dict:
         fresh_state = dict(fresh_flow["state"])
         fresh_steps = list(fresh_state.get("steps") or [])
-        fresh_state["steps"] = apply_dispatched_steps(fresh_steps, records)
+        fresh_state["steps"] = apply_spawn_failures(
+            apply_dispatched_steps(fresh_steps, records), failed_records
+        )
         return fresh_state
 
     updated, error = await update_flow_with_conflict_retry(
@@ -264,3 +280,35 @@ async def _taskflow_dispatch_locked(
         f"{prefix}: flow_id={flow_id}, step_ids={dispatched_ids}, "
         f"revision={updated['expected_revision']}"
     )
+
+
+async def _persist_spawn_failures(
+    flow_id: str,
+    revision: int,
+    flow: dict,
+    failed_records: list[dict],
+    session_id: SessionId,
+) -> str | None:
+    """Persist failed-spawn markers when NOTHING in the batch spawned.
+
+    With no successful spawn there is no live child key to protect, so this is
+    a best-effort write: losing it costs only the board marker (the tool answer
+    already names the failed step ids), never a running child.
+    """
+
+    def build_state(fresh_flow: dict, _attempt: int) -> dict:
+        fresh_state = dict(fresh_flow["state"])
+        fresh_steps = list(fresh_state.get("steps") or [])
+        fresh_state["steps"] = apply_spawn_failures(fresh_steps, failed_records)
+        return fresh_state
+
+    _, error = await update_flow_with_conflict_retry(
+        flow_id, revision, flow, build_state, child_keys=[], session_id=session_id
+    )
+    if error:
+        logger.warning(
+            "taskflow dispatch: failed-spawn markers not persisted for flow {}: {}",
+            flow_id,
+            error,
+        )
+    return error

@@ -7,7 +7,7 @@
  * sanitization), so it cannot be used to verify real browser (WebView2/Chromium) security
  * behavior. The project's other test suites remain on happy-dom, unaffected.
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { createVNode } from 'vue';
 import type { ComponentPublicInstance, DirectiveBinding, VNode } from 'vue';
 import { vSafeHtml, safeMarkdownHtml, safeHtmlOnly } from '../safeHtml';
@@ -179,6 +179,24 @@ describe('vSafeHtml 指令', () => {
     vSafeHtml.mounted!(el, makeBinding('<script>alert(1)</script>hi'), vnode, null);
     expect(el.querySelector('script')).toBeNull();
     expect(el.textContent).toContain('hi');
+  });
+
+  it('mounted 将 markdown 图片标记为可缩放并打开画廊', async () => {
+    const { useImagePreview } = await import('~/composables/useImagePreview');
+    useImagePreview().closePreview();
+    const el = document.createElement('div');
+    vSafeHtml.mounted!(el, makeBinding('![shot](http://x/a.png)'), vnode, null);
+    const image = el.querySelector('img');
+    expect(image?.classList.contains('markdown-image')).toBe(true);
+    expect(image?.getAttribute('role')).toBe('button');
+    expect(image?.getAttribute('tabindex')).toBe('0');
+    expect(image?.getAttribute('aria-label')).toBeTruthy();
+
+    image?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await vi.waitFor(() => expect(useImagePreview().isPreviewVisible.value).toBe(true));
+    expect(useImagePreview().galleryItems.value).toEqual([image?.src]);
+    useImagePreview().closePreview();
   });
 });
 

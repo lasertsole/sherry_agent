@@ -15,7 +15,6 @@ const catalogApi = vi.hoisted(() => ({
   presetCatalogFacts: vi.fn(() => ({ skills: [] })),
   catalogEntries: vi.fn(() => [
     { id: 'pure', nameKey: 'personaPreset.pure', builtin: true },
-    { id: 'companion', nameKey: 'personaPreset.companion', builtin: true },
     { id: 'sherry', nameKey: 'personaPreset.sherry', builtin: true }
   ]),
   entryName: vi.fn((entry: { id: string }) => `name:${entry.id}`),
@@ -54,6 +53,7 @@ function mountTour() {
  * Click by the visible (translated) label.
  * @param wrapper
  * @param label
+ * @param debounced
  */
 async function clickLabel(wrapper: ReturnType<typeof mount>, label: string, debounced = false) {
   const button = wrapper.findAll('button').find(candidate => candidate.text() === label);
@@ -104,14 +104,14 @@ describe('OnboardingDialog', () => {
   it('开始使用 creates the session from the CHOSEN preset, then records the flag', async () => {
     const wrapper = mountTour();
     await clickLabel(wrapper, '下一步');
-    await wrapper.get('[data-test="onboarding-preset-companion"]').trigger('click');
+    await wrapper.get('[data-test="onboarding-preset-pure"]').trigger('click');
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '开始使用', true);
     await flushPromises();
 
     expect(catalogApi.createSessionFromPreset).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'companion' }),
+      expect.objectContaining({ id: 'pure' }),
       expect.objectContaining({ locale: 'zh', ensureCharacter: expect.any(Function) })
     );
     expect(flags.setAppFlag).toHaveBeenCalledWith('onboarding_completed', true);

@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from agent.tools.file_tools import search_files as search_files_module
 from agent.tools.file_tools.search_files import build_search_files_tool
 from agent.tools.pub_base import path_utils, rg_resolver
 from config.features import RIPGREP, TOOLS_TIMEOUTS
@@ -64,6 +65,33 @@ class TestTimeBudget:
         result = _search(pattern="needle", target="content", path=".")
 
         assert [m["path"] for m in result["matches"]] == ["/needle.txt"]
+
+    @pytest.mark.parametrize("target", ["content", "files"])
+    def test_exhausted_budget_spawns_no_engine(self, virtual_root, monkeypatch, target):
+        """A spent budget is refused before either engine starts.
+
+        The ripgrep path cannot rely on its watchdog for this: on a tiny tree
+        ``rg`` finishes before the timer thread fires, so a pre-exhausted budget
+        would otherwise return a complete-looking result. Pinning the engine
+        lookup and the engine calls makes the rule independent of a host ``rg``.
+        """
+        (virtual_root / "needle.txt").write_text("needle\n", encoding="utf-8")
+        monkeypatch.setitem(TOOLS_TIMEOUTS, "file_tools_search_time_budget_s", -1.0)
+        monkeypatch.setattr(search_files_module, "resolve_rg", lambda: "/nonexistent/rg")
+
+        def _must_not_run(*args, **kwargs):
+            raise AssertionError("no engine may run on an exhausted budget")
+
+        monkeypatch.setattr(search_files_module, "rg_search", _must_not_run)
+        monkeypatch.setattr(search_files_module, "rg_search_files", _must_not_run)
+        monkeypatch.setattr(search_files_module, "_search_content", _must_not_run)
+        monkeypatch.setattr(search_files_module, "_search_files", _must_not_run)
+
+        result = _search(pattern="needle", target=target, path=".")
+
+        assert result["scan_truncated"] is True
+        assert result["scan_stop_reason"] == "time_budget"
+        assert result["matches" if target == "content" else "files"] == []
 
 
 class TestMatchCap:

@@ -51,7 +51,7 @@ Sherry 的持久化模型是**「状态持久 + sweeper 兜底 + 新 turn 重驱
 
 - **启动对账**（`server/service/boot_recovery.py`，对被 checkpoint 覆盖的会话目录做一次有上限的扫描）：图仍挂起的会话重建 HITL pending 标志（该寄存器只在内存，否则服务端报 IDLE，下一条消息会被当作普通回合派发而不是 `Command(resume=...)`）；转录末尾若有带工具调用却无结果的助手回合，用错误占位符加中断标记一次提交修复（确定性 id）；被**已不可能完成**的回合认领的 `CLAIMED` 队列行退回 `QUEUED`，而不是占着槽位等到 24 小时过期。每一步都失败开放且扫描有上限，坏会话只花掉自己那一次探测。
 - **恢复出来的 RUNNING run 不是活的。** 没有任何任务能跨重启存活，因此加载时直接终态化（`pause_reason=process_restart`，outcome TIMEOUT）；继续留着 RUNNING 会让 WAITING flow 扫描以为子代理还活着，让孤儿回收等待一个永远不会到来的失联阈值。它的交付保持 PENDING，由 sweeper 的未交付扫描补发公告——拥有该 step 的 flow 因此能得知结果，而不是一直停在 DISPATCHED。
-- **所有持久化时间戳在加载时重基准**（`_rebase_restored_clock`）。`time.monotonic()` 是进程相对的：上个进程写的值在这里可能读成数小时前、也可能读成未来，于是每个 `now - timestamp` 的过期判定都静默失效。截止时间（`archive_at`）给一个新的窗口而不是重基准到“现在”，否则第一次扫描就会归档。
+- **所有持久化时间戳在加载时重基准**（`_rebase_restored_clock`）。`time.monotonic()` 是进程相对的：上个进程写的值在这里可能读成数小时前、也可能读成未来，于是每个 `now - timestamp` 的过期判定都静默失效。
 - **会中断的工具在 headless 回合直接拒绝。** 审批门早已对无操作者的回合自动拒绝，但自己调用 `interrupt()` 的工具（`question`、`exit_plan_mode`、自我文件审批、通用 `interrupt_on` 策略、沙箱绕过）仍然挂起——一个无人能答的回合就此中断。现在它们拒绝并告诉模型继续（或停止），绝不重试。
 - **trajectory 时间线是真的了。** 钩子事件与帧投影现在共享**同一个**按回合递增的序号（钩子过去传 `seq=0`，于是每个钩子事件都排在该回合第一帧之前），时间戳带毫秒，失败的流在重新抛出前记一条 `error` 事件——一条直接停住的时间线看起来就像“还在运行”。
 

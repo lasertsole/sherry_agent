@@ -92,6 +92,8 @@ per-role model profile (own max_output_tokens, default 8192)
 
 **Tool policy.** A role's `tools` list becomes an allow-list, and the default deny-list is cleared because the allow-list already restricts. Per-spawn `extra_tools` join that allow-list; both remain subject to the unconditional `main_only` metadata drop and to any explicit deny-list.
 
+**Skill visibility.** A specialized role's tools are stamped with `metadata["caller_role"]` next to `caller_scope`; the identity GENERAL role stays unstamped, so the default delegation path keeps the pre-role full view. `skill_list` and `skill_view` hide a skill whose frontmatter `roles: [...]` omits the role; a skill without `roles` is visible to every role, and the main agent skips the check entirely. `skill_view` reads the target SKILL.md directly, so the same `roles` gate is applied there; the delegate `load_skills` validation uses the identical filter. Builtin tags: `multimodal_rag` / `llm_wiki` are hidden from the executor (visible to every other role), `bugfix-contract` is executor + reviewer only, and the multimedia chain + `code_wiki` stay all-visible.
+
 ## 🔒 Spawn Privilege Guards
 
 Depth-based spawn privilege is enforced at two independent points, so no single leak can escalate it (functional-role containment is a third, orthogonal gate — see the note below):
@@ -117,7 +119,12 @@ Two stateful decisions are explicit objects (2026-11-09 design audit):
   `thinking_off`, `local_validation_fatal`). The spawn path resolves the
   persisted integer once with `strategy_for()` and reads flags; the integer
   stays the on-disk compatibility format, but no call site compares
-  `level >= 1/2`.
+  `level >= 1/2`. The persisted entry also carries `escalated_at` and
+  `reprobe_count`: `get_level` decays one rung after 24 h → 48 h → 7 d,
+  `confirm_level` commits the decayed rung once a spawn succeeds at it, and a
+  transient 429 / rate-limit / timeout / connection error never degrades a
+  model. Menu → System Config → Model Config lists and clears the learned
+  labels through `GET|DELETE /sherry-config/model-caps`.
 - **Completion delivery** transitions through one table
   (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`). Every `mark_delivery_*`
   helper calls `transition_delivery()`, so `DELIVERED` and `DISCARDED` are
@@ -233,6 +240,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 |------|----------|---------|--------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal-loop turn budget, including the first turn |
 | per-spawn `goal_max_turns` | `sessions_spawn` parameter | `None` → configured value | overrides the budget for one spawn |
+| per-spawn `run_timeout_seconds` | `sessions_spawn` parameter / `SubagentConfig.run_timeout_seconds` | `600` s | wall-clock ceiling for the run AND its subtree: frozen on the run, descendants capped by the parent's remaining budget (1 s fail-fast floor); a non-OK parent cascade-kills its live descendants |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | `RETRY` verdicts before the step is blocked |
 | `default_functional_role` | `SubagentConfig` | `"general"` | fallback when neither a hint nor an `agent_id` match resolves |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | workspace directory holding optional role overrides |

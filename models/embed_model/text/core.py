@@ -2,13 +2,35 @@ from typing import Never
 import math
 from pathlib import Path
 from loguru import logger
+from config import APP_HOME, LOG_DIR
+from config.features import LLM_CLIENT_DEFAULTS, LOCAL_DAEMONS
 from config.models_settings import get_model_setting
+from models.daemon.base import (
+    DaemonError,
+    DaemonSpec,
+    ReadyState,
+    ensure_ready,
+    request_json,
+)
 from models.http_client import OpenAICompatibleClient
 from langchain_core.embeddings import Embeddings
 
 
 _MODEL_DIR = Path(__file__).resolve().parent
 _WEIGHT_DIR = _MODEL_DIR / "model_weight"
+
+# The daemon owns the GGUF; the orchestrator only sends text batches. Ports and
+# budgets are central feature config (env-overridable per deployment).
+_EMBED_DAEMON = DaemonSpec(
+    name="embedding",
+    host=LOCAL_DAEMONS["host"],
+    port=LOCAL_DAEMONS["embed_port"],
+    pid_path=APP_HOME / ".embed_daemon.pid",
+    import_fn="models.embed_model.text.daemon",
+    ready_wait_s=LOCAL_DAEMONS["embed_ready_wait_s"],
+    liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],
+)
+_DAEMON_LOG = LOG_DIR / "daemons" / "embed.log"
 
 
 def _abort(msg: str) -> Never:
@@ -146,11 +168,70 @@ def _l2_normalize(vec: list[float]) -> list[float]:
 
 
 class _LocalEmbeddingBackend:
-    """Local llama.cpp strategy: load on demand, release after use, L2-normalise."""
+    """Local bge-m3 strategy: the daemon owns the GGUF, this side normalises.
+
+    Baseline measurement made the daemon path the default: a hot ``Llama`` load
+    is ~1.3 s and the RSS peak is ~1 GB, both of which the orchestrator should
+    never pay. The daemon keeps one context warm and serialises inference.
+
+    ``EMBEDDING_DAEMON_ENABLED=false`` (or a spawn that cannot start at all)
+    restores the historical in-process load/close path, so a deployment that
+    cannot fork a daemon keeps semantic recall working.
+    """
+
+    def __init__(self) -> None:
+        self._daemon_ready = False
+        self._daemon_usable = bool(LOCAL_DAEMONS["embed_daemon_enabled"])
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        if self._daemon_usable:
+            try:
+                return self._embed_via_daemon(texts)
+            except _DaemonUnavailableError as error:
+                logger.warning(
+                    "embedding daemon unavailable ({}); falling back to the in-process GGUF "
+                    "loader for this process",
+                    error,
+                )
+                self._daemon_usable = False
+        return self._embed_in_process(texts)
+
+    def _embed_via_daemon(self, texts: list[str]) -> list[list[float]]:
+        try:
+            return self._daemon_request(texts)
+        except DaemonError:
+            # The daemon may have idled out or died between calls; one respawn
+            # attempt keeps a 600 s idle window invisible to callers.
+            self._daemon_ready = False
+            return self._daemon_request(texts)
+
+    def _daemon_request(self, texts: list[str]) -> list[list[float]]:
+        if not self._daemon_ready:
+            state = ensure_ready(_EMBED_DAEMON, log_path=_DAEMON_LOG)
+            if state is ReadyState.UNAVAILABLE:
+                raise _DaemonUnavailableError("could not start the embedding daemon")
+            if state is not ReadyState.READY:
+                raise DaemonError("embedding daemon is still warming up")
+            self._daemon_ready = True
+        payload = request_json(
+            _EMBED_DAEMON,
+            "/embeddings",
+            {"input": texts},
+            timeout_s=LOCAL_DAEMONS["embed_http_timeout_s"],
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list) or len(data) != len(texts):
+            raise DaemonError("embedding daemon returned a malformed vector batch")
+        if not all(
+            isinstance(item, dict) and "index" in item and "embedding" in item for item in data
+        ):
+            raise DaemonError("embedding daemon returned a vector without index/embedding")
+        data.sort(key=lambda item: item["index"])
+        return [_l2_normalize(item["embedding"]) for item in data]
+
+    def _embed_in_process(self, texts: list[str]) -> list[list[float]]:
         model = _load_model()
         try:
             embeddings = model.create_embedding(input=texts)
@@ -159,6 +240,10 @@ class _LocalEmbeddingBackend:
             return [_l2_normalize(item["embedding"]) for item in data]
         finally:
             model.close()
+
+
+class _DaemonUnavailableError(RuntimeError):
+    """No daemon process exists and one could not be started."""
 
 
 class _RemoteEmbeddingBackend:
@@ -178,6 +263,9 @@ class _RemoteEmbeddingBackend:
                 "input": texts,
                 "encoding_format": "float",
             },
+            # Never let a hung remote endpoint block the worker forever; the
+            # auxiliary timeout is the same ceiling the other remote calls use.
+            timeout=float(LLM_CLIENT_DEFAULTS["aux_timeout"]),
         )
         data = result.get("data", [])
         data.sort(key=lambda x: x["index"])

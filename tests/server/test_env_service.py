@@ -135,11 +135,15 @@ MAIN_LLM_PROVIDER = "openai"
     def test_canonical_prefix_order(self):
         from config.features import SERVER_HTTP
 
-        assert SERVER_HTTP["env_group_prefixes"][:5] == (
+        assert SERVER_HTTP["env_group_prefixes"][:9] == (
             "MAIN_LLM_",
             "AUXILIARY_LLM_",
             "TASKFLOW_LLM_",
             "COMPRESSION_LLM_",
+            "EXECUTOR_LLM_",
+            "RESEARCHER_LLM_",
+            "REVIEWER_LLM_",
+            "LIBRARIAN_LLM_",
             "ITTT_",
         )
         # The network file's groups render last, after the model families.

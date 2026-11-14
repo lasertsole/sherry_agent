@@ -9,6 +9,7 @@ kill -9 leftover (``.sherry-tmp-*.swp``) is swept by the next write into the
 directory.
 """
 
+import errno
 import json
 import os
 import stat
@@ -89,6 +90,45 @@ def test_stale_revision_is_refused_and_leaves_the_file_alone(target):
     assert not list(target.parent.glob(".sherry-tmp-*"))
 
 
+def _require_walk() -> None:
+    from agent.tools.pub_base.path_utils import _can_walk_beneath
+
+    if not _can_walk_beneath():
+        pytest.skip("component-by-component dir_fd walking is unavailable here")
+
+
+def test_a_nested_target_still_writes(tmp_path):
+    _require_walk()
+    target = tmp_path / "a" / "b" / "file.txt"
+    target.parent.mkdir(parents=True)
+
+    atomic_write_text_no_follow(target, "hello")
+
+    assert target.read_text(encoding="utf-8") == "hello"
+
+
+def test_an_intermediate_dir_swap_is_refused_and_the_outside_file_is_untouched(tmp_path):
+    """L2: the temp create / replace happen through ONE verified parent fd."""
+    _require_walk()
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    target = root / "sub" / "file.txt"
+    target.write_text("old", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "file.txt"
+    victim.write_text("victim", encoding="utf-8")
+    os.rename(root / "sub", root / "sub.orig")
+    os.symlink(outside, root / "sub")
+
+    with pytest.raises(OSError) as excinfo:
+        atomic_write_text_no_follow(target, "pwned")
+
+    assert excinfo.value.errno in (errno.ELOOP, errno.ENOTDIR)
+    assert victim.read_text(encoding="utf-8") == "victim"
+    assert not list(outside.glob(".sherry-tmp-*"))
+
+
 def test_revision_changed_between_the_temp_write_and_the_replace(target, monkeypatch):
     """The second CAS layer: the file moves AFTER the temp file exists."""
     target.write_text("old", encoding="utf-8")
@@ -115,7 +155,7 @@ def test_rename_failure_falls_back_to_an_in_place_write(target, monkeypatch):
 
     target.write_text("old", encoding="utf-8")
 
-    def boom(_src, _dst):
+    def boom(_src, _dst, **_kwargs):
         raise OSError("rename unsupported here")
 
     monkeypatch.setattr(atomic_write_mod, "_replace", boom)

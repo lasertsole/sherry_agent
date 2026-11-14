@@ -13,12 +13,13 @@ import type { SessionModelProfile } from '~/composables/bridge/session';
 // Stable module specifiers so tests can vi.mock the bridge / logger.
 /* eslint-disable @typescript-eslint/no-restricted-imports */
 import { setAgentConfig } from '~/composables/bridge/agent-config';
+import { writePresetSystemPrompt, writeSystemPrompt } from '~/composables/bridge';
 import { setSessionModel } from '~/composables/bridge/session';
 import { logUtil } from '~/utils/log';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /** Built-in entry ids (the virtual, non-deletable presets). */
-export type BuiltinPresetId = 'pure' | 'companion' | 'sherry';
+export type BuiltinPresetId = 'pure' | 'sherry';
 
 /** Translate function shape the catalogue needs (a component's `t`). */
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
@@ -41,18 +42,15 @@ export interface PresetEntry {
 }
 
 /**
- * The built-in entries, in display order — the whole spectrum, read top to
- * bottom:
+ * The built-in entries, in display order:
  *
- * - Pure (`pure`): nobody named, no persona content at all, only the catalogue's
- *   REQUIRED skills — the bare floor a session can run on;
- * - Companion (`companion`): the full role-play persona with the coding
- *   work-flow skills left out of the index;
- * - Full (`sherry`): the DEFAULT — the full persona with every skill in the index.
+ * - Pure (`pure`): the same rules and tool surface as Full, but with no SOUL and
+ *   nobody named — a clean agent without a persona;
+ * - Full (`sherry`): the DEFAULT — the complete persona (rules + SOUL + the
+ *   shipped character).
  *
  * The `sherry` ID is kept as-is: sessions already bound to this built-in store
- * it in their current-session preset binding, and only the LABEL became Full (the shipped
- * character is still 橘雪莉 (Sherry) — the preset names the configuration, not the role).
+ * it in their current-session preset binding; only its LABEL changed to 橘雪莉.
  */
 export const BUILTIN_PRESETS: ReadonlyArray<{
   id: BuiltinPresetId;
@@ -62,11 +60,6 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
   {
     id: 'pure',
     nameKey: 'config.persona.preset.builtinPureName',
-    badgeKey: 'config.persona.preset.builtinBadge'
-  },
-  {
-    id: 'companion',
-    nameKey: 'config.persona.preset.builtinCompanionName',
     badgeKey: 'config.persona.preset.builtinBadge'
   },
   {
@@ -137,186 +130,15 @@ export function composeRoleFile(character: PresetCharacter, t: TranslateFn): str
 }
 
 /**
- * The catalogue facts a built-in preset's agent block is computed from — the
- * same `GET /agent/catalog` response the tabs render, so the client never
- * hardcodes skill names (a skill added to the backend lands in these presets
- * too). Built-in tools and the middleware chain are not configurable, so they
- * contribute no facts.
- */
-export interface PresetCatalogFacts {
-  /** Every skill the index can contain, with its lock flag (required first). */
-  skills: ReadonlyArray<{ name: string; required?: boolean }>;
-}
-
-/** Work-flow skills Companion excludes from its index (the coding chain). */
-export const COMPANION_EXCLUDED_SKILLS: readonly string[] = [
-  'bugfix-contract',
-  'code-wiki',
-  'taskflow',
-  'ulw-execute',
-  'todolist'
-];
-
-/**
- * The Operating Instructions sections Companion drops, per UI language: the task-orchestration
- * doctrine (the literal headings 编排者信条 / 何时创建 Todo / 委派 / 转换屏障 / 完成契约 / 反模式) and
- * the two task bullets of the first section. A companion preset is not an
- * orchestrator, so the text that would steer it into planning-and-delegating is
- * removed rather than left to fight the preset's tool set.
+ * The agent block a built-in pins.
  *
- * Matched by the literal heading/label text the shipped templates use
- * (`workspace/template/<lang>/AGENTS.md`); `persona-catalog.test.ts` reads those
- * files and fails when a reworded template stops matching.
- */
-export const COMPANION_DROPPED_SECTIONS: Record<string, { sections: string[]; bullets: string[] }> = {
-  zh: { sections: ['任务管理与编排'], bullets: ['任务分配', '任务执行'] },
-  en: { sections: ['Task Management & Orchestration'], bullets: ['Task assignment', 'Task execution'] },
-  ja: { sections: ['タスク管理とオーケストレーション'], bullets: ['タスクの割り当て', 'タスクの実行'] },
-  ko: { sections: ['작업 관리 및 오케스트레이션'], bullets: ['작업 분배', '작업 실행'] }
-};
-
-/**
- * The SOUL.md line Companion drops, per UI language: the couple relationship
- * with 远野汉娜 that the shipped templates carry.
- *
- * The companion preset keeps the persona's warmth, curiosity and tone; only the
- * romantic pairing goes, because a general companion setting should not colour
- * every interaction with it.
- *
- * Matched by the literal bold marker the shipped templates use
- * (`workspace/template/<lang>/SOUL.md`); `persona-catalog.test.ts` reads those
- * files and fails when a reworded template stops matching.
- */
-export const COMPANION_DROPPED_RELATIONSHIP_MARKERS: Record<string, string> = {
-  zh: '**恋爱关系**',
-  en: '**couple relationship**',
-  ja: '**恋人関係**',
-  ko: '**연인 관계**'
-};
-
-/**
- * Strip the relationship line out of one SOUL template (see
- * {@link COMPANION_DROPPED_RELATIONSHIP_MARKERS}).
- *
- * The whole line carrying the marker goes (a Markdown bullet is one line in
- * every shipped template); unknown languages and templates without a match come
- * back untouched.
- * @param text The SOUL.md template.
- * @param locale UI locale selecting the marker.
- * @returns The text without the relationship line.
- */
-export function stripRelationshipLines(text: string, locale: string): string {
-  const marker = COMPANION_DROPPED_RELATIONSHIP_MARKERS[locale.split('-')[0] ?? ''];
-  if (!marker) return text;
-  return text
-    .split('\n')
-    .filter(line => !line.includes(marker))
-    .join('\n');
-}
-
-/**
- * Strip the task / orchestration content out of one Operating Instructions template (see
- * {@link COMPANION_DROPPED_SECTIONS}).
- *
- * A dropped SECTION runs from its heading to the next heading of the same or a
- * higher level (the shipped templates end with it). A dropped BULLET is one
- * ``- **label**`` line anywhere; a section left without any content is dropped
- * as well, so the empty husk of the operating rules does not survive. Unknown languages and
- * templates without a match come back untouched.
- * @param text The AGENTS.md template.
- * @param locale UI locale selecting the match list.
- * @returns The text without the task-orchestration content.
- */
-export function stripTaskSections(text: string, locale: string): string {
-  const rules = COMPANION_DROPPED_SECTIONS[locale.split('-')[0] ?? ''];
-  if (!rules) return text;
-  const lines = text.split('\n');
-  const kept: string[] = [];
-  let dropping: number | null = null; // heading level currently being dropped
-  for (const line of lines) {
-    const heading = /^(#+)\s+(.*)$/.exec(line);
-    if (heading) {
-      const level = heading[1]!.length;
-      if (dropping !== null && level <= dropping) dropping = null;
-      if (dropping === null && rules.sections.some(title => heading[2]!.startsWith(title))) {
-        dropping = level;
-        continue;
-      }
-    }
-    if (dropping !== null) continue;
-    const bullet = /^-\s+\*\*(.+?)\*\*/.exec(line);
-    if (bullet && rules.bullets.some(label => bullet[1]!.startsWith(label))) continue;
-    kept.push(line);
-  }
-  // A section whose bullets all went away leaves a bare heading behind: drop
-  // those second-level headings too (the file title stays regardless).
-  const out: string[] = [];
-  for (let index = 0; index < kept.length; index += 1) {
-    const line = kept[index]!;
-    const heading = /^(#+)\s+/.exec(line);
-    if (heading && heading[1]!.length > 1) {
-      const rest = kept.slice(index + 1).filter(candidate => candidate.trim() !== '');
-      if (rest.length === 0 || /^#+\s+/.test(rest[0]!)) continue;
-    }
-    out.push(line);
-  }
-  return `${out
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()}\n`;
-}
-
-/**
- * The catalogue facts of a loaded agent-config store.
- * @param store The store (usually `useAgentConfigStore()`).
- * @param store.catalog
- * @param store.catalog.skills
- * @returns The facts (an empty list until the catalogue has loaded).
- */
-export function presetCatalogFacts(store: { catalog: { skills: PresetCatalogFacts['skills'] } }): PresetCatalogFacts {
-  return { skills: store.catalog.skills };
-}
-
-/**
- * The agent block a built-in pins ({} = every default).
- *
- * - Pure: only the catalogue's required skills — the locked set the service
- *   would refuse to drop anyway, so the preset states the floor explicitly;
- * - Companion: every NON-required skill except the coding work-flow set;
- * - Full: no opinion (every skill in the index).
- *
- * Built-in tools and the middleware chain are no longer configurable, so the
- * presets differ by persona + skill index only.
- *
- * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
- * silent fallback to `{}` would apply the opposite of what the preset promises.
- * @param id Built-in entry id.
- * @param facts The loaded catalogue.
+ * Both built-ins return `{}` (no opinion): every skill in the index and the
+ * same built-in tool/middleware surface. They differ only in persona content
+ * and the character block.
  * @returns The agent block for the session config.
  */
-export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFacts): AgentConfig {
-  if (id !== 'pure' && id !== 'companion') return {};
-  if (facts.skills.length === 0) {
-    throw new Error('[persona-catalog] the skill catalogue is unavailable; cannot compose the preset');
-  }
-  return { skills: builtinSkills(id, facts.skills).map(skill => skill.name) };
-}
-
-/**
- * The skills a built-in keeps in the index (catalogue order, required always in).
- * @param id Built-in entry id.
- * @param skills The catalogue's skill list.
- * @returns The kept skills.
- */
-function builtinSkills(id: BuiltinPresetId, skills: PresetCatalogFacts['skills']): PresetCatalogFacts['skills'] {
-  const required = skills.filter(skill => skill.required === true);
-  const optional = skills.filter(skill => skill.required !== true);
-  if (id === 'pure' || id === 'sherry') {
-    // Pure keeps the locked floor only; Full has no opinion (every skill).
-    return id === 'pure' ? required : skills;
-  }
-  const excluded = new Set(COMPANION_EXCLUDED_SKILLS);
-  return [...required, ...optional.filter(skill => !excluded.has(skill.name))];
+export function builtinAgentConfig(): AgentConfig {
+  return {};
 }
 
 /** Payload every apply path writes: the persona files + the character + the agent config. */
@@ -343,27 +165,22 @@ export interface PersonaPresetPayload {
 /**
  * The payload of a built-in entry, composed from the language template.
  *
- * - Pure: EVERY persona file empty (no operating rules either) and nobody named
- *   — the clean slate — plus an agent block that keeps only the required skills;
- * - Companion: the full template with the task-orchestration content stripped
- *   from the Operating Instructions (a companion is not an orchestrator) and the couple-relationship
- *   line stripped from SOUL, plus the default names;
- * - Full: the full template plus the shipped default names.
+ * - Pure: the full Operating Instructions, a blank SOUL and USER, and nobody
+ *   named — rules without a persona;
+ * - Full: the same rules plus SOUL and the shipped default character.
+ *
+ * Neither ships a USER profile: the user fills it in later.
  * @param id Built-in entry id.
  * @param template The language template (`readSystemPromptTemplate`), already fetched.
  * @param t The component's translate function.
- * @param facts The loaded catalogue (drives Pure / Companion's agent block).
- * @param locale UI locale (selects Companion's section-strip list).
  * @returns The apply payload (ROLE.md composed from the character).
  */
 export function builtinPayload(
   id: BuiltinPresetId,
   template: Record<string, string>,
-  t: TranslateFn,
-  facts: PresetCatalogFacts,
-  locale: string
+  t: TranslateFn
 ): PersonaPresetPayload {
-  const named = id === 'companion' || id === 'sherry';
+  const named = id === 'sherry';
   const character: PresetCharacter = named
     ? { ...DEFAULT_CACHED_CHARACTER }
     : {
@@ -374,22 +191,15 @@ export function builtinPayload(
         userName: '',
         userAvatar: ''
       };
-  const rules = template['AGENTS.md'] ?? '';
-  let content: Record<string, string>;
-  if (id === 'pure') {
-    content = { 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '' };
-  } else {
-    content = {
-      'AGENTS.md': id === 'companion' ? stripTaskSections(rules, locale) : rules,
-      'SOUL.md':
-        id === 'companion' ? stripRelationshipLines(template['SOUL.md'] ?? '', locale) : (template['SOUL.md'] ?? ''),
-      'USER.md': template['USER.md'] ?? ''
-    };
-  }
+  const content: Record<string, string> = {
+    'AGENTS.md': template['AGENTS.md'] ?? '',
+    'SOUL.md': id === 'pure' ? '' : (template['SOUL.md'] ?? ''),
+    'USER.md': ''
+  };
   content['ROLE.md'] = composeRoleFile(character, t);
   // No built-in pins a model: `null` = follow the environment config, which is
   // also what the panel's Main agent sub-tab starts at.
-  return { content, character, agent: builtinAgentConfig(id, facts), mainModel: null };
+  return { content, character, agent: builtinAgentConfig(), mainModel: null };
 }
 
 /**
@@ -404,8 +214,6 @@ export interface CreateSessionOptions {
   locale: string;
   /** Translate function (component `t`). */
   t: TranslateFn;
-  /** The loaded skill catalogue. */
-  facts: PresetCatalogFacts;
   /** Router (Nuxt `useRouter()`). */
   router: { push: (to: string) => Promise<unknown> };
   /** Locale-aware path builder (Nuxt `useLocalePath()`). */
@@ -430,7 +238,7 @@ export interface CreateSessionOptions {
  * @returns The new session id.
  */
 export async function createSessionFromPreset(entry: PresetEntry, options: CreateSessionOptions): Promise<string> {
-  const payload = await loadPresetPayload(entry, options.locale, options.t, options.facts);
+  const payload = await loadPresetPayload(entry, options.locale, options.t);
   // The id is minted first so the apply can also write the preset's agent
   // config (Agent models / Skills) into THIS session's registers.
   const sessionId = crypto.randomUUID();
@@ -472,18 +280,16 @@ export async function createSessionFromPreset(entry: PresetEntry, options: Creat
  * @param entry Catalogue entry.
  * @param locale Current UI locale (selects the language template for built-ins).
  * @param t The component's translate function.
- * @param facts The loaded catalogue (built-ins' agent blocks are derived from it).
  * @returns The payload (persona files incl. ROLE.md + the character block).
  */
 export async function loadPresetPayload(
   entry: PresetEntry,
   locale: string,
-  t: TranslateFn,
-  facts: PresetCatalogFacts
+  t: TranslateFn
 ): Promise<PersonaPresetPayload> {
   if (entry.builtin) {
     const template = await readSystemPromptTemplate(locale);
-    return builtinPayload(entry.id as BuiltinPresetId, template, t, facts, locale);
+    return builtinPayload(entry.id as BuiltinPresetId, template, t);
   }
   const preset = entry.userPreset;
   if (!preset) throw new Error(`[persona-catalog] unknown preset entry: ${entry.id}`);
@@ -515,7 +321,10 @@ export async function loadPresetPayload(
  * @throws When the file write cannot be verified (the caller surfaces the failure).
  */
 export async function applyPresetPayload(payload: PersonaPresetPayload, sessionId?: string): Promise<void> {
-  await writeSystemPrompt(payload.content);
+  // A built-in payload carries AGENTS.md and needs the creation-only route; an
+  // ordinary apply (the persona panel) writes only the community files.
+  const write = 'AGENTS.md' in payload.content ? writePresetSystemPrompt : writeSystemPrompt;
+  await write(payload.content);
   const written = await readSystemPrompt();
   const verified = !!written && Object.entries(payload.content).every(([file, content]) => written[file] === content);
   if (!verified) throw new Error('[persona-catalog] applied content verification failed');

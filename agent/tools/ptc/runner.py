@@ -79,8 +79,10 @@ def _resolve_sandboxed_argv(
     so it always requests sandboxing — identical to a ``sandbox=True`` call:
 
     - ``off`` → no wrap, backend never probed.
-    - ``auto`` → a usable backend wraps the argv; an unavailable one degrades to
-      the direct unsandboxed spawn with exactly one loguru warning.
+    - ``auto`` → a usable backend wraps the argv; an unavailable one RAISES:
+      PTC has no HITL middleware, so the AUTO degrade would silently fall back
+      to the restricted-builtins/AST layer alone. The operator's explicit
+      ``off`` is the escape hatch.
     - ``required`` → a usable backend wraps the argv; an unavailable one raises
       :class:`PtcSandboxUnavailableError` so the run is refused (fail-closed).
     """
@@ -93,14 +95,15 @@ def _resolve_sandboxed_argv(
         raise PtcSandboxUnavailableError(
             "execute_code refused: SANDBOX_POLICY=required but no OS sandbox backend is "
             f"available ({exc}). Install bubblewrap (Linux) or use macOS Seatbelt, or set "
-            "SANDBOX_POLICY=auto to allow the unsandboxed degrade path."
+            "SANDBOX_POLICY=off as a deliberate operator choice."
         ) from exc
     if backend is None:
-        logger.warning(
-            "execute_code: sandbox requested but no backend available "
-            f"(policy={policy.value}) — degrading to unsandboxed execution"
+        raise PtcSandboxUnavailableError(
+            "execute_code refused: SANDBOX_POLICY=auto and no OS sandbox backend is "
+            "available on this host. PTC has no operator approval path, so it will not run "
+            "unsandboxed; install bubblewrap (Linux) / use macOS Seatbelt, or set "
+            "SANDBOX_POLICY=off as a deliberate operator choice."
         )
-        return argv, env
     return backend.wrap(argv, env, writable_roots, allow_network=allow_network)
 
 

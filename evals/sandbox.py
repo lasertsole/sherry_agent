@@ -36,11 +36,11 @@ from loguru import logger
 
 SAFE_TOOL_NAMES = frozenset({"read_file", "search_files", "question"})
 
-_STORE_MODULES: dict[str, str] = {
-    "agent.tools.taskflow.registry.store_sqlite": "taskflow_registry.db",
-    "agent.tools.subagent.registry.store_sqlite": "subagent_registry.db",
-    "agent.tools.todolist.registry.store_sqlite": "todos.db",
-}
+_STORE_MODULES: tuple[str, ...] = (
+    "agent.tools.taskflow.registry.store_sqlite",
+    "agent.tools.subagent.registry.store_sqlite",
+    "agent.tools.todolist.registry.store_sqlite",
+)
 
 
 class EvalSandbox:
@@ -64,21 +64,23 @@ class EvalSandbox:
     def _mkdir_parents(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _redirect_store(self, module_name: str, db_filename: str) -> None:
+    def _redirect_store(self, module_name: str, registry: Path) -> None:
         module = importlib.import_module(module_name)
-        db_dir = self.root / "stores" / module_name.rsplit(".", 1)[-1]
-        db_dir.mkdir(parents=True, exist_ok=True)
-        self._set(module, "_DB_DIR", db_dir)
-        self._set(module, "_DB_PATH", db_dir / db_filename)
+        self._mkdir_parents(registry)
+        self._set(module, "_DB_DIR", registry.parent)
+        self._set(module, "_DB_PATH", registry)
         self._set(module, "_initialized", False)
         self._set(module, "_init_loop", None)
         self._set(module, "_init_lock", asyncio.Lock())
         self._set(module, "_sync_tables_ready", False)
 
         pending = importlib.import_module("agent.tools.subagent.registry.pending_injections")
-        pending_db = self.root / "stores" / "subagent_registry.db"
-        self._mkdir_parents(pending_db)
-        self._set(pending, "_DB_PATH", pending_db)
+        self._set(pending, "_DB_DIR", registry.parent)
+        self._set(pending, "_DB_PATH", registry)
+        queue = importlib.import_module("server.queue.user_input_queue")
+        self._set(queue, "_DB_PATH", registry)
+        ledger = importlib.import_module("agent.tools.pub_base.evidence_ledger")
+        self._set(ledger.EvidenceLedger, "LEDGER_PATH", str(registry))
 
     def _restrict_child_tools(self) -> None:
         """Apply the opt-in read-only allowlist to spawned children."""
@@ -145,8 +147,9 @@ class EvalSandbox:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.src.mkdir(parents=True, exist_ok=True)
 
-        for module_name, db_filename in _STORE_MODULES.items():
-            self._redirect_store(module_name, db_filename)
+        registry = self.root / "stores" / "registry.db"
+        for module_name in _STORE_MODULES:
+            self._redirect_store(module_name, registry)
 
         mes_db = importlib.import_module("context_engine.store.db")
         mes_memory_dir = self.src / "store" / "mes_memory"

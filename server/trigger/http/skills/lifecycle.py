@@ -6,6 +6,7 @@ from pathlib import Path
 
 from robyn import Response
 from server.trigger.core import app
+from server.trigger.http.helpers import read_body
 from loguru import logger
 from skills.loader import parse_frontmatter
 from config import PLUGIN_SKILLS_DIR
@@ -172,12 +173,8 @@ async def toggle_skill_handler(request):
 
     Accepts a JSON body: {"name": string, "active": bool}.
     """
-    try:
-        body = request.json()
-    except Exception:
-        body = None
-
-    if not isinstance(body, dict):
+    body = read_body(request)
+    if body is None:
         logger.warning("Skill toggle rejected: invalid JSON body")
         return Response(
             status_code=400,

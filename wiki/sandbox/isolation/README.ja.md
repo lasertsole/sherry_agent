@@ -70,7 +70,7 @@ bwrap
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true` を3秒のタイムアウトでスモーク実行。バイナリの存在だけでは不十分です。Ubuntu 24.04+ の AppArmor 非特権 user namespace 制限は uid-map 段階ですべての bwrap を殺せます。だからこそ実際のスモーク実行だけが誠実な確認です。
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")` のみ。sbpl には終了コードベースのスモークプローブがありません。
 
-**PTC はこのバックエンドを再利用します。** `execute_code`(プログラム的ツール呼び出し)は `sandbox` フラグを持たないため、どのポリシーでも `sandbox=True` 呼び出しと同様に振る舞います: 使えるバックエンドは `[sys.executable, script_path]` を包み、`SANDBOX_POLICY=required` でバックエンドが無い場合は spawn せずに `status: "sandbox_unavailable"` エンベロープを返し、`auto` はちょうど1件の警告を記録してサンドボックスなし実行へ降格します。PTC は `allow_network=True` を渡すため、bwrap は `--unshare-all` の隣に `--share-net` を追加します：子は親の loopback RPC リスナーに到達する必要があり、書き込み/読み取りのサンドボックスは変わりません。[PTC ページ](../../ptc/README.ja.md)を参照してください。
+**PTC はこのバックエンドを再利用します。** `execute_code`(プログラム的ツール呼び出し)は `sandbox` フラグを持たないため、どのポリシーでも `sandbox=True` 呼び出しと同様に振る舞います: 使えるバックエンドは `[sys.executable, script_path]` を包み、`SANDBOX_POLICY=required` でバックエンドが無い場合は spawn せずに `status: "sandbox_unavailable"` エンベロープを返し、`SANDBOX_POLICY=auto` でバックエンドが無い場合も spawn せず `status: "sandbox_unavailable"` を返します(PTC には HITL 経路がないため降格しません)。`off` のときだけサンドボックスなしで実行します。PTC は `allow_network=True` を渡すため、bwrap は `--unshare-all` の隣に `--share-net` を追加します：子は親の loopback RPC リスナーに到達する必要があり、書き込み/読み取りのサンドボックスは変わりません。[PTC ページ](../../ptc/README.ja.md)を参照してください。
 
 ### 3. 危険コマンドゲート (terminal のみ)
 
@@ -140,7 +140,7 @@ bwrap
 
 **検索コンテインメント(`_stays_within_root`)。** `os.walk` はディレクトリのシンボリックリンクを辿りませんが、ファイルのシンボリックリンクは一覧に現れます。両検索モードはすべてのヒットを `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`、`ValueError` / `OSError` / `RuntimeError` でスキップ)でフィルタするため、検索ツリーの外に解決されるシンボリックリンクは決して返りません — `/etc/passwd` へのファイルシンボリックリンクはスキップされます。検索ルートは常に解決済みです(プロジェクト内検索はさらに `ROOT_DIR` で制限されます)ので、allowlist 済みの外部ディレクトリ検索はそのまま機能します。
 
-**スキャン境界。** 両モードは `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)でスキャン自体も制限します: `file_tools_search_time_budget_s`(既定 5.0 秒)の期限切れで走査を停止し、`file_tools_search_max_matches`(既定 10,000)が収集ヒット数を上限化し、`file_tools_search_prune_dirs`(既定 `proc`、`sys`、`dev`)は `dirnames[:]` から除外されるため疑似ファイルシステムには決して降りません。打ち切られたスキャンは決して黙りません — JSON 結果に `scan_truncated: true`、`scan_stop_reason`(`time_budget` / `max_matches`)とヒントが付き、プルーニングが発生した場合は `pruned_dir_count` も付きます。ファイル名パターンは `fnmatch` を通り(ブレース展開なし)、展開数上限は不要です。
+**スキャン境界。** 両モードは `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)でスキャン自体も制限します: `file_tools_search_time_budget_s`(既定 5.0 秒)の期限切れで走査を停止し、`file_tools_search_max_matches`(既定 10,000)が収集ヒット数を上限化し、`file_tools_search_prune_dirs`(既定 `proc`、`sys`、`dev`)は `dirnames[:]` から除外されるため疑似ファイルシステムには決して降りません。打ち切られたスキャンは決して黙りません — JSON 結果に `scan_truncated: true`、`scan_stop_reason`(`time_budget` / `max_matches`)とヒントが付き、プルーニングが発生した場合は `pruned_dir_count` も付きます。呼び出し時点で既に予算を使い切っている場合は、どちらのエンジンも起動する前に拒否されます——ripgrep の watchdog だけでは先に終わる小さな木を完全な結果と誤報告してしまうためです——同じ `time_budget` マーカーを返します。ファイル名パターンは `fnmatch` を通り(ブレース展開なし)、展開数上限は不要です。
 
 **deepagents 参考実装との設計差。** 参考実装はすべてのパスを仮想名前空間(`virtual_mode`)に固定することで、トラバーサルを設計上不可能にします。Sherry は代わりに実ファイルシステムパスを保持し(`prompt_builder`、スキルツール、terminal の cwd がすべて依存)、解決**後**にコンテインメント(上記の3ゲート)を適用し、`O_NOFOLLOW` で TOCTOU を閉じます。`BackendProtocol`、`CompositeBackend`、`StateBackend`、完全な仮想パス名前空間は意図的に採用していません。それはアーキテクチャの書き換えであり、Sherry にマルチバックエンドの用途がないためです。
 
@@ -177,7 +177,7 @@ bwrap
 | 2 | `required` | `True` | いいえ | すべて | `RuntimeError` / ツールエラー、何も生成されない |
 | 3 | `required` | `False` | (照会しない) | すべて | ツール層の `ToolException`、決して `GraphInterrupt` ではない、生成なし |
 | 4 | `auto` | `False` | (照会しない) | メイン、非 YOLO | HITL インタラプト: 承認 → 実行(依然洗浄済み)、拒否 → エラー `ToolMessage` |
-| 5 | `auto` | `True` | いいえ | すべて | 降格: サンドボックスなしで直接実行、ちょうど1件の警告、env は依然洗浄済み |
+| 5 | `auto` | `True` | いいえ | メイン(非 YOLO) | 降格: まずサンドボックス迂回 HITL カード; 承認 → サンドボックスなし実行(env は洗浄済み)、拒否/ヘッドレス → 拒否。INFO はちょうど1件 |
 | 6 | `off` | `True` / `False` | プローブしない | メイン | サンドボックスなし、承認なし、警告なし、そのまま実行 |
 
 補足:

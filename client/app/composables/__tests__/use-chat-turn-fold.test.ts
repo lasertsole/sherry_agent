@@ -96,3 +96,38 @@ describe('classifyTurnFold', () => {
     expect(fold.eligible).toBe(false);
   });
 });
+
+describe('classifyTurnFold artifact previews', () => {
+  it("collects the hidden tool rows' artifact references for the header peek", () => {
+    const fold = classifyTurnFold([
+      msg({
+        id: 1,
+        role: CHAT_ROLE.TOOL,
+        toolName: 'terminal',
+        toolResult: 'sherry-artifact://s1/image-0123456789abcdef.png'
+      }),
+      msg({
+        id: 2,
+        role: CHAT_ROLE.TOOL,
+        toolName: 'terminal',
+        toolResult: 'sherry-artifact://s1/image-0123456789abcdef.png sherry-artifact://s1/image-fedcba9876543210.png'
+      }),
+      msg({ id: 3, content: 'answer' })
+    ]);
+
+    expect(fold.eligible).toBe(true);
+    expect(fold.artifactUris).toEqual([
+      'sherry-artifact://s1/image-0123456789abcdef.png',
+      'sherry-artifact://s1/image-fedcba9876543210.png'
+    ]);
+  });
+
+  it('reports no images for a turn whose results carry none', () => {
+    const fold = classifyTurnFold([
+      msg({ id: 1, role: CHAT_ROLE.TOOL, toolName: 'read_file', toolResult: 'plain' }),
+      msg({ id: 2, content: 'answer' })
+    ]);
+
+    expect(fold.artifactUris).toEqual([]);
+  });
+});

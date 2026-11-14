@@ -349,7 +349,10 @@ async function requestBaseApi<T = Response>({
         networkFailed = false;
         httpFailed = false;
         if (import.meta.client) {
-          // If the response issues a token, hold it in memory only (never persisted).
+          // Ordinary responses no longer carry the gateway token (it is issued
+          // only by the /auth/token bootstrap, read by refreshGatewayToken).
+          // Keep this hook for a response that explicitly issues one, and hold
+          // it in memory only (never persisted).
           const token: string | null = response.headers.get('token');
           if (token) {
             memoryToken = token;

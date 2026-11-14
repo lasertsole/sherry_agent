@@ -1,6 +1,6 @@
 """SQLite persistence layer: serializes SubagentRunRecord instances as JSON into aiosqlite.
 
-Database path: subagent/data/subagent_registry.db
+Database path: the shared src/data/registry.db (subagent_runs / settle_wake_state tables)
 Table schema: subagent_runs(run_id TEXT PK, data TEXT) where data is model_dump_json()
 
 Connection lifecycle comes from ``agent.tools.pub_base.sqlite_store``
@@ -20,18 +20,18 @@ import asyncio
 import json
 import sqlite3
 import threading
-from pathlib import Path
 
 from loguru import logger
 
 from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
+from config.path import resolve_registry_db_path
 from config.features import SUBAGENT_INFRA
 from ..types.registry import (
     SubagentRunRecord,
 )
 
-_DB_DIR = Path(__file__).resolve().parent.parent / "data"
-_DB_PATH = _DB_DIR / "subagent_registry.db"
+_DB_PATH = resolve_registry_db_path()
+_DB_DIR = _DB_PATH.parent
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this

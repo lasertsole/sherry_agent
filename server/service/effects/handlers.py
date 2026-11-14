@@ -56,9 +56,9 @@ async def handle_completion_notice(payload: dict) -> EffectResult:
     run_id = str(payload.get("run_id") or "")
     if not run_id:
         return EffectResult(abandon=True)
-    from agent.tools.subagent.registry.read import get_run_readonly
+    from agent.tools.subagent.registry import memory
 
-    run = get_run_readonly(run_id)
+    run = memory.get(run_id)
     if run is None:
         # The run was purged; there is nothing left to announce.
         return EffectResult(abandon=True)

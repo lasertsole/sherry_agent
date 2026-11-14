@@ -1,11 +1,12 @@
-"""LangChain tool wrappers for the code intelligence index — RESEARCHER only.
+"""LangChain tool wrappers for the code intelligence index — CODE_INTEL_ROLES.
 
 The six tools (``explore`` / ``callers`` / ``callees`` / ``impact`` / ``path`` /
 ``semantic_code_search``) are never registered in ``_MAIN_TOOLS_BUILDERS``;
 ``agent/tools/subagent/spawn/core.py`` injects them into a child agent only when
-its functional role is RESEARCHER. Each carries
-``metadata={"scope": "researcher_only"}`` so the tag is visible to policy
-layers, and the outputs are JSON strings, matching the rest of the tool surface.
+its functional role is in ``CODE_INTEL_ROLES`` (researcher / librarian /
+executor / general). Each carries ``metadata={"scope": "code_intel"}`` so the
+tag is visible to policy layers, and the outputs are JSON strings, matching the
+rest of the tool surface.
 
 ``semantic_code_search`` is the embedding-backed, concept-level search
 over the same symbol table. It is fail-open — an unavailable embedding model or
@@ -46,7 +47,7 @@ from .query import (
 from .semantic import SemanticSearch, build_semantic_search_tool
 
 _DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
-_SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
+_SCOPE_METADATA: dict[str, Any] = {"scope": "code_intel", "idempotent": True}
 
 
 def _resolve_db_path(config: CodeIntelConfig, session_id: str, explicit_root: Path | None) -> str:

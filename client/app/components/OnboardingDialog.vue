@@ -231,7 +231,6 @@ const finish = async (): Promise<void> => {
     await createSessionFromPreset(entry, {
       locale: locale.value,
       t,
-      facts: presetCatalogFacts(agentStore),
       router,
       localePath,
       ensureCharacter: ensureSessionCharacter
@@ -256,7 +255,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "选择一个预设开始",
       "presetDesc": {
         "pure": "无预设配置，最小化工具面",
-        "companion": "角色扮演，关闭任务编排",
         "sherry": "全部能力开启"
       },
       "guideTitle": "核心操作",
@@ -281,7 +279,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "Pick a preset to start",
       "presetDesc": {
         "pure": "No preset configuration, minimal tool surface",
-        "companion": "Role-play; task orchestration off",
         "sherry": "Everything on"
       },
       "guideTitle": "The essentials",
@@ -306,7 +303,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "プリセットを選んで開始",
       "presetDesc": {
         "pure": "プリセット設定なし、最小限のツール",
-        "companion": "ロールプレイ、タスク編成はオフ",
         "sherry": "すべての機能を有効"
       },
       "guideTitle": "基本操作",
@@ -331,7 +327,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "시작할 프리셋 선택",
       "presetDesc": {
         "pure": "프리셋 없음, 최소 도구 구성",
-        "companion": "역할극, 작업 오케스트레이션 끔",
         "sherry": "모든 기능 켜짐"
       },
       "guideTitle": "핵심 조작",

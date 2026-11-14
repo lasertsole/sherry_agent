@@ -24,6 +24,45 @@ def memory_repo(tmp_path, monkeypatch):
     repo.close()
 
 
+class TestEntryCountCap:
+    """A count cap complements the char budgets (tiny entries are cheap)."""
+
+    def test_add_refuses_at_the_cap(self, memory_repo, monkeypatch):
+        monkeypatch.setitem(memory_module.MEMORY_TOOL, "max_entries_per_target", 2)
+        store = MemoryStore()
+        assert store.add("memory", "alpha")["success"] is True
+        assert store.add("memory", "beta")["success"] is True
+
+        refused = store.add("memory", "gamma")
+
+        assert refused["success"] is False
+        assert "entries" in refused["error"]
+        assert store.memory_entries == ["alpha", "beta"]
+
+    def test_append_evicts_oldest_at_the_cap(self, memory_repo, monkeypatch):
+        monkeypatch.setitem(memory_module.MEMORY_TOOL, "max_entries_per_target", 2)
+        store = MemoryStore()
+        store.append_entries("§ alpha\n§ beta")
+
+        store.append_entries("§ gamma")
+
+        assert store.memory_entries == ["beta", "gamma"]
+
+    def test_facts_evicts_least_active_at_the_cap(self, memory_repo, monkeypatch):
+        monkeypatch.setitem(memory_module.MEMORY_TOOL, "max_entries_per_target", 2)
+        store = MemoryStore()
+        store.add("facts", "old fact")
+        store.add("facts", "recent fact")
+
+        result = store.add("facts", "new fact")
+
+        assert result["success"] is True
+        assert len(store.facts_entries) == 2
+        # FACTS rolls the least-active entry off, never refusing the write.
+        assert "old fact" not in store.facts_entries
+        assert "new fact" in store.facts_entries
+
+
 # ===========================================================================
 # Routing
 # ===========================================================================

@@ -209,7 +209,8 @@ class TestWatcher:
         assert task.status == "completed" and task.exit_code == 0
         assert pushed and pushed[0]["event"] == "terminal_bg_exit"
         assert pushed[0]["content"]["task_id"] == "bg-w"
-        assert turned and "exited with code 0" in turned[0]
+        assert turned and "<status>completed</status>" in turned[0]
+        assert "completed (exit code 0)" in turned[0]
 
     @pytest.mark.asyncio
     async def test_the_exit_keeps_the_log_for_later_reads(self, sessions_root: Path):

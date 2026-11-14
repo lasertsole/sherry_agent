@@ -65,7 +65,7 @@ blocked ──(依存満足)──▶ ready ──(ディスパッチ)──▶ 
 
 | ステータス | 意味 | 設定主体 |
 | :--- | :--- | :--- |
-| `blocked` | 少なくとも 1 つの `depends_on` が `done` でない；子は生成されない | `taskflow_step(action="run_task")` |
+| `blocked` | 子が進めない：少なくとも 1 つの `depends_on` が `done` でない（子は生成されない）、**または** step の結果が証明されていない（`step_outcome="blocked"` / StepJudge BLOCK）。下流は blocked のまま | `taskflow_step(action="run_task")` / `taskflow_step(action="resume")` / `taskflow_step(action="update_steps")` |
 | `ready` | すべての依存が満たされ、ディスパッチ待ち | 登録時、または再開後の `unlock_dependents` |
 | `dispatched` | 分離された子セッションが生成され、`child_session_key` と `dispatched_at` を記録 | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | `taskflow_step(action="resume")` によって結果が注入された | `taskflow_step(action="resume")` |

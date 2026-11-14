@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 import time
 
 import pytest
@@ -44,6 +45,30 @@ async def test_handler_done_marks_the_intent_done(effects_db) -> None:
     await worker._tick()
 
     assert _status(effects_db, intent_id)[0] == "done"
+
+
+@pytest.mark.asyncio
+async def test_intent_log_calls_run_off_the_event_loop(effects_db, monkeypatch) -> None:
+    """M9: the blocking sqlite calls are dispatched to worker threads."""
+    intent_log.enqueue("kind", "key", {})
+    worker = EffectWorker()
+    worker.register("kind", lambda payload: _done())
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+
+    for name in ("fetch_pending", "mark_in_flight", "mark_done"):
+        original = getattr(intent_log, name)
+
+        def _spy(*args, _original=original, **kwargs):
+            seen.append(threading.get_ident())
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(intent_log, name, _spy)
+
+    await worker._tick()
+
+    assert seen
+    assert all(thread_id != loop_thread for thread_id in seen)
 
 
 @pytest.mark.asyncio

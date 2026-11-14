@@ -1,10 +1,10 @@
-# 🖼️ Media Pipeline: Compression, Native Reads, History Budget & Artifacts
+# 🖼️ Media Pipeline: Compression, Native Reads, History Budget, Artifacts & Generation
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How the agent handles images and PDFs end to end: every upload is compressed by one deterministic cascade before it reaches a provider, `read_file` can show the model an image or a PDF instead of a skill detour, history media is kept newest-first inside a byte budget instead of being stripped after every turn, and persisted uploads live in a SHA-256 content-addressed artifact store that deduplicates identical bytes and serves them through `sherry-artifact://` references.
+> How the agent handles images and PDFs end to end: every upload is compressed by one deterministic cascade before it reaches a provider, `read_file` can show the model an image or a PDF instead of a skill detour, history media is kept newest-first inside a byte budget instead of being stripped after every turn, persisted uploads live in a SHA-256 content-addressed artifact store that deduplicates identical bytes and serves them through `sherry-artifact://` references, and `image_generation` turns a prompt into generated images stored in that same artifact store.
 
-Source of truth: `pub/func/media/image_compress.py`, `agent/middlewares/media_pipeline/core.py`, `agent/middlewares/media_pipeline/media_handlers.py`, `agent/middlewares/media_pipeline/tool_media.py`, `agent/middlewares/media_pipeline/scrub.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/pub_base/pdf_render.py`, `agent/tools/pub_base/artifact_store.py`, `agent/middlewares/summarization/media_offload.py`, `server/trigger/http/artifacts.py`, `client/app/composables/use-chat-media.ts`, `config/features/agent_side/media_pipeline.py`. Every constant in this document was checked against that code.
+Source of truth: `pub/func/media/image_compress.py`, `agent/middlewares/media_pipeline/core.py`, `agent/middlewares/media_pipeline/budget_projection.py`, `agent/middlewares/media_pipeline/media_handlers.py`, `agent/middlewares/media_pipeline/tool_media.py`, `agent/middlewares/media_pipeline/scrub.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/pub_base/pdf_render.py`, `agent/tools/pub_base/artifact_store.py`, `agent/tools/image_gen.py`, `models/TTI_model/core.py`, `agent/middlewares/summarization/media_offload.py`, `server/trigger/http/artifacts.py`, `client/app/composables/use-chat-media.ts`, `config/features/agent_side/media_pipeline.py`, `config/features/agent_side/image_gen.py`. Every constant in this document was checked against that code.
 
 ## Table of Contents
 
@@ -23,6 +23,8 @@ Source of truth: `pub/func/media/image_compress.py`, `agent/middlewares/media_pi
   - [Store layout and dedupe](#-store-layout-and-dedupe)
   - [Serving and rendering](#-serving-and-rendering)
   - [Compression-time reuse](#-compression-time-reuse)
+- [Image Generation](#-image-generation)
+- [Chunked Upload: `/upload/chunk`](#-chunked-upload-uploadchunk)
 - [Configuration Reference](#-configuration-reference)
 - [Testing](#-testing)
 - [Limitations](#-limitations)
@@ -68,7 +70,7 @@ PNG is never converted to JPEG while a PNG candidate fits, so transparency is pr
 - `server/service/messages.py::_get_content_list` compresses `image_base64_list` and `image_bytes_list` before building `data:` URLs.
 - `agent/middlewares/media_pipeline/tool_media.py::_image_block` compresses a screenshot before embedding it.
 - `server/trigger/http/image.py::upload_image` compresses before writing the upload to disk.
-- `pub/func/media/image.py::download_and_convert_to_base64` compresses the image-to-text skill's downloaded bytes.
+- The `image_to_text` skill downloads remote images through `safe_fetch` and hands the file to its ITTT model, not the compression cascade; the old `pub/func/media/image.py` download/base64 helpers were removed — no live caller, and their bare `requests` path was an SSRF surface.
 
 The `image_compress_enabled` switch (default `true`) keeps the old byte-exact passthrough available. An image that cannot fit the budget is omitted on the tool path and reported as `413` on the HTTP upload path; the model-side upload keeps the original and lets the provider reject it rather than losing the attachment silently.
 
@@ -108,7 +110,7 @@ A request now carries as much history media as fits `history_media_budget_bytes`
 
 ### 🛡️ Order and placeholders
 
-`wrap_model_call` (and its async twin) applies `_scrub_request` first, then `_project_budget_request`. The scrub replaces a family the model cannot read with a text placeholder; the budget layer then measures every surviving `image_url` block by its DECODED data-URL size (a remote URL costs zero because the provider fetches it) and builds a `model_copy` request. The checkpoint is never mutated.
+`MediaBudgetProjectionMiddleware` (`agent/middlewares/media_pipeline/budget_projection.py`) applies `_project_media_budget` in `wrap_model_call` (and its async twin); `MultimodalProcessor` keeps the upload / persistence / capability-scrub half and applies `_scrub_request` first. The scrub replaces a family the model cannot read with a text placeholder; the budget middleware then measures every surviving `image_url` / `audio_url` / `video_url` block by its DECODED data-URL size (a remote URL costs zero because the provider fetches it) and builds a `model_copy` request. The checkpoint is never mutated. The middleware is registered in BOTH chains, so a subagent reading many images is budgeted exactly like the main agent.
 
 The latest real user message (`metadata.origin == "user"`) is protected: its media is kept even when it alone exceeds the budget. A transcript without that marker falls back to the newest media-bearing `HumanMessage`. Protected bytes are deducted from the budget first; the remaining images are admitted newest-first by message index. A block that does not fit becomes:
 
@@ -140,6 +142,36 @@ The client resolves a `sherry-artifact://` entry through `/artifacts` in `use-ch
 
 When compression offloads inline media, `media_offload` first calls `find_artifact` with the decoded bytes and the media family. A hit means the upload path already stored the payload, so the block becomes an `[evicted to: <artifact path>]` pointer without a second write. A miss keeps the legacy decode-and-store route under `SESSIONS_DIR/<session_id>/media/`, which also covers non-pipeline media such as audio and video bytes.
 
+## 🎨 Image Generation
+
+`image_generation` is the main-agent tool that turns a text prompt into images. It is registered only when the `TTI_*` family is configured (`TTI_API_NAME` + `TTI_API_KEY`; `TTI_MODEL_PROVIDER` and `TTI_API_BASE` point it at an OpenAI-compatible Images API), and it never reaches a subagent — generation costs money and is the operator's model choice.
+
+The provider half is `models/TTI_model/core.py::TTIModel`. It sends `POST /v1/images/generations` with `model`, `prompt`, `n` and `size`; `quality` is sent only when it applies (a legacy `standard`/`hd` value is dropped for a gpt-image model); `response_format="b64_json"` is forced for the older `dall-e-*` models and omitted for `gpt-image-*` / `chatgpt-image-latest`; the newer-only options (`background`, `output_format`, `output_compression`, `moderation`) pass through only to those newer models, and DALL·E `style` only to the older ones. A URL response is downloaded (50 MiB cap) and treated exactly like `b64_json`.
+
+The image count is clamped twice: `IMAGE_GEN_MAX_OUTPUT` per model (`dall-e-3` = 1, `dall-e-2` and the gpt-image family = 10, unknown = 1) and `IMAGE_GEN["max_n"]` (10) as a hard ceiling. Every returned image is written through `write_artifact(session_id, data, media_type="image", ext=…)`, so identical bytes deduplicate and the per-session URI is stable; the tool answers markdown references exactly like a stored upload:
+
+```
+Generated 2 image(s) with gpt-image-1:
+
+![generated image 1](sherry-artifact://<session>/image-<sha256[:16]>.png)
+
+![generated image 2](sherry-artifact://<session>/image-<sha256[:16]>.png)
+```
+
+The chat's gallery/lightbox path renders those references: final answers go through `resolveArtifactRefsInMarkdown`, and TOOL RESULTS now render as pictures too — `ChatToolCard` extracts every `sherry-artifact://` reference from a result and shows an `ArtifactImageGallery` thumbnail grid instead of the plain `<pre>` (the collapsed card shows the grid as well, so a generated image cannot hide behind the fold, and clicking opens the shared `useImagePreview` gallery). A collapsed TURN also advertises its hidden pictures: `classifyTurnFold` collects the tool rows' references and `ChatTurnHistoryStatus` peeks up to four thumbnails beside its expand trigger. No generation-specific renderer exists — the branch is keyed on the URI, not the tool name.
+
+The same provider backs the `text_to_image` skill's terminal-run script (`skills/builtin/text_to_image/scripts/core.py`). The terminal tool injects `SHERRY_SESSION_ID` into every child environment (sync, async and background spawns), the script generates through `TTIModel`, stores each image with `write_artifact`, PRINTS every URI to stdout and reports failures as an `[error] …` line; the previous script printed nothing and saved under `STATIC_DIR/images`, so the agent never learned where the image went. The skill's plain URI lines and the tool's markdown references ride the same thumbnail branch. A provider error, a missing key or a failed artifact write comes back as `Error: …` text (tool) or an `[error] …` stdout line (script), never as an exception escaping the tool; the tool's provider call runs in a worker thread so the event loop is not blocked.
+
+Phase 1 is generation only. `inputImageMask` / `inputFidelity` (inpainting) and streaming partial-image events are not wired; the model-capability catalogue (`config/model_capabilities.json`) describes INPUT media, so image-generation model limits live in `models/TTI_model/core.py::IMAGE_GEN_MAX_OUTPUT` rather than being added there as fake input capabilities.
+
+## 📤 Chunked Upload: `/upload/chunk`
+
+Browsers and the Tauri shell send attachments through `bridge/upload-chunked.ts`. A payload of at most `CHUNK_SIZE` (512 KiB) keeps the whole-body `/images|/audio|/video/upload` route. A larger one opens a session with `POST /upload/begin` (session, filename, content type, `total_chunks`, `total_bytes`), posts every chunk as `POST /upload/chunk?upload_id&chunk_index`, and finishes with `POST /upload/complete?upload_id`.
+
+Chunks for ONE file are strictly sequential: the server rejects a skipped index (`code=chunkGap`) and a replayed one (`code=chunkConflict`), mirroring ZCode. Parallelism is between files — `uploadMultipleFiles` runs up to `max_concurrent_files` (8) lanes through `runPool`, each lane keeping its own sequential chunk stream. `GET /upload/status` reports the contiguous received count for `resumeUpload`, and `POST /upload/abort` discards the staging directory.
+
+The server stages chunks under `TEMP_DIR/upload_chunks/<upload_id>/` with a `meta.json`; `begin` validates the per-kind byte cap and the chunk-count/byte-size agreement, then `complete` concatenates, hashes with SHA-256 and writes `<sha256[:16]><ext>` into the same per-kind directory the whole-body route uses. Identical bytes reuse one file and URL, a completed upload removes its staging, and an incomplete one answers `400` while keeping the chunks for a resume. `bridge/upload-cache.ts` hashes the payload and keeps a Dexie `uploadCache` row (`schema v7`, including the live upload id and status) for `read_cache_ttl_ms` (30 s), so a repeated send inside that window does not upload again; caching is fail-open.
+
 ## ⚙️ Configuration Reference
 
 | Setting | Default | Meaning |
@@ -156,15 +188,25 @@ When compression offloads inline media, `media_offload` first calls `find_artifa
 | `history_media_budget_bytes` | `78643200` | Retained history image budget (75 MiB). |
 | `preserve_latest_user_media` | `true` | Protect the latest real user message's media. |
 | `artifact_store_enabled` | `true` | Use the content-addressed store; off keeps timestamped `media/` copies. |
+| `chunk_size_bytes` | `524288` | Maximum bytes in one `/upload/chunk` body. |
+| `max_concurrent_files` | `8` | Parallel file lanes for one multi-attachment send. |
+| `read_cache_ttl_ms` | `30000` | Client dedupe window for an uploaded URL. |
+| `IMAGE_GEN["max_n"]` | `10` | Hard ceiling on one generation request (per-model caps apply first). |
+| `IMAGE_GEN["default_size"]` | `"1024x1024"` | Size when the caller omits one. |
+| `IMAGE_GEN["default_quality"]` | `""` | Quality when the caller omits one (empty = provider default). |
+| `IMAGE_GEN["timeout_s"]` | `120.0` | Provider + image-download timeout. |
 
 ## 🧪 Testing
 
 - `tests/pub/func/media/test_image_compress.py` — passthrough, quality ladder, dimension cap, token gate, WebP, `too_large`.
 - `tests/agent/tools/file_tools/test_read_file_image.py` and `test_read_file_pdf.py` — native blocks, skill fallback, caps, page-range errors.
 - `tests/agent/tools/pub_base/test_pdf_render.py` — PyMuPDF path, `pdftoppm` fallback, timeout and missing-renderer errors.
-- `tests/agent/middlewares/media_pipeline/test_history_budget.py` — fit, newest-first eviction, protected latest user, remote URLs, all-dropped.
+- `tests/agent/middlewares/media_pipeline/test_budget_projection.py` — fit, newest-first eviction, protected latest user, remote URLs, all-dropped, both chains.
 - `tests/agent/tools/pub_base/test_artifact_store.py` and `tests/server/trigger/http/test_artifacts.py` — dedupe, concurrency, URI parsing, serving, session scope.
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact reuse versus the legacy offload path.
+- `tests/agent/middlewares/test_media_pipeline_e2e.py` — real agent graph: server compression → artifact store + `/artifacts` → `read_file` image/PDF blocks → history budget projection.
+- `tests/server/trigger/http/test_upload_chunked.py` and the client `upload-chunked` / `upload-cache` suites — staging, assembly, content-hash dedupe, caps and the short-TTL cache.
+- `tests/models/TTI_model/test_core.py` and `tests/agent/tools/test_image_gen.py` — request shape, per-model caps, the `response_format` guard, URL download, artifact dedupe, error text and the registration gate.
 - `client/app/composables/__tests__/use-chat-media.test.ts` — URI resolution in attachments and markdown references.
 
 ## ⚠️ Limitations
@@ -173,3 +215,4 @@ When compression offloads inline media, `media_offload` first calls `find_artifa
 - Video is capped per payload (`video_max_bytes`, 30 MiB) but is not compressed and has no cumulative history bucket. ZCode behaves the same way.
 - The 75 MiB budget is a request-size heuristic, not a token predictor: many compressed images can still be expensive in provider tokens, and compaction remains the reactive backstop.
 - An artifact URI written before `artifact_store_enabled` was turned off remains readable; new uploads fall back to timestamped `media/` files and the `/media` endpoint.
+- Image generation depends on an operator-configured provider: without `TTI_API_NAME` and `TTI_API_KEY` the tool is absent and the model cannot draw. Phase 1 has no editing/inpainting and no streaming previews.

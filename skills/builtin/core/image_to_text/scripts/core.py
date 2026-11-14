@@ -10,16 +10,41 @@ if str(project_root) not in sys.path:
 
 import base64
 import tempfile
-import requests
 from PIL import Image
 from loguru import logger
 from models import ITTT_model
 from config.path import load_env
 from pub.func.validator import is_url
+from pub.func.validator.safe_fetch import safe_fetch
 from langchain_core.messages import HumanMessage
 
 # .env plus the .network overlay (network keys outrank the environment file)
 load_env()
+
+#: Cap on one remote image download (a hostile endpoint must not exhaust memory).
+_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+
+#: safe_fetch refusal reasons → the model-visible explanation.
+_DOWNLOAD_ERRORS = {
+    "scheme": "only public http(s) URLs are supported",
+    "ssrf": "the URL resolves to a private, loopback or link-local address",
+    "oversize": f"the image exceeds the {_MAX_DOWNLOAD_BYTES // (1024 * 1024)} MiB download limit",
+    "redirects": "too many redirects",
+    "network": "the host could not be reached or the response was unreadable",
+}
+
+
+def _image_suffix(data: bytes) -> str:
+    """File suffix from the image magic bytes (PIL also sniffs content)."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    if len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return ".png"
 
 
 @validate_call
@@ -38,31 +63,27 @@ def itt(
     """
     # ----- Phase 1: Get image data -----
     if is_url(image_path):
-        # URL → download to temp file
+        # URL → download to a temp file through the shared SSRF guard.
+        # safe_fetch refuses non-http(s) schemes, resolves the host once and
+        # dials THAT address (DNS pinning), re-verifies every redirect hop and
+        # caps the body — a user-supplied URL cannot reach loopback / RFC1918 /
+        # the cloud metadata endpoint, and cannot exhaust memory.
         logger.debug(f"Downloading image from URL: {image_path}")
-        try:
-            resp = requests.get(image_path, stream=True, timeout=60)
-            resp.raise_for_status()
-            # Infer suffix from Content-Type
-            content_type = resp.headers.get("Content-Type", "")
-            suffix = ".png"
-            if "jpeg" in content_type or "jpg" in content_type:
-                suffix = ".jpg"
-            elif "webp" in content_type:
-                suffix = ".webp"
-            elif "gif" in content_type:
-                suffix = ".gif"
-
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(resp.content)
-                tmp_path = Path(tmp.name)
-
-            logger.info(f"[info] Image downloaded to temp file: {tmp_path}")
-            path = tmp_path
-        except Exception as e:
-            err_mes: str = f"[Error] Image download failed: {repr(e)}"
-            logger.exception(err_mes)
+        fetched = safe_fetch(image_path, timeout=60, max_bytes=_MAX_DOWNLOAD_BYTES)
+        if not fetched.ok or fetched.body is None:
+            reason = _DOWNLOAD_ERRORS.get(fetched.reason, fetched.reason or "unknown error")
+            err_mes = f"[Error] Image download failed: {reason}"
+            logger.warning(err_mes)
             return err_mes
+        if not 200 <= fetched.status < 300:
+            err_mes = f"[Error] Image download failed: HTTP {fetched.status}"
+            logger.warning(err_mes)
+            return err_mes
+        with tempfile.NamedTemporaryFile(suffix=_image_suffix(fetched.body), delete=False) as tmp:
+            tmp.write(fetched.body)
+            tmp_path = Path(tmp.name)
+        logger.info(f"[info] Image downloaded to temp file: {tmp_path}")
+        path = tmp_path
     else:
         path = Path(image_path)
         try:

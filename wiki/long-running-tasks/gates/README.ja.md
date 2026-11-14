@@ -34,7 +34,7 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 
 - **不一致**はエラーとともに `schema_validated=false` として記録され、失敗として扱われ、リトライ種別は `schema_error` です — 判定呼び出しは一切消費せず、リトライされなかった不一致はステップを `failed` にします。
 - **不一致はリトライに教えます。** schema の失敗は判定より前に短絡するため `judge_feedback` は空です。そこで置換子エージェントのタスクは検証器自身のメッセージ（`Your previous output failed schema validation: <フィールドパス, expected/got>.`）を `## Previous Attempt Feedback` として運び、子はステップの spawn 契約一式（`response_schema` → 構造化出力の要件、機能ロール、モデル上書き、実行タイムアウト）を継承します — schema も失敗理由も見えないリトライは推測するしかありません。
-- **形は生成時にも拘束されます。** ステップが `response_schema` を宣言すると、子エージェントは LangChain の `response_format` 付きで構築されます（生の schema は `AutoStrategy` に解決され、プロバイダーが対応していればネイティブな構造化出力、なければ構造化出力ツール呼び出しになります）。明らかな不一致はこの検証器ではなくモデルの側で止まり、schema 本文は子の system prompt にプロンプトレベルのフォールバックとして残り、この Tier 1 チェックは第二の網として残ります — プロバイダーのエッジケースや構造化出力ツールを呼ばないモデルは、ここで捕まります。`sessions_spawn` は同じ `output_schema` フィールドを公開するので、ツール駆動の子も同様に拘束できます。構造化出力が拒否されると**段階的に降格**します：レベル 0（既定）は schema を LangChain に渡し、その戦略を名指す 400 でレベル 1（子が自分で `response_format={"type":"json_object"}` を送り、schema はプロンプトに残して結果をローカル検証）へ、さらに失敗するとレベル 2（レベル 1 + 思考オフ）へ下がります。段階は `(provider, model)` ごとに `src/data/subagent_model_caps.json` へ永続化され、一度降格したモデルを後続の子が繰り返し試すことはありません。
+- **形は生成時にも拘束されます。** ステップが `response_schema` を宣言すると、子エージェントは LangChain の `response_format` 付きで構築されます（生の schema は `AutoStrategy` に解決され、プロバイダーが対応していればネイティブな構造化出力、なければ構造化出力ツール呼び出しになります）。明らかな不一致はこの検証器ではなくモデルの側で止まり、schema 本文は子の system prompt にプロンプトレベルのフォールバックとして残り、この Tier 1 チェックは第二の網として残ります — プロバイダーのエッジケースや構造化出力ツールを呼ばないモデルは、ここで捕まります。`sessions_spawn` は同じ `output_schema` フィールドを公開するので、ツール駆動の子も同様に拘束できます。構造化出力が拒否されると**段階的に降格**します：レベル 0（既定）は schema を LangChain に渡し、その戦略を名指す 400 でレベル 1（子が自分で `response_format={"type":"json_object"}` を送り、schema はプロンプトに残して結果をローカル検証）へ、さらに失敗するとレベル 2（レベル 1 + 思考オフ）へ下がります。段階は `(provider, model)` ごとに `src/data/subagent_model_caps.json` へ永続化され、再試行クロックを持ちます。24 時間 → 48 時間 → 7 日で 1 段階戻り、spawn 成功時にその下位レベルが確定します。一時的な 429 / レート制限 / タイムアウト / 接続エラーでは降格しません。システム設定 → モデル設定で一覧表示・消去できます。
 - **一致**は `structured_result` + `schema_validated=true` を保存し、Tier 2 へ進みます。構造だけで内容が正しいことは決して証明されません — これが第二層の存在理由そのものです。
 
 ### Tier 2 — 意味論（補助 LLM）
@@ -57,7 +57,7 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 
 ### そして：`done` は「設定されたゲートを通過した」という意味
 
-ステップの `done` は、それ自体で「作業が正しい」ということにはなりません。**何の**期待も設定されていなければ（`response_schema`、`judge_criteria` / `validation_criteria`、`retry_policy`）、古い意味 —「結果が注入された」— に降格し、エラーを報告した子でも `done` になり後続を解放できます。期待を宣言する（`response_schema` は無料で、判定呼び出しの前に検証されます）か `step_outcome="failure"` を報告すれば、閉ループが捕まえます：`failed` / `skipped` / `cancelled` は実際のステップ状態になり、失敗は依存先を決して解放せず、`taskflow_flow(action="finish")` は未解決ステップを抱えた完了を拒否します。
+ステップの `done` は、それ自体で「作業が正しい」ということにはなりません。**何の**期待も設定されていなければ（`response_schema`、`judge_criteria` / `validation_criteria`、`retry_policy`）、古い意味 —「結果が注入された」— に降格し、エラーを報告した子でも `done` になり後続を解放できます。期待を宣言する（`response_schema` は無料で、判定呼び出しの前に検証されます）か `step_outcome="failure"` を報告すれば、閉ループが捕まえます：`failed` / `skipped` / `cancelled` は実際のステップ状態になり、失敗は依存先を決して解放せず、`taskflow_flow(action="finish")` は未解決ステップを抱えた完了を拒否します。goal loop の予算切れは代わりに `step_outcome="blocked"` を報告します。ステップは部分結果を保持し、依存側は blocked のまま残るため、エージェントが再試行・再計画・キャンセルを選べます。
 
 ## フローレベル（`taskflow_flow(action="finish")`）
 
@@ -70,7 +70,7 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 | **C — エビデンス** | フローのエビデンスに `FAIL`、`[broken]`、`[stale]` 行が無い（[エビデンス台帳](../gates/evidence-ledger/README.ja.md)参照） | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 目標判定** | 収集された結果がフローの `description` を満たすかを補助モデルが判定 | `taskflow_flow(action="replan")` を名指しする拒否 |
 
-すべてのゲートは**フェイルオープン**です：読めない collector、モデルエラー、パース不能な判定は完了を妨げず通過させます。Gate E は `description` を持ち、ステップ数が `GOAL_GATE["min_steps"]`（3）以上の場合にのみ走ります — 1〜2 ステップのフローは子レベルの[完了判定器](../../subagent/README.ja.md)がすでに覆っており、同じ仕事への二つ目の判定はまさにその重複だからです。`GOAL_GATE["enabled"]` はそのマスタースイッチ、`GOAL_GATE["max_result_chars"]`（4000）は渡される各結果の窓です。
+Gate E と回帰リプレイは**フェイルオープン**です：モデルエラーやパース不能な判定は完了を妨げず通過させます。Gate C の証跡**読み取り**は異なります：読めない collector はフロー state に `evidence_unavailable` として記録され、完了を**拒否**します — 検証できない完了を通しません。本当に**空**の台帳は通過します。Gate E は `description` を持ち、ステップ数が `GOAL_GATE["min_steps"]`（3）以上の場合にのみ走ります — 1〜2 ステップのフローは子レベルの[完了判定器](../../subagent/README.ja.md)がすでに覆っており、同じ仕事への二つ目の判定はまさにその重複だからです。`GOAL_GATE["enabled"]` はそのマスタースイッチ、`GOAL_GATE["max_result_chars"]`（4000）は渡される各結果の窓です。
 
 ## 隣接するゲート（別ページ、同じ考え方）
 

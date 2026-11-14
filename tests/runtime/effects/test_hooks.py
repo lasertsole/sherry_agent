@@ -226,9 +226,9 @@ class TestHandlers:
     async def test_completion_handler_abandons_a_purged_run(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import agent.tools.subagent.registry.read as read_mod
+        import agent.tools.subagent.registry.memory as memory_mod
 
-        monkeypatch.setattr(read_mod, "get_run_readonly", lambda run_id: None)
+        monkeypatch.setattr(memory_mod, "get", lambda run_id: None)
 
         result = await handle_completion_notice({"run_id": "gone"})
         assert result.abandon is True

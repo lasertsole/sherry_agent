@@ -44,7 +44,7 @@ def _make_run(
 pytestmark = [pytest.mark.unit]
 
 
-@pytest.mark.parametrize("status", ["completed", "failed", "interrupted"])
+@pytest.mark.parametrize("status", ["completed", "failed", "interrupted", "blocked"])
 def test_status_message_text_metadata_and_role(status: str):
     msg = build_completion_message(_make_run(), "all done", status)
 

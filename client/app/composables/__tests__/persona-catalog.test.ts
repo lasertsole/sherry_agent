@@ -6,28 +6,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   BUILTIN_PRESETS,
-  COMPANION_DROPPED_RELATIONSHIP_MARKERS,
   DEFAULT_PRESET_ID,
   applyPresetPayload,
+  builtinAgentConfig,
   builtinPayload,
   catalogEntries,
   composeRoleFile,
   entryName,
   loadPresetPayload,
-  presetCatalogFacts,
-  stripRelationshipLines,
-  stripTaskSections,
   userPresetEntryId
 } from '@/composables/persona-catalog';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { PersonaPreset } from '@/composables/db';
-import type { PresetCatalogFacts } from '@/composables/persona-catalog';
 
 const bridge = vi.hoisted(() => ({
   readSystemPrompt: vi.fn(),
   readSystemPromptTemplate: vi.fn(),
-  writeSystemPrompt: vi.fn()
+  writeSystemPrompt: vi.fn(),
+  writePresetSystemPrompt: vi.fn()
 }));
 vi.mock('~/composables/bridge', () => bridge);
 
@@ -54,8 +49,7 @@ vi.mock('@/composables/db', () => db);
 const t = ((key: string, params?: Record<string, unknown>) => {
   const table: Record<string, string> = {
     'config.persona.preset.builtinPureName': '纯净',
-    'config.persona.preset.builtinCompanionName': '情感陪伴',
-    'config.persona.preset.defaultName': '全量',
+    'config.persona.preset.defaultName': '橘雪莉',
     'config.persona.preset.defaultBadge': '默认',
     'config.persona.preset.builtinBadge': '内置',
     'config.role.aiLine': '你将扮演{name}。',
@@ -73,53 +67,6 @@ const TEMPLATE = {
   'ROLE.md': 'ignored — composed'
 };
 
-/** A 运行守则 ("Operating Instructions") template shaped like the shipped ones (task content included). */
-const TEMPLATE_WITH_TASKS = {
-  ...TEMPLATE,
-  'AGENTS.md': [
-    '# AGENTS.md',
-    '',
-    '## 运行守则',
-    '- **任务分配**：先规划。',
-    '- **任务执行**：按规则执行。',
-    '',
-    '## 边界',
-    '- **隐私保护**：尊重隐私。',
-    '',
-    '## 任务管理与编排（CRITICAL）',
-    '',
-    '### 编排者信条（MANDATORY）',
-    '',
-    '你是 ORCHESTRATOR，绝非实现者。',
-    ''
-  ].join('\n')
-};
-
-/** The catalogue facts the built-in agent blocks derive from (a real subset). */
-const FACTS = {
-  // The required multimedia chain first (the backend serves it that way), then
-  // the work-flow skills and two it does not.
-  skills: [
-    { name: 'image_to_text', required: true },
-    { name: 'speech_to_text', required: true },
-    { name: 'text_to_image', required: true },
-    { name: 'video_text_to_text', required: true },
-    { name: 'bugfix-contract' },
-    { name: 'clawhub' },
-    { name: 'code-wiki' },
-    { name: 'cron' },
-    { name: 'taskflow' },
-    { name: 'todolist' },
-    { name: 'ulw-execute' }
-  ]
-};
-
-/** Facts without a catalogue (Full still composes; the rest throw). */
-const NO_AGENT: PresetCatalogFacts = { skills: [] };
-
-/** The required skill names of {@link FACTS} (kept by every preset). */
-const REQUIRED_SKILLS = ['image_to_text', 'speech_to_text', 'text_to_image', 'video_text_to_text'];
-
 const userPreset = (overrides: Partial<PersonaPreset> = {}): PersonaPreset => ({
   id: 7,
   name: '我的预设',
@@ -134,28 +81,22 @@ describe('persona catalogue', () => {
     vi.clearAllMocks();
   });
 
-  it('lists 纯净 / 情感陪伴 / 全量, with 全量 the default', () => {
-    expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'companion', 'sherry']);
+  it('lists 纯净 / 橘雪莉, with 橘雪莉 the default', () => {
+    expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'sherry']);
     expect(DEFAULT_PRESET_ID).toBe('sherry');
     const entries = catalogEntries([]);
-    expect(entries.map(entry => entry.id)).toEqual(['pure', 'companion', 'sherry']);
+    expect(entries.map(entry => entry.id)).toEqual(['pure', 'sherry']);
     expect(entries.every(entry => entry.builtin)).toBe(true);
-    expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '情感陪伴', '全量']);
-    // Only the default carries the 默认 badge ("Default"); the other three read 内置 ("Built-in").
-    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '默认']);
+    expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '橘雪莉']);
+    // Only the default carries the 默认 badge ("Default"); Pure reads 内置 ("Built-in").
+    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '默认']);
   });
 
   it('appends the saved presets after the built-ins', () => {
     const entries = catalogEntries([userPreset(), userPreset({ id: 9, name: 'Second' })]);
 
-    expect(entries.map(entry => entry.id)).toEqual([
-      'pure',
-      'companion',
-      'sherry',
-      userPresetEntryId(7),
-      userPresetEntryId(9)
-    ]);
-    expect(entryName(entries[3]!, t)).toBe('我的预设');
+    expect(entries.map(entry => entry.id)).toEqual(['pure', 'sherry', userPresetEntryId(7), userPresetEntryId(9)]);
+    expect(entryName(entries[2]!, t)).toBe('我的预设');
   });
 
   it('composes the ROLE statement per name and drops blank ones', () => {
@@ -172,140 +113,48 @@ describe('persona catalogue', () => {
     expect(composeRoleFile(character('', ''), t)).toBe('');
   });
 
-  it('builds the 全量 payload from the full template and the default roles', () => {
-    const payload = builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh');
+  it('builds the 橘雪莉 payload from the full template and the default roles', () => {
+    const payload = builtinPayload('sherry', TEMPLATE, t);
 
     expect(payload.content['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
     expect(payload.content['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
-    expect(payload.content['USER.md']).toBe(TEMPLATE['USER.md']);
+    // The full preset ships no USER profile; the user fills it in later.
+    expect(payload.content['USER.md']).toBe('');
     expect(payload.content['ROLE.md']).toBe('# ROLE.md\n\n你将扮演橘雪莉。\n用户将扮演远野汉娜。\n');
     expect(payload.character.aiName).toBe('橘雪莉');
     expect(payload.character.userName).toBe('远野汉娜');
-    // Full pins nothing: every skill in the index.
     expect(payload.agent).toEqual({});
   });
 
-  it('builds the 纯净 payload with no persona and only the required skills', () => {
-    const payload = builtinPayload('pure', TEMPLATE, t, FACTS, 'zh');
+  it('builds the 纯净 payload with the full rules but no persona', () => {
+    const payload = builtinPayload('pure', TEMPLATE, t);
 
-    // Every file empty — including the operating rules — and nobody named.
-    expect(payload.content).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
+    // Rules match Full; only SOUL / USER / ROLE and the character stay empty.
+    expect(payload.content).toEqual({
+      'AGENTS.md': TEMPLATE['AGENTS.md'],
+      'SOUL.md': '',
+      'USER.md': '',
+      'ROLE.md': ''
+    });
     expect(payload.character).toEqual({ aiName: '', aiAvatar: '', userName: '', userAvatar: '' });
-    // The catalogue's locked skill set is the whole index this preset enables.
-    expect(payload.agent).toEqual({ skills: REQUIRED_SKILLS });
+    expect(payload.agent).toEqual({});
   });
 
-  it('builds the 情感陪伴 payload on the full persona with the coding work-flow skills left out', () => {
-    const payload = builtinPayload('companion', TEMPLATE, t, FACTS, 'zh');
-
-    expect(payload.content['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
-    expect(payload.character.aiName).toBe('橘雪莉');
-    // The skills are the complementary set: the required chain plus every
-    // skill outside the work-flow set (clawhub / cron here). The tool set is no
-    // longer configurable, so the agent block carries skills only.
-    expect(payload.agent).toEqual({ skills: [...REQUIRED_SKILLS, 'clawhub', 'cron'] });
-  });
-
-  it('strips the task-orchestration content out of 情感陪伴\u2019s 运行守则', () => {
-    const payload = builtinPayload('companion', TEMPLATE_WITH_TASKS, t, FACTS, 'zh');
-
-    expect(payload.content['AGENTS.md']).not.toContain('任务管理与编排');
-    expect(payload.content['AGENTS.md']).not.toContain('ORCHESTRATOR');
-    expect(payload.content['AGENTS.md']).not.toContain('任务分配');
-    expect(payload.content['AGENTS.md']).not.toContain('任务执行');
-    // The emptied 运行守则 ("Operating Instructions") heading goes with its bullets; 边界 ("Boundaries") stays intact.
-    expect(payload.content['AGENTS.md']).not.toContain('## 运行守则');
-    expect(payload.content['AGENTS.md']).toContain('## 边界');
-    expect(payload.content['AGENTS.md']).toContain('隐私保护');
-    // The other built-ins keep the template verbatim.
-    expect(builtinPayload('sherry', TEMPLATE_WITH_TASKS, t, FACTS, 'zh').content['AGENTS.md']).toContain(
-      '任务管理与编排'
-    );
-    expect(builtinPayload('sherry', TEMPLATE_WITH_TASKS, t, NO_AGENT, 'zh').content['AGENTS.md']).toContain(
-      '任务管理与编排'
-    );
-  });
-
-  it('drops the relationship line out of 情感陪伴\u2019s SOUL and keeps the rest', () => {
-    const soul = [
-      '# SOUL.md',
-      '',
-      '## 人格',
-      '- 开朗',
-      '- 与远野汉娜组成"黄绿组合"，处于**恋爱关系**，愿为对方付出生命。',
-      '- 天然呆'
-    ].join('\n');
-    const withSoul = { ...TEMPLATE, 'SOUL.md': soul };
-
-    const payload = builtinPayload('companion', withSoul, t, FACTS, 'zh');
-
-    // Exactly the marked line goes; every other line survives verbatim.
-    expect(payload.content['SOUL.md']).not.toContain('恋爱关系');
-    expect(payload.content['SOUL.md']).toBe(['# SOUL.md', '', '## 人格', '- 开朗', '- 天然呆'].join('\n'));
-    // The other built-ins keep the template verbatim.
-    expect(builtinPayload('sherry', withSoul, t, FACTS, 'zh').content['SOUL.md']).toBe(soul);
-  });
-
-  it('reads the shipped SOUL templates and drops their relationship line in all four languages', () => {
-    // Self-guarding: a reworded template line turns this red instead of
-    // silently shipping the couple pairing to a companion session.
-    for (const lang of ['zh', 'en', 'ja', 'ko']) {
-      const marker = COMPANION_DROPPED_RELATIONSHIP_MARKERS[lang]!;
-      const path = join(process.cwd(), '..', 'workspace', 'template', lang, 'SOUL.md');
-      const template = readFileSync(path, 'utf8');
-      expect(template, lang).toContain(marker);
-
-      const stripped = stripRelationshipLines(template, lang);
-
-      expect(stripped, lang).not.toContain(marker);
-      // One line dropped, nothing else touched.
-      expect(template.split('\n').length - stripped.split('\n').length, lang).toBe(1);
+  it('pins no skills for either built-in', () => {
+    expect(builtinAgentConfig()).toEqual({});
+    for (const id of ['pure', 'sherry'] as const) {
+      expect(builtinPayload(id, TEMPLATE, t).agent).toEqual({});
     }
-    // An unknown locale (or a template without the marker) comes back untouched.
-    expect(stripRelationshipLines('a\nb', 'fr')).toBe('a\nb');
-  });
-
-  it('reads the shipped templates and drops their task sections in all four languages', () => {
-    // Self-guarding: a reworded template heading turns this red instead of
-    // silently shipping the orchestration doctrine to a companion session.
-    for (const lang of ['zh', 'en', 'ja', 'ko']) {
-      const path = join(process.cwd(), '..', 'workspace', 'template', lang, 'AGENTS.md');
-      const template = readFileSync(path, 'utf8');
-      const stripped = stripTaskSections(template, lang);
-
-      expect(stripped, lang).not.toMatch(/ORCHESTRATOR|ORCHESTRATOR|オーケストレーター|오케스트레이터/);
-      expect(stripped, lang).not.toMatch(/NEVER THE IMPLEMENTER|実装者では|구현자가/);
-      expect(stripped.length, lang).toBeLessThan(template.length);
-      expect(stripped, lang).toContain('# AGENTS.md');
-      // The 边界 ("Boundaries") section survives in every language (its bullets), and
-      // so does the clarify-first rule: only 任务分配 / 任务执行 are stripped.
-      expect(stripped.split('\n').filter(line => line.startsWith('- ')).length, lang).toBe(5);
-    }
-  });
-
-  it('refuses to compose a preset whose restriction needs the catalogue', () => {
-    // A silent `{}` would apply the OPPOSITE of what these presets promise.
-    for (const id of ['pure', 'companion'] as const) {
-      expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('skill catalogue is unavailable');
-    }
-    // Full has no opinion at all, so it never needs the catalogue.
-    expect(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
-  });
-
-  it('reads the facts off an agent-config store', () => {
-    const facts = presetCatalogFacts({ catalog: { skills: FACTS.skills } });
-
-    expect(facts.skills).toBe(FACTS.skills);
   });
 
   it('loads a built-in payload from the language template and a saved preset from its row', async () => {
     bridge.readSystemPromptTemplate.mockResolvedValue(TEMPLATE);
 
-    const builtin = await loadPresetPayload(catalogEntries([])[2]!, 'zh', t, NO_AGENT);
+    const builtin = await loadPresetPayload(catalogEntries([])[1]!, 'zh', t);
     expect(bridge.readSystemPromptTemplate).toHaveBeenCalledWith('zh');
     expect(builtin.content['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
 
-    const user = await loadPresetPayload(catalogEntries([userPreset()])[3]!, 'zh', t, NO_AGENT);
+    const user = await loadPresetPayload(catalogEntries([userPreset()])[2]!, 'zh', t);
     expect(user.content).toEqual({
       'AGENTS.md': 'A',
       'SOUL.md': 'S',
@@ -315,18 +164,18 @@ describe('persona catalogue', () => {
     });
   });
 
-  it('applies a payload through the API (verified) and the global character profile', async () => {
+  it('applies a built-in payload through the preset write route', async () => {
     const written: Record<string, string> = {};
-    bridge.writeSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
+    bridge.writePresetSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
       Object.assign(written, map);
     });
     bridge.readSystemPrompt.mockImplementation(async () => ({ ...written }));
-    const payload = builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh');
+    const payload = builtinPayload('sherry', TEMPLATE, t);
 
     await applyPresetPayload(payload);
 
-    expect(bridge.writeSystemPrompt).toHaveBeenCalledWith(payload.content);
-    // The applied character is Full's shipped default (both roles named).
+    expect(bridge.writePresetSystemPrompt).toHaveBeenCalledWith(payload.content);
+    expect(bridge.writeSystemPrompt).not.toHaveBeenCalled();
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
       aiName: '橘雪莉',
@@ -336,12 +185,18 @@ describe('persona catalogue', () => {
     });
   });
 
-  it('pins a skill list on every restricted preset and nothing on 全量', () => {
-    for (const id of ['pure', 'companion'] as const) {
-      const payload = builtinPayload(id, TEMPLATE, t, FACTS, 'zh');
-      expect(payload.agent!.skills).toBeTruthy();
-    }
-    expect(builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh').agent).toEqual({});
+  it('applies an ordinary persona payload through the community write route', async () => {
+    const payload = {
+      content: { 'SOUL.md': 'S', 'USER.md': 'U', 'ROLE.md': 'R' },
+      character: { aiName: '', aiAvatar: '', userName: '', userAvatar: '' }
+    };
+    bridge.writeSystemPrompt.mockResolvedValue(undefined);
+    bridge.readSystemPrompt.mockResolvedValue(payload.content);
+
+    await applyPresetPayload(payload);
+
+    expect(bridge.writeSystemPrompt).toHaveBeenCalledWith(payload.content);
+    expect(bridge.writePresetSystemPrompt).not.toHaveBeenCalled();
   });
 
   it('writes the agent block to the session when the apply names one', async () => {
@@ -354,7 +209,7 @@ describe('persona catalogue', () => {
 
     await applyPresetPayload(
       {
-        content: { 'AGENTS.md': 'A' },
+        content: { 'SOUL.md': 'S' },
         character: {
           aiName: '',
           aiAvatar: '',
@@ -371,17 +226,17 @@ describe('persona catalogue', () => {
     // Without a session the call is skipped (no session exists yet).
     agentBridge.setAgentConfig.mockClear();
     await applyPresetPayload({
-      content: { 'AGENTS.md': 'A' },
+      content: { 'SOUL.md': 'S' },
       character: { aiName: '', aiAvatar: '', userName: '', userAvatar: '' }
     });
     expect(agentBridge.setAgentConfig).not.toHaveBeenCalled();
   });
 
   it('throws when the write cannot be verified (the caller surfaces it)', async () => {
-    bridge.writeSystemPrompt.mockResolvedValue(undefined);
+    bridge.writePresetSystemPrompt.mockResolvedValue(undefined);
     bridge.readSystemPrompt.mockResolvedValue({ 'AGENTS.md': 'something else' });
 
-    await expect(applyPresetPayload(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh'))).rejects.toThrow(
+    await expect(applyPresetPayload(builtinPayload('sherry', TEMPLATE, t))).rejects.toThrow(
       'applied content verification failed'
     );
     expect(db.cacheCharacter).not.toHaveBeenCalled();

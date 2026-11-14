@@ -1,8 +1,8 @@
-# 📦 TodoList Data Layer — Plans, Boulder, Ledger & todos.db
+# 📦 TodoList Data Layer — Plans, Boulder, Ledger & registry.db
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Part of [TodoList](../README.md): the session-scoped data stores behind the planning layer — plan files, boulder state, the evidence ledger, and the todos.db schema.
+> Part of [TodoList](../README.md): the session-scoped data stores behind the planning layer — plan files, boulder state, the evidence ledger, and the registry.db schema.
 
 ---
 
@@ -71,11 +71,11 @@ Persistent work state:
 }
 ```
 
-### Evidence Ledger (src/data/evidence-ledger.db)
+### Evidence Ledger (`src/data/registry.db` (`evidence_events` table))
 
 SQLite table `evidence_events` (WAL): the shared verification audit trail. Rows are INSERTed and never UPDATEd; retention deletes old rows. It is written by `agent/tools/pub_base/evidence_recorder.py` and read by `agent/tools/taskflow/evidence_collector.py`; the producers, row schemas, the derived-staleness rule, the summary format, retention and the gates that consume it are documented in [Evidence Ledger](../../gates/evidence-ledger/README.md).
 
-### todos.db — Session-Level TODO Storage
+### registry.db — Session-Level TODO Storage
 
 ```sql
 CREATE TABLE IF NOT EXISTS todos (
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `step_id`  | Linked TaskFlow step id (e.g. `step-2`), for re-reading DAG status |
 | `todo_id`  | Stable per-session identity shown as `#N`; local patch/remove/reattach address it. `position` is display order only |
 
-> **Design boundary**: `todos.db` does **not** hold `depends_on` / DAG state / step status. The dependency graph, `blocked/ready/dispatched/done` and unlock logic are all provided by TaskFlow. The todo only points to the corresponding flow step via `flow_id`/`step_id`; DAG status is re-read via `taskflow_inspect(action="summary", flow_id)`.
+> **Design boundary**: `registry.db` does **not** hold `depends_on` / DAG state / step status. The dependency graph, `blocked/ready/dispatched/done` and unlock logic are all provided by TaskFlow. The todo only points to the corresponding flow step via `flow_id`/`step_id`; DAG status is re-read via `taskflow_inspect(action="summary", flow_id)`.
 
 CRUD interface:
 

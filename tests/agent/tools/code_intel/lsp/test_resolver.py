@@ -290,3 +290,11 @@ class TestConfigSurface:
         }
         assert LSP["lsp_max_concurrent_servers"] >= 1
         assert LSP["lsp_idle_shutdown_s"] > 0
+        # Edit sync / passive injection / auto-diagnostics defaults.
+        assert LSP["lsp_max_restarts"] == 3
+        assert LSP["lsp_content_modified_max_retries"] == 3
+        assert LSP["lsp_content_modified_backoff_s"] == 0.5
+        assert LSP["lsp_auto_diagnostics_enabled"] is True
+        assert LSP["lsp_auto_diagnostics_max_files"] == 20
+        assert LSP["lsp_diagnostics_inject_max_files"] == 10
+        assert LSP["lsp_diagnostics_inject_max_errors"] == 20

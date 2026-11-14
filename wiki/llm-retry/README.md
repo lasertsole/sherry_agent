@@ -40,6 +40,10 @@ A completion with no text, no tool calls and no usage consumes one ordinary retr
 
 A fallback candidate starts a new model request, so its retry budget starts at zero. Without a cap, a chain of N candidates could issue `11 × N` physical requests. Sherry therefore tracks `llm_fallback_switches` per turn and refuses a switch once `max_fallback_switches` (default `1`) is reached; `0` also disables a sticky candidate. The session's sticky fallback index is unchanged: later turns still start on the candidate that already won.
 
+## Per-Turn Physical Call Cap 
+
+The budgets above are per MODEL CALL, and several layers re-enter this middleware for the same user message (MaxTokensBoost, the overflow-recovery loop, the mid-stream stub recall). `max_physical_calls_per_turn` (default `200`; `0` disables) counts every physical request in the session state register, shared across all those layers, and raises `CallBudgetExceededError` once the cap is spent instead of letting the nested budgets multiply. `before_agent` resets the counter. The cap sits above the main `IterationBudget` (180 logical calls), so an ordinary long turn is unaffected while retry amplification is bounded.
+
 ## Stale-Streak Scope
 
 `llm_stale_streak` counts consecutive timeout-classified failures. With `stale_giveup_scope = "turn"` (default), `before_agent` clears it at every main-agent turn; the breaker still aborts the current turn at `stale_giveup_threshold = 5`. `"session"` restores the old cross-turn behavior. ZCode has no equivalent cross-turn breaker; this is deliberate Sherry protection, not a parity claim.

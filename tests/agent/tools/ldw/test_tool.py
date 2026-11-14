@@ -58,6 +58,46 @@ async def test_missing_session_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compile_is_refused_when_flow_extraction_is_off(monkeypatch) -> None:
+    """预设角色 → 高级: the flow switch blocks LDW compilation, not future replays."""
+    monkeypatch.setattr(
+        tool_mod,
+        "resolve_session_plan_identity",
+        lambda _sid: type("I", (), {"key": "k1"})(),
+    )
+    monkeypatch.setattr("runtime.session.extraction.flow_extraction_enabled", lambda _sid="": False)
+
+    def _knowledge(*_args, **_kwargs):
+        raise AssertionError("compile must not read the DAG while the switch is off")
+
+    monkeypatch.setattr(tool_mod, "plan_knowledge_from_flow", _knowledge)
+
+    tool = WorkflowReplayTool()
+    payload = json.loads(await tool._arun(action="compile", session_id="sess"))
+
+    assert payload["ok"] is False
+    assert "flow extraction is disabled" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_flow_switch(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tool_mod,
+        "resolve_session_plan_identity",
+        lambda _sid: type("I", (), {"key": "k1"})(),
+    )
+    monkeypatch.setattr(tool_mod, "replay_count", lambda _key: 0)
+    monkeypatch.setattr(tool_mod, "find_ldw_script", lambda _key: None)
+    monkeypatch.setattr(tool_mod, "plan_knowledge_from_flow", lambda _sid, **_kwargs: None)
+    monkeypatch.setattr("runtime.session.extraction.flow_extraction_enabled", lambda _sid="": False)
+
+    tool = WorkflowReplayTool()
+    payload = json.loads(await tool._arun(action="status", session_id="sess"))
+
+    assert payload["flow_extraction_enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_replay_marks_degraded_as_ok(monkeypatch) -> None:
     monkeypatch.setattr(
         tool_mod,

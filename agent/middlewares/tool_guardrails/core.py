@@ -97,6 +97,17 @@ _STATE_LOCKS: dict[str, threading.Lock] = {}
 _STATE_LOCKS_GUARD = threading.Lock()
 _MAX_RECORDS = 200
 
+
+def clear_session_state(session_id: str) -> bool:
+    """Drop one session's mutation lock (session purge).
+
+    The lock map is keyed by session id and had no other pruning path, so a
+    long-lived server retained one entry per session it ever guarded.
+    """
+    with _STATE_LOCKS_GUARD:
+        return _STATE_LOCKS.pop(session_id, None) is not None
+
+
 _ACTION_RANK = {
     GuardrailAction.ALLOW: 0,
     GuardrailAction.WARN: 1,

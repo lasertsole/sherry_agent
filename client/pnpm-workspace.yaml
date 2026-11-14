@@ -31,7 +31,11 @@ overrides:
   '@intlify/core@<11.4.14': '>=11.4.14'
   '@intlify/core-base@<11.4.14': '>=11.4.14'
   '@intlify/shared@<11.4.14': '>=11.4.14'
-  # deepmerge has no patched upstream release (GHSA-...): left at 4.3.1.
+  # GHSA-gcqx-w48m-w2h4 / CVE-2026-93753: deepmerge 4.3.1 is the latest
+  # published release and no patched version exists. Only the Nuxt build
+  # toolchain (nitropack -> @rollup/plugin-node-resolve) uses it, at build
+  # time; the shipped SPA bundle never contains it. Accepted at low severity
+  # (dismissed on GitHub as tolerable_risk) until upstream publishes a fix.
   'svgo@>=4.0.0 <4.1.0': '>=4.1.0'
   # katex: transitive via @eslint/markdown > micromark-extension-math (still
   # declares ^0.16); forced to the patched line for GHSA-238p-pmpm-9mq7. Only

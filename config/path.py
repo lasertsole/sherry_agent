@@ -316,11 +316,19 @@ def is_allowed_skill_path(skill_file: Path, skills_dir: Path | None = None) -> b
 
     ``skills_dir`` defaults to :data:`SKILLS_DIR`; callers that override the
     skills root (e.g. tests) pass it explicitly.
+
+    BOTH sides are resolved before the containment check: a lexically
+    under-root path can still be a symlink to somewhere else, and a skill
+    directory or ``SKILL.md`` plantable by a third-party install must not let
+    discovery read (or a later write follow) content outside the tree. A
+    symlink that resolves back INSIDE the root stays allowed, and a symlinked
+    root itself works because both sides go through ``resolve()``. An
+    unresolvable path (loop / permission) fails closed.
     """
     base = SKILLS_DIR if skills_dir is None else skills_dir
     try:
-        rel = skill_file.relative_to(base)
-    except ValueError:
+        rel = skill_file.resolve().relative_to(base.resolve())
+    except (OSError, RuntimeError, ValueError):
         return False
     return bool(rel.parts) and rel.parts[0] in SKILL_DISCOVERY_ROOTS
 
@@ -423,15 +431,26 @@ def resolve_boulder_path() -> Path:
     return SRC_DIR / "data" / "boulder.json"
 
 
+def resolve_registry_db_path() -> Path:
+    """Return the shared registry SQLite path (``SRC_DIR/data/registry.db``).
+
+    One file holds the subagent run registry, TaskFlow flows, todos and the
+    evidence ledger. They are separate tables with separate repositories; the
+    shared file removes the four-file scatter and lets flow-scoped evidence be
+    read without cross-database plumbing.
+    """
+    return SRC_DIR / "data" / "registry.db"
+
+
 def resolve_evidence_ledger_path() -> Path:
-    """Return the absolute evidence-ledger SQLite path (``SRC_DIR/data/evidence-ledger.db``).
+    """Return the absolute evidence-ledger SQLite path (``SRC_DIR/data/registry.db``).
 
     The ledger deliberately stays repo-scoped (not session-scoped): it is the
     audit trail shared across sessions that verify the same plan. The legacy
     ``evidence-ledger.jsonl`` beside it is imported once on first open and then
     renamed to ``.migrated``. The ``data`` directory is created on first access.
     """
-    return SRC_DIR / "data" / "evidence-ledger.db"
+    return resolve_registry_db_path()
 
 
 def subagent_model_caps_path() -> Path:

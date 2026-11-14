@@ -45,7 +45,7 @@
 
 两条刻意的边界：
 
-- 终节点是符号链接时一律拒绝（`ELOOP`，经由 `_open_no_follow`），因此该助手不能复用 `pub/func/atomic_replace.py`——后者是故意跟随链接的。
+- 路径的**每一段**都拒绝符号链接：`_open_no_follow` 从 `/` 开始用 `O_NOFOLLOW` + `dir_fd` 逐段打开父目录，临时文件、`os.replace` 与就地回退全部使用同一个已验证的父目录 fd。校验之后被换成符号链接的目录无法再把读或写重定向（中间链接在 Linux 上可能报 `ENOTDIR`）。因此该助手不能复用 `pub/func/atomic_replace.py`——后者是故意跟随链接的。
 - 文件系统拒绝 rename 时，助手降级为就地写——可用性优先于原子性，并以 WARNING 记日志。
 
 ### 2. 两层 CAS

@@ -15,7 +15,7 @@
   - [计划文件 (workspace/sessions/<session_id>/plans/*.md)](data/README.zh.md#计划文件-workspacesessionssession_idplansmd)
   - [Boulder 状态 (src/data/boulder.json)](data/README.zh.md#boulder-状态-srcdataboulderjson)
   - [证据账本](../gates/evidence-ledger/README.zh.md)
-  - [todos.db — 会话级 TODO 存储](data/README.zh.md#todosdb--会话级-todo-存储)
+  - [registry.db — 会话级 TODO 存储](data/README.zh.md#registrydb--会话级-todo-存储)
 - [服务层](#服务层)
 - [工具层](#工具层)
 - [编排执行层](#编排执行层)
@@ -41,7 +41,7 @@
 | 归属     | 规划与纪律层（本文）                                | TaskFlow（既有系统）                                                                      |
 | 作用范围 | 单个 session，轻量                                  | 跨 session，durable                                                                       |
 | 状态内容 | todo 的 content/status/priority/category/delegation | step 的 depends_on/status/child_session_key/results                                       |
-| 持久化   | `todos.db`（会话级）                                | `taskflow_registry.db` + flow `state_json`                                                |
+| 持久化   | `registry.db`（`todos` 表）                                | `registry.db`（`task_flows` 表）+ flow `state_json`                                                |
 | 注入方式 | 系统提示词 block（每次压缩后重建，天然免疫压缩）    | 工具返回文本（`taskflow_inspect(action="summary")` 回读）                                                   |
 | 主要职责 | 计划、可见性、纪律强制（E1–E7）                     | 依赖满足、阻塞/解锁、并行派发、有界等待、结果注入                                         |
 | 是否调度 | 否                                                  | 是（`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`） |
@@ -52,11 +52,11 @@
 
 | 关注点                       | 权威源                | 说明                                                   |
 | ---------------------------- | --------------------- | ------------------------------------------------------ |
-| todo 是否完成                | `todos.db`            | 只有 `todowrite` 能改 todo 状态                        |
+| todo 是否完成                | `registry.db`            | 只有 `todowrite` 能改 todo 状态                        |
 | step 是否完成 / 依赖是否满足 | TaskFlow `state_json` | 只有 `taskflow_step(action="resume")` 能把 step 标 `done` 并解锁后继  |
 | 子会话是否还在跑             | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run` |
 | 计划文件进度（checkbox）     | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator 编辑 `- [ ]` → `- [x]`                    |
-| 执行证据                     | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`（共享，WAL，保留期/清理）       |
+| 执行证据                     | `src/data/registry.db` (`evidence_events` table)   | SQLite `EvidenceLedger`（共享，WAL，保留期/清理）       |
 | 活跃工作状态                 | `src/data/boulder.json`   | 计划激活/恢复                                          |
 
 ### 关联方式（唯一事实来源）
@@ -129,7 +129,7 @@ Layer 5  │ DAG 执行层 ★      │ 由 TaskFlow 提供: depends_on + blocke
 Layer 4  │ 编排执行层 ★      │ ulw-execute: plan→checkbox→sub-task→worker→verify，调用 TaskFlow
 Layer 3  │ 工具层            │ todowrite + todoread（DAG 由 taskflow_* 工具家族执行）
 Layer 2  │ 服务层            │ TodoService（EvidenceLedger 已移到 `pub_base/` 并共享；DAG 状态查询委派 TaskFlow）
-Layer 1  │ 数据存储层         │ todos.db (WAL) + boulder.json + ledger.db + plans/*.md + taskflow_registry.db
+Layer 1  │ 数据存储层         │ registry.db (WAL, todos + evidence tables) + boulder.json + plans/*.md
 ─────────│──────────────────│
 E1       │ 系统提示词强制     │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ 工具描述强制       │ todowrite docstring 格式规则
@@ -174,7 +174,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` 是验证审计轨迹背后的 SQLite 存储（`src/data/evidence-ledger.db`，WAL）：`append` + `read_all` 就是全部存储契约，调用方看到的行为仍是只追加；保留期会删除旧行。会话级视图读取同一份共享数据库。它已从 `todolist/` 迁到 `pub_base/`，由 todolist、TaskFlow、terminal 和文件工具共享，不再是 todolist 私有层。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
+`agent/tools/pub_base/evidence_ledger.py` 是验证审计轨迹背后的 SQLite 存储（`src/data/registry.db` (`evidence_events` table)，WAL）：`append` + `read_all` 就是全部存储契约，调用方看到的行为仍是只追加；保留期会删除旧行。会话级视图读取同一份共享数据库。它已从 `todolist/` 迁到 `pub_base/`，由 todolist、TaskFlow、terminal 和文件工具共享，不再是 todolist 私有层。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
 
 ### WS 推送
 
@@ -275,7 +275,7 @@ Phase 3: Execute next checkbox（调度全部交给 TaskFlow）
   → blocked 不派发；ready 步骤 taskflow_step(action="dispatch") 批量派发
   → taskflow_step(action="wait_all") → taskflow_step(action="resume")（注入结果，解锁后继）
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.db
+Phase 4: Verify and record evidence → 5 gates → `src/data/registry.db` (`evidence_events` table)
 Phase 5: Mark progress → 编辑 checkbox - [ ] → - [x]，不询问是否继续
 ```
 
@@ -329,7 +329,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 
 | Block                      | 数据源            | 上下文开销 | 说明                                             |
 | -------------------------- | ----------------- | ---------- | ------------------------------------------------ |
-| `_build_todo_block()`      | todos.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
+| `_build_todo_block()`      | registry.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 行      | 活跃工作状态                                     |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 

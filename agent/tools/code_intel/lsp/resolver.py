@@ -93,13 +93,20 @@ def _explicit_override(language: str) -> str | None:
     return stripped or None
 
 
-def _server_command(language: str) -> str | None:
-    """Return the configured command name/path for *language*, or ``None``."""
-    spec = LSP["lsp_supported_servers"].get(language)
-    if not spec:
+def _server_command(language: str, servers: dict[str, dict] | None = None) -> str | None:
+    """Return the configured command name/path for *language*, or ``None``.
+
+    The legacy per-language ``lsp_*_server`` fields still win for a spec that
+    is still the builtin one; a project/skill declaration (which replaces the
+    whole spec) is authoritative.
+    """
+    table = servers if servers is not None else LSP["lsp_supported_servers"]
+    spec = table.get(language)
+    if not spec or not spec.get("command"):
         return None
-    override = _explicit_override(language)
-    return override or spec["command"][0]
+    if spec == LSP["lsp_supported_servers"].get(language):
+        return _explicit_override(language) or spec["command"][0]
+    return spec["command"][0]
 
 
 def _resolve_local(command: str, cwd: str, suffixes: list[str], language: str) -> str | None:
@@ -172,9 +179,13 @@ def _resolve_uncached(command: str, work_dir: str, language: str) -> str | None:
     return None
 
 
-def resolve_lsp_server(language: str, cwd: str | None = None) -> str | None:
+def resolve_lsp_server(
+    language: str,
+    cwd: str | None = None,
+    servers: dict[str, dict] | None = None,
+) -> str | None:
     """Resolve the LSP server binary for *language*, or ``None`` when not installed."""
-    command = _server_command(language)
+    command = _server_command(language) if servers is None else _server_command(language, servers)
     if not command:
         return None
     work_dir = cwd or os.getcwd()
@@ -193,16 +204,21 @@ def resolve_lsp_server(language: str, cwd: str | None = None) -> str | None:
     return result
 
 
-def get_install_hint(language: str) -> str:
+def get_install_hint(language: str, servers: dict[str, dict] | None = None) -> str:
     """Return a human-readable install hint for a language's LSP server."""
-    return LSP["lsp_install_hints"].get(
-        language, f"Install the LSP server for {language} and ensure it is on PATH."
+    table = servers if servers is not None else LSP["lsp_supported_servers"]
+    spec = table.get(language) or {}
+    return str(
+        spec.get("install_hint")
+        or LSP["lsp_install_hints"].get(language)
+        or f"Install the LSP server for {language} and ensure it is on PATH."
     )
 
 
-def get_local_install_hint(language: str) -> str | None:
+def get_local_install_hint(language: str, servers: dict[str, dict] | None = None) -> str | None:
     """Return the project-local install command, or ``None`` when unavailable."""
-    server = LSP["lsp_supported_servers"].get(language)
+    table = servers if servers is not None else LSP["lsp_supported_servers"]
+    server = table.get(language)
     return server.get("local_install") if server else None
 
 

@@ -40,6 +40,12 @@ def _payload(response) -> dict:
     return json.loads(response.description)
 
 
+@pytest.fixture(autouse=True)
+def _allow_the_tmp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """M2: the picker only enumerates configured roots; the test tree is one."""
+    monkeypatch.setenv("SHERRY_DIR_PICKER_ROOTS", str(tmp_path))
+
+
 @pytest.fixture()
 def tree(tmp_path: Path) -> Path:
     """A level with two dirs, one file, and a hidden dir; plus a nested level."""
@@ -82,11 +88,21 @@ def test_navigating_into_a_child_moves_the_parent_pointer(tree: Path):
     assert inner.entries == []
 
 
-def test_the_parent_of_the_filesystem_root_is_none():
-    level = svc.list_subdirectories("/")
+def test_the_filesystem_root_is_outside_the_browse_roots():
+    """M2: an arbitrary absolute path (here ``/``) is refused, not enumerated."""
+    with pytest.raises(svc.FileBrowserError) as excinfo:
+        svc.list_subdirectories("/")
 
-    assert level.path == "/"
-    assert level.parent is None
+    assert excinfo.value.status == 403
+
+
+def test_an_allowed_root_offers_no_go_up_step(tree: Path):
+    """The go-up target must itself be allowed (or absent)."""
+    level = svc.list_subdirectories(str(tree))
+
+    assert level.path == str(tree.resolve())
+    # tmp_path is the configured browse root, so its child may step up to it.
+    assert level.parent == str(tree.parent.resolve())
 
 
 def test_empty_path_starts_at_the_server_users_home(tmp_path: Path, monkeypatch):
@@ -157,7 +173,8 @@ def test_an_unreadable_directory_is_refused_not_empty(tmp_path: Path):
         locked.chmod(0o755)
 
 
-def test_a_symlinked_directory_is_listed(tmp_path: Path):
+def test_a_symlinked_directory_is_not_listed(tmp_path: Path):
+    """L18: a link's target is never presented as an ordinary child folder."""
     real = tmp_path / "real"
     (real / "child").mkdir(parents=True)
     link = tmp_path / "link"
@@ -165,9 +182,9 @@ def test_a_symlinked_directory_is_listed(tmp_path: Path):
 
     level = svc.list_subdirectories(str(tmp_path))
 
-    assert [entry["name"] for entry in level.entries] == ["link", "real"]
+    assert [entry["name"] for entry in level.entries] == ["real"]
+    # An explicitly typed symlink still resolves once and lists its target.
     linked = svc.list_subdirectories(str(link))
-    # resolve() reports the real location, so the UI navigates the target.
     assert linked.path == str(real.resolve())
     assert [entry["name"] for entry in linked.entries] == ["child"]
 

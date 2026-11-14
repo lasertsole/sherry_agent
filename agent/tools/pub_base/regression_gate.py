@@ -292,6 +292,75 @@ def prioritized_sessions(
         return []
 
 
+#: Auto-diagnostics rows are written as ``lsp_diagnostics <project-relative path>``.
+#: They are not shell commands, so they get their own replay executor instead of
+#: going through the verifier allowlist.
+_LSP_COMMAND_PREFIX = "lsp_diagnostics "
+
+
+async def _run_lsp_diagnostics(command: str, root: Path, timeout_s: int) -> tuple[int | None, str]:
+    """Replay one auto-diagnostics row through the LSP client (no shell).
+
+    Returns ``(exit_code, output)``: 0 = no error-severity diagnostics, 1 = at
+    least one, ``None`` = could not produce a verdict (missing server, file,
+    timeout). Uses the SAME manager/client the tools use, so it shares the
+    server rather than starting a parallel one; ``None`` never marks broken.
+    """
+    try:
+        raw = command[len(_LSP_COMMAND_PREFIX) :].strip()
+        if not raw:
+            return None, "missing path"
+        candidate = Path(raw)
+        path = candidate if candidate.is_absolute() else root / candidate
+        try:
+            path = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            return None, f"unresolvable path: {exc}"
+        if not path.is_file():
+            return None, f"file missing: {raw}"
+
+        from agent.tools.code_intel.lsp.fallback import check_lsp_availability
+        from agent.tools.code_intel.lsp.manager import get_manager, lsp_server_cwd
+        from agent.tools.code_intel.lsp.protocol import (
+            detect_language,
+            format_diagnostic,
+            path_to_uri,
+        )
+
+        language = detect_language(str(path))
+        if not language:
+            return None, "no language server for this file"
+        cwd = lsp_server_cwd()
+        availability, message = await asyncio.to_thread(check_lsp_availability, language, cwd)
+        if availability != "available":
+            return None, str(message)
+        client, error = await asyncio.to_thread(get_manager().acquire, language, cwd, message)
+        if client is None:
+            return None, error or "language server unavailable"
+        uri = path_to_uri(str(path))
+        cached_before = client.cached_diagnostics(uri)
+        generation = client.diagnostics_generation(uri)
+        sync_error, changed = await asyncio.to_thread(client.refresh_from_disk, str(path))
+        if sync_error is not None:
+            return None, sync_error
+        if changed or cached_before is None or client.diagnostics_pending(uri):
+            published = await asyncio.to_thread(
+                client.wait_diagnostics_since, uri, generation, timeout_s
+            )
+        else:
+            published = cached_before
+        if published is None:
+            return None, "no diagnostics were published within the timeout"
+        formatted = [item for entry in published if (item := format_diagnostic(entry)) is not None]
+        errors = [item for item in formatted if item["severity"] == "error"]
+        summary = "; ".join(
+            f"{item['message']} (line {item['range']['start_line']})" for item in errors[:8]
+        )
+        return (1 if errors else 0), summary or f"{len(formatted)} diagnostic(s), no errors"
+    except Exception as exc:  # noqa: BLE001 - one row must not break the batch
+        return None, str(exc)
+
+
 async def _run(argv: list[str], cwd: Path, timeout_s: int) -> tuple[int | None, str]:
     """Run one argv without a shell; returns (exit_code|None, bounded output).
 
@@ -377,13 +446,15 @@ async def reverify_flow_evidence(
     creator_session_key: str = "",
     priority_session_keys: Sequence[str] = (),
 ) -> list[ReverifyResult]:
-    """Replay a flow's passed verification commands once; append broken/unmark.
+    """Replay a flow's verification commands once; append broken/unmark.
 
-    Evidence is grouped by session. Every unique passed command is replayed at
-    most once (``max_reverify_commands`` cap), in the flow's project root. A
-    pass appends ``unmark`` only for sessions whose evidence that command had
-    marked stale/broken; a failure appends ``broken`` for each affected
-    session. Skipped commands (unsafe, missing, timed out) append nothing.
+    Evidence is grouped by session. Every unique passed command — plus every
+    auto-diagnostics row, whose pass/fail is the state being re-checked — is
+    replayed at most once (``max_reverify_commands`` cap), in the flow's project
+    root. A pass appends ``unmark`` for sessions whose evidence that command had
+    marked stale/broken (and for auto-diagnostics rows, whose verdict the pass
+    clears); a failure appends ``broken`` for each affected session. Skipped
+    commands (unsafe, missing, timed out) append nothing.
 
     ``priority_session_keys`` (from declared ``file_deps``) moves those
     sessions' commands to the front; a stable sort keeps ledger order inside
@@ -404,7 +475,11 @@ async def reverify_flow_evidence(
             for index, record in enumerate(records):
                 if record.get("event"):
                     continue
-                if record.get("status") != "passed":
+                # Auto-diagnostics rows are replayed whether they passed or
+                # failed: the replay is what turns "still broken" into a
+                # [broken] verdict (and "now fixed" into an unmark).
+                is_lsp_row = str(record.get("kind") or "") == "lsp_diagnostics"
+                if record.get("status") != "passed" and not is_lsp_row:
                     continue
                 command = str(record.get("command") or "").strip()
                 if command:
@@ -449,12 +524,17 @@ async def reverify_flow_evidence(
 
         results: list[ReverifyResult] = []
         for command in commands:
-            argv = _safe_argv(command)
-            if argv is None:
-                logger.debug("regression gate: skipped unsafe command: {}", command[:200])
-                results.append(ReverifyResult(command, "skipped", detail="unsafe command"))
-                continue
-            exit_code, output = await _run(argv, root, timeout_s)
+            if command.startswith(_LSP_COMMAND_PREFIX):
+                # Auto-diagnostics evidence: an in-process LSP check, never a
+                # shell command, so the verifier allowlist does not apply.
+                exit_code, output = await _run_lsp_diagnostics(command, root, timeout_s)
+            else:
+                argv = _safe_argv(command)
+                if argv is None:
+                    logger.debug("regression gate: skipped unsafe command: {}", command[:200])
+                    results.append(ReverifyResult(command, "skipped", detail="unsafe command"))
+                    continue
+                exit_code, output = await _run(argv, root, timeout_s)
             if exit_code is None:
                 results.append(ReverifyResult(command, "skipped", detail=output[:500]))
                 continue
@@ -464,7 +544,12 @@ async def reverify_flow_evidence(
             if exit_code == 0:
                 for session_key, indexes in by_session.items():
                     records = grouped.get(session_key) or []
-                    if any(any(derive_evidence_state(records, index)) for index in indexes):
+                    needs_unmark = any(
+                        any(derive_evidence_state(records, index))
+                        or str(records[index].get("kind") or "") == "lsp_diagnostics"
+                        for index in indexes
+                    )
+                    if needs_unmark:
                         _append_unmark(session_key, command)
                 results.append(ReverifyResult(command, "passed", exit_code=exit_code))
             else:

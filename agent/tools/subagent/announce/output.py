@@ -50,9 +50,16 @@ def build_compact_announce_stats_line(runs: list[SubagentRunRecord]) -> str:
         for r in runs
         if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.KILLED
     )
+    budget_exhausted = sum(
+        1
+        for r in runs
+        if r.execution.outcome and r.execution.outcome.status == RunOutcomeStatus.BUDGET_EXHAUSTED
+    )
     total_runtime_ms = sum(r.accumulated_runtime_ms for r in runs)
 
     parts = [f"total={total} ok={ok} errors={errors} timeouts={timeouts} killed={killed}"]
+    if budget_exhausted:
+        parts.append(f"budget_exhausted={budget_exhausted}")
     if total_runtime_ms > 0:
         parts.append(f"runtime={total_runtime_ms / 1000:.1f}s")
 

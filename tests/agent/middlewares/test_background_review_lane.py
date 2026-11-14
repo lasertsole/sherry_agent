@@ -44,6 +44,11 @@ def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(review_mod, "judge_skill_update", _pass)
 
+    async def _generalizable(_context):
+        return review_mod._GeneralizabilityVerdict(True, "reusable procedure")
+
+    monkeypatch.setattr(review_mod, "_judge_task_generalizability", _generalizable)
+
 
 async def _wait_until(predicate, timeout: float = 2.0) -> None:
     """Poll ``predicate`` until true, failing the test on timeout."""

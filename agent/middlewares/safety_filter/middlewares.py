@@ -33,9 +33,9 @@ from .rules import apply_replacements, scan
 
 __all__ = ["InputSafetyFilter", "LLMModerationMiddleware", "OutputSafetyFilter"]
 
-#: Wall clock a review call may take before the filter fails open. A safety
-#: check that stalls the turn is worse than none: the provider's own alignment
-#: is still in the loop.
+#: Wall clock a review call may take before it is treated as unavailable. A
+#: safety check that stalls the turn is worse than none: ``on_keyword_hit``
+#: then fails open, while ``always`` fails closed.
 _MODERATION_TIMEOUT_S = 20.0
 
 _MODERATION_SYSTEM = (
@@ -177,7 +177,27 @@ class LLMModerationMiddleware(AgentMiddleware):
             return await handler(request)
         safe, reason = await _review(text, settings["llm_moderation_model"])
         if safe is None:
-            # Unreachable / unparseable review: fail open and say so once.
+            # Unreachable / unparseable review. The two strategies answer
+            # differently on purpose: ``always`` asked for EVERY message to be
+            # reviewed, so it fails CLOSED — silently letting the turn
+            # through would make the switch pointless when the judge is down.
+            # ``on_keyword_hit`` already has the keyword layer's verdict, so the
+            # optional second opinion fails open.
+            if settings["llm_moderation_mode"] == "always":
+                logger.warning(
+                    "safety filter: LLM moderation unavailable in always mode; blocking the turn ({})",
+                    reason,
+                )
+                session_id = _session_id(request.state)
+                notify_safety(
+                    session_id,
+                    layer="llm_moderation",
+                    action="block",
+                    rule_count=1,
+                    message=f"LLM 审核不可用（always 模式），已拦截：{reason}"[:200],
+                    snippet=text[:50],
+                )
+                return AIMessage(content=settings["safe_refusal_message"])
             logger.warning("safety filter: LLM moderation unavailable, allowing the turn")
             return await handler(request)
         if safe:
@@ -242,7 +262,8 @@ async def _review(text: str, model_name: str) -> tuple[bool | None, str]:
     """Ask the configured model whether ``text`` is safe.
 
     Returns ``(None, reason)`` when the review could not run (no model, request
-    failure, timeout, unparseable answer) — the caller then fails open. The
+    failure, timeout, unparseable answer); the caller decides fail-open vs
+    fail-closed by strategy (``always`` closes). The
     review uses the auxiliary family's provider/credentials with the configured
     model name, so one name identifies the reviewer.
     """

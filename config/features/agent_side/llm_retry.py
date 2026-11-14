@@ -24,6 +24,14 @@ class LlmRetryConfig(TypedDict):
     #: Maximum fallback-model switches per user turn (ZCode allows one); 0
     #: disables fallback for the turn, including a sticky candidate.
     max_fallback_switches: int
+    #: Cumulative PHYSICAL model calls one user turn may make, across every
+    #: nested retry layer (LLMRetry retries, empty-completion re-calls, the
+    #: MaxTokensBoost / overflow-recovery re-calls and the mid-stream stub
+    #: recall). 0 disables the cap. It is deliberately above the main
+    #: IterationBudget (180 logical calls): a normal turn never reaches it, but
+    #: multiplicative retry budgets cannot amplify a single message without
+    #: bound.
+    max_physical_calls_per_turn: int
     #: "turn" resets the timeout streak at every main-agent turn; "session"
     #: keeps the old cross-turn breaker.
     stale_giveup_scope: Literal["turn", "session"]
@@ -42,6 +50,7 @@ LLM_RETRY: LlmRetryConfig = {
     "empty_completion_retries": 1,
     "emit_retry_events": True,
     "max_fallback_switches": 1,
+    "max_physical_calls_per_turn": 200,
     "stale_giveup_scope": "turn",
     "stale_giveup_threshold": 5,
 }

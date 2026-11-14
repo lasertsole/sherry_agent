@@ -20,6 +20,9 @@ class MemoryToolConfig(TypedDict):
     memory_char_limit: int
     user_char_limit: int
     facts_char_limit: int
+    #: Hard cap on ACTIVE rows per target: the char budgets alone let thousands
+    #: of tiny entries accumulate (each ``§`` row costs only a few chars).
+    max_entries_per_target: int
     #: Idle days before an entry becomes eligible for usage-based pruning.
     max_unused_days: int
     #: Semantic recall: embedding + reranker retrieval of relevant entries.
@@ -35,6 +38,7 @@ MEMORY_TOOL: MemoryToolConfig = {
     "memory_char_limit": 2_200,
     "user_char_limit": 1_375,
     "facts_char_limit": 1_375,
+    "max_entries_per_target": 200,
     "max_unused_days": 90,
     "semantic_recall_enabled": False,
     "semantic_recall_top_k": 5,

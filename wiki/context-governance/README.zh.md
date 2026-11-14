@@ -125,7 +125,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **`message_search`** | FTS5/SQLite 搜索运行在 MesMemory 上，那里归档着**完整**工具结果与**完整**人类文本 —— 驱逐只压缩模型视图 |
 | **前缀缓存** | P1-9 按 id 原地更新消息（内容相同、id 相同）且不重写其他内容，因此只有当预览视图确实不同时才使模型可见前缀失效；工具驱逐发生在消息进入 state 之前，模型见到的自始至终只有预览这一版 |
 | **工具配对 / 净化器** | 所有替换都保留 `id` 与 `tool_call_id`；`sanitize_tool_use_result_pairing` 永远不需要为驱逐做修复，stub 依旧是合法的配对输入 |
-| **子代理会话** | 子代理管线**不**注册 `ContextEvictionMiddleware` 与 `MessagePersistenceMiddleware`：子转录保留完整工具结果，且只存在于 checkpoint |
+| **子代理会话** | 子代理管线注册与主链**完全相同**的 `ContextEvictionMiddleware`（不再有精简模式）：超过同一 20 000 字符阈值的工具结果写入子代理自己的 `evicted/` 目录，该会话可自行读回；共享的人类消息开关只匹配 `origin="user"`，子代理任务消息不带该标记，因此不会被驱逐；但**不**注册 `MessagePersistenceMiddleware`：子转录只存在于 checkpoint |
 
 ## 🧩 Provider 提示词缓存（Anthropic）
 
@@ -252,10 +252,10 @@ uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
 ## 🧹 清除语义与局限
 
 - **`clear_session` 一次清除全部。** `server/service/session_cleanup_service.py::purge_session` 删除该会话的 MesMemory 行（连同 `persisted_message_ids` 水位一起删除）、checkpointer 历史，以及整个 `SESSIONS_DIR/<session_id>/` 文件夹 —— 因此 **`evicted/` 文件与 `plans/` 随会话一并删除**（`config/path.py::session_plans_dir` 记录了同样的整目录契约）。内存寄存器最后清理。
-- **驱逐只是模型视图压缩，绝不是删除。** 本页压缩的每份载荷要么归档在 MesMemory、要么全文留在图 state（人类消息）、要么在磁盘 `evicted/` 下 —— 且每份预览都带指针。
+- **驱逐只是模型视图压缩，绝不是删除。** 本页压缩的每份载荷要么归档在 MesMemory、要么全文留在图 state（人类消息）、要么在磁盘 `evicted/` 下 —— 且每份预览都带指针。子代理自己的 `evicted/` 属于会话私有树，读写免 HITL，因此预览同样可恢复；只有卸载失败才回退到内存硬截断。
 - **`evicted/` 目录归会话所有，但没有垃圾回收。** 文件活到 `clear_session` 为止；没有逐消息 TTL。长会话 + 大量巨型工具结果会在 `workspace/sessions/<session_id>/evicted/` 下持续累积磁盘占用。
 - **行窗口缩不下去的载荷回退到按字符预算的预览。** 行数 ≤ 10 时 5 头/5 尾窗口重叠、会把原文抄两遍（无换行的正文是极端情形）；回退方案改为把每行截到 2 048 字符、每侧截到 8 192，于是 50 000 字符的单行仍会以约 4 300 字符的预览被驱逐。`len(preview) >= len(text)` 守卫保留为最终兜底。
 - **`read_file` 切片不可从切片自身恢复 —— 这是设计。** 源文件才是恢复路径；提示明确告诉模型如何续读。只有文件缺失/被删才会失效。
 - **人类消息驱逐仅限尾部消息。** 巨型载荷之后如果还有另一个用户回合，它不会被重新检视；"只看最后一条"是刻意设计，避免重翻已定历史。
 - **尾部裁剪只有在尾部批次够大时才有用。** 若上下文被人类回合或非工具消息占满，则退化为既有路由；P1-2 是优化，不是保证。
-- **子代理转录不在范围内。** 子代理保留完整工具结果（不驱逐、不持久化）—— 其转录只存在于 checkpoint，永不进入客户端可见的 MesMemory 历史。
+- **子代理转录受限但不持久化。** 子代理注册与主链相同的驱逐配置：超大工具结果写入子代理自己的 `evicted/` 目录（该私有树读写免 HITL，预览指针可恢复）；任务/续跑消息不会被驱逐（人类驱逐只匹配 `origin="user"`，它们不带），也不会进入客户端可见的 MesMemory 历史。checkpoint 保存预览视图。

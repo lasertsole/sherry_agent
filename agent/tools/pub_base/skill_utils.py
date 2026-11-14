@@ -129,7 +129,38 @@ def normalize_skill_scope(raw: Any) -> str:
     return value if value in VALID_SKILL_SCOPES else "all"
 
 
-def skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
+#: Allowed values for the ``roles:`` frontmatter field — the names of
+#: ``agent.tools.subagent.types.functional_role.FunctionalRole``. Kept as a
+#: plain set so the loader can duplicate it without importing agent code.
+VALID_SKILL_ROLES = frozenset({"general", "researcher", "executor", "reviewer", "librarian"})
+
+
+def normalize_skill_roles(raw: Any) -> list[str] | None:
+    """Normalize a ``roles:`` frontmatter value to a list of role names.
+
+    ``None`` (the field is absent — every caller sees the skill), or a list
+    whose valid entries are kept in order. A scalar string is accepted as a
+    single role (``roles: executor``). Invalid entries are dropped; a value
+    with NO valid entry degrades to ``None`` (visible to every role), the
+    fail-open direction — the write path refuses invalid values instead.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return None
+    roles: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if value in VALID_SKILL_ROLES and value not in roles:
+            roles.append(value)
+    return roles or None
+
+
+def skill_visible_to(
+    skill: dict[str, Any], caller_scope: str, caller_role: str | None = None
+) -> bool:
     """Return True when *skill* is visible to a caller with *caller_scope*.
 
     Visibility contract (shared with skills/loader.py and the subagent tool
@@ -139,14 +170,26 @@ def skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
     - ``caller_scope == "subagent"`` sees skills whose scope != ``main_only``.
     - Unknown caller scopes degrade to ``"main"``; a skill with an absent or
       invalid ``scope`` defaults to ``"all"`` (visible to every caller).
+    - ``roles`` is ORTHOGONAL to scope: a skill carrying ``roles: [...]`` is
+      visible only to those functional roles. Absent roles = every role, and a
+      caller without a role (the main agent, or the identity GENERAL role)
+      skips the roles check entirely.
     """
     scope = normalize_skill_scope(skill.get("scope") if isinstance(skill, dict) else None)
     caller = str(caller_scope or "").strip().lower()
     if caller not in ("main", "subagent"):
         caller = "main"
     if caller == "subagent":
-        return scope != "main_only"
-    return scope != "subagent_only"
+        if scope == "main_only":
+            return False
+    elif scope == "subagent_only":
+        return False
+    roles = normalize_skill_roles(skill.get("roles") if isinstance(skill, dict) else None)
+    if roles is not None and caller_role is not None:
+        role = str(caller_role).strip().lower()
+        if role and role not in roles:
+            return False
+    return True
 
 
 # Storage prefix: all skill config vars are stored under skills.config.*

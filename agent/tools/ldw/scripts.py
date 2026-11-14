@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+import ast
 from pathlib import Path
 from typing import Any
 
@@ -100,19 +100,57 @@ def write_ldw_script(
     return target
 
 
+#: The ONLY names a compiled LDW script may define. The compiler writes plain
+#: literals; anything else (an import, a call, a helper) is not a replay script
+#: and must never be executed in the orchestrator process.
+_ALLOWED_CONSTANTS = frozenset({"PLAN_KEY", "REQUIRED_AGENT_TYPES", "WORKFLOW_META"})
+
+
+def _read_script_constants(path: Path) -> dict[str, Any] | None:
+    """Parse the script as DATA: allowed literal assignments only, never execute.
+
+    The file lives under ``skills/auto`` (writable by the agent's own skill
+    tools), and ``exec_module`` ran whatever it contained with the server's full
+    permissions. A replay script only ever needs three literal constants, so the
+    loader AST-parses them and refuses imports/calls/assignments to anything
+    else. Returns None for a malformed, oversized, or non-literal file.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if len(text.encode("utf-8")) > int(LDW["script_max_bytes"]):
+        return None
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    values: dict[str, Any] = {}
+    for node in tree.body:
+        if (
+            not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(node.targets[0], ast.Name)
+            or node.targets[0].id not in _ALLOWED_CONSTANTS
+        ):
+            return None
+        try:
+            values[node.targets[0].id] = ast.literal_eval(node.value)
+        except (ValueError, SyntaxError):
+            return None
+    return values
+
+
 def load_ldw_script(plan_key: str, *, root: Path | None = None) -> dict[str, Any] | None:
     path = find_ldw_script(plan_key, root=root)
     if path is None:
         return None
-    try:
-        spec = importlib.util.spec_from_file_location(f"ldw_skill_{plan_key}", path)
-        if spec is None or spec.loader is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        meta = getattr(module, "WORKFLOW_META", None)
-        if isinstance(meta, dict) and str(meta.get("plan_key") or "") == plan_key:
-            return meta
-    except Exception as exc:  # noqa: BLE001 - a bad skill script is fail-open
-        logger.warning("LDW replay: cannot load {}: {}", path, exc)
+    values = _read_script_constants(path)
+    if values is None:
+        logger.warning("LDW replay: refusing a non-literal script at {}", path)
+        return None
+    meta = values.get("WORKFLOW_META")
+    if isinstance(meta, dict) and str(meta.get("plan_key") or "") == plan_key:
+        return meta
+    logger.warning("LDW replay: {} does not carry this plan's WORKFLOW_META", path)
     return None

@@ -48,7 +48,6 @@ class SubagentConfig(BaseModel):
     stale_unended_threshold_seconds: int = 7200  # 2 hours without an end signal
     recent_ended_window_seconds: int = 1800  # 30 min window to consider a run "recently ended"
     steer_rate_limit_ms: int = 2000
-    archive_after_minutes: int = 60  # 1 hour
     lifecycle_grace_period_seconds: float = 15.0
 
     attachments_enabled: bool = True

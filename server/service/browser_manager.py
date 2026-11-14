@@ -92,6 +92,12 @@ class BrowserPage:
     )
     alive: bool = True
     screencasting: bool = False
+    #: Passive debug capture (console / JS exceptions / failed requests).
+    debug_capture: bool = False
+    console_events: list[dict[str, Any]] = field(default_factory=list)
+    network_events: list[dict[str, Any]] = field(default_factory=list)
+    #: requestId -> {url, method}, so loadingFailed can name its URL.
+    network_requests: dict[str, dict[str, str]] = field(default_factory=dict)
     #: "page" for an ordinary tab, "devtools" for a devtools frontend target.
     kind: str = "page"
     #: For kind="devtools": the target id this frontend inspects.
@@ -249,6 +255,11 @@ class _BrowserManagerBase:
     def _require_transport(self) -> BrowserTransport: ...
     async def _nudge_paint(self, page: BrowserPage) -> None: ...
     async def _eval_raw(self, page: BrowserPage, expression: str, *, timeout: float) -> Any: ...
+    def subscribe_events(
+        self, page: BrowserPage, sink: Callable[[BrowserPage, str, dict[str, Any]], None]
+    ) -> None: ...
+    async def _enable_debug_capture(self, page: BrowserPage) -> None: ...
+    def _clear_debug(self, page: BrowserPage) -> None: ...
 
 
 class _BrowserPagePoolMixin(_BrowserManagerBase):
@@ -348,6 +359,7 @@ class _BrowserPagePoolMixin(_BrowserManagerBase):
             last_used=time.monotonic(),
         )
         await transport.call("Page.enable", session=page.cdp_session)
+        await self._enable_debug_capture(page)
         self._pages[page.page_id] = page
         return page
 
@@ -399,6 +411,283 @@ class _BrowserPagePoolMixin(_BrowserManagerBase):
                 except CdpError:
                     logger.debug("browser: LRU evict failed (best-effort)", exc_info=True)
                     pass
+
+
+class _BrowserDebugCaptureMixin(_BrowserManagerBase):
+    """Passive debugging: console, JS exceptions and failed network requests.
+
+    The CDP domains (``Runtime`` / ``Network`` / ``Log``) are enabled per page
+    and the events land in per-page ring buffers. Only failures are kept on the
+    network side (status >= 400 or ``loadingFailed``) and headers/body are never
+    read, so the buffer cannot become a cookie/credential sink.
+
+    The capture is fail-open and switchable: a domain that refuses to enable, a
+    malformed event or a page that navigates away only costs buffered entries.
+    """
+
+    def _debug_capture_enabled(self) -> bool:
+        """Live switch: sherry.jsonc App Config, with the env as an override.
+
+        Read per call (the file is tiny) so the 应用配置 entry applies without a
+        restart; an explicit ``SHERRY_BROWSER_DEBUG_CAPTURE`` still wins for a
+        single launch. The built-in config value is only the last-resort
+        fallback (tests / a broken settings file).
+        """
+        raw = os.environ.get("SHERRY_BROWSER_DEBUG_CAPTURE", "").strip().lower()
+        if raw:
+            return raw not in ("0", "false", "no", "off")
+        try:
+            from config.sherry_settings import get_sherry_setting
+
+            return bool(get_sherry_setting("browser.debug_capture"))
+        except Exception:  # noqa: BLE001 - a broken config must not kill capture
+            return bool(self.config.get("debug_capture", 1))
+
+    def _debug_limit(self) -> int:
+        return max(1, int(self.config.get("debug_buffer_max", 200)))
+
+    async def _enable_debug_capture(self, page: BrowserPage) -> None:
+        """Enable the CDP domains for one ordinary page (once)."""
+        if page.kind != "page" or page.debug_capture or not self._debug_capture_enabled():
+            return
+        page.debug_capture = True
+        self.subscribe_events(page, self._debug_sink)
+        transport = self._require_transport()
+        for method in ("Runtime.enable", "Network.enable", "Log.enable"):
+            try:
+                await transport.call(
+                    method,
+                    session=page.cdp_session,
+                    timeout=float(self.config["op_timeout_s"]),
+                )
+            except Exception:  # noqa: BLE001 - capture is advisory, the page is not
+                logger.debug("browser: {} failed (capture continues)", method, exc_info=True)
+
+    def _clear_debug(self, page: BrowserPage) -> None:
+        page.console_events.clear()
+        page.network_events.clear()
+        page.network_requests.clear()
+
+    @staticmethod
+    def _push(buffer: list[dict[str, Any]], item: dict[str, Any], limit: int) -> None:
+        buffer.append(item)
+        if len(buffer) > limit:
+            del buffer[: len(buffer) - limit]
+
+    @staticmethod
+    def _remote_text(value: object, *, limit: int = 500) -> str:
+        """A console argument's readable text (``RemoteObject`` shapes)."""
+        if not isinstance(value, dict):
+            return str(value)[:limit]
+        raw = value.get("value")
+        if raw is not None:
+            return str(raw)[:limit]
+        special = value.get("unserializableValue")
+        if special is not None:
+            return str(special)[:limit]
+        description = value.get("description")
+        if description:
+            return str(description)[:limit]
+        preview = value.get("preview")
+        if isinstance(preview, dict):
+            properties = preview.get("properties") or []
+            rendered = ", ".join(
+                f"{item.get('name')}: {item.get('value')}"
+                for item in properties[:20]
+                if isinstance(item, dict)
+            )
+            if rendered:
+                return rendered[:limit]
+        return str(value.get("type") or "")[:limit]
+
+    def _debug_sink(self, page: BrowserPage, method: str, params: dict[str, Any]) -> None:
+        """Buffer one raw CDP event (called on the server loop)."""
+        try:
+            limit = self._debug_limit()
+            if method == "Runtime.consoleAPICalled":
+                raw_type = str(params.get("type") or "log")
+                level = {
+                    "warning": "warn",
+                    "assert": "error",
+                    "error": "error",
+                    "debug": "debug",
+                }.get(raw_type, "info")
+                text = " ".join(
+                    self._remote_text(arg) for arg in (params.get("args") or [])[:30]
+                ).strip()
+                self._push(
+                    page.console_events,
+                    {
+                        "kind": "console",
+                        "level": level,
+                        "type": raw_type,
+                        "text": text[:2000],
+                    },
+                    limit,
+                )
+            elif method == "Runtime.exceptionThrown":
+                details = params.get("exceptionDetails") or {}
+                if not isinstance(details, dict):
+                    return
+                exception = details.get("exception") or {}
+                description = (
+                    self._remote_text(exception, limit=1000)
+                    if isinstance(exception, dict)
+                    else str(exception)[:1000]
+                )
+                text = str(details.get("text") or "Uncaught exception")
+                if description and description not in text:
+                    text = f"{text}: {description}"
+                stack = []
+                trace = details.get("stackTrace") or {}
+                for frame in (trace.get("callFrames") or [])[:10]:
+                    if not isinstance(frame, dict):
+                        continue
+                    stack.append(
+                        {
+                            "function": str(frame.get("functionName") or ""),
+                            "url": str(frame.get("url") or ""),
+                            "line": int(frame.get("lineNumber") or 0) + 1,
+                            "column": int(frame.get("columnNumber") or 0) + 1,
+                        }
+                    )
+                self._push(
+                    page.console_events,
+                    {
+                        "kind": "exception",
+                        "level": "error",
+                        "type": "exception",
+                        "text": text[:2000],
+                        "url": str(details.get("url") or ""),
+                        "line": int(details.get("lineNumber") or 0) + 1,
+                        "column": int(details.get("columnNumber") or 0) + 1,
+                        "stack": stack,
+                    },
+                    limit,
+                )
+            elif method == "Log.entryAdded":
+                entry = params.get("entry") or {}
+                if not isinstance(entry, dict):
+                    return
+                raw_level = str(entry.get("level") or "info")
+                level = "warn" if raw_level == "warning" else raw_level
+                self._push(
+                    page.console_events,
+                    {
+                        "kind": "log",
+                        "level": "info" if level == "verbose" else level,
+                        "type": str(entry.get("source") or "log"),
+                        "text": str(entry.get("text") or "")[:2000],
+                        "url": str(entry.get("url") or ""),
+                        "line": int(entry.get("lineNumber") or 0) + 1,
+                    },
+                    limit,
+                )
+            elif method == "Network.requestWillBeSent":
+                request_id = str(params.get("requestId") or "")
+                request = params.get("request") or {}
+                if request_id and isinstance(request, dict):
+                    page.network_requests[request_id] = {
+                        "url": str(request.get("url") or ""),
+                        "method": str(request.get("method") or "GET"),
+                    }
+                    while len(page.network_requests) > self._debug_limit() * 3:
+                        page.network_requests.pop(next(iter(page.network_requests)))
+            elif method == "Network.responseReceived":
+                response = params.get("response") or {}
+                if not isinstance(response, dict):
+                    return
+                status = int(response.get("status") or 0)
+                if status < 400:
+                    return
+                request_id = str(params.get("requestId") or "")
+                meta = page.network_requests.get(request_id, {})
+                self._push(
+                    page.network_events,
+                    {
+                        "kind": "response",
+                        "url": str(response.get("url") or meta.get("url") or ""),
+                        "method": str(meta.get("method") or "GET"),
+                        "status": status,
+                        "resource_type": str(params.get("type") or ""),
+                        "mime_type": str(response.get("mimeType") or ""),
+                        "from_cache": bool(response.get("fromDiskCache")),
+                    },
+                    limit,
+                )
+            elif method == "Network.loadingFailed":
+                request_id = str(params.get("requestId") or "")
+                meta = page.network_requests.get(request_id, {})
+                self._push(
+                    page.network_events,
+                    {
+                        "kind": "failure",
+                        "url": str(meta.get("url") or ""),
+                        "method": str(meta.get("method") or "GET"),
+                        "status": 0,
+                        "resource_type": str(params.get("type") or ""),
+                        "error": str(params.get("errorText") or "request failed"),
+                        "blocked_reason": str(params.get("blockedReason") or ""),
+                        "canceled": bool(params.get("canceled")),
+                    },
+                    limit,
+                )
+            elif method == "Page.frameNavigated":
+                frame = params.get("frame") or {}
+                if isinstance(frame, dict) and not frame.get("parentId"):
+                    self._clear_debug(page)
+        except Exception:  # noqa: BLE001 - one malformed event must not break the feed
+            logger.opt(exception=True).debug("browser: debug capture event failed")
+
+    def console_events(
+        self,
+        session_id: str,
+        page_id: str | None = None,
+        *,
+        level: str = "all",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """The page's buffered console/exceptions, newest LAST."""
+        page = self.page_for(session_id, page_id)
+        wanted = str(level or "all").strip().lower()
+        events = page.console_events
+        if wanted not in ("", "all"):
+            if wanted in ("warn", "warning"):
+                wanted = "warn"
+            events = [event for event in events if event.get("level") == wanted]
+        cap = max(1, min(int(limit or 100), self._debug_limit()))
+        return {
+            **page.info(),
+            "enabled": page.kind == "page" and self._debug_capture_enabled(),
+            "events": events[-cap:],
+            "buffered": len(page.console_events),
+        }
+
+    def network_events(
+        self,
+        session_id: str,
+        page_id: str | None = None,
+        *,
+        min_status: int = 400,
+        include_failures: bool = True,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """The page's buffered failed requests, newest LAST."""
+        page = self.page_for(session_id, page_id)
+        minimum = max(0, int(min_status))
+        events = [
+            event
+            for event in page.network_events
+            if (event.get("kind") == "response" and int(event.get("status") or 0) >= minimum)
+            or (include_failures and event.get("kind") == "failure")
+        ]
+        cap = max(1, min(int(limit or 100), self._debug_limit()))
+        return {
+            **page.info(),
+            "enabled": page.kind == "page" and self._debug_capture_enabled(),
+            "requests": events[-cap:],
+            "buffered": len(page.network_events),
+        }
 
 
 class _BrowserScreencastMixin(_BrowserManagerBase):
@@ -571,6 +860,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
                 timeout=float(self.config["op_timeout_s"]),
             )
             page.refs.clear()
+            self._clear_debug(page)
             finished = await self._wait_ready(page, float(self.config["nav_timeout_s"]))
         location = await self._page_location(page)
         page.url = location.get("url") or target
@@ -847,6 +1137,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
                 "Page.reload", session=page.cdp_session, timeout=float(self.config["op_timeout_s"])
             )
             page.refs.clear()
+            self._clear_debug(page)
             finished = await self._wait_ready(page, float(self.config["nav_timeout_s"]))
         location = await self._page_location(page)
         page.url = location.get("url") or page.url
@@ -902,6 +1193,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
                 timeout=timeout,
             )
             page.refs.clear()
+            self._clear_debug(page)
             finished = await self._wait_ready(page, float(self.config["nav_timeout_s"]))
         location = await self._page_location(page)
         page.url = location.get("url") or page.url
@@ -1075,7 +1367,12 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
             await asyncio.sleep(0.1)
 
 
-class BrowserManager(_BrowserInteractionMixin, _BrowserScreencastMixin, _BrowserPagePoolMixin):
+class BrowserManager(
+    _BrowserDebugCaptureMixin,
+    _BrowserInteractionMixin,
+    _BrowserScreencastMixin,
+    _BrowserPagePoolMixin,
+):
     """The process-wide browser: lazy launch, per-session pages, bounded verbs."""
 
     def __init__(

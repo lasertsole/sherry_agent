@@ -1,19 +1,24 @@
 """Factories for the optionally-independent internal LLM families.
 
-``TASKFLOW_LLM_*`` (TaskFlow decision calls) and ``COMPRESSION_LLM_*`` (the
-summarization middleware's own model) both follow the same three-way rule:
+``TASKFLOW_LLM_*`` (TaskFlow decision calls), ``COMPRESSION_LLM_*`` (the
+summarization middleware's own model) and the per-role subagent families
+(``EXECUTOR_LLM_*`` / ``RESEARCHER_LLM_*`` / ``REVIEWER_LLM_*`` /
+``LIBRARIAN_LLM_*``) follow the same three-way rule:
 
-1. ``<PREFIX>_MODEL_LOCAL=true`` → the auxiliary model's local branch. Decision
-   A of the plan: local mode REUSES the auxiliary GGUF, so enabling a family
-   costs no second download and the desktop bundle does not grow.
+1. ``<PREFIX>_MODEL_LOCAL=true`` → the fallback family's local branch. Decision
+   A of the plan: local mode REUSES an already-downloaded GGUF, so enabling a
+   family costs no second download and the desktop bundle does not grow.
 2. ``<PREFIX>_PROVIDER`` or ``<PREFIX>_API_BASE`` set → a remote client built
    exactly like the auxiliary one (same retry/timeout/max-output plumbing).
-3. Neither set → ``build_auxiliary_llm()`` — the backward-compatible fallback.
+3. Neither set → the fallback family — ``AUXILIARY_LLM`` by default, ``main``
+   for the per-role families (a role's spawn resolver only reaches its builder
+   when the family is configured, so an empty role family keeps the role's own
+   model tier).
 
 The remote branch is fail-open at BUILD time: a provider name that
 ``init_chat_model`` cannot resolve (a missing integration package, an unknown
-provider) falls back to the auxiliary model with a warning instead of taking
-the TaskFlow/compression surface down. A wrong endpoint that only fails at
+provider) falls back to the chosen family with a warning instead of taking the
+TaskFlow/compression/child surface down. A wrong endpoint that only fails at
 invoke time is NOT hidden — the call sites already own their fail-open
 reporting.
 """
@@ -21,7 +26,7 @@ reporting.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -35,22 +40,28 @@ from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kw
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.env_builder import ModelEnvBuilder, read_env
 
-__all__ = ["build_family_llm"]
+__all__ = ["build_family_llm", "family_configured"]
 
-# Read .models / .env before the first call site builds a client.
+#: Read .models / .env before the first call site builds a client.
 load_env()
 
+#: Which family an unconfigured (or locally-configured) family falls back to.
+FallbackFamily = Literal["auxiliary", "main"]
 
-def _build_auxiliary(temperature: float | None) -> Any:
-    """The fallback, resolved through the ``models`` package at CALL time.
 
-    Going through the package attribute (instead of binding
-    ``build_auxiliary_llm`` at import) keeps the existing test seam — tests
-    patch ``models.build_auxiliary_llm`` to inject a stub — working unchanged,
-    and keeps the lazy-export contract of ``models/__init__.py``.
+def _build_fallback(fallback: FallbackFamily, temperature: float | None) -> Any:
+    """The fallback model, resolved through the ``models`` package at CALL time.
+
+    Going through the package attribute (instead of binding the builder at
+    import) keeps the existing test seam — tests patch
+    ``models.build_auxiliary_llm`` / ``models.build_main_llm`` to inject a stub —
+    working unchanged, and keeps the lazy-export contract of
+    ``models/__init__.py``.
     """
     import models
 
+    if fallback == "main":
+        return models.build_main_llm(temperature=temperature)
     return models.build_auxiliary_llm(temperature=temperature)
 
 
@@ -62,20 +73,39 @@ def _family_is_configured(prefix: str) -> tuple[bool, bool]:
     return bool(provider or api_base), is_local
 
 
-def build_family_llm(prefix: str, temperature: float | None = None) -> Any:
-    """Build the model for one family (``TASKFLOW_LLM`` / ``COMPRESSION_LLM``).
+def family_configured(prefix: str) -> bool:
+    """Whether one family is deliberately configured (remote OR local).
+
+    The spawn resolver uses this to choose between a per-role family and the
+    role's own model tier: an unconfigured family must keep the existing tier
+    instead of silently redirecting the child.
+    """
+    remote_configured, is_local = _family_is_configured(prefix)
+    return remote_configured or is_local
+
+
+def build_family_llm(
+    prefix: str,
+    temperature: float | None = None,
+    *,
+    fallback: FallbackFamily = "auxiliary",
+) -> Any:
+    """Build the model for one family (``TASKFLOW_LLM`` / ``EXECUTOR_LLM`` / …).
 
     A fresh instance per call: the same event-loop binding rule as
     :func:`build_auxiliary_llm` (a cached client deadlocks across subagent
     threads), and the same temperature default (0 — these are deterministic
-    decision / summary calls).
+    decision / summary calls unless a caller binds another value).
+
+    ``fallback`` names the family an unconfigured or local family reuses:
+    ``"auxiliary"`` (the historical default) or ``"main"`` (per-role children).
     """
     remote_configured, is_local = _family_is_configured(prefix)
 
-    # Local mode wins over provider config (T4 / C7), and an unconfigured
-    # family follows the auxiliary model (T3 / C2).
+    # Local mode wins over provider config, and an unconfigured family follows
+    # its declared fallback family.
     if is_local or not remote_configured:
-        return _build_auxiliary(temperature)
+        return _build_fallback(fallback, temperature)
 
     from langchain.chat_models import init_chat_model
 
@@ -116,8 +146,9 @@ def build_family_llm(prefix: str, temperature: float | None = None) -> Any:
         return NormalizingChatModel(inner=inner)
     except Exception as exc:  # noqa: BLE001 - build-time fail-open (plan §3.5)
         logger.warning(
-            "{}: configured model could not be built ({}); falling back to the auxiliary model",
+            "{}: configured model could not be built ({}); falling back to the {} model",
             prefix,
             exc,
+            fallback,
         )
-        return _build_auxiliary(temperature)
+        return _build_fallback(fallback, temperature)

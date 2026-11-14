@@ -71,7 +71,13 @@ def _ptc_tools_map(
     from config.features import PTC
 
     base_tools = tools if tools is not None else build_main_tools()
-    filtered = apply_tool_policy(base_tools, run.inherited_tool_allow, effective_deny)
+    role = str(getattr(run, "functional_role", "") or "").strip()
+    filtered = apply_tool_policy(
+        base_tools,
+        run.inherited_tool_allow,
+        effective_deny,
+        caller_role=None if role in ("", "general") else role,
+    )
     allowed = set(PTC["ptc_allowed_tools"])
     return {
         name: tool

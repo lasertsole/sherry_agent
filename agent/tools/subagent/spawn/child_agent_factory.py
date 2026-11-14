@@ -31,10 +31,27 @@ _STRUCTURED_OUTPUT_REJECTION_MARKERS = (
     "structured output",
 )
 
+#: Transient provider/transport failures must never degrade a model: a 429 or a
+#: reset connection that happens to mention ``response_format`` is not a
+#: capability rejection, and persisting a degradation for it costs every later
+#: spawn.
+_TRANSIENT_EXCLUSION_MARKERS = (
+    "429",
+    "rate_limit",
+    "rate limit",
+    "too many requests",
+    "timeout",
+    "timed out",
+    "connection",
+    "temporarily",
+)
+
 
 def _is_structured_output_rejection(exc: BaseException) -> bool:
     """True when ``exc`` looks like a provider rejecting the JSON strategy."""
     text = f"{type(exc).__name__}: {exc}".lower()
+    if any(marker in text for marker in _TRANSIENT_EXCLUSION_MARKERS):
+        return False
     return any(marker in text for marker in _STRUCTURED_OUTPUT_REJECTION_MARKERS)
 
 
@@ -150,6 +167,7 @@ def _build_child_middlewares(
     main_llm_context_window: int,
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
     spawn_depth: int = 1,
+    session_id: str = "",
 ) -> list[Any]:
     """Assemble the child-agent middleware pipeline.
 
@@ -162,6 +180,11 @@ def _build_child_middlewares(
     depth-scaled summary budget into a :class:`ChildBuildContext`. The executor
     is the write-capable worker and gets the larger iteration budget; every
     other role keeps the standard worker budget.
+
+    ``session_id`` is the CHILD session key; the main session behind it is what
+    carries the user's 预设角色 → 高级 sub-agent ceiling. The effective value is
+    a CAP (``min(role limit, ceiling)``), so the default 90 leaves a worker's 60
+    and an executor's 90 exactly as they were.
     """
     from agent.middlewares.specs import ChildBuildContext, build_child_middlewares
     from config.features import ITERATION_BUDGET
@@ -171,6 +194,20 @@ def _build_child_middlewares(
         if functional_role == FunctionalRole.EXECUTOR
         else ITERATION_BUDGET["worker_max_iterations"]
     )
+    if session_id:
+        try:
+            from runtime.session.extraction import effective_extraction_config, root_session_id
+
+            sub_ceiling = int(
+                effective_extraction_config(root_session_id(session_id))["iteration_budget_sub"]
+            )
+            iteration_limit = min(iteration_limit, sub_ceiling)
+        except Exception:  # noqa: BLE001 - a settings read must not block a spawn
+            logger.warning(
+                "Subagent: extraction ceiling unavailable for session {}; keeping role limit {}",
+                session_id,
+                iteration_limit,
+            )
     logger.info(
         "Subagent middleware budget: functional_role={} max_iterations={}",
         functional_role,
@@ -245,12 +282,21 @@ def _assemble_child_tools(
             if name not in effective_allow:
                 effective_allow.append(name)
 
-    filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
+    # The identity GENERAL role carries NO caller_role: skill ``roles: [...]``
+    # tags restrict SPECIALIZED workers, while the default delegation path keeps
+    # the pre-role full view (backward compatible with every existing spawn).
+    filtered_tools = apply_tool_policy(
+        base_tools,
+        effective_allow,
+        tool_deny,
+        caller_role=None if functional_role == FunctionalRole.GENERAL else str(functional_role),
+    )
 
-    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher + librarian):
-    # they are injected here, after the role policy, and never added to
-    # _MAIN_TOOLS_BUILDERS, so the main agent and every other functional role
-    # cannot see them.
+    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher, librarian
+    # and the write roles executor/general): they are injected here, after the
+    # role policy, and never added to _MAIN_TOOLS_BUILDERS, so the main agent
+    # and the remaining roles (reviewer) cannot see them. The read-only/write
+    # distinction lives in the role prompt, not in the injected tool set.
     final_tools = list(filtered_tools)
     if functional_role in CODE_INTEL_ROLES:
         from agent.tools.code_intel import build_code_intel_tools
@@ -301,9 +347,10 @@ def _select_child_llm(
     *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
     it is a full profile descriptor, so the child can run on another provider /
     key entirely. A build failure logs and falls through to the next step. Then
-    *model_override* (resolved by name), then the functional role's *model_tier*,
-    and finally the depth role: ORCHESTRATOR gets the main LLM, LEAF the
-    auxiliary one.
+    *model_override* (resolved by name), then a CONFIGURED per-role family
+    (``EXECUTOR_LLM_*`` …; an empty family keeps the role's tier), then the
+    functional role's *model_tier*, and finally the depth role: ORCHESTRATOR
+    gets the main LLM, LEAF the auxiliary one.
 
     ``thinking_off`` forces the main-family builders to the thinking-off variant.
     The structured-output degradation ladder sets it only at its LAST level: a
@@ -429,6 +476,42 @@ class _TierResolver(_ModelResolver):
         return None
 
 
+class _RoleFamilyResolver(_ModelResolver):
+    """A configured per-role family (``EXECUTOR_LLM_*`` …) outranks the tier.
+
+    An UNCONFIGURED family returns ``None`` so the role keeps its existing model
+    tier (the shipped definitions use ``AUXILIARY_LLM_*``) — a deployment that
+    never touches the new keys behaves exactly as before.
+    """
+
+    def resolve(self, **kwargs):
+        functional_role = kwargs["functional_role"]
+        if functional_role == FunctionalRole.GENERAL:
+            return None
+        try:
+            from models.LLMs.role_llm import build_role_llm, role_llm_configured
+
+            if not role_llm_configured(str(functional_role)):
+                return None
+            if kwargs["thinking_off"]:
+                # The per-role families are aux-shaped clients (no thinking
+                # knob); the structured-output ladder's last rung therefore has
+                # nothing to turn off. Recorded, never fatal — level 1 already
+                # sends json_object itself.
+                logger.info(
+                    "Subagent structured output: role family {} has no thinking switch "
+                    "(functional_role={})",
+                    str(functional_role),
+                    functional_role,
+                )
+            return build_role_llm(str(functional_role))
+        except Exception as exc:  # noqa: BLE001 - a bad family must not kill the spawn
+            logger.warning(
+                "Subagent role model family failed ({}); falling back to the role tier", exc
+            )
+            return None
+
+
 class _RoleResolver(_ModelResolver):
     def resolve(self, **kwargs):
         thinking_off = kwargs["thinking_off"]
@@ -440,6 +523,7 @@ class _RoleResolver(_ModelResolver):
 _MODEL_RESOLVERS: tuple[_ModelResolver, ...] = (
     _ProfileResolver(),
     _OverrideResolver(),
+    _RoleFamilyResolver(),
     _TierResolver(),
     _RoleResolver(),
 )
@@ -473,6 +557,17 @@ def _child_model_identity(
         os.getenv("AUXILIARY_LLM_PROVIDER") or "",
         os.getenv("AUXILIARY_LLM_API_NAME") or "",
     )
+    if functional_role != FunctionalRole.GENERAL:
+        from models.LLMs.role_llm import role_family, role_llm_configured
+
+        if role_llm_configured(str(functional_role)):
+            from models.env_builder import read_env
+
+            family = role_family(str(functional_role)) or ""
+            return (
+                read_env(f"{family}_PROVIDER") or "",
+                read_env(f"{family}_API_NAME") or "",
+            )
     if functional_role != FunctionalRole.GENERAL and model_tier == "main":
         return main_identity
     if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
@@ -480,6 +575,33 @@ def _child_model_identity(
     if role == SubagentSessionRole.ORCHESTRATOR:
         return main_identity
     return aux_identity
+
+
+def _child_model_source(
+    model_profile: dict[str, str] | None,
+    model_override: str | None,
+    functional_role: FunctionalRole,
+    model_tier: str | None,
+    role: SubagentSessionRole,
+) -> str:
+    """Where the child's model came from — the resolver rung that answered.
+
+    Mirrors :func:`_select_child_llm`'s precedence for the spawn log /
+    trajectory event, so "I configured it but it did not take effect" is
+    distinguishable from "it is inherited".
+    """
+    if model_profile and model_profile.get("model"):
+        return "role_profile"
+    if model_override:
+        return "model_override"
+    if functional_role != FunctionalRole.GENERAL:
+        from models.LLMs.role_llm import role_llm_configured
+
+        if role_llm_configured(str(functional_role)):
+            return "role_family"
+    if functional_role != FunctionalRole.GENERAL and model_tier in ("main", "auxiliary"):
+        return f"tier_{model_tier}"
+    return "depth_main" if role == SubagentSessionRole.ORCHESTRATOR else "depth_auxiliary"
 
 
 async def _build_child_agent(
@@ -583,6 +705,43 @@ async def _build_child_agent(
         # self-sent response_format while reasoning.
         thinking_off=bool(output_schema) and strategy.thinking_off,
     )
+    # Which model the child actually runs on, and which rung answered: the
+    # spawn log plus one trajectory event make a configured role family (or a
+    # silently inherited tier) visible instead of a guess.
+    model_provider, model_name = _child_model_identity(
+        model_profile, functional_role, model_tier, role
+    )
+    model_source = _child_model_source(
+        model_profile, model_override, functional_role, model_tier, role
+    )
+    logger.info(
+        "Subagent model: functional_role={} depth_role={} tier={} source={} "
+        "provider={} model={} schema={}",
+        functional_role,
+        role,
+        model_tier,
+        model_source,
+        model_provider or "?",
+        model_name or "?",
+        bool(output_schema),
+    )
+    if session_id:
+        from agent.trajectory_events import record_trajectory_event
+
+        record_trajectory_event(
+            session_id,
+            "subagent_model",
+            {
+                "functional_role": str(functional_role),
+                "depth_role": str(role),
+                "model_tier": model_tier or "",
+                "source": model_source,
+                "provider": model_provider,
+                "model": model_name,
+                "structured": bool(output_schema),
+                "thinking_off": bool(output_schema) and strategy.thinking_off,
+            },
+        )
     # Levels 1/2: no framework-level structured output (no forced tool_choice);
     # the provider's JSON mode + the prompt schema + our validator replace it.
     # ``with_request_options`` is used instead of ``bind`` because the graph's
@@ -605,6 +764,7 @@ async def _build_child_agent(
         main_llm_context_window=main_llm_max_tokens,
         functional_role=functional_role,
         spawn_depth=spawn_depth,
+        session_id=session_id,
     )
     # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
     # middleware must abort the spawn, not ship a weakened child.

@@ -16,9 +16,10 @@ from .mcp_plugin import build_mcp_tools
 from .browser import build_browser_tools
 from .terminal import build_terminal_bg_tool as build_terminal_bg_tool
 from .terminal import build_terminal_tool as build_terminal_tool
-from .subagent import build_subagent_runtime_tools
+from .subagent.tools.runtime_tools import build_subagent_runtime_tools
 from .web import build_web_fetch_tool as build_web_fetch_tool
 from .web import build_web_search_tool as build_web_search_tool
+from .image_gen import build_image_gen_tool as build_image_gen_tool
 from .python_repl import build_python_repl_tool
 from .question import build_question_tool
 from .compact_now import build_compact_now_tool
@@ -53,6 +54,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_memory_tool,
     build_web_search_tool,
     build_web_fetch_tool,
+    build_image_gen_tool,
     build_terminal_tool,
     build_terminal_bg_tool,
     build_coordination_tools,

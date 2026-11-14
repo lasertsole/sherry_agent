@@ -17,7 +17,7 @@ from typing import Any
 from loguru import logger
 
 from agent.tools.memory import ENTRY_DELIMITER, memory_store
-from config.features import SERVER_HTTP
+from config.features import MEMORY_TOOL, SERVER_HTTP
 from context_engine.store.memory_entry_repository import (
     ARCHIVE_REASONS,
     MEMORY_TARGETS,
@@ -81,9 +81,15 @@ def _active_contents(target: str) -> list[str]:
 def _check_capacity(target: str, contents: list[str]) -> None:
     limit = min(_limit_for(target), _MEMORY_MAX_CHARS)
     current = _joined_length(target, contents)
+    max_entries = int(MEMORY_TOOL["max_entries_per_target"])
     if current > limit:
         raise ValueError(
             f"Memory at {current:,}/{limit:,} chars. Shorten the entry or remove others first."
+        )
+    if len(contents) > max_entries:
+        raise ValueError(
+            f"Memory holds {len(contents):,} active entries (limit {max_entries:,}). "
+            "Remove or merge entries first."
         )
 
 
@@ -382,6 +388,8 @@ def write_memory_files(file_to_content: dict[str, str]) -> None:
         limit = min(_limit_for(target), _MEMORY_MAX_CHARS)
         if _joined_length(target, entries) > limit:
             raise ValueError(f"Content too long for memory file: {file_name}")
+        if len(entries) > int(MEMORY_TOOL["max_entries_per_target"]):
+            raise ValueError(f"Too many entries for memory file: {file_name}")
         parsed_by_target[target] = entries
 
     with _repo().transaction():

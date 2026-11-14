@@ -222,6 +222,8 @@ blocked → ready → dispatched → done
 
 > `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来どおり「結果が注入された」に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子でも `done` になり得ます。 各ゲートが何をするかを含む完全な規則は[判定ゲート](../gates/README.ja.md)にあります。
 
+> CompletionJudge の予算切れ（子の goal loop が `goal_max_turns` を使い切っても `DONE` にならない場合）は `step_outcome="blocked"` として報告され、`failure` でも `OK` でもありません。子は実際に作業しているため、ステップは部分結果を読める状態で保持され、依存側は `blocked` のまま残り、エージェントが再試行・再計画・キャンセルを選べます。`failed` は確定的な失敗または修復不能な schema 不一致に限定されます。
+
 >
 
 > `failed`・`skipped`・`cancelled` はいずれも依存側をアンロックしません。`failed` の依存は依存側を `blocked` のまま残し（失敗を黙って飛ばしてはいけない）、`skipped`/`cancelled` の依存は `skipped` を依存側へ連鎖させ、死んだ枝をその場で決着させてフローを永遠に待たせません。
@@ -274,7 +276,7 @@ blocked → ready → dispatched → done
 
 | `schema_validated`  | `true` / `false` / `null`（schema 未設定）——Tier 1 の判定結果。               |
 
-| `step_outcome`      | 呼び出し側が宣言した場合に記録（`success` / `failure` / `partial` / `skipped`）。 |
+| `step_outcome`      | 呼び出し側が宣言した場合に記録（`success` / `failure` / `partial` / `skipped` / `blocked`）。 |
 
 
 
@@ -715,7 +717,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 
 
-全 spawn の前にバッチ全体を検証（全か無か）。その後バッチは共有の `_dispatch.dispatch_child` シームを通じて**同時に** spawn し、同時実行数は `TASKFLOW_INFRA["max_parallel_dispatch"]`（既定 2：SUBAGENT レーンがグローバルな背圧であり、この上限は同時に何個の spawn 呼び出しが飛行中かを決めるだけ）で制限されます。1 つの spawn の失敗はもはや兄弟を中止させません——成功した子はすべて 1 回の `update_flow` で永続化され、失敗したステップ id はすべて応答に列挙されます（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。`apply_dispatched_steps()` ヘルパーが新読みのステップリストに記録済みディスパッチステップペイロードを再適用し、`step_id` でマッチ——spawn 済み子エージェントが同時書き込みによるステップリスト書き換えで失われることはない。`max_parallel_dispatch = 1` は歴史的な順次動作を正確に再現します。
+全 spawn の前にバッチ全体を検証（全か無か）。その後バッチは共有の `_dispatch.dispatch_child` シームを通じて**同時に** spawn し、同時実行数は `TASKFLOW_INFRA["max_parallel_dispatch"]`（既定 2：SUBAGENT レーンがグローバルな背圧であり、この上限は同時に何個の spawn 呼び出しが飛行中かを決めるだけ）で制限されます。1 つの spawn の失敗はもはや兄弟を中止させません——成功した子はすべて 1 回の `update_flow` で永続化され、失敗したステップ id はすべて応答に列挙されます（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。失敗したステップには永続マーカー `last_spawn_error`（+ `last_spawn_failed_at`）が付きます——何かが spawn できた場合は同じ書き込みで、全滅時はマーカー専用の書き込み——成功した dispatch は両方を消すため、board は「再試行対象」と「次の自動 wave が起動する作業」を区別できます。`apply_dispatched_steps()` ヘルパーが新読みのステップリストに記録済みディスパッチステップペイロードを再適用し、`step_id` でマッチ——spawn 済み子エージェントが同時書き込みによるステップリスト書き換えで失われることはない。`max_parallel_dispatch = 1` は歴史的な順次動作を正確に再現します。
 
 
 
@@ -723,7 +725,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 
 
-resume はアンロックした依存側だけでなく、**ready 集合全体**を起動します（`auto_dispatch=True`、既定）：`newly_ready ∪ all_ready` —— 今回 unlock した下流と、以前から `ready` だが未 dispatch だった兄弟 —— を同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）が広い走査を制御し、false（または `auto_dispatch=False`）で従来の「unlock のみ/新規 unlock のみ」動作に戻せます。spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_step(action="dispatch")` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライできます。既に dispatched のステップは除外されフローロック内で再確認されるため、広い走査でも spawn は正確に 1 回です。
+resume はアンロックした依存側だけでなく、**ready 集合全体**を起動します（`auto_dispatch=True`、既定）：`newly_ready ∪ all_ready` —— 今回 unlock した下流と、以前から `ready` だが未 dispatch だった兄弟 —— を同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）が広い走査を制御し、false（または `auto_dispatch=False`）で従来の「unlock のみ/新規 unlock のみ」動作に戻せます。spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_step(action="dispatch")` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライでき、さらに `last_spawn_error` マーカーが付くので board は再試行対象として示し続けます（後で成功すればマーカーは消えます）。既に dispatched のステップは除外されフローロック内で再確認されるため、広い走査でも spawn は正確に 1 回です。
 
 
 
@@ -827,7 +829,7 @@ resume はアンロックした依存側だけでなく、**ready 集合全体**
 
 
 
-- **データベース**：`agent/tools/taskflow/data/taskflow_registry.db`
+- **データベース**：`src/data/registry.db` (`task_flows` table)
 
 - **テーブル**：`task_flows(flow_id TEXT PK, state_json TEXT NOT NULL, wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL, child_session_key TEXT)`
 

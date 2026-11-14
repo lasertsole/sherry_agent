@@ -50,6 +50,21 @@ export async function writeSystemPrompt(fileToContent: Record<string, string>): 
 }
 
 /**
+ * Write a built-in preset's full persona payload (AGENTS.md included).
+ *
+ * The ordinary write route refuses AGENTS.md; this creation-only route is how a
+ * preset seeds its Operating Instructions once.
+ * @param fileToContent
+ */
+export async function writePresetSystemPrompt(fileToContent: Record<string, string>): Promise<void> {
+  await fetchApi({
+    url: '/system_prompt/preset',
+    opts: { file_to_content: fileToContent },
+    method: 'put'
+  });
+}
+
+/**
  * Replace the given system prompt files; files not in the payload are unchanged.
  * @param fileToContent
  */

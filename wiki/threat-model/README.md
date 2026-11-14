@@ -39,7 +39,7 @@ OS-isolation detail.
 | Memory / skill file injection | **Memory-write scan** on all three write paths (a prose-specific table, because a note *about* the system is not an attack) + skill scan gate on install | — |
 | Secret leakage into logs / tool output | **Redaction engine** on the log pipeline (always on, exception text included) and on leak-prone tool output, `scrub_env` for child processes | It removes what its patterns recognise, nothing more |
 | URL credential leakage | **URL redaction**: extra schemes, nested percent-encoding (depth 8), query and presigned parameters | — |
-| Path traversal | `PathGuard` + `O_NOFOLLOW` | — |
+| Path traversal | `PathGuard` + component-wise `O_NOFOLLOW` (`dir_fd` walking) | — |
 | Shell injection | `agent/middlewares/humanInTheLoop/detection.py` blocklist (12 hardline + 61 dangerous rules) | — |
 | Sandbox escape | `bwrap` / `seatbelt` | — |
 | Reasoning-block leakage into the stream | **Inline-CoT redirect**: the thinking is moved to the reasoning channel, not discarded | Models that emit no tags at all are unaffected by definition |
@@ -136,15 +136,20 @@ Two WHITELISTS now stand in front of that surface
 
 | Mode | Rule | Allowed inside sherry's trees |
 |---|---|---|
-| **write** | "changing it must not break the runtime, another session, or leak a credential" | `<project>/.sherry/` (index, attachments), `APP_HOME/checkpoints/store`, the CURRENT session's `plans/` `attachments/` `uploads/`, `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
-| **read** | "reading it must not leak a credential, private memory, or another session's transcript" | the whole SOURCE TREE (reading source breaks nothing and leaks nothing) plus the write list; denied: `.env` `.models` `.network` `sherry.jsonc` + their `.example`s, `src/data/**`, `src/checkpoints/**`, `workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`, `workspace/memory/**`, `workspace/knowledge/**`, model-weight files, `mcp_servers/**`, the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory ledger, every session directory except the CURRENT session's `plans/` |
+| **write** | "changing it must not break the runtime, another session, or leak a credential" | `<project>/.sherry/` (index, attachments), `APP_HOME/checkpoints/store`, the CURRENT session's ENTIRE `SESSIONS_DIR/<session_id>/` tree (`plans/` `attachments/` `uploads/` `evicted/` and scratch files), `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
+| **read** | "reading it must not leak a credential, private memory, or another session's transcript" | the whole SOURCE TREE (reading source breaks nothing and leaks nothing) plus the write list; denied: `.env` `.models` `.network` `sherry.jsonc` + their `.example`s, `src/data/**`, `src/checkpoints/**`, `workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`, `workspace/memory/**`, `workspace/knowledge/**`, model-weight files, `mcp_servers/**`, the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory ledger, every session directory except the CURRENT session's ENTIRE private tree |
 
 Both are enforced on the paths the file tools resolve — and on the IN-ROOT
 success branch, not only the external one, because that branch is exactly where
 the default checkout silently passes (`resolve_tool_path` in
 `agent/tools/pub_base/path_utils.py`, plus `search_files`, which resolves on its own). A path in a
 DIFFERENT session project directory is the user's workspace and never reaches
-this policy.
+this policy. The CURRENT session's own `SESSIONS_DIR/<session_id>` tree is
+EXEMPT for both chains: `resolve_external_path` returns it at step 2b and the
+in-root policy allows it, so a main agent or subagent reads, writes, modifies
+and deletes its private files without HITL even when that tree sits outside the
+project root. Cross-session isolation is unchanged — another session's
+directory still prompts (main) or is refused (subagent).
 
 **Who answers.** The main agent gets ONE-SHOT approval (`sherry_self_access`,
 `approve` / `reject` only — no YOLO, no session allowlist: sherry's own files

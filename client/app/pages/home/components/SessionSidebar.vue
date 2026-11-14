@@ -210,18 +210,19 @@
             </div>
           </div>
         </div>
-        <div class="h-17 flex items-center justify-between">
-          <div class="flex items-center justify-center gap-1">
+        <div class="h-17 flex items-center justify-between gap-2">
+          <div class="flex shrink-0 items-center gap-1">
             <Checkbox
               :model-value="isCheckAllSession"
               :indeterminate="isIndeterminate"
               binary
               @update:model-value="handleToggleSelectAll" />
-            <span>{{ t('history.selectAll') }}</span>
+            <span class="truncate whitespace-nowrap">{{ t('history.selectAll') }}</span>
           </div>
           <Button
             icon="pi pi-trash"
             :label="t('history.batchDelete')"
+            class="shrink-0 [&>.p-button-label]:truncate [&>.p-button-label]:whitespace-nowrap"
             :disabled="selectedSessionIds.length === 0 || batchDeleting"
             :loading="batchDeleting"
             v-debounce:click.500="handleBatchDelete" />

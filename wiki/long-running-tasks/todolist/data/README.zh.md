@@ -1,8 +1,8 @@
-# 📦 TodoList 数据层 — 计划、Boulder、账本与 todos.db
+# 📦 TodoList 数据层 — 计划、Boulder、账本与 registry.db
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> [TodoList](../README.zh.md) 的一部分：规划层背后的会话级数据存储 —— 计划文件、Boulder 状态、证据账本与 todos.db 结构。
+> [TodoList](../README.zh.md) 的一部分：规划层背后的会话级数据存储 —— 计划文件、Boulder 状态、证据账本与 registry.db 结构。
 
 ---
 
@@ -69,11 +69,11 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 }
 ```
 
-### 证据账本 (src/data/evidence-ledger.db)
+### 证据账本 (`src/data/registry.db` (`evidence_events` table))
 
 SQLite 表 `evidence_events`（WAL）：共享的验证审计轨迹。行只 INSERT、不 UPDATE；保留期会删除旧行。写入方是 `agent/tools/pub_base/evidence_recorder.py`，读取方是 `agent/tools/taskflow/evidence_collector.py`；写入方、行 schema、陈旧性推导规则、摘要格式、保留期与消费它的门控，统一记录在[证据账本](../../gates/evidence-ledger/README.zh.md)。
 
-### todos.db — 会话级 TODO 存储
+### registry.db — 会话级 TODO 存储
 
 ```sql
 CREATE TABLE IF NOT EXISTS todos (
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `step_id`  | 关联的 TaskFlow step id（如 `step-2`），用于回读 DAG 状态          |
 | `todo_id`  | 每会话稳定身份，显示为 `#N`；局部 patch/remove/reattach 用它定位。`position` 只负责显示顺序 |
 
-> **设计边界**：`todos.db` **不持有** `depends_on` / 波次 / step 状态。依赖图、`blocked/ready/dispatched/done` 与解锁逻辑全部由 TaskFlow 提供。todo 只通过 `flow_id`/`step_id` 指向对应 flow step，DAG 状态用 `taskflow_inspect(action="summary", flow_id)` 回读。
+> **设计边界**：`registry.db` **不持有** `depends_on` / 波次 / step 状态。依赖图、`blocked/ready/dispatched/done` 与解锁逻辑全部由 TaskFlow 提供。todo 只通过 `flow_id`/`step_id` 指向对应 flow step，DAG 状态用 `taskflow_inspect(action="summary", flow_id)` 回读。
 
 CRUD 接口：
 

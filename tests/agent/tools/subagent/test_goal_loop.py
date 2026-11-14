@@ -212,7 +212,7 @@ async def test_goal_loop_budget_exhausted(monkeypatch: pytest.MonkeyPatch):
     assert len(child.inputs) == 2
     assert len(recorded) == 2
     outcome = captured[0][1]
-    assert outcome.status == RunOutcomeStatus.OK
+    assert outcome.status == RunOutcomeStatus.BUDGET_EXHAUSTED
     assert outcome.error == "goal_loop_budget_exhausted"
     assert captured[0][2] == "turn-2 output"
 

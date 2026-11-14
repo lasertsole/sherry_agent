@@ -22,7 +22,6 @@
 - **전역 동시성 상한 추가**: `max_concurrent = 8` — 처음에는 spawn 파이프라인에서 강제되어 초과 spawn은 `forbidden`을 반환했습니다. **전역 SUBAGENT lane으로 대체됨**: 초과 spawn은 이제 `PENDING`으로 대기하다 lane slot이 비면 시작합니다 (이 필드는 하위 호환용으로만 유지됩니다). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가 — 둘 다 `PENDING` run을 활성으로 계산합니다 (대기 중인 자식도 admission slot을 점유하므로).
 - **`max_spawn_depth` 기본값 3 → 2, 하드 상한화**: 2 초과 값은 생성과 할당 모두에서 거부; `delegate_task(max_spawn_depth=...)`는 상한 초과 시 `ValueError` 발생. 깊이 트리: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 - **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망. (**2026-10-15 반전**: 기본값이 다시 600초 — 위 노트 참조.)
-- **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: 호출별 `max_concurrent` 오버라이드는 폐기됨 — 전역 동시성은 SUBAGENT lane이 대기열로 처리하므로, 전달해도 `DeprecationWarning`만 발생합니다 (값은 호출별로 적용·복원됨).
 - 이 문서들(en/zh/ko/ja)과 루트 README의 모든 설정 테이블과 다이어그램이 새 기본값으로 동기화되었습니다.
 
@@ -62,7 +61,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 1. 검증 (Validation)
   │     ├── task는 비어 있으면 안 됨. task_name 정규화
-  │     │   ([^a-zA-Z0-9_-] → _, 반복 압축, 64자 절단 — task_name.py)
+  │     │   ([^a-zA-Z0-9_-] → _, 반복 압축, 64자 절단 — text_helpers.py)
   │     ├── target_policy: agent_id는 allow_agents 화이트리스트 내여야 함
   │     │   (* 와일드카드 지원)
   │     ├── depth = 부모 깊이 + 1, max_spawn_depth(2) 이하
@@ -81,7 +80,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │         researcher / librarian)——MAIN/general은 무제한
   │
   ├── 3. 모델 및 사고 계획 (Model & Thinking Plan, spawn/plan.py,
-  │     spawn/thinking.py)
+  │     spawn/text_helpers.py)
   │     ├── thinking 우선순위: 명시 지정 → 요청자 → 대상 에이전트 기본값
   │     └── 타임아웃: spawn별 재정의 가능(도구 입력은 [600, 7200]으로 clamp),
   │           없으면 run_timeout_seconds(기본 600초, 0 = 타임아웃 없음)
@@ -820,7 +819,6 @@ agent/tools/subagent/
 │   ├── work_admission.py      Gateway 독립적 루트 작업 어드미션 + pending 카운트
 │   ├── lifecycle.py           라이프사이클 컨트롤러(completeRun/resume/announce/pressurePrune/gracePeriod)
 │   ├── state.py               persist/restore 브리지(settle-wake 영속화 복구 포함)
-│   ├── read.py                외부 읽기 전용 API(find_run_by_task_name + run record 주요 쿼리)
 │   ├── task_refs.py           asyncio.Task 참조 관리(register/get/remove/cancel)
 │   ├── yield_events.py        asyncio.Event 관리(yield 깨우기 / 자손 정산)
 │   ├── sweeper.py             실패 백오프가 있는 백그라운드 스캐너(계층형 만료: cron=2h, subagent=6h, interactive=24h)
@@ -840,15 +838,12 @@ agent/tools/subagent/
 │   ├── target_policy.py       allowAgents 검증
 │   ├── depth.py               깊이 계산 및 제한
 │   ├── attachments.py         자식 workspace로의 첨부파일 실체화(Unicode C0+DEL 제어 문자 감지, 중복 이름 감지, 엄격한 base64 검증 포함)
-│   ├── task_name.py           taskName 정규화
+│   ├── text_helpers.py        taskName 정규화, 수락 노트, 첫 user message 봉투, thinking 수준 우선순위
 │   ├── system_prompt.py       자식 에이전트 system prompt 생성(6부 구성: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
-│   ├── initial_message.py     자식 에이전트의 첫 user message(구조화 봉투: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  도구 허용/차단 목록 상속
 │   ├── runtime_isolation.py   런타임 격리 및 보안 경계 + workspace 상속
 │   ├── origin_routing.py      요청자 오리진 라우팅 해결 + fingerprint 생성(build_origin_fingerprint를 외부 API로 노출)
 │   ├── gateway_dispatch.py    최소 권한 scope 해결 + SubagentLaunchAuthorization + scope→deny 매핑
-│   ├── accepted_note.py       SpawnResult.note 내용 생성
-│   ├── thinking.py            thinking 수준 재정의 파싱
 │   └── completion_judge.py    CompletionJudge — 보조 LLM done/continue 판정(goal loop)
 │
 ├── announce/                  완료 알림 파이프라인
@@ -927,7 +922,7 @@ registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
   ↑                    ↑                              ↑
 registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
                                                          ↑
-                                                    registry/read.py
+                                                    registry/memory.py + registry/queries.py
 
 swarm/fifo.py ← swarm/collector.py ← types/swarm.py
 
@@ -939,7 +934,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/initial_message.py ← spawn/task_name.py
+spawn/text_helpers.py(초기 메시지 ← taskName 정규화)
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 
@@ -992,7 +987,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 가동 미종료 run의 stale 임계값 |
 | `recent_ended_window_seconds` | 1800 | 최근 종료 표시 윈도우 |
 | `steer_rate_limit_ms` | 2000 | Steer 레이트 리밋 |
-| `archive_after_minutes` | 60 | 자동 아카이브까지의 분 |
 | `attachments_enabled` | True | 첨부 허용 여부 |
 | `attachments_max_files` | 50 | spawn당 최대 파일 수 |
 | `attachments_max_file_bytes` | 1MB | 단일 파일 크기 상한 |

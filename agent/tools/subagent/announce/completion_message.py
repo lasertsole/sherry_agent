@@ -25,6 +25,7 @@ from ..types.registry import SubagentRunRecord
 
 __all__ = [
     "PROVENANCE",
+    "STATUS_BLOCKED",
     "STATUS_COMPLETED",
     "STATUS_FAILED",
     "STATUS_INTERRUPTED",
@@ -33,11 +34,12 @@ __all__ = [
 ]
 
 PROVENANCE = "subagent_completion"
+STATUS_BLOCKED = "blocked"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_INTERRUPTED = "interrupted"
 
-VALID_STATUSES = frozenset({STATUS_COMPLETED, STATUS_FAILED, STATUS_INTERRUPTED})
+VALID_STATUSES = frozenset({STATUS_BLOCKED, STATUS_COMPLETED, STATUS_FAILED, STATUS_INTERRUPTED})
 
 
 def _resolve_child_name(child_run_info: SubagentRunRecord) -> str:

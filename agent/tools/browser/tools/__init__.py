@@ -2,7 +2,7 @@
 
 ``build_browser_tools`` returns ``[]`` while the feature is switched off (no
 schema reaches the catalogue, the prompt or ``GET /agent/catalog``). When it is
-on, the seven everyday verbs arrive as ONE ``browser`` tool; ``browser_evaluate``
+on, the nine everyday verbs arrive as ONE ``browser`` tool; ``browser_evaluate``
 is added only when ``allow_evaluate`` is set — the escape hatch stays opt-in and
 is absent, not merely disabled, while the switch is off.
 
@@ -23,9 +23,11 @@ from loguru import logger
 from config.features import BROWSER_AGENT
 
 from .browser_click import BrowserClickTool, ClickInput
+from .browser_console import BrowserConsoleTool, ConsoleInput
 from .browser_evaluate import BrowserEvaluateTool, EvaluateInput
 from .browser_merged import BROWSER_ACTIONS, BrowserInput, BrowserToolMerged
 from .browser_navigate import BrowserNavigateTool, NavigateInput
+from .browser_network import BrowserNetworkTool, NetworkInput
 from .browser_press import BrowserPressTool, PressInput
 from .browser_screenshot import BrowserScreenshotTool, ScreenshotInput
 from .browser_scroll import BrowserScrollTool, ScrollInput
@@ -35,9 +37,11 @@ from .browser_type import BrowserTypeTool, TypeInput
 __all__ = [
     "BROWSER_ACTIONS",
     "BrowserClickTool",
+    "BrowserConsoleTool",
     "BrowserEvaluateTool",
     "BrowserInput",
     "BrowserNavigateTool",
+    "BrowserNetworkTool",
     "BrowserPressTool",
     "BrowserScreenshotTool",
     "BrowserScrollTool",
@@ -45,8 +49,10 @@ __all__ = [
     "BrowserToolMerged",
     "BrowserTypeTool",
     "ClickInput",
+    "ConsoleInput",
     "EvaluateInput",
     "NavigateInput",
+    "NetworkInput",
     "PressInput",
     "ScreenshotInput",
     "ScrollInput",

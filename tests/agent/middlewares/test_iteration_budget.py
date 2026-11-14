@@ -163,3 +163,46 @@ class TestIterationBudget:
 
         assert IterationBudget._BUDGET_KEY == "iteration_budget"
         assert IterationBudget._USED_KEY == "iteration_budget_used"
+
+    def test_cap_resolver_sets_this_turns_ceiling(self, fresh_state_register):
+        """The 高级 iteration limit replaces the static cap per session."""
+        from agent.middlewares.iteration_budget import IterationBudget
+
+        ib = IterationBudget(max_iterations=5, cap_resolver=lambda sid: 2 if sid == "s1" else 5)
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
+            ib._before_agent_impl({"session_id": "s1"})
+            assert fresh_state_register.get_state("s1", ib._BUDGET_KEY) == 2
+            assert ib._consume("s1") is True
+            assert ib._consume("s1") is True
+            assert ib._consume("s1") is False  # resolver cap, not the static 5
+
+            # The same process-level instance serves another session with the
+            # static fallback; the two counters do not leak into each other.
+            ib._before_agent_impl({"session_id": "s2"})
+            assert fresh_state_register.get_state("s2", ib._BUDGET_KEY) == 5
+            assert ib._consume("s2") is True
+
+    def test_cap_resolver_error_keeps_the_static_cap(self, fresh_state_register):
+        from agent.middlewares.iteration_budget import IterationBudget
+
+        def _boom(_sid: str) -> int:
+            raise RuntimeError("settings unavailable")
+
+        ib = IterationBudget(max_iterations=3, cap_resolver=_boom)
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
+            ib._before_agent_impl({"session_id": "s1"})
+            assert fresh_state_register.get_state("s1", ib._BUDGET_KEY) == 3
+
+    def test_a_nonpositive_resolution_keeps_the_static_cap(self, fresh_state_register):
+        from agent.middlewares.iteration_budget import IterationBudget
+
+        ib = IterationBudget(max_iterations=4, cap_resolver=lambda _sid: 0)
+        with patch(
+            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
+        ):
+            ib._before_agent_impl({"session_id": "s1"})
+            assert fresh_state_register.get_state("s1", ib._BUDGET_KEY) == 4

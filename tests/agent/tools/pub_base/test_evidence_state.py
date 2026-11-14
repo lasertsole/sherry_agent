@@ -1,9 +1,9 @@
 """B': verification_state changed_paths + evidence modified_files snapshots.
 
-The old staleness rule is a command substring. These tests pin the new
-file-set rule: edits accumulate per session, each verification snapshots the
-set, and a later write to a snapshotted file invalidates the evidence even when
-the command never names it. Legacy rows keep the substring fallback.
+These tests pin the file-set rule: edits accumulate per session, each
+verification snapshots the set, and a later write to a snapshotted file
+invalidates the evidence even when the command never names it. A legacy row
+without a snapshot matches only a command PATH TOKEN (never a substring).
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ def test_a_new_row_still_notices_a_write_to_its_test_file():
     assert "[stale]" in (collect_evidence_summary(session_key=A) or "")
 
 
-def test_a_legacy_row_still_uses_the_command_substring():
+def test_a_legacy_row_matches_the_command_token():
     EvidenceLedger.for_session(A).append(kind="test", command="pytest alpha.py", status="passed")
 
     _stale(B, "alpha.py")

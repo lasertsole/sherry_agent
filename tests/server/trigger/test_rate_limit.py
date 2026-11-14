@@ -45,6 +45,21 @@ def test_the_burst_is_allowed_then_dropped_with_one_notice() -> None:
     )
 
 
+def test_consume_frame_prunes_stale_buckets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M20: the frame map is pruned on the frame path, not only the ticket path."""
+    now = 10_000.0
+    monkeypatch.setattr(rate_limit.time, "monotonic", lambda: now)
+    for index in range(rate_limit._FRAME_PRUNE_SIZE):
+        bucket = rate_limit._Bucket(1.0, now)
+        bucket.last = now - rate_limit._FRAME_STALE_S - 1
+        rate_limit._frames[f"stale-{index}"] = bucket
+
+    rate_limit.consume_frame("fresh")
+
+    assert len(rate_limit._frames) < rate_limit._FRAME_PRUNE_SIZE
+    assert "fresh" in rate_limit._frames
+
+
 def test_buckets_are_per_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(WS_RATE_LIMIT, "burst", 1)
     monkeypatch.setitem(WS_RATE_LIMIT, "frames_per_second", 0.0)

@@ -73,9 +73,12 @@ describe('TitleBar.vue (integration, Tauri mocked)', () => {
     // The height comes from the shared constant (not a drifting Tailwind class).
     expect(bar.attributes('style')).toContain(`height: ${TITLEBAR_HEIGHT}px`);
 
-    // One drag region plus the three window controls.
+    // One drag region plus the three window controls. The drag region is empty.
     const drag = wrapper.get('[data-test="titlebar-drag"]');
     expect(drag.attributes()).toHaveProperty('data-tauri-drag-region');
+    expect(drag.text()).toBe('');
+    // Windows-style maximize glyph: one outlined square in the window state.
+    expect(wrapper.get('[data-test="titlebar-maximize"] svg').findAll('rect')).toHaveLength(1);
     expect(wrapper.find('[data-test="titlebar-minimize"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="titlebar-maximize"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="titlebar-close"]').exists()).toBe(true);
@@ -146,7 +149,11 @@ describe('TitleBar.vue (integration, Tauri mocked)', () => {
     expect(windowApi.toggleMaximize).toHaveBeenCalledTimes(1);
     expect(wrapper.get('[data-test="titlebar-maximize"]').attributes('title')).toBe('还原');
     expect(wrapper.get('[data-test="titlebar"]').attributes('data-maximized')).toBe('true');
-    expect(wrapper.get('[data-test="titlebar-maximize"] i').classes()).toContain('pi-window-minimize');
+    // Restore glyph: the front square plus the visible part of the back one
+    // (a path, because the overlap is not drawn).
+    expect(wrapper.get('[data-test="titlebar-maximize"] svg').findAll('rect')).toHaveLength(1);
+    expect(wrapper.get('[data-test="titlebar-maximize"] svg').findAll('path')).toHaveLength(1);
+    expect(wrapper.find('[data-test="titlebar-maximize"] i').exists()).toBe(false);
 
     // Clicking again restores the label.
     windowApi.isMaximized.mockResolvedValueOnce(false);

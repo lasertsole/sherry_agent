@@ -45,9 +45,10 @@ select, the rules editor with a test scan, and the recent filter events.
   `warn` only reports. The input side never rewrites the user's own message.
 - Every decision records one event (bounded ring, newest first) and pushes a
   `safety_filter` WS frame; the client shows a toast (block = error level).
-- The LLM review fails OPEN: a timeout, a request failure or an unparseable
-  answer lets the turn through and logs a warning — the provider's own
-  alignment is still in the loop.
+- The LLM review's failure policy depends on the strategy: `always` fails
+  CLOSED (a timeout, a request failure or an unparseable answer blocks the turn
+  with the safe refusal), while `on_keyword_hit` fails OPEN because the
+  keyword layer already produced a verdict. A warning is logged in both cases.
 
 ## 🚂 Streaming Guard
 
@@ -81,7 +82,8 @@ The switches and the review model are `sherry.jsonc` keys written through
 
 `tests/agent/middlewares/safety_filter/test_rules.py` (validation, scopes,
 hot reload, literal replacement), `test_middlewares.py` (input block without a
-provider call, warn/replace pass-through, LLM gating and fail-open, output
+provider call, warn/replace pass-through, LLM gating and its strategy-dependent
+failure policy, output
 replacement) and `test_stream_guard.py` (hold-back window, block latch,
 replacement before emission, the end-of-stream flush). The settings tab is
 pinned by `client/app/pages/home/components/__tests__/SafetyFilterPanel.integration.test.ts`.

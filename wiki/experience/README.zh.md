@@ -2,15 +2,17 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 **技能评审**、压缩后 todo fork，以及主会话删除时的 session-end salvage（对捕获的压缩切口运行后台两波 memory review）。产出分别落入四个存储——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`todos.db`——外加原始 `handoff-tree.json` 审计文件；下文 **Curator** 一节记录维护 `skills/auto/`（技能评审 的写入目标）的后台流程。
+本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 **技能评审**、压缩后 todo fork，以及主会话删除时的 session-end salvage（对捕获的压缩切口运行后台两波 memory review）。产出分别落入四个存储——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`registry.db`——外加原始 `handoff-tree.json` 审计文件；下文 **Curator** 一节记录维护 `skills/auto/`（技能评审 的写入目标）的后台流程。
 
 > **存储更新（2026-11-04）：** 下文的 MEMORY.md / USER.md / FACTS.md 三个记忆产出，现已改为 MesMemory `memory_entries` 表中的行，每个 target（`memory` / `user` / `facts`）各占若干行。遗留 Markdown 文件由 `memory_migration.py` 在启动时导入一次并改名为 `*.md.bak`。加载入口是 `MemoryStore.load_from_store()`；每行携带 `origin_session`（来源）与 `usage_count` / `last_used`（用量反馈）。
+
+> **模块拆分（2026-11-13）：** 后台复盘任务现在位于 `agent/middlewares/summarization/` 下的专用文件：`memory_review.py`、`session_end_salvage.py`、`handoff_tree.py`、`skill_review_runner.py`、`ptc_compile.py`、`compression_todo.py`，共享的 `background_scaffold.py` / `_common.py`；`skill_review.py` 仍是质量门。`background_reviews.py` 变成 re-export facade，其模块代理会把属性写入转发到实现模块，因此历史符号与 monkeypatch 接缝保持不变。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
 ## 设计原则
 
-1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md / FACTS.md、`skills/auto/`、或 `todos.db`；原始 handoff tree 只作审计，不作为面向模型的知识存储。没有任何抽取路径另建平行存储。
+1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md / FACTS.md、`skills/auto/`、或 `registry.db`；原始 handoff tree 只作审计，不作为面向模型的知识存储。没有任何抽取路径另建平行存储。
 2. **全部 fail-open。** 每个触发点都记录并吞掉自身失败。todo 存储损坏、plan 文件不可读、LLM 调用失败，都不会阻塞或打断主对话回合。
 3. **回合路径零阻塞。** 压缩后 todo fork 与压缩时后台评审 都是 fire-and-forget 后台任务；memory review 与 技能评审 作为独立子 agent 在 BACKGROUND_REVIEW 车道上运行，绝不阻塞模型调用。
 4. **每条抽取路径都需要工具。** memory review、技能评审 与 todo fork 都是 `create_agent` fork，因为各自都要通过工具写入（`memory`、`skill_manage`、`todowrite`）；不再存在独立的纯抽取调用。
@@ -22,7 +24,7 @@
 |---|---|---|
 | 每次压缩 | 记忆复盘（`_execute_memory_review`）：只收**被丢弃**的那段，**原文**发在"本轮刚用过的"模型配置上（`_build_session_model`），并复刻会话的系统提示词与工具面，使请求命中前缀缓存；`BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"` 则改为折叠（最近 24 条原文，更早的每条截断成一行） | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 | 计划完成——轮次边界上全部 todo 为 `completed` / `cancelled`（**不在压缩时**） | 技能评审（`_run_skill_review`）：完成钩子（`PlanContinuationEnforcer` → `maybe_trigger_skill_review`）用**辅助模型** fork 专用 agent，使用 `_SKILL_REVIEW_PROMPT`，且**不带任何对话历史** | `skills/auto/`（类级技能 + `<module>-notes`）；允许 judge 认可的 no-op；原始 `handoff-tree.json` 先写盘审计 |
-| 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget 后台评审 agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
+| 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget 后台评审 agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `registry.db` |
 | 删除主会话（purge 之前） | session-end salvage（`salvage_session_memory`）：快照 checkpoint transcript，捕获模型/系统提示词/工具面，只读计算压缩切割线，然后运行两次独立 memory review——第一波处理本会被压缩的前缀，第二波在重载 memory 并重建提示词后处理保留的尾部 | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 
 ## 触发详情
@@ -41,24 +43,28 @@
 
 `_detect_todo_all_complete(session_id)` 在计划可能完成的每个回合评估，每个完成周期只触发一次：todos 存在且全部为 `completed` / `cancelled`；`skill_review_fired` 尚未设置。它设置 fired 标志，列表不完整时重置；读取全部 fail-open。完成钩子现在每回合检查，短会话也能抽取。
 
-标志本身看不到 completed todo 的原地修改，因此 trigger 还比较 `_plan_snapshot_hash`（id + content + status + plan_ref）与上次**成功** pass 后存入 `skill_review_snapshot_hash` 的值——内容变化才重新抽取，计划未变则跳过，失败 pass 在 cooldown 后重试。
+标志本身看不到 completed todo 的原地修改，因此 trigger 还比较 `_plan_snapshot_hash`（id + content + status + plan_ref）与上次**已消费** pass 后存入 `skill_review_snapshot_hash` 的值（成功抽取，或预判断判定为不可泛化）——内容变化才重新抽取，计划未变则跳过，失败 pass 在 cooldown 后重试。
 
 `skill_review_enabled` 与 `skill_review_enabled` 都开启时，hook 以 fire-and-forget 方式在 BACKGROUND_REVIEW 车道运行 `_run_skill_review`：
 
 1. `_build_plan_context` 读取 plan 文件、todos、子代理 runs（result_text 截断 24 KB），以及有界 `feedback`：最近消息中的 `skill_view` 调用 + `.usage.json` 最近条目（`loaded_skills`），以及最近回合的用户纠正（`user_corrections`）。internal carrier、system reminder、workspace notice 都被排除。没有 todo 返回 `{}`，pass 跳过。
 2. LLM 之前先把原始合并 handoff tree 原子写入 `handoff-tree.json` 审计；它不是面向模型的知识读取入口。
 3. `_SKILL_REVIEW_PROMPT` 用压缩上下文渲染，交给专用 agent（辅助模型，temperature=0，**不带对话**）。工具面显式绑定 `skill_list` / `skill_view` / `skill_manage`；`knowledge` 和 `memory` 不在其中，因此不能写知识或 FACTS。
-4. Prompt 明确映射证据：`success_steps` → 步骤/验证，`failed_branches` → pitfalls / `when_not_to_use`，`hard_constraints` → guardrails，`locked_decisions` → rationale，`user_corrections` → body / `when_to_use`。优先 patch 本次加载的 skill，其次已有类级 umbrella，再次支持文件，最后才新建类级 skill。只有带具体理由才允许 no-op。
+4. Prompt 明确映射证据：`success_steps` → 步骤/验证，`failed_branches` → pitfalls / `when_not_to_use`，`hard_constraints` → guardrails，`locked_decisions` → rationale，`user_corrections` → body / `when_to_use`。优先 patch 本次加载的 skill，其次已有类级 umbrella，再次支持文件，最后才新建类级 skill。只有带具体理由才允许 no-op。可见性上默认**省略** `scope`（主代理与子代理均可见），只有当流程依赖主代理专属能力（`sessions_spawn` / `taskflow_*` / `todowrite` 等委托编排、`skill_manage`）时才写 `main_only`，只有纯子代理执行套路才写 `subagent_only`；质量 judge 返回 `scope_valid`，声明与正文矛盾时判定失败并带反馈重试。
 
 实现细节：`summarization/background_reviews.py` 的 `_run_skill_review` 使用 `_create_skill_review_agent`，在 `skill_review_lock` 下运行；`state_register_db` 保存指纹，`outcome` 来自 subagent runs，失败标志为 `False`。
+
+在 LLM 工作之前，一次**任务级预判断**（`_judge_task_generalizability`）先筛选计划：一次简短的辅助模型调用只收到计划目标与已完成 todo 摘要（不含 handoff 证据），回答 `{"should_extract": bool, "reason": str}`。返回 `false` 时在构建 handoff tree 与评审 agent 之前直接返回，并把快照指纹记为已消费——即成功路径写的同一个 `skill_review_snapshot_hash`——因此同一计划不会重复预判断。预判断返回格式错误、不可用或调用失败时**fail-open 为继续抽取**：完整评审与质量 judge 仍负责技能内容质量，预判断只决定「任务类别」是否值得评审。
+
+**用户开关。** 菜单-预设角色 → 高级 的「经验学习」开关（`skill_extraction_enabled`：全局写在 `sherry.jsonc`，可按会话覆盖）在完成检测之前读取。关闭时本轮不 fork，计划也不会被标记为已抽取，之后再打开仍可抽取。同一面板的「流程复用编译」（`flow_extraction_enabled`，全局只读——会话侧显示为锁定）控制下文的 PTC 编译与 LDW 编译；经验学习关闭时流程复用强制视为关闭。唯一读取入口是 `runtime/session/extraction.py`。
 
 技能评审以 snapshot/judge 事务运行：
 
 - **snapshot**：`skill_review.snapshot_auto_skills()` 在首次尝试前捕获 `skills/auto`（技能、支持文件、usage sidecar）。
 - **write**：评审创建/修补 skill；`set_current_write_origin("background_review")` 使新 skill 标记为 agent-created，供 curator 管理。
-- **judge**：`skill_review.judge_skill_update()` 用辅助模型返回 `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`feedback`。只有 `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable 才通过；no-op 需要 `no_op_justified`。
+- **judge**：`skill_review.judge_skill_update()` 用辅助模型返回 `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`scope_valid`、`feedback`。**改动过的 skill** 只有 `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable、`scope_valid` 全过才通过；**有理由的 no-op** 只凭 `no_op_justified` 即通过——没有文件变更就没有内容可评分，因此一次 judge 调用后直接结束，不进入重试。
 - **retry/rollback**：失败尝试恢复 pre-review snapshot，带 judge feedback 重试（默认最多 2 次）。耗尽后再次恢复，记录 `skill_review_failed_hash` + 时间戳，不推进成功指纹；后续回合在 `skill_review_failure_cooldown_s` 后可重试，计划变化立即重试。
-- **可选 PTC 编译（通过后）**：当 `PTC["ptc_prefill_enabled"]` 开启时，同一后台任务会为每个成功的 TaskFlow step 向更新后的 skill 编译 `scripts/ptc__<plan_key>__<step_id>.py`。编译是 best-effort，绝不重跑 judge，也不回滚已通过的 skill。
+- **可选 PTC 编译（通过后）**：当 `PTC["ptc_prefill_enabled"]` 与 预设角色 → 高级 的「流程复用编译」开关都开启时，同一后台任务会为每个成功的 TaskFlow step 向更新后的 skill 编译 `scripts/ptc__<plan_key>__<step_id>.py`。编译是 best-effort，绝不重跑 judge，也不回滚已通过的 skill；该开关只控制编译，不会阻止重放已存在的脚本。
 
 此路径不再写 knowledge（`task-*.json` / `wave-*.json` / `plan-summary.json`）或 FACTS。旧 knowledge 文件留在磁盘但属于 legacy；面向模型的 prompt block 和 `knowledge` 工具已退役。
 
@@ -87,9 +93,9 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 
 ## Curator（技能策展）
 
-**frontmatter 契约（索引就是触发器）。** `<available_skills>` 只渲染技能的 frontmatter —— 正文要加载后才读 —— 所以这些字段就是路由信号：`description`（能力概述）、`when_to_use`（**必填**：这些路径创建或修补的每个技能都要写，写明应该加载它的具体场景／用户意图）与 `when_not_to_use`（可选：排除条件与替代方案）。加载器用 CJK 感知的 token 预算（60 / 50 / 50 token）渲染这两个附加标签并做 XML 转义；前端技能 tooltip 展示同样三个字段。curator 还加了更窄的第二层：伞状技能的 frontmatter 覆盖整个技能，而每个 `##` 子能力段落以自己的一行 `**When to use:**` 开头（确有排除时才加 `**When NOT to use:**`），模型 `skill_view` 后即可选对段落。它的确定性回退写出同样的形状，从合并理由里启发式提取这些条件。
+**frontmatter 契约（索引就是触发器）。** `<available_skills>` 只渲染技能的 frontmatter —— 正文要加载后才读 —— 所以这些字段就是路由信号：`description`（能力概述）、`when_to_use`（**必填**：这些路径创建或修补的每个技能都要写，写明应该加载它的具体场景／用户意图）与 `when_not_to_use`（可选：排除条件与替代方案）。可选的 `roles: [...]` 可把技能限制给特定的子代理功能角色（省略则所有角色可见；主代理与身份角色 GENERAL 跳过该检查）。加载器用 CJK 感知的 token 预算（60 / 50 / 50 token）渲染这两个附加标签并做 XML 转义；前端技能 tooltip 展示同样三个字段。curator 还加了更窄的第二层：伞状技能的 frontmatter 覆盖整个技能，而每个 `##` 子能力段落以自己的一行 `**When to use:**` 开头（确有排除时才加 `**When NOT to use:**`），模型 `skill_view` 后即可选对段落。它的确定性回退写出同样的形状，从合并理由里启发式提取这些条件。
 
-Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md / FACTS.md 与 `todos.db` 都不在其范围内。
+Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md / FACTS.md 与 `registry.db` 都不在其范围内。
 
 **是什么。** 它是空闲触发的编排器，而非定时 cron。服务入口通过 `context_engine.curator.init()` 启动守护线程（`curator-timer`）（`server/__main__.py:140`；HTTP-only 模式下跳过，`server/__main__.py:66-73`）。线程每 3600 秒唤醒一次并调用 `maybe_run_curator(idle_for_seconds=...)`（`context_engine/curator/__init__.py:122-140`）。导入该包无副作用——只有 `init()` 会启动线程（`context_engine/curator/__init__.py:151-165`）。
 
@@ -104,7 +110,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 
 **LLM 合并。** 当 `curator.consolidate` 开启（默认开）时，`run_curator_review()` 渲染非 pinned 技能候选列表（`context_engine/curator/review.py:69`），让主 LLM 以 temperature 0.3 把重叠的窄技能合并为类级 umbrella 技能（`CURATOR_REVIEW_PROMPT`，`context_engine/curator/review.py:16`）。新 umbrella 及其支持文件生成后写入 `skills/auto/`（`_generate_umbrella_skill`，`context_engine/curator/umbrella.py:86`；`_apply_consolidation`，`context_engine/curator/orchestrator.py:163`）。合并是该流程唯一的 LLM 步骤；失败会被捕获，运行继续。
 
-**与四条抽取路径的关系。** 路径 2（压缩时 skill review）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 skill review 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、`todos.db`，以及删除时的 memory 抢救），因此与 Curator 没有交集。
+**与四条抽取路径的关系。** 路径 2（压缩时 skill review）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 skill review 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、`registry.db`，以及删除时的 memory 抢救），因此与 Curator 没有交集。
 
 **状态与边界。** 运行状态存于 `skills/.curator_state`（`context_engine/curator/constants.py:3`，由 `context_engine/curator/state.py` 读写）；每次运行在 `logs/curator/{timestamp}/` 下写出 `run.json` + `REPORT.md`（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。范围仅限 `skills/auto/`——绝不触碰内置技能，pinned 技能跳过所有破坏性流转，整个流程在后台线程运行，不占对话回合路径。完整细节：[curator/README.md](../../context_engine/curator/README.zh.md)。
 
@@ -135,7 +141,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 | legacy plan knowledge | `workspace/knowledge/plans/<plan_key>/` | 已退役：旧 `task-<n>.json` / `wave-<n>.json` / `plan-summary.json` 留在磁盘，但模型面向路径不再写入或读取 |
 | handoff audit | `workspace/knowledge/plans/<plan_key>/handoff-tree.json` | 评审前写入的原始 handoff tree；不是 prompt block |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件；PTC 为 `ptc__<plan_key>__<step_id>.py`，LDW 为 `ldw__<plan_key>.py` |
-| todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |
+| todos | `src/data/registry.db` (`todos` table)（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |
 
 ## 配置开关
 
@@ -143,6 +149,8 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 启用压缩后 todo fork |
 | `skill_review_enabled` | `BACKGROUND_REVIEW_CONFIG`（`config/features/agent_side/background_review.py`） | `True` | 技能评审主开关（skill-only，不写 knowledge） |
+| `extraction.skill_extraction_enabled` | `sherry.jsonc`（预设角色 → 高级） | `True` | 面向用户的经验学习开关，可按会话覆盖 |
+| `extraction.flow_extraction_enabled` | `sherry.jsonc`（预设角色 → 高级） | `True` | 面向用户的流程复用编译开关（PTC + LDW），全局只读；经验学习关闭时强制关闭 |
 | `skill_review_max_attempts` | `BACKGROUND_REVIEW_CONFIG` | `2` | 初次尝试 + 最多一次 judge feedback 重试 |
 | `skill_review_quality_threshold` | `BACKGROUND_REVIEW_CONFIG` | `6` | 通过所需最低 `quality` |
 | `skill_review_feedback_turns` / `_max_items` / `_chars` | `BACKGROUND_REVIEW_CONFIG` | `12` / `8` / `2000` | 有界用户纠正上下文 |

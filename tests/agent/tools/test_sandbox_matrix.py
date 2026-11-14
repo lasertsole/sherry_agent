@@ -38,13 +38,13 @@ Coverage map (cell -> tests):
    (``graph.get_state(config).tasks``), never swallowed into a deny
    ToolMessage (Task 8 ``_pending_tasks`` pattern).
 5. auto + sandbox=True + backend unavailable (Windows degrade)
-   -> ``TestCell5AutoSandboxTrueUnavailableDegradedOneWarning``: degraded
-   DIRECT execution + EXACTLY ONE loguru warning. Cross-component spec
+   -> ``TestCell5AutoSandboxTrueUnavailableDegradedOneInfoLine``: degraded
+   DIRECT execution + EXACTLY ONE loguru INFO line. Cross-component spec
    (plan line 829): global ``subprocess.Popen`` mock asserts BOTH the
    scrubbed env dict AND the command string/argv -- one test per tool.
 6. off + any
    -> ``TestCell6OffNeverSandboxNeverApproved``: no sandbox wrap, no backend
-   consult, no degrade warning, no approval needed: ``sandbox=False``
+   consult, no degrade log line, no approval needed: ``sandbox=False``
    executes directly (no approver exists in off mode, consistent with the
    matrix).
 
@@ -218,6 +218,17 @@ def _loguru_warnings():
     """Capture loguru WARNING+ records (loguru does not reach stdlib caplog)."""
     records: list[str] = []
     sink_id = logger.add(lambda m: records.append(str(m)), level="WARNING")
+    try:
+        yield records
+    finally:
+        logger.remove(sink_id)
+
+
+@contextmanager
+def _loguru_info():
+    """Capture loguru INFO+ records (the degrade line is informational)."""
+    records: list[str] = []
+    sink_id = logger.add(lambda m: records.append(str(m)), level="INFO")
     try:
         yield records
     finally:
@@ -499,7 +510,7 @@ class TestCell4AutoSandboxFalseNonYoloGraphInterrupt:
 # (cross-component spec, plan line 829: assert BOTH the scrubbed env dict AND
 #  the command string/argv passed to Popen — one test per tool)
 # ═════════════════════════════════════════════════════════════════════════════
-class TestCell5AutoSandboxTrueUnavailableDegradedOneWarning:
+class TestCell5AutoSandboxTrueUnavailableDegradedOneInfoLine:
     def test_terminal_degrade_direct_exec_env_and_command_string(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -508,12 +519,12 @@ class TestCell5AutoSandboxTrueUnavailableDegradedOneWarning:
         _seed_fake_secrets(monkeypatch)
         calls = _install_fake_popen(monkeypatch, _FakeShellProc)
 
-        with _loguru_warnings() as records:
+        with _loguru_info() as records:
             term = build_terminal_tool()
             out = term._run(["echo ok"], sandbox=True)
 
-        assert len(records) == 1, f"exactly ONE degrade warning expected, got {records!r}"
-        assert "sandbox" in records[0] and "degrad" in records[0]
+        assert len(records) == 1, f"exactly ONE degrade info line expected, got {records!r}"
+        assert "sandbox unavailable" in records[0] and "unsandboxed" in records[0]
         assert out == "ok-out", "degraded call still executes and returns output"
 
         assert len(calls) == 1
@@ -531,12 +542,12 @@ class TestCell5AutoSandboxTrueUnavailableDegradedOneWarning:
         _seed_fake_secrets(monkeypatch)
         calls = _install_fake_popen(monkeypatch, _FakeReplProc)
 
-        with _loguru_warnings() as records:
+        with _loguru_info() as records:
             repl = build_python_repl_tool()
             out = repl._run("print(1)", sandbox=True)
 
-        assert len(records) == 1, f"exactly ONE degrade warning expected, got {records!r}"
-        assert "sandbox" in records[0] and "degrad" in records[0]
+        assert len(records) == 1, f"exactly ONE degrade info line expected, got {records!r}"
+        assert "sandbox unavailable" in records[0] and "unsandboxed" in records[0]
         assert out == "1\n", "degraded call still executes and returns output"
 
         assert len(calls) == 1
@@ -597,7 +608,7 @@ class TestCell6OffNeverSandboxNeverApproved:
             term = build_terminal_tool()
             out = term._run(["echo ok"], sandbox=True)
 
-        assert records == [], "policy=off must emit no degrade warning"
+        assert records == [], "policy=off must emit no degrade log line"
         assert out == "ok-out"
         assert len(calls) == 1
         assert calls[0]["args"][0] == "echo ok", "off must NEVER wrap (plain string form)"
@@ -614,7 +625,7 @@ class TestCell6OffNeverSandboxNeverApproved:
             repl = build_python_repl_tool()
             out = repl._run("print(1)", sandbox=True)
 
-        assert records == [], "policy=off must emit no degrade warning"
+        assert records == [], "policy=off must emit no degrade log line"
         assert out == "1\n"
         assert len(calls) == 1
         argv = calls[0]["args"][0]

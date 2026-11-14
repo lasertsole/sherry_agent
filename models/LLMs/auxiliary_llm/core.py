@@ -81,6 +81,12 @@ class _LocalAuxiliaryChatModel(LocalLlamaChatBase):
 
     def _ensure_client(self) -> Any:
         if self._client is None:
+            client = self._build_daemon_client()
+            if client is not None:
+                self._client = client
+                atexit.register(self._release_client)
+                return self._client
+
             from llama_cpp import Llama
 
             self._client = Llama(
@@ -91,6 +97,29 @@ class _LocalAuxiliaryChatModel(LocalLlamaChatBase):
             )
             atexit.register(self._release_client)
         return self._client
+
+    def _build_daemon_client(self) -> Any | None:
+        """The daemon shim when the local chat daemon can serve; else None.
+
+        The weights are 5.5 GB and the KV cache scales with ``n_ctx``; keeping
+        them in the orchestrator is exactly the cost this plan removes. A daemon
+        that cannot start (frozen entry missing, permissions) or is still
+        warming past its budget falls back to the historical in-process load —
+        behavior first, isolation second.
+        """
+        from config.features import LOCAL_DAEMONS
+
+        if not LOCAL_DAEMONS["auxiliary_daemon_enabled"]:
+            return None
+        from models.LLMs.local_daemon.client import build_daemon_chat_client
+
+        client = build_daemon_chat_client(
+            model_path=self._resolved_path,
+            n_ctx=self.n_ctx,
+            n_gpu_layers=self.n_gpu_layers,
+            verbose=self.verbose,
+        )
+        return client if client.available() else None
 
     @property
     def _llm_type(self) -> str:
@@ -217,9 +246,16 @@ def build_auxiliary_llm(
 
     else:
         # ---------- Local (GGUF) branch ----------
+        # n_ctx is feature config now (AUXILIARY_LLM_N_CTX overrides it). The
+        # shipped 40 960 keeps the historical behavior; a deployment that lowers
+        # it also gets a max_tokens that cannot exceed the window.
+        from config.features import LOCAL_DAEMONS
+
         _local_temperature = temperature if temperature is not None else 0.0
+        _n_ctx = int(LOCAL_DAEMONS["auxiliary_n_ctx"])
+        _max_tokens = min(32768, max(1024, _n_ctx // 2))
         model = _LocalAuxiliaryChatModel(
-            n_ctx=40960, temperature=_local_temperature, max_tokens=32768
+            n_ctx=_n_ctx, temperature=_local_temperature, max_tokens=_max_tokens
         )
         model = NormalizingChatModel(inner=model)
 

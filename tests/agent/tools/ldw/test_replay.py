@@ -110,6 +110,37 @@ async def test_compile_on_miss_writes_skill_script(tmp_path, monkeypatch) -> Non
     assert writes and writes[0]["plan_key"] == "k1"
 
 
+@pytest.mark.asyncio
+async def test_compile_on_miss_is_skipped_when_flow_extraction_is_off(
+    tmp_path, monkeypatch
+) -> None:
+    """A missing script is not compiled while the global flow switch is off.
+
+    An EXISTING script still replays — the switch governs compilation only — so
+    this path returns a distinct status instead of falling through to a compile.
+    """
+    monkeypatch.setattr(replay_mod, "PLAN_KNOWLEDGE_DIR", tmp_path)
+    monkeypatch.setitem(replay_mod.LDW, "min_replays", 1)
+    monkeypatch.setitem(replay_mod.LDW, "journal_path", "")
+    monkeypatch.setattr(
+        replay_mod,
+        "resolve_session_plan_identity",
+        lambda _sid: type("I", (), {"key": "k1", "plan_name": "p"})(),
+    )
+    monkeypatch.setattr(replay_mod, "load_ldw_script", lambda _key: None)
+    monkeypatch.setattr("runtime.session.extraction.flow_extraction_enabled", lambda _sid="": False)
+
+    def _knowledge(*_args, **_kwargs):
+        raise AssertionError("the DAG must not be read for a refused compile")
+
+    monkeypatch.setattr(replay_mod, "plan_knowledge_from_flow", _knowledge)
+
+    result = await replay_mod.replay_plan("sess", plan_key="k1", variant_input="v")
+
+    assert result["status"] == "flow_extraction_disabled"
+    assert result["plan_key"] == "k1"
+
+
 def test_plan_knowledge_from_flow_reads_taskflow_steps(monkeypatch) -> None:
     flow = {
         "state": {

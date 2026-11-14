@@ -58,6 +58,9 @@ class StateKey(StrEnum):
     LLM_FALLBACK_INDEX = "llm_fallback_index"
     # Per-turn fallback-switch counter, reset by LLMRetryMiddleware.before_agent.
     LLM_FALLBACK_SWITCHES = "llm_fallback_switches"
+    # Cumulative PHYSICAL model calls in one turn, across every nested retry
+    # layer. Reset by LLMRetryMiddleware.before_agent.
+    LLM_TURN_PHYSICAL_CALLS = "llm_turn_physical_calls"
     LLM_CONTENT_FILTER_BLOCKED = "llm_content_filter_blocked"
     LLM_CONTENT_FILTER_TERMINATED = "llm_content_filter_terminated"
     LLM_PARTIAL_STREAM_STUB = "llm_partial_stream_stub"
@@ -98,6 +101,17 @@ class StateKey(StrEnum):
     # Choice made mid-turn: parked so the running turn keeps the config it
     # started with; promoted at the turn boundary (same twin pattern).
     AGENT_CONFIG_PENDING = "agent_config_pending"
+
+    # Per-session EXTRACTION overrides (预设角色 → 高级): experience learning and
+    # the two iteration ceilings. Only explicitly overridden fields are stored;
+    # absent = inherit the global sherry.jsonc ``extraction`` value. Flow replay
+    # compilation is GLOBAL-ONLY and never stored here (a session payload naming
+    # it is rejected by the API). Read by the skill-review / PTC / LDW gates and
+    # by IterationBudget.
+    EXTRACTION = "extraction_overrides"
+    # Choice made mid-turn: parked so the in-flight turn keeps the values it
+    # started with; promoted at the turn boundary (same twin pattern).
+    EXTRACTION_PENDING = "extraction_overrides_pending"
 
     # Per-session web-search backend (client UI → /sessions/search_backend):
     # "tavily" | "searxng", absent = the global default (availability-aware).

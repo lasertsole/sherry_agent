@@ -7,9 +7,9 @@ from agent.tools.subagent.spawn.depth import (
 )
 from agent.tools.subagent.spawn.target_policy import validate_target_policy, is_target_allowed
 from agent.tools.subagent.spawn.plan import resolve_run_timeout_seconds
-from agent.tools.subagent.spawn.task_name import normalize_subagent_task_name
+from agent.tools.subagent.spawn.text_helpers import normalize_subagent_task_name
 from agent.tools.subagent.spawn.system_prompt import build_subagent_system_prompt
-from agent.tools.subagent.spawn.initial_message import build_subagent_initial_user_message
+from agent.tools.subagent.spawn.text_helpers import build_subagent_initial_user_message
 from agent.tools.subagent.spawn.inherited_tool_policy import (
     apply_tool_policy,
     normalize_tool_denylist,

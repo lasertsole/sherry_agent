@@ -13,7 +13,13 @@ from .registry import (
 from .lifecycle import LifecycleEndedReason, LifecycleEndedOutcome
 from .delivery import DeliveryContext
 from .capability import SubagentSessionRole, ControlScope
-from .functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
+from .functional_role import (
+    CODE_INTEL_ROLES,
+    CODE_INTEL_WRITE_ROLES,
+    PTC_ROLES,
+    SPAWN_ALLOWED_CHILD_ROLES,
+    FunctionalRole,
+)
 from .swarm import SwarmMode, SwarmRunState, SwarmGroupConfig
 
 __all__ = [
@@ -32,7 +38,9 @@ __all__ = [
     "ControlScope",
     "FunctionalRole",
     "CODE_INTEL_ROLES",
+    "CODE_INTEL_WRITE_ROLES",
     "PTC_ROLES",
+    "SPAWN_ALLOWED_CHILD_ROLES",
     "SwarmMode",
     "SwarmRunState",
     "SwarmGroupConfig",

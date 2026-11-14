@@ -87,8 +87,52 @@
   "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
   "COMPRESSION_LLM_PRESENCE_PENALTY": "",
 
+  // ── 角色子代理模型 Per-role subagent models ─────────────────────────────
+  // One family per functional role. A configured family (provider or api_base)
+  // serves every child of that role; empty keeps the role's own model tier
+  // (the shipped role definitions use AUXILIARY_LLM_*), so leaving these empty
+  // changes nothing. Useful for cheap read-only roles (researcher / reviewer /
+  // librarian) while the executor stays on a strong model.
+  // true = local GGUF: reuses the MAIN model's weights (no second download).
+  // MUST be >= 200000 (200K) when configured.
+  "EXECUTOR_LLM_MODEL_LOCAL": false,
+  "EXECUTOR_LLM_PROVIDER": "",
+  "EXECUTOR_LLM_API_NAME": "",
+  "EXECUTOR_LLM_API_BASE": "",
+  "EXECUTOR_LLM_API_KEY": "",
+  "EXECUTOR_LLM_MAX_TOKEN": 200000,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "EXECUTOR_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "EXECUTOR_LLM_FREQUENCY_PENALTY": "",
+  "EXECUTOR_LLM_PRESENCE_PENALTY": "",
+  "RESEARCHER_LLM_MODEL_LOCAL": false,
+  "RESEARCHER_LLM_PROVIDER": "",
+  "RESEARCHER_LLM_API_NAME": "",
+  "RESEARCHER_LLM_API_BASE": "",
+  "RESEARCHER_LLM_API_KEY": "",
+  "RESEARCHER_LLM_MAX_TOKEN": 200000,
+  "RESEARCHER_LLM_MAX_OUTPUT_TOKEN": "",
+  "RESEARCHER_LLM_FREQUENCY_PENALTY": "",
+  "RESEARCHER_LLM_PRESENCE_PENALTY": "",
+  "REVIEWER_LLM_MODEL_LOCAL": false,
+  "REVIEWER_LLM_PROVIDER": "",
+  "REVIEWER_LLM_API_NAME": "",
+  "REVIEWER_LLM_API_BASE": "",
+  "REVIEWER_LLM_API_KEY": "",
+  "REVIEWER_LLM_MAX_TOKEN": 200000,
+  "REVIEWER_LLM_MAX_OUTPUT_TOKEN": "",
+  "REVIEWER_LLM_FREQUENCY_PENALTY": "",
+  "REVIEWER_LLM_PRESENCE_PENALTY": "",
+  "LIBRARIAN_LLM_MODEL_LOCAL": false,
+  "LIBRARIAN_LLM_PROVIDER": "",
+  "LIBRARIAN_LLM_API_NAME": "",
+  "LIBRARIAN_LLM_API_BASE": "",
+  "LIBRARIAN_LLM_API_KEY": "",
+  "LIBRARIAN_LLM_MAX_TOKEN": 200000,
+  "LIBRARIAN_LLM_MAX_OUTPUT_TOKEN": "",
+  "LIBRARIAN_LLM_FREQUENCY_PENALTY": "",
+  "LIBRARIAN_LLM_PRESENCE_PENALTY": "",
 
   // ── 图生文 Image-to-Text model ───────────────────────────────────────────
   "ITTT_MODEL_LOCAL": false,

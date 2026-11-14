@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を Python モジュール定数として保存します。クロージャ、ソース文字列、`workflow.json` のサイドカーは保存しません。書き込み側は JSON テキストではなく Python リテラルを使います。`json.dumps` は小文字の `true` / `false` / `null` を出すため、`additionalProperties: false` を含む schema ではスクリプトが読み込めなくなるからです。
+LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を Python モジュール定数として保存します。クロージャ、ソース文字列、`workflow.json` のサイドカーは保存しません。書き込み側は JSON テキストではなく Python リテラルを使います。`json.dumps` は小文字の `true` / `false` / `null` を出すため、`additionalProperties: false` を含む schema ではスクリプトが読み込めなくなるからです。ローダーはファイルを `exec_module` しません：3 つのリテラル代入だけを AST で解析し、それ以外（import、呼び出し、余分な名前）は拒否するため、改ざんされたスクリプトがオーケストレーターの権限で実行されることはありません。
 
 ## ⚙️ ランタイムと Journal
 
@@ -82,6 +82,7 @@ step 失敗時は `repair_extraction` が replay flow の child handoff を読�
 |---|---|---|
 | `LDW["enabled"]` | `True` | マスタースイッチ。False なら全リプレイを TaskFlow のままにします |
 | `LDW["min_replays"]` | `3` | 計画が TaskFlow を離れて LDW スクリプトをコンパイルするまでのリプレイ回数 |
+| `extraction.flow_extraction_enabled`（プリセットキャラクター → 詳細） | `True` | ユーザー向けコンパイルスイッチ（グローバル専用）。オフの間は `action=compile`、未作成スクリプトのコンパイル、修復時の再コンパイルを拒否。既存スクリプトの再生は可能 |
 | `LDW["script_max_bytes"]` | `65536` | 1 つの `ldw__<plan_key>.py` の上限 |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | プロセス間 journal の位置 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 失敗後に TaskFlow replay flow を作成・駆動する |
@@ -94,6 +95,7 @@ step 失敗時は `repair_extraction` が replay flow の child handoff を読�
 
 - これはリプレイ加速器であり、sandbox でも再試行エンジンでもありません。
 - LDW leaf はロールのツールポリシーを継承します。LDW の sandbox/deepagents 経路は意図的に使いません。
+- journal は**完全一致**です：`prompt` / `agent_type` / `model` / `schema` / `isolation` をハッシュし、変体が変われば再実行します。fuzzy マッチと prompt の空白/Unicode 正規化は意図的に行いません——step prompt は空白が意味を持つコードや構造化された上流結果を含みうるため、近い一致のキャッシュは誤った出力を下流に渡してしまいます。miss のコストは 1 回の実実行で、成功後に書き戻します。
 - 計画や変体が変われば別の journal key になり再実行されます。古いスクリプトが現在の prompt より優先されることはありません。
 - 再実行した失敗 step の副作用はロールバックされません。journal は以前成功した step だけをスキップします。
 - 降格時に成功 step が再度 spawn されることはありません。失敗 step は TaskFlow の retry/judge に従い、LDW 独自の再試行ループはありません。

@@ -184,3 +184,80 @@ describe('ChatToolCard inline diff', () => {
     expect(wrapper.text()).toContain('−0');
   });
 });
+
+/**
+ * Artifact images: a tool result carrying `sherry-artifact://` references
+ * renders as thumbnails (never raw text), and the thumbnails are visible even
+ * while the card is collapsed so a generated picture cannot hide behind the
+ * fold. Clicking one opens the shared gallery.
+ */
+describe('ChatToolCard artifact images', () => {
+  const URI = 'sherry-artifact://s1/image-0123456789abcdef.png';
+  const OTHER = 'sherry-artifact://s1/image-fedcba9876543210.png';
+  const URL = 'http://localhost:8080/artifacts/s1/image-0123456789abcdef.png';
+
+  const mountExpanded = (message: MessageItem) =>
+    mount(ChatToolCard, {
+      props: {
+        message,
+        expanded: true,
+        expandable: true,
+        argsLabel: 'args',
+        resultLabel: 'result',
+        runningLabel: 'running',
+        noOutputLabel: 'no output',
+        trajectoryLabel: 'trajectory'
+      }
+    });
+
+  it('renders thumbnails while the card is collapsed', () => {
+    const wrapper = mountCard(toolMessage({ toolResult: URI }));
+
+    expect(wrapper.find('[data-test="artifact-image-gallery"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="artifact-image-thumb"] img').attributes('src')).toBe(URL);
+  });
+
+  it('replaces the plain-text result with the grid when expanded', () => {
+    const wrapper = mountExpanded(toolMessage({ toolResult: URI }));
+
+    expect(wrapper.find('[data-test="artifact-image-gallery"]').exists()).toBe(true);
+    expect(wrapper.find('pre').exists()).toBe(false);
+  });
+
+  it('keeps prose beside the images readable on expand', () => {
+    const wrapper = mountExpanded(
+      toolMessage({
+        toolResult: `${URI}\n[warn] 1 generated image(s) could not be persisted and were discarded.`
+      })
+    );
+
+    expect(wrapper.find('[data-test="artifact-image-gallery"]').exists()).toBe(true);
+    expect(wrapper.get('pre').text()).toContain('[warn] 1 generated image(s)');
+  });
+
+  it('renders one thumbnail per distinct reference', () => {
+    const wrapper = mountExpanded(toolMessage({ toolResult: `${URI}\n${OTHER}\n${URI}` }));
+
+    expect(wrapper.findAll('[data-test="artifact-image-thumb"]')).toHaveLength(2);
+  });
+
+  it('keeps the plain <pre> for results without artifact references', () => {
+    const wrapper = mountExpanded(toolMessage({ toolResult: 'plain output' }));
+
+    expect(wrapper.find('[data-test="artifact-image-gallery"]').exists()).toBe(false);
+    expect(wrapper.get('pre').text()).toContain('plain output');
+  });
+
+  it('opens the shared gallery on the clicked image', async () => {
+    const wrapper = mountExpanded(toolMessage({ toolResult: `${URI}\n${OTHER}` }));
+    const preview = await import('../../../composables/useImagePreview');
+    const gallery = preview.useImagePreview();
+
+    await wrapper.findAll('[data-test="artifact-image-thumb"]')[1].trigger('click');
+
+    expect(gallery.isPreviewVisible.value).toBe(true);
+    expect(gallery.galleryItems.value).toEqual([URL, 'http://localhost:8080/artifacts/s1/image-fedcba9876543210.png']);
+    expect(gallery.currentIndex.value).toBe(1);
+    gallery.closePreview();
+  });
+});

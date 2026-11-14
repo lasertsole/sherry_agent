@@ -11,6 +11,11 @@ when_not_to_use: "When the image is already attached for a vision-capable model,
 
 The `image_path` argument accepts BOTH a local absolute file path AND an http/https URL. If the user uploaded an image, the middleware message tells you its exact location — pass that value directly to `image_path`.
 
+URL downloads go through the shared SSRF guard: only **public http(s)** addresses
+are fetched (DNS-pinned, redirects re-checked, 50 MiB cap). Loopback, private,
+link-local and cloud-metadata URLs are refused with an `[Error] Image download
+failed: …` line — do not retry such a URL or fall back to a shell download.
+
 Use the **`terminal` tool** to run the skill script (the `python_repl` tool cannot import skill modules because its builtins are restricted). Run:
 
 ```bash

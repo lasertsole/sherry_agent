@@ -1,8 +1,3 @@
-from .media import (
-    detect_image_format as detect_image_format,
-    download_and_convert_to_base64 as download_and_convert_to_base64,
-    check_if_image_and_convert_to_base64 as check_if_image_and_convert_to_base64,
-)
 from .format import (
     escape_xml as escape_xml,
     sanitize_content as sanitize_content,

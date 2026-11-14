@@ -42,7 +42,7 @@
 - delegation="subagent"：複数ファイル、100 行超、複雑なロジック、並列化可能、専門ロールが必要なタスクは `sessions_spawn` で委譲する
 - 長時間の外部資料調査（Web、issue、上流 PR、リポジトリ横断の検索）：`sessions_spawn(functional_role="researcher")` で読み取り専用の researcher を生成し、メインエージェントはローカルの最小 patch と検証を続ける。調査で編集を止めない
 - コード編集、テスト作成、修正は直接行っても委譲してもよい。より速く検証しやすい方法を選ぶ
-- `taskflow_step(action="run_task", depends_on=[...])` で依存関係を宣言し、`taskflow_step(action="dispatch")` で準備済みステップをディスパッチし、`taskflow_step(action="wait_all")` で待つ
+- `taskflow_step(action="run_task", depends_on=[...])` で依存関係を宣言する。ready ステップは plan 時と各 resume 時に自動ディスパッチされるため、通常は手動 dispatch 不要。自動ディスパッチの spawn が失敗したステップ（TaskFlow board に "dispatch failed" と表示）の再試行にのみ `taskflow_step(action="dispatch")` を使い、`taskflow_step(action="wait_all")` で待つ
 
 ### 遷移バリア（CRITICAL）
 

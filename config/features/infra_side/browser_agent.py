@@ -68,6 +68,11 @@ class BrowserAgentConfig(TypedDict):
     #: 1 = the ``browser_evaluate`` escape hatch registers. Default 0 (off).
     allow_evaluate: int
     allow_evaluate_env_var: str
+    #: 1 = passive console / JS-exception / failed-network capture via CDP.
+    debug_capture: int
+    debug_capture_env_var: str
+    #: Events kept per page and per buffer (console, network).
+    debug_buffer_max: int
 
 
 def _build_browser_agent(env: Mapping[str, str] | None = None) -> BrowserAgentConfig:
@@ -107,6 +112,12 @@ def _build_browser_agent(env: Mapping[str, str] | None = None) -> BrowserAgentCo
         "snapshot_max_text_chars": 4000,
         "allow_evaluate": _env_int("SHERRY_BROWSER_ALLOW_EVALUATE", 0, source),
         "allow_evaluate_env_var": "SHERRY_BROWSER_ALLOW_EVALUATE",
+        # Passive debugging capture is part of the browser feature (itself
+        # opt-in). A site that misbehaves under the domains can be debugged
+        # with the switch off: the tools then answer "capture disabled".
+        "debug_capture": _env_int("SHERRY_BROWSER_DEBUG_CAPTURE", 1, source),
+        "debug_capture_env_var": "SHERRY_BROWSER_DEBUG_CAPTURE",
+        "debug_buffer_max": 200,
     }
 
 

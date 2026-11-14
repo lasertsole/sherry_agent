@@ -15,6 +15,7 @@ LSP_NAMES = {
     "lsp_find_references",
     "lsp_workspace_symbol",
     "lsp_call_hierarchy",
+    "lsp_hover",
     "lsp_rename",
     "lsp_diagnostics",
     "lsp_format",
@@ -120,14 +121,29 @@ class TestLibrarianGetsLsp:
         assert AST_GREP_NAMES <= names
 
 
-class TestOtherRolesHaveNoLsp:
-    @pytest.mark.parametrize("role_name", ["general", "executor", "reviewer"])
-    def test_non_researcher_child_has_no_lsp(self, _wiring: dict, role_name: str) -> None:
+class TestWriteRolesGetLsp:
+    @pytest.mark.parametrize("role_name", ["general", "executor"])
+    def test_write_role_child_gets_lsp_and_code_intel(self, _wiring: dict, role_name: str) -> None:
         _build(
             tools=[_StubTool("read_file"), _StubTool("write_file"), _StubTool("terminal")],
             tool_allow=["read_file", "write_file", "terminal", "python_repl"],
             tool_deny=[],
             functional_role=_role(role_name),
+            model_tier="auxiliary",
+        )
+        names = _tool_names(_wiring)
+        assert LSP_NAMES <= names
+        assert CODE_INTEL_NAMES <= names
+        assert AST_GREP_NAMES <= names
+
+
+class TestOtherRolesHaveNoLsp:
+    def test_reviewer_child_has_no_lsp(self, _wiring: dict) -> None:
+        _build(
+            tools=[_StubTool("read_file"), _StubTool("terminal")],
+            tool_allow=["read_file", "terminal"],
+            tool_deny=[],
+            functional_role=_role("reviewer"),
             model_tier="auxiliary",
         )
         assert not (LSP_NAMES & _tool_names(_wiring))
