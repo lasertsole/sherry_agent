@@ -48,12 +48,29 @@ def failure_detail(error: Exception) -> str:
 
 
 def read_body(request) -> dict | None:
-    """Parse a JSON request body defensively."""
+    """Parse a JSON request body defensively.
+
+    ``request.json()`` is the primary path. It rejects a BYTES body (the Robyn
+    test client builds ``Request`` from encoded bytes) with a TypeError, while a
+    real server hands over text; the fallback decodes the raw body so the two
+    environments accept the same payload.
+    """
     try:
         body = request.json()
     except Exception:
-        return None
-    return body if isinstance(body, dict) else None
+        body = None
+    if isinstance(body, dict):
+        return body
+    raw = getattr(request, "body", "")
+    if isinstance(raw, (bytes, bytearray)):
+        raw = bytes(raw).decode("utf-8", "replace")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 def query_int(

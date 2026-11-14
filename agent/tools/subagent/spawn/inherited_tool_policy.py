@@ -34,6 +34,8 @@ def apply_tool_policy(
     tool_allow: list[str] | None,
     tool_deny: list[str] | None,
     blocked_tools: list[str] | None = None,
+    *,
+    caller_role: str | None = None,
 ) -> list:
     """Apply tool policy to a candidate tool list for a sub-agent.
 
@@ -54,6 +56,12 @@ def apply_tool_policy(
       (otherwise an ORCHESTRATOR whose deny list became empty after unblocking
       spawn/yield would have them re-added).
     - ``blocked_tools`` is merged into the deny-set when provided.
+    - ``caller_role`` (a specialized functional role) is stamped as
+      ``metadata["caller_role"]`` next to the caller scope, so consumer tools
+      (``skill_list`` / ``skill_view``) can honour a skill's ``roles: [...]``
+      filter. The identity GENERAL role passes ``None``: it keeps the full
+      view, exactly like the main agent, because ``roles`` restricts
+      SPECIALIZED workers, not the default delegation path.
 
     Every tool that survives the filter (i.e. every tool handed to a subagent)
     is stamped ``metadata["caller_scope"] = "subagent"`` in place, so consumer
@@ -99,14 +107,18 @@ def apply_tool_policy(
         # When allow-list is non-empty, only keep explicitly allowed tools
         if allow_set and name not in allow_set:
             continue
-        # Stamp the caller scope so consumer tools can adapt at runtime
+        # Stamp the caller scope/role so consumer tools can adapt at runtime
         if isinstance(metadata, dict):
             metadata.setdefault("caller_scope", "subagent")
+            if caller_role:
+                metadata.setdefault("caller_role", str(caller_role))
         else:
             # Tool lacks a metadata dict (or it is not a dict) — create one.
             # Best-effort: never let stamping failures break the filter.
             try:
                 tool.metadata = {"caller_scope": "subagent"}
+                if caller_role:
+                    tool.metadata["caller_role"] = str(caller_role)
             except Exception as e:
                 logger.debug("Could not stamp caller_scope on tool {}: {}", name, e)
         result.append(tool)

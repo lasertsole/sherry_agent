@@ -8,8 +8,12 @@ The finish path is gated before the DONE transition:
 * Gate C — flow-scoped evidence must be free of failing/stale rows.
 * Gate E — the goal judge, only for a flow carrying a ``description`` (`_goal_gate`).
 
-Every gate is fail-open: an unavailable evidence collector or judge never
-blocks a finish.
+Gate E and the regression replay are fail-open: a broken judge or an optional
+probe must never pin a flow open. Gate C's evidence READ is different: if
+the collector is unavailable, the finish is rejected and the reason is recorded
+in the flow state as ``evidence_unavailable`` — an unverifiable completion must
+not silently pass. A flow with no evidence rows at all still passes (nothing
+was recorded to contradict the completion).
 
 (The old Gate D — ``SisyphusVerifier`` via caller-supplied ``todo`` +
 ``plan_path`` — was removed: no prompt required
@@ -17,6 +21,8 @@ the linkage and nothing passed it, so a 248-line module served a call path that
 did not happen. The Sisyphus contract lives on as orchestrator doctrine in
 ``skills/builtin/core/ulw-execute/SKILL.md``.)
 """
+
+from typing import NamedTuple
 
 from langchain_core.tools import tool
 from loguru import logger
@@ -129,8 +135,17 @@ _GOAL_GATE_SYSTEM_PROMPT = (
 )
 
 
-async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
-    """Return an ``Error:`` text when the flow's evidence is failing/stale/broken.
+class _EvidenceGateOutcome(NamedTuple):
+    """Gate C's verdict: an ``Error:`` text and/or an availability failure."""
+
+    error: str | None = None
+    #: Set when the evidence store could not be READ. The caller records
+    #: it in the flow state; the finish is rejected rather than silently passed.
+    unavailable: str | None = None
+
+
+async def _evidence_gate(flow: dict, steps: list[dict]) -> _EvidenceGateOutcome:
+    """Judge the flow's aggregated evidence; no evidence rows means pass.
 
     The gate reads ONE flow's rows by ``flow_id``. A step child is stamped at
     spawn; during this finish call the creator session is temporarily stamped
@@ -144,8 +159,9 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     is fail-open and skips unsafe/unparseable commands, so it can never turn an
     infrastructure error into a rejection.
 
-    Fail-open: a missing collector, unreadable ledger, or any collector error
-    passes (``None``) — an optional probe must never block a finish.
+    An unreadable collector is NOT fail-open: the returned outcome carries
+    ``unavailable`` and an ``Error:`` text, so taskflow_finish records the reason
+    and keeps the flow open. Only a genuinely empty ledger passes.
     """
     creator_key = str((flow.get("state") or {}).get("creator_session_key") or "")
     flow_id = str(flow.get("flow_id") or "")
@@ -187,8 +203,17 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
                 # the creator) is the only way to see evidence that still exists;
                 # it never widens to the whole session beyond those keys.
                 evidence = collect_evidence_summary(session_keys=keys)
-        except Exception:  # noqa: BLE001 - optional probe; never block a finish
-            return None
+        except Exception as exc:  # noqa: BLE001 - unavailable is recorded, not ignored
+            detail = f"{type(exc).__name__}: {exc}"[:300]
+            logger.warning("TaskFlow evidence gate unavailable (rejecting the finish): {}", detail)
+            return _EvidenceGateOutcome(
+                error=(
+                    "Error: Cannot finish: the verification evidence ledger is unavailable "
+                    f"({detail}), so completion cannot be verified. Retry after the evidence "
+                    "store recovers, or cancel the flow."
+                ),
+                unavailable=detail,
+            )
     finally:
         if creator_key and flow_id:
             from runtime import StateKey, state_register_mem
@@ -199,21 +224,27 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
                 state_register_mem.delete_state(creator_key, StateKey.FLOW_ID)
 
     if not evidence:
-        return None
+        return _EvidenceGateOutcome()
     if "FAIL" in evidence:
-        return f"Error: Finish gate rejected: failing verification evidence:\n{evidence}"
+        return _EvidenceGateOutcome(
+            error=f"Error: Finish gate rejected: failing verification evidence:\n{evidence}"
+        )
     if "[broken]" in evidence:
-        return (
-            "Error: Finish gate rejected: confirmed regression (a re-verified "
-            f"command now fails):\n{evidence}\nFix the regression or revert the change "
-            "that broke it, then re-run verification."
+        return _EvidenceGateOutcome(
+            error=(
+                "Error: Finish gate rejected: confirmed regression (a re-verified "
+                f"command now fails):\n{evidence}\nFix the regression or revert the change "
+                "that broke it, then re-run verification."
+            )
         )
     if "[stale]" in evidence:
-        return (
-            "Error: Finish gate rejected: stale evidence (code changed since last "
-            f"verification):\n{evidence}\nRe-run verification commands before finishing."
+        return _EvidenceGateOutcome(
+            error=(
+                "Error: Finish gate rejected: stale evidence (code changed since last "
+                f"verification):\n{evidence}\nRe-run verification commands before finishing."
+            )
         )
-    return None
+    return _EvidenceGateOutcome()
 
 
 async def _persist_finish_state(
@@ -443,9 +474,15 @@ async def taskflow_finish(
         )
 
     # Gate C — the flow's aggregated evidence must be free of failing/stale rows.
-    evidence_error = await _evidence_gate(flow, steps)
-    if evidence_error is not None:
-        return await _reject(evidence_error)
+    # An unreadable ledger is recorded on the flow and rejects; a merely
+    # empty one passes (there was nothing to contradict the completion).
+    evidence_outcome = await _evidence_gate(flow, steps)
+    if evidence_outcome.unavailable:
+        state["evidence_unavailable"] = evidence_outcome.unavailable
+    else:
+        state.pop("evidence_unavailable", None)
+    if evidence_outcome.error is not None:
+        return await _reject(evidence_outcome.error)
 
     # Gate E — the goal judge (opt-in: a flow with a description). Gates A-C
     # prove the machinery finished; this is the only gate that reads the

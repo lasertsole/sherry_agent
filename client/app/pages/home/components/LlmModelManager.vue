@@ -101,6 +101,20 @@
           data-test="follows-auxiliary">
           {{ t('config.llm.followsAuxiliary') }}
         </p>
+        <!-- Per-role families: empty keeps the role's own model tier, and the
+             backend reports the effective model + where it came from. -->
+        <p
+          v-if="isRoleFamily && followsRoleDefault && !isLocalEntrySelected"
+          class="m-0 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+          data-test="follows-role-default">
+          {{ t('config.llm.followsRoleDefault') }}
+        </p>
+        <p
+          v-if="isRoleFamily && roleModel && !isLocalEntrySelected"
+          class="m-0 rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-600 dark:bg-gray-800/60 dark:text-gray-300"
+          data-test="role-effective-model">
+          {{ roleEffectiveText }}
+        </p>
         <div
           v-for="key in paramKeys"
           :key="key"
@@ -180,16 +194,36 @@
           <InputText
             v-else
             v-model="draft[key]"
+            :type="isSecretKey(key) ? 'password' : 'text'"
             :disabled="isLocalEntrySelected"
-            :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
+            :placeholder="
+              isLocalEntrySelected
+                ? t('config.llm.localUnused')
+                : isSecretKey(key)
+                  ? secretConfigured(key)
+                    ? t('config.llm.secretKeep')
+                    : t('config.llm.secretInput')
+                  : ''
+            "
             :class="[
               'w-full font-mono text-xs disabled:opacity-60',
               missingRequired && (key === providerKey || key === nameKey) && !(draft[key] ?? '').trim()
                 ? 'border-red-400'
                 : ''
             ]"
-            autocomplete="off"
+            :autocomplete="isSecretKey(key) ? 'new-password' : 'off'"
             spellcheck="false" />
+          <!-- The stored key is never sent to the browser: state it explicitly
+               so an empty box does not read as "no key configured". -->
+          <p
+            v-if="isSecretKey(key) && !isLocalEntrySelected"
+            class="m-0 text-[11px]"
+            :class="
+              secretConfigured(key) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+            "
+            :data-test="`secret-state-${key}`">
+            {{ secretConfigured(key) ? t('config.llm.secretConfigured') : t('config.llm.secretUnset') }}
+          </p>
         </div>
 
         <div
@@ -324,7 +358,7 @@ import { useI18n } from 'vue-i18n';
 import LlmProfileRow from './LlmProfileRow.vue';
 import { MAX_TOKEN_GUARD_KEYS } from '@/constants/env';
 import { MAX_PROFILES_PER_GROUP } from '~/stores/llm-profiles';
-import type { ModelTestResult } from '~/composables/env';
+import type { ModelRoleEffective, ModelTestResult } from '~/composables/env';
 // Stable module specifiers so tests can vi.mock the composables (the unimport
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
@@ -341,13 +375,24 @@ const props = defineProps<{
   keys: string[];
   /** Live `.env` values for those keys (used to seed new profiles / infer the applied one). */
   values: Record<string, string>;
+  /**
+   * Secret key → whether the backend already stores a value. The VALUE is
+   * never sent; the panel renders a write-only password field.
+   */
+  configuredSecrets?: Record<string, boolean>;
   /** Group heading shown above the panel. */
   groupTitle?: string;
   /**
    * Model-download family behind the built-in local entry. Defaults to the
-   * group itself; the optional internal families reuse the auxiliary GGUF.
+   * group itself; the optional internal families reuse the auxiliary GGUF and
+   * the per-role families reuse the main model.
    */
   downloadGroup?: string;
+  /**
+   * The family's effective judge/role model from `GET /sherry-config/model-roles`
+   * (what this panel will actually serve, and where it is inherited from).
+   */
+  roleModel?: ModelRoleEffective | null;
 }>();
 
 const emit = defineEmits<{
@@ -375,6 +420,10 @@ const GROUP_HELP_KEYS: Record<string, string> = {
   AUXILIARY_LLM: 'config.llm.modelHelp.auxiliary',
   TASKFLOW_LLM: 'config.llm.modelHelp.taskflow',
   COMPRESSION_LLM: 'config.llm.modelHelp.compression',
+  EXECUTOR_LLM: 'config.llm.modelHelp.executor',
+  RESEARCHER_LLM: 'config.llm.modelHelp.researcher',
+  REVIEWER_LLM: 'config.llm.modelHelp.reviewer',
+  LIBRARIAN_LLM: 'config.llm.modelHelp.librarian',
   ITTT: 'config.llm.modelHelp.ittt',
   VTTT: 'config.llm.modelHelp.vttt',
   TTI: 'config.llm.modelHelp.tti',
@@ -750,6 +799,21 @@ const selected = computed(() =>
   isLocalEntrySelected.value ? localEntry.value : store.byId(props.group, selectedId.value)
 );
 
+/**
+ * API keys are write-only: the backend never returns their value.
+ * @param key
+ */
+const isSecretKey = (key: string): boolean => key.endsWith('_API_KEY');
+
+/**
+ * Whether a secret is already stored — either the backend reports one
+ * (``configuredSecrets``) or the selected client profile still carries a key
+ * the user typed earlier. The value itself is never rendered.
+ * @param key
+ */
+const secretConfigured = (key: string): boolean =>
+  props.configuredSecrets?.[key] === true || !!selected.value?.params[key]?.trim();
+
 /** The provider key of this group (any `*_PROVIDER` variant, e.g. `ITTT_model_PROVIDER`). */
 const providerKey = computed(() => props.keys.find(k => k.endsWith('_PROVIDER')) ?? '');
 /** The model-name key of this group (`*_API_NAME` wins over `*_NAME`). */
@@ -760,6 +824,10 @@ const nameKey = computed(
 /** The two optional internal families the backend can follow the auxiliary model with. */
 const INTERNAL_FAMILIES = ['TASKFLOW_LLM', 'COMPRESSION_LLM'] as const;
 const isInternalFamily = computed(() => (INTERNAL_FAMILIES as readonly string[]).includes(props.group));
+
+/** Per-role subagent families: an empty family keeps the role's own tier. */
+const ROLE_FAMILIES = ['EXECUTOR_LLM', 'RESEARCHER_LLM', 'REVIEWER_LLM', 'LIBRARIAN_LLM'] as const;
+const isRoleFamily = computed(() => (ROLE_FAMILIES as readonly string[]).includes(props.group));
 
 /**
  * True when this internal family is UNCONFIGURED, i.e. its provider and API
@@ -772,6 +840,33 @@ const followsAuxiliary = computed(() => {
   const provider = (draft.value[providerKey.value] ?? '').trim();
   const base = baseKey ? (draft.value[baseKey] ?? '').trim() : '';
   return !provider && !base;
+});
+
+/**
+ * True when this ROLE family is unconfigured (no provider / API base / local
+ * switch): the child keeps the role definition's own model tier — the shipped
+ * roles use the auxiliary model. The precise effective model arrives from the
+ * backend when the read succeeds (`roleModel`); the badge alone is the
+ * offline-safe statement.
+ */
+const followsRoleDefault = computed(() => {
+  if (!isRoleFamily.value) return false;
+  const baseKey = props.keys.find(k => k.endsWith('_API_BASE'));
+  const localKey = props.keys.find(k => k.endsWith('_MODEL_LOCAL'));
+  const provider = (draft.value[providerKey.value] ?? '').trim();
+  const base = baseKey ? (draft.value[baseKey] ?? '').trim() : '';
+  const local = localKey ? (draft.value[localKey] ?? '').toLowerCase() === 'true' : false;
+  return !provider && !base && !local;
+});
+
+/** The "effective model — source" line under the role-family header. */
+const roleEffectiveText = computed(() => {
+  const row = props.roleModel;
+  if (!row) return '';
+  const source = t(`config.llm.source.${row.source}`);
+  return row.effective_model
+    ? t('config.llm.effectiveModel', { model: row.effective_model, source })
+    : t('config.llm.effectiveModelDepth');
 });
 
 /**
@@ -800,7 +895,11 @@ const isActive = (profile: { id: string; params: Record<string, string> }): bool
 const syncDraft = () => {
   const profile = selected.value;
   const next: Record<string, string> = {};
-  for (const key of props.keys) next[key] = profile?.params[key] ?? props.values[key] ?? '';
+  for (const key of props.keys) {
+    // Secret values are never rendered: the box always starts empty and the
+    // profile's stored key (if any) is used only when applying.
+    next[key] = isSecretKey(key) ? '' : (profile?.params[key] ?? props.values[key] ?? '');
+  }
   draft.value = next;
 };
 // Keep the built-in entry's read-only display in sync with the live `.env`.
@@ -849,6 +948,10 @@ const TESTABLE_GROUPS = [
   'AUXILIARY_LLM',
   'TASKFLOW_LLM',
   'COMPRESSION_LLM',
+  'EXECUTOR_LLM',
+  'RESEARCHER_LLM',
+  'REVIEWER_LLM',
+  'LIBRARIAN_LLM',
   'EMBEDDING',
   'RERANKER'
 ] as const;
@@ -887,8 +990,16 @@ const runTest = async () => {
   }
   testing.value = true;
   testResult.value = null;
+  // A blank password box is not "no key": use this profile's stored key when
+  // it has one, otherwise the backend fills it from .models.
+  const testParams: Record<string, string> = { ...draft.value };
+  for (const key of props.keys) {
+    if (!isSecretKey(key) || (testParams[key] ?? '').trim()) continue;
+    const stored = (selected.value?.params[key] ?? '').trim();
+    if (stored) testParams[key] = selected.value!.params[key]!;
+  }
   try {
-    const result = await testModelProfile(props.group, { ...draft.value });
+    const result = await testModelProfile(props.group, testParams);
     testResult.value = result ?? {
       supported: true,
       ok: false,
@@ -941,6 +1052,13 @@ const saveProfile = () => {
     return;
   }
   const params: Record<string, string> = { ...draft.value };
+  // An empty password box means "keep the key this profile already carries";
+  // it must not erase it from the client-side profile.
+  for (const key of props.keys) {
+    if (isSecretKey(key) && !(params[key] ?? '').trim()) {
+      params[key] = selected.value?.params[key] ?? '';
+    }
+  }
   store.update(props.group, selected.value!.id, {
     label: params[nameKey.value] || selected.value.label,
     params
@@ -961,6 +1079,11 @@ const payloadFor = (entry: { id: string; params: Record<string, string> }): Reco
   if (entry.id === LOCAL_ENTRY_ID) return flagKey ? { [flagKey]: 'true' } : {};
   const params: Record<string, string> = { ...entry.params };
   if (flagKey) params[flagKey] = 'false';
+  // A blank secret means "leave whatever .models already stores"; sending ""
+  // would wipe a credential the browser was never given.
+  for (const key of props.keys) {
+    if (isSecretKey(key) && !(params[key] ?? '').trim()) delete params[key];
+  }
   return params;
 };
 
@@ -1029,6 +1152,16 @@ const applyProfile = () => {
   const params: Record<string, string> = isLocalEntrySelected.value
     ? payloadFor(selected.value)
     : { ...draft.value, ...(flagKey ? { [flagKey]: 'false' } : {}) };
+  if (!isLocalEntrySelected.value) {
+    for (const key of props.keys) {
+      if (!isSecretKey(key)) continue;
+      const typed = (draft.value[key] ?? '').trim();
+      const stored = (selected.value?.params[key] ?? '').trim();
+      if (typed) params[key] = draft.value[key]!;
+      else if (stored) params[key] = selected.value!.params[key]!;
+      else delete params[key];
+    }
+  }
   emit('apply', { id: selected.value.id, params });
 };
 

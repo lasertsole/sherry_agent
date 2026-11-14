@@ -66,6 +66,15 @@ def test_create_rejects_over_capacity(repo):
         service.create_memory_entry("memory", "x" * 30)
 
 
+def test_create_rejects_over_the_entry_count_cap(repo, monkeypatch):
+    monkeypatch.setitem(memory_module.MEMORY_TOOL, "max_entries_per_target", 2)
+    service.create_memory_entry("memory", "first")
+    service.create_memory_entry("memory", "second")
+
+    with pytest.raises(ValueError, match="active entries"):
+        service.create_memory_entry("memory", "third")
+
+
 def test_update_rejects_over_capacity(repo):
     first = service.create_memory_entry("memory", "a" * 10)
     service.create_memory_entry("memory", "b" * 10)

@@ -29,11 +29,10 @@ def _finalize_restored_pending(run: SubagentRunRecord) -> SubagentRunRecord:
 def _rebase_restored_clock(run: SubagentRunRecord, now: float) -> SubagentRunRecord:
     """Move every persisted monotonic timestamp onto THIS process's clock.
 
-    The shaping lives on :class:`SubagentRunRecord` (audit M17); this wrapper
-    only supplies the config-derived archive window.
+    The shaping lives on :class:`SubagentRunRecord`; this wrapper exists so the
+    restore path has one named seam.
     """
-    window = get_config().archive_after_minutes * 60
-    return run.rebase_clock(now, archive_window_seconds=window)
+    return run.rebase_clock(now)
 
 
 def _mark_restored_running_terminal(run: SubagentRunRecord, now: float) -> SubagentRunRecord:
@@ -51,11 +50,15 @@ async def persist_runs_to_disk() -> None:
 
 
 async def restore_runs_from_disk() -> None:
-    """Restore run records from SQLite into memory (executes only once)."""
+    """Restore run records from SQLite into memory (once SUCCESSFULLY).
+
+    The flag is set only after a successful pass: a transient SQLite failure at
+    boot used to latch ``_restore_done`` before the read, so the restore never
+    retried and every leftover run stayed invisible for the process lifetime.
+    """
     global _restore_done
     if _restore_done:
         return
-    _restore_done = True
 
     try:
         runs = await store_sqlite.load_runs_from_sqlite()
@@ -86,6 +89,7 @@ async def restore_runs_from_disk() -> None:
                 "(no task survives a restart)",
                 restored_running,
             )
+        _restore_done = True
     except Exception as e:
         logger.exception("Failed to restore subagent runs from SQLite: {}", e)
 

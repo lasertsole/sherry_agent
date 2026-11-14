@@ -5,7 +5,7 @@ internal injection vs user completion message delivery path.
 """
 
 from ..types.registry import SubagentRunRecord
-from ..registry.read import get_run_by_child_session_key_readonly
+from ..registry import memory
 
 
 class AnnounceOrigin:
@@ -64,4 +64,4 @@ def resolve_announce_origin(run: SubagentRunRecord) -> AnnounceOrigin:
 
 def _find_requester_run(requester_session_key: str) -> SubagentRunRecord | None:
     """Look up the run record for a requester session key, if it is a sub-agent."""
-    return get_run_by_child_session_key_readonly(requester_session_key)
+    return memory.find_by_child_session_key(requester_session_key)

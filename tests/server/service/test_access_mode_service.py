@@ -106,6 +106,39 @@ def test_confirm_all_sets_the_strict_flag(register):
     assert service.get_access_mode("s1") == service.CONFIRM_ALL
 
 
+def test_full_access_warns_when_no_os_sandbox_is_available(register, monkeypatch):
+    """YOLO bypasses every approval, so activation says it runs naked."""
+    from loguru import logger
+
+    import agent.tools.pub_base.sandbox as sandbox
+
+    monkeypatch.setattr(sandbox, "sandbox_effective", lambda requested=True: False)
+    lines: list[str] = []
+    sink_id = logger.add(lines.append, level="WARNING")
+    try:
+        service.set_access_mode("s1", service.FULL_ACCESS)
+    finally:
+        logger.remove(sink_id)
+
+    assert any("without OS sandboxing" in line for line in lines), lines
+
+
+def test_full_access_does_not_warn_with_a_usable_sandbox(register, monkeypatch):
+    from loguru import logger
+
+    import agent.tools.pub_base.sandbox as sandbox
+
+    monkeypatch.setattr(sandbox, "sandbox_effective", lambda requested=True: True)
+    lines: list[str] = []
+    sink_id = logger.add(lines.append, level="WARNING")
+    try:
+        service.set_access_mode("s1", service.FULL_ACCESS)
+    finally:
+        logger.remove(sink_id)
+
+    assert not any("without OS sandboxing" in line for line in lines), lines
+
+
 def test_confirm_all_and_full_access_clear_each_other(register):
     service.set_access_mode("s1", service.FULL_ACCESS)
     service.set_access_mode("s1", service.CONFIRM_ALL)

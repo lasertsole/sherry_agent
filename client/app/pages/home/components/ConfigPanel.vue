@@ -209,6 +209,13 @@
             </template>
 
             <template v-else>
+              <!-- Why three independently configurable families exist: the
+                   heterogeneous-judge guidance, shown once above the cards. -->
+              <p
+                class="m-0 rounded-lg border border-solid border-sky-100 bg-sky-50/60 px-3 py-2 text-[11px] leading-relaxed text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-300"
+                data-test="heterogeneous-judge-hint">
+                {{ t('config.llm.heterogeneousJudge') }}
+              </p>
               <template
                 v-for="group in modelTabGroups"
                 :key="group.name">
@@ -220,8 +227,10 @@
                   :group="group.name"
                   :keys="group.entries.map(e => e.key)"
                   :values="groupValues[group.name] ?? {}"
+                  :configured-secrets="configuredSecrets[group.name] ?? {}"
                   :group-title="groupTitle(group.name)"
                   :download-group="downloadGroupFor(group.name)"
+                  :role-model="roleEffective[group.name] ?? null"
                   @apply="payload => applyModelProfile(group.name, payload)" />
                 <div
                   v-else
@@ -260,6 +269,11 @@
             <!-- Optional CUDA pack (packing-plan E1): Tauri desktop only, and
                  only where the shell detected an NVIDIA driver. -->
             <CudaPackCard />
+
+            <!-- Learned structured-output fallbacks: read/clear only, so a
+                 provider that later accepts the default strategy can be
+                 retried without editing the persisted JSON by hand. -->
+            <ModelCapsSection />
           </div>
         </TabPanel>
 
@@ -397,6 +411,13 @@
           :header="t('config.tabs.desktop')">
           <DesktopSettingsSection />
         </TabPanel>
+        <!-- LSP / code intelligence: the three declaration layers and the
+             project-level lsp.json editor/upload (session-scoped). -->
+        <TabPanel
+          value="lsp"
+          :header="t('config.tabs.lsp')">
+          <LspConfigSection />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -441,17 +462,19 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
-import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
+import type { ConfigSource, EnvGroup, ModelRoleEffective, SourcedEnvGroup } from '@/composables/env';
 import type { CodeEmbedderStatus } from '@/composables/code-embedder';
 import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import CudaPackCard from './CudaPackCard.vue';
+import ModelCapsSection from './ModelCapsSection.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import I18nPanel from './I18nPanel.vue';
 import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
 import DesktopSettingsSection from './DesktopSettingsSection.vue';
 import SafetyFilterPanel from './SafetyFilterPanel.vue';
+import LspConfigSection from './LspConfigSection.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
@@ -466,18 +489,27 @@ const { t } = useI18n({ useScope: 'local' });
 /** Localized headings for the two optional internal model families. */
 const GROUP_TITLE_KEYS: Record<string, string> = {
   TASKFLOW_LLM: 'config.llm.groupTaskflow',
-  COMPRESSION_LLM: 'config.llm.groupCompression'
+  COMPRESSION_LLM: 'config.llm.groupCompression',
+  EXECUTOR_LLM: 'config.llm.groupExecutor',
+  RESEARCHER_LLM: 'config.llm.groupResearcher',
+  REVIEWER_LLM: 'config.llm.groupReviewer',
+  LIBRARIAN_LLM: 'config.llm.groupLibrarian'
 };
 const groupTitle = (name: string): string => (GROUP_TITLE_KEYS[name] ? t(GROUP_TITLE_KEYS[name]!) : name);
 
 /**
  * Local-model prefetch family behind a group's built-in local entry. The two
- * internal families reuse the auxiliary GGUF (no second download), so their
- * download box reports / downloads the auxiliary family.
+ * internal families reuse the auxiliary GGUF and the per-role families reuse
+ * the MAIN model's weights (no second download), so their download box reports
+ * the family they actually load.
  */
 const LOCAL_DOWNLOAD_GROUP: Record<string, string> = {
   TASKFLOW_LLM: 'AUXILIARY_LLM',
-  COMPRESSION_LLM: 'AUXILIARY_LLM'
+  COMPRESSION_LLM: 'AUXILIARY_LLM',
+  EXECUTOR_LLM: 'MAIN_LLM',
+  RESEARCHER_LLM: 'MAIN_LLM',
+  REVIEWER_LLM: 'MAIN_LLM',
+  LIBRARIAN_LLM: 'MAIN_LLM'
 };
 const downloadGroupFor = (name: string): string => LOCAL_DOWNLOAD_GROUP[name] ?? name;
 
@@ -489,11 +521,11 @@ const emits = defineEmits<{ saved: [] }>();
  * every behaviour below (footer, lazy loads, dirty state, reset) keys off the
  * value — adding or moving a tab can never silently re-target them.
  */
-const TAB_ORDER = ['background', 'env', 'sherry', 'i18n', 'shortcuts', 'safetyFilter', 'desktop'] as const;
+const TAB_ORDER = ['background', 'env', 'sherry', 'i18n', 'shortcuts', 'safetyFilter', 'desktop', 'lsp'] as const;
 type ConfigTab = (typeof TAB_ORDER)[number];
 
 /** Tabs that save on their own (no shared footer). */
-const FOOTERLESS_TABS: readonly ConfigTab[] = ['env', 'i18n', 'shortcuts', 'safetyFilter', 'desktop'];
+const FOOTERLESS_TABS: readonly ConfigTab[] = ['env', 'i18n', 'shortcuts', 'safetyFilter', 'desktop', 'lsp'];
 
 const activeTabValue = ref<ConfigTab>('background');
 const activeTab = computed<number>({
@@ -514,6 +546,25 @@ const saving = ref(false);
 const envGroups = ref<SourcedEnvGroup[]>([]);
 const originalEnvValues = ref<Record<string, string>>({});
 const envLoadError = ref('');
+
+/** Per-family effective judge/role model rows (the "inherits from" labels). */
+const roleEffective = ref<Record<string, ModelRoleEffective>>({});
+
+/** Refresh the effective-model map after a load or a successful write.
+ *
+ * Decoration only: a failed read (or a transport mock that lacks it) leaves
+ * the previous map in place instead of surfacing an unhandled rejection.
+ */
+const refreshModelRoles = async (): Promise<void> => {
+  try {
+    const rows = await readModelRoles();
+    const next: Record<string, ModelRoleEffective> = {};
+    for (const row of rows) next[row.family] = row;
+    roleEffective.value = next;
+  } catch {
+    /* keep the last known effective map */
+  }
+};
 
 /** Whether the env config has already been loaded (avoids duplicate GETs) */
 const envLoaded = ref(false);
@@ -614,6 +665,19 @@ const groupValues = computed<Record<string, Record<string, string>>>(() => {
   return all;
 });
 
+/** Secret key → whether the backend stores a value (the value itself never arrives). */
+const configuredSecrets = computed<Record<string, Record<string, boolean>>>(() => {
+  const all: Record<string, Record<string, boolean>> = {};
+  for (const group of envGroups.value) {
+    const flags: Record<string, boolean> = {};
+    for (const entry of group.entries) {
+      if (entry.secret) flags[entry.key] = entry.configured === true;
+    }
+    all[group.name] = flags;
+  }
+  return all;
+});
+
 /**
  * Apply a model profile: write its MAIN_LLM_* parameters into .models through
  * the env tab's write path, then sync the tab's draft/snapshot so the diff stays
@@ -624,7 +688,14 @@ const groupValues = computed<Record<string, Record<string, string>>>(() => {
  * @param payload.params
  */
 const applyModelProfile = async (groupName: string, payload: { id: string; params: Record<string, string> }) => {
-  const ok = await writeModelsConfig(payload.params);
+  // An empty secret means "keep the stored credential"; it must never be
+  // written as an empty string. Non-empty typed keys are sent normally.
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload.params)) {
+    if (key.endsWith('_API_KEY') && !String(value ?? '').trim()) continue;
+    params[key] = value;
+  }
+  const ok = await writeModelsConfig(params);
   if (!ok) {
     envLoadError.value = t('config.env.saveFailed');
     return;
@@ -632,12 +703,20 @@ const applyModelProfile = async (groupName: string, payload: { id: string; param
   envLoadError.value = '';
   const group = envGroups.value.find(g => g.name === groupName);
   for (const entry of group?.entries ?? []) {
-    if (entry.key in payload.params) entry.value = payload.params[entry.key]!;
+    if (!(entry.key in params)) continue;
+    if (entry.secret) {
+      entry.value = '';
+      entry.configured = true;
+    } else {
+      entry.value = params[entry.key]!;
+    }
   }
-  for (const [key, value] of Object.entries(payload.params)) {
-    originalEnvValues.value[key] = value;
+  for (const [key, value] of Object.entries(params)) {
+    originalEnvValues.value[key] = key.endsWith('_API_KEY') ? '' : value;
   }
   llmProfiles.setActive(groupName, payload.id);
+  // The inherits-from labels follow the write that just landed.
+  void refreshModelRoles();
 };
 
 /** Lazily loads the three config files when the env tab is opened */
@@ -647,6 +726,9 @@ const loadEnvConfig = async () => {
   envLoadError.value = '';
   try {
     const [models, network, env] = await Promise.all([readModelsConfig(), readNetworkConfig(), readEnvConfig()]);
+    // The effective judge/role rows are decoration for the model cards — a
+    // failed read must not block the tab.
+    void refreshModelRoles();
     const tag = (groups: EnvGroup[], source: ConfigSource): SourcedEnvGroup[] => groups.map(g => ({ ...g, source }));
     const modelGroups = tag(models.groups || [], 'models');
     const networkGroups = tag(network.groups || [], 'network');
@@ -715,10 +797,19 @@ const persistEnvChanges = async (): Promise<boolean> => {
     const ok = await writers[source](perSource[source]);
     if (!ok) return false;
   }
-  // Sync the snapshot to serve as the baseline for the next diff
+  // Sync the snapshot to serve as the baseline for the next diff. A secret the
+  // user just typed is dropped from memory/snapshot: .models now holds it and
+  // the field returns to its write-only "configured" state.
   for (const g of envGroups.value) {
-    for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
+    for (const e of g.entries) {
+      if (e.secret) {
+        if (e.value.trim()) e.configured = true;
+        e.value = '';
+      }
+      originalEnvValues.value[e.key] = e.value;
+    }
   }
+  void refreshModelRoles();
   return true;
 };
 
@@ -764,7 +855,8 @@ const SHERRY_ENTRY_SLUGS: Record<string, string> = {
   'curator.archive_after_days': 'curatorArchiveAfterDays',
   'curator.consolidate': 'curatorConsolidate',
   'curator.prune_builtins': 'curatorPruneBuiltins',
-  'hooks.enabled': 'hooksEnabled'
+  'hooks.enabled': 'hooksEnabled',
+  'browser.debug_capture': 'browserDebugCapture'
 };
 
 /**
@@ -1149,11 +1241,11 @@ onBeforeUnmount(onHide);
       },
       "tabs": {
         "role": "角色配置",
-        "agents": "运行守则",
         "soul": "人格灵魂",
         "user": "用户信息",
         "env": "模型配置",
         "sherry": "应用配置",
+        "lsp": "LSP / 代码智能",
         "i18n": "国际化",
         "shortcuts": "快捷键",
         "safetyFilter": "直播安全",
@@ -1175,8 +1267,7 @@ onBeforeUnmount(onHide);
       "persona": {
         "preset": {
           "builtinPureName": "纯净",
-          "builtinCompanionName": "情感陪伴",
-          "defaultName": "全量",
+          "defaultName": "橘雪莉",
           "defaultBadge": "默认",
           "builtinBadge": "内置",
           "savePreset": "保存预设",
@@ -1279,6 +1370,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "生命周期 Hook 总开关",
             "hint": "允许运行 sherry.jsonc 里配置的钩子命令；钩子会执行本机命令，默认关闭。"
+          },
+          "browserDebugCapture": {
+            "label": "浏览器调试捕获",
+            "hint": "让 agent 的浏览器页面记录 console、未捕获 JS 异常与失败请求（状态 ≥400 或 loadingFailed）。浏览器功能本身需先开启；此开关只控制被动捕获，保存后即时生效。"
           }
         },
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
@@ -1390,7 +1485,6 @@ onBeforeUnmount(onHide);
         "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
         "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）",
         "role": "AI 与用户各自的扮演角色（名字与头像）",
-        "agents": "Agent 的运行守则与安全边界",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
       },
@@ -1458,11 +1552,11 @@ onBeforeUnmount(onHide);
       },
       "tabs": {
         "role": "Character Setup",
-        "agents": "Operating Instructions",
         "soul": "Soul",
         "user": "User Profile",
         "env": "Model Config",
         "sherry": "App Config",
+        "lsp": "LSP / Code Intelligence",
         "i18n": "Language",
         "shortcuts": "Shortcuts",
         "safetyFilter": "Live safety",
@@ -1484,8 +1578,7 @@ onBeforeUnmount(onHide);
       "persona": {
         "preset": {
           "builtinPureName": "Pure",
-          "builtinCompanionName": "Companion",
-          "defaultName": "Full",
+          "defaultName": "橘雪莉",
           "defaultBadge": "Default",
           "builtinBadge": "Built-in",
           "savePreset": "Save Preset",
@@ -1603,6 +1696,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "Lifecycle hooks master switch",
             "hint": "Allow the hook commands configured in sherry.jsonc to run. Hooks execute local commands, so this is off by default."
+          },
+          "browserDebugCapture": {
+            "label": "Browser debug capture",
+            "hint": "Record console output, uncaught JS exceptions and failed requests (status ≥ 400 or loadingFailed) on the agent's live browser page. The browser feature itself is opt-in; this switch only controls passive capture and applies live."
           }
         },
         "loadError": "Failed to load app config. Please check the backend service.",
@@ -1714,7 +1811,6 @@ onBeforeUnmount(onHide);
         "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
         "memoryUser": "User long-term memory info (workspace/memory/USER.md)",
         "role": "Who the AI and the user each play (names and avatars)",
-        "agents": "The agent's operating instructions and safety boundaries",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
       },
@@ -1782,11 +1878,11 @@ onBeforeUnmount(onHide);
       },
       "tabs": {
         "role": "キャラクター設定",
-        "agents": "操作指示",
         "soul": "人格・魂",
         "user": "ユーザー情報",
         "env": "モデル設定",
         "sherry": "アプリ設定",
+        "lsp": "LSP / コードインテリジェンス",
         "i18n": "国際化",
         "shortcuts": "ショートカット",
         "safetyFilter": "ライブ安全",
@@ -1808,8 +1904,7 @@ onBeforeUnmount(onHide);
       "persona": {
         "preset": {
           "builtinPureName": "純粋",
-          "builtinCompanionName": "寄り添い",
-          "defaultName": "フル",
+          "defaultName": "橘雪莉",
           "defaultBadge": "デフォルト",
           "builtinBadge": "内蔵",
           "savePreset": "プリセット保存",
@@ -1927,6 +2022,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "ライフサイクル フックの総合スイッチ",
             "hint": "sherry.jsonc に設定したフック コマンドの実行を許可します。ローカルでコマンドを実行するため既定はオフです。"
+          },
+          "browserDebugCapture": {
+            "label": "ブラウザデバッグ捕捉",
+            "hint": "エージェントのブラウザページで console、未捕捉 JS 例外、失敗リクエスト（status 400 以上 / loadingFailed）を記録します。ブラウザ機能自体はオプトインで、このスイッチは受動捕捉だけを制御し、即時反映されます。"
           }
         },
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
@@ -2038,7 +2137,6 @@ onBeforeUnmount(onHide);
         "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
         "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）",
         "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
-        "agents": "Agent の操作指示と安全境界",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
       },
@@ -2106,11 +2204,11 @@ onBeforeUnmount(onHide);
       },
       "tabs": {
         "role": "캐릭터 설정",
-        "agents": "운영 지침",
         "soul": "인격·영혼",
         "user": "사용자 정보",
         "env": "모델 설정",
         "sherry": "앱 설정",
+        "lsp": "LSP / 코드 인텔리전스",
         "i18n": "국제화",
         "shortcuts": "단축키",
         "safetyFilter": "라이브 안전",
@@ -2132,8 +2230,7 @@ onBeforeUnmount(onHide);
       "persona": {
         "preset": {
           "builtinPureName": "순수",
-          "builtinCompanionName": "감정 동반",
-          "defaultName": "전체",
+          "defaultName": "橘雪莉",
           "defaultBadge": "기본",
           "builtinBadge": "내장",
           "savePreset": "프리셋 저장",
@@ -2245,6 +2342,10 @@ onBeforeUnmount(onHide);
           "hooksEnabled": {
             "label": "생애주기 Hook 총 스위치",
             "hint": "sherry.jsonc 에 설정한 훅 명령 실행을 허용합니다. 로컬 명령을 실행하므로 기본은 꺼짐입니다."
+          },
+          "browserDebugCapture": {
+            "label": "브라우저 디버그 캡처",
+            "hint": "에이전트의 브라우저 페이지에서 console, 잡히지 않은 JS 예외, 실패 요청(status 400 이상 / loadingFailed)을 기록합니다. 브라우저 기능 자체는 옵트인이며, 이 스위치는 수동 캡처만 제어하고 즉시 적용됩니다."
           }
         },
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
@@ -2356,7 +2457,6 @@ onBeforeUnmount(onHide);
         "memoryAgent": "Agent 장기 기억 메모 (workspace/memory/MEMORY.md)",
         "memoryUser": "사용자 장기 기억 정보 (workspace/memory/USER.md)",
         "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
-        "agents": "Agent의 운영 지침과 안전 경계",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
       },

@@ -94,6 +94,8 @@
 
 **ツールポリシー。** ロールの `tools` リストは許可リストになり、許可リスト自体が既に制限しているため既定の拒否リストは空になります。spawn ごとの `extra_tools` はその許可リストに合流し、両者はいずれも無条件の `main_only` メタデータゲートと明示的な拒否リストの対象のままです。
 
+**スキル可視性。** 特化ロールのツールには `caller_scope` の隣に `metadata["caller_role"]` が付きます。識別ロール GENERAL には付かないため、既定の委譲経路はロール導入前の全表示を保ちます。`skill_list` と `skill_view` は frontmatter の `roles: [...]` にそのロールが含まれないスキルを隠します。`roles` のないスキルは全ロールに可視で、メインエージェントはチェックを完全に省略します。`skill_view` は対象の SKILL.md を直接読むため同じ `roles` ゲートを適用し、delegate の `load_skills` 検証も同一フィルタを使います。組み込みのタグ：`multimodal_rag` / `llm_wiki` は executor から隠れ（他の全ロールには可視）、`bugfix-contract` は executor + reviewer のみ、マルチメディア連鎖と `code_wiki` は全可視のままです。
+
 ## 🔒 spawn 権限ガード
 
 深度に基づく spawn 権限は二つの独立した地点で執行されるため、単一のリークで昇格することはありません（機能ロールの封じ込めは 3 つ目の直交ゲートです——下の注記を参照）：
@@ -118,7 +120,12 @@
   `StructuredOutputStrategy`(`level`、`label`、`sends_json_mode`、
   `thinking_off`、`local_validation_fatal`)。spawn 経路は永続化された整数を
   `strategy_for()` で一度解決し、フラグを読みます。整数はディスク上の互換形式
-  のままですが、呼び出し側は `level >= 1/2` を比較しません。
+  のままですが、呼び出し側は `level >= 1/2` を比較しません。永続化エントリは
+  `escalated_at` と `reprobe_count` も保持し、`get_level` は 24 時間 → 48 時間
+  → 7 日で 1 段階戻します。`confirm_level` は spawn がその下位レベルで成功した
+  時点で確定し、一時的な 429 / レート制限 / タイムアウト / 接続エラーでは降格
+  しません。システム設定 → モデル設定から
+  `GET|DELETE /sherry-config/model-caps` で一覧表示・消去できます。
 - **完了配信**は単一の遷移表
   (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`)を通ります。すべての
   `mark_delivery_*` は `transition_delivery()` を呼ぶため、`DELIVERED` と
@@ -234,6 +241,7 @@ curated 直行パスへ置換）を追加し、`constraints` のルールは HAR
 |--------|------|--------|------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal loop のターン予算（最初のターンを含む） |
 | spawn ごとの `goal_max_turns` | `sessions_spawn` パラメータ | `None` → 設定値 | 単一 spawn の予算を上書き |
+| spawn ごとの `run_timeout_seconds` | `sessions_spawn` パラメータ / `SubagentConfig.run_timeout_seconds` | `600` 秒 | 実行**とそのサブツリー**のウォールクロック上限：実行に凍結され、子孫は親の残り予算で上限化（1 秒の即時失敗フロア）；OK 以外で終わった親は生存中の子孫をカスケード kill |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | ステップがブロックされるまでの `RETRY` 回数 |
 | `default_functional_role` | `SubagentConfig` | `"general"` | ヒントも `agent_id` 一致も解決しない場合のフォールバック |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 任意のロール上書きを置くワークスペースディレクトリ |

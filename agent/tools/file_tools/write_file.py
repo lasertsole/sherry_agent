@@ -26,6 +26,8 @@ from typing import override
 
 from pydantic import BaseModel, Field
 
+from loguru import logger
+
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 
@@ -233,6 +235,14 @@ class FormattedWriteFileTool(BaseTool):
             new_content = self._read_preview_text(resolved)
             if new_content is not None:
                 diff = _unified_diff(old_content, new_content, display_path(resolved, root))
+        # Keep an ALREADY-RUNNING language server on the new bytes (the file is
+        # re-read so the .py formatter's own edits are included). Fail-open.
+        try:
+            from agent.tools.pub_base.lsp_sync import sync_edited_path
+
+            sync_edited_path(str(resolved), session_id)
+        except Exception:  # noqa: BLE001 - advisory only
+            logger.debug("LSP edit sync skipped", exc_info=True)
         payload: dict[str, object] = {
             "success": True,
             "path": display_path(resolved, root),

@@ -4,7 +4,7 @@ Usage:
 
     from agent.tools.browser import build_browser_tools
 
-The model-facing ``browser`` tool is one action dispatcher over seven thin
+The model-facing ``browser`` tool is one action dispatcher over nine thin
 handlers; each handler resolves the process-wide ``BrowserManager`` through
 ``runtime/hooks.BROWSER_MANAGER`` (``agent/**`` must not import ``server/**``)
 and the session comes from ``InjectedState``. All the bounds (page caps,
@@ -30,7 +30,9 @@ readable text plus numbered interactive elements whose refs
 ``browser(action="click"/"type", ref=...)`` resolve — and
 ``browser(action="screenshot")`` is for the visual case only (the PNG lands in
 the scratch dir; the ``image_to_text`` skill is how a model without native
-vision looks at it).
+vision looks at it). ``browser(action="console")`` / ``browser(action="network")``
+read the passive debug capture (console + uncaught exceptions, failed requests)
+accrued since the page opened or last navigated.
 """
 
 from .tools import (

@@ -145,6 +145,7 @@ The controls below are capability reduction, not an OS boundary — the honest p
 | `ptc_max_stderr_bytes` | 10000 | stderr retained from the child before truncation |
 | `ptc_allowed_tools` | `read_file`, `write_file`, `patch_file`, `terminal`, `search_files`, `web_search` | Allowlist intersected with the child's available tools |
 | `ptc_prefill_enabled` | `False` | Enables skill-review script compilation and spawn-side PTC prefill; keep off during the observation pass |
+| `extraction.flow_extraction_enabled` (Presets & Role → Advanced) | `True` | User-facing flow-replay switch; gates the COMPILE half (PTC + LDW) globally and is read-only per session. Replaying an existing script is not gated |
 | `ptc_script_max_bytes` | `20480` | Maximum compiled script read from a skill's `scripts/` directory |
 | `ptc_compile_max_attempts` | `2` | Compiler attempts on JSON/syntax misses; compilation never executes the script |
 

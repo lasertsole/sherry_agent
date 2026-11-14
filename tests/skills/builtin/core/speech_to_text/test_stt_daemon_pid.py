@@ -1,15 +1,19 @@
 """Unit tests for STT daemon spawn de-duplication via PID file (audit round 2 #27).
 
-``_spawn_daemon`` must consult the PID file before spawning: a live recorded
-PID suppresses the spawn, a stale PID file (dead process) is refreshed by a
-respawn. ``subprocess.Popen`` is fully mocked — no real daemon is started.
+``_spawn_daemon`` delegates to the shared :mod:`models.daemon.base` lifecycle
+(extracted from this module), so the PID-file contract is exercised through the
+STT spec: a live recorded PID suppresses the spawn, a stale PID file (dead
+process) is refreshed by a respawn. ``subprocess.Popen`` is fully mocked — no
+real daemon is started.
 """
 
+import dataclasses
 import os
 import subprocess
 
 import pytest
 
+import models.daemon.base as daemon_base
 import skills.builtin.core.speech_to_text.scripts.core as stt_core
 
 pytestmark = pytest.mark.unit
@@ -18,6 +22,9 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def pid_path(tmp_path, monkeypatch):
     path = tmp_path / "stt_daemon.pid"
+    monkeypatch.setattr(
+        stt_core, "_STT_SPEC", dataclasses.replace(stt_core._STT_SPEC, pid_path=path)
+    )
     monkeypatch.setattr(stt_core, "_PID_PATH", path)
     return path
 
@@ -40,7 +47,7 @@ class _FakePopen:
 
 def test_spawn_writes_pid_file_when_none_exists(pid_path, monkeypatch):
     calls: list = []
-    monkeypatch.setattr(stt_core.subprocess, "Popen", _FakePopen(calls))
+    monkeypatch.setattr(daemon_base.subprocess, "Popen", _FakePopen(calls))
 
     stt_core._spawn_daemon()
 
@@ -51,7 +58,7 @@ def test_spawn_writes_pid_file_when_none_exists(pid_path, monkeypatch):
 def test_spawn_skipped_when_pid_file_holds_live_process(pid_path, monkeypatch):
     pid_path.write_text(str(os.getpid()))
     calls: list = []
-    monkeypatch.setattr(stt_core.subprocess, "Popen", _FakePopen(calls))
+    monkeypatch.setattr(daemon_base.subprocess, "Popen", _FakePopen(calls))
 
     stt_core._spawn_daemon()
 
@@ -61,7 +68,7 @@ def test_spawn_skipped_when_pid_file_holds_live_process(pid_path, monkeypatch):
 def test_spawn_respawns_when_pid_file_is_stale(pid_path, monkeypatch):
     pid_path.write_text(str(_dead_pid()))
     calls: list = []
-    monkeypatch.setattr(stt_core.subprocess, "Popen", _FakePopen(calls))
+    monkeypatch.setattr(daemon_base.subprocess, "Popen", _FakePopen(calls))
 
     stt_core._spawn_daemon()
 
@@ -72,9 +79,18 @@ def test_spawn_respawns_when_pid_file_is_stale(pid_path, monkeypatch):
 def test_spawn_respawns_when_pid_file_is_unreadable_garbage(pid_path, monkeypatch):
     pid_path.write_text("not-a-pid")
     calls: list = []
-    monkeypatch.setattr(stt_core.subprocess, "Popen", _FakePopen(calls))
+    monkeypatch.setattr(daemon_base.subprocess, "Popen", _FakePopen(calls))
 
     stt_core._spawn_daemon()
 
     assert len(calls) == 1, "an unreadable PID file must not block spawning"
     assert pid_path.read_text() == "424242"
+
+
+def test_spawn_reuses_the_shared_lifecycle_with_the_stt_identity():
+    spec = stt_core._STT_SPEC
+
+    assert spec.import_fn == "skills.builtin.core.speech_to_text.scripts.server"
+    assert spec.port == stt_core.DAEMON_PORT
+    assert spec.host == stt_core.DAEMON_HOST
+    assert spec.name == "STT"

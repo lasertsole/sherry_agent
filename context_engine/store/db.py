@@ -37,6 +37,12 @@ enabled in the database header, ``busy_timeout`` (``MES_MEMORY["busy_timeout_s"]
 10s) is set on the connection, and connect itself retries a locked boot up to
 ``connect_attempts`` times. Any future consolidation should keep this handle
 model rather than force the store into the short-lived base.
+
+The 2026-11-13 audit's single-connection serialization item (M16) was reviewed
+against this contract and kept: a pool of connections would change the
+``with _shared_db():`` commit semantics call sites depend on and reintroduce
+the silent-lost-row failure the statement lock closed. The serialized
+throughput ceiling is an accepted trade-off, not an unresolved defect.
 """
 
 import threading
@@ -92,6 +98,22 @@ class _SerializedConnection:
     def commit(self) -> None:
         with _stmt_lock:
             self._conn.commit()
+
+    def begin_transaction(self) -> None:
+        """Hold the statement lock until :meth:`end_transaction` (atomic unit).
+
+        Per-statement locking is enough for a single statement, but an explicit
+        BEGIN/COMMIT spans several: without this hold another thread's statement
+        could run between them on the SAME connection and observe a half-applied
+        write. Re-entrant, so the statements made by the holder still pass
+        through :meth:`execute`; the caller must pair this with end_transaction
+        in a finally block.
+        """
+        _stmt_lock.acquire()
+
+    def end_transaction(self) -> None:
+        """Release the hold taken by :meth:`begin_transaction`."""
+        _stmt_lock.release()
 
     def close(self) -> None:
         with _stmt_lock:

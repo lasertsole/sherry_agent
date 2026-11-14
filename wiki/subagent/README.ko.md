@@ -94,6 +94,8 @@
 
 **도구 정책.** 역할의 `tools` 목록은 허용 목록이 되고, 허용 목록 자체가 이미 제한하므로 기본 거부 목록은 비워집니다. spawn별 `extra_tools`는 그 허용 목록에 합류하며, 둘 다 무조건적인 `main_only` 메타데이터 게이트와 명시적 거부 목록의 적용을 계속 받습니다.
 
+**스킬 가시성.** 특화 역할의 도구에는 `caller_scope` 옆에 `metadata["caller_role"]`이 찍힙니다. 정체성 역할 GENERAL에는 찍히지 않으므로 기본 위임 경로는 역할 도입 이전의 전체 보기를 유지합니다. `skill_list`와 `skill_view`는 frontmatter `roles: [...]`에 해당 역할이 없는 스킬을 숨깁니다. `roles`가 없는 스킬은 모든 역할에 보이고, 메인 에이전트는 검사를 완전히 건너뜁니다. `skill_view`는 대상 SKILL.md를 직접 읽으므로 같은 `roles` 게이트를 적용하고, delegate의 `load_skills` 검증도 동일한 필터를 씁니다. 내장 태그: `multimodal_rag` / `llm_wiki`는 executor에서 숨겨지고(다른 모든 역할에는 보임), `bugfix-contract`는 executor + reviewer 전용이며, 멀티미디어 체인과 `code_wiki`는 전체 공개를 유지합니다.
+
 ## 🔒 spawn 권한 가드
 
 깊이 기반 spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 권한 상승이 불가능합니다(기능 역할 봉쇄는 세 번째 직교 게이트입니다——아래 주석 참조):
@@ -119,6 +121,11 @@
   `thinking_off`, `local_validation_fatal`)입니다. spawn 경로는 저장된 정수를
   `strategy_for()`로 한 번 해석한 뒤 플래그를 읽습니다. 정수는 디스크 호환
   형식으로 남지만, 호출 지점은 더 이상 `level >= 1/2`를 비교하지 않습니다.
+  저장 항목은 `escalated_at`과 `reprobe_count`도 보관하며, `get_level`은
+  24시간 → 48시간 → 7일 후 한 단계 내립니다. `confirm_level`은 spawn이 그 하위
+  레벨에서 성공했을 때 확정하고, 일시적인 429 / 레이트 리밋 / 타임아웃 / 연결
+  오류는 강등을 유발하지 않습니다. 시스템 설정 → 모델 설정에서
+  `GET|DELETE /sherry-config/model-caps`로 목록을 보고 지울 수 있습니다.
 - **완료 전달**은 단일 전환 표
   (`registry/delivery_state.py::_ALLOWED_TRANSITIONS`)를 통과합니다. 모든
   `mark_delivery_*`가 `transition_delivery()`를 호출하므로 `DELIVERED`와
@@ -235,6 +242,7 @@ curated 직행 경로로 교체)를 추가하고, `constraints` 규칙은 HARD �
 |------|------|--------|------|
 | `goal_max_turns` | `config/features/agent_side/completion_judge.py` | `5` | goal loop 턴 예산(첫 턴 포함) |
 | spawn별 `goal_max_turns` | `sessions_spawn` 파라미터 | `None` → 설정값 | 단일 spawn의 예산 재정의 |
+| spawn별 `run_timeout_seconds` | `sessions_spawn` 파라미터 / `SubagentConfig.run_timeout_seconds` | `600`초 | 실행 **및 그 하위 트리**의 벽시계 상한: 실행에 고정되고, 자손은 부모의 남은 예산으로 상한이 적용됨(1초 즉시 실패 하한); OK가 아닌 부모는 살아 있는 자손을 캐스케이드 kill |
 | `max_retries` | `config/features/agent_side/step_judge.py` | `2` | 단계가 차단되기 전까지의 `RETRY` 횟수 |
 | `default_functional_role` | `SubagentConfig` | `"general"` | 힌트와 `agent_id` 일치가 모두 실패할 때의 폴백 |
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 선택적 역할 재정의를 두는 워크스페이스 디렉터리 |

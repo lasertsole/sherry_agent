@@ -198,7 +198,7 @@ async def _write_interrupt_marker(
         return None
 
 
-def _record_resumable_breakpoint(
+async def _record_resumable_breakpoint(
     session_id: str,
     write: InterruptMarkerWrite | None,
     *,
@@ -230,7 +230,8 @@ def _record_resumable_breakpoint(
             return
         if not partial_text.strip() and not has_reasoning:
             return
-        set_breakpoint(
+        await asyncio.to_thread(
+            set_breakpoint,
             session_id,
             build_breakpoint(
                 marker_id=write.marker_id,
@@ -437,8 +438,6 @@ class _GenerateTurn(_TurnLogMixin, StreamTurn):
         messages: Sequence[MultiModalMessage] | None = None,
     ) -> None:
         super().__init__(session_id)
-        if self._clears_resumable_breakpoint:
-            clear_breakpoint(session_id)
         if messages is not None:
             self.messages: list[MultiModalMessage] = list(messages)
         elif multi_modal_message is not None:
@@ -459,6 +458,11 @@ class _GenerateTurn(_TurnLogMixin, StreamTurn):
     async def _prepare(self) -> None:
         # reset curator reset_idle_for_seconds
         reset_idle_for_seconds()
+        if self._clears_resumable_breakpoint:
+            # A new turn invalidates the previous interrupted answer. The
+            # register is blocking sqlite3, so it runs off the loop; a
+            # continuation turn keeps the breakpoint for _ContinueTurn.
+            await asyncio.to_thread(clear_breakpoint, self.session_id)
         self._agent = await built_agent(force_rebuild=True)
         # Lease the graph for the whole turn: a concurrent rebuild must not close
         # the checkpointer connection this turn is writing checkpoints through.
@@ -635,7 +639,7 @@ class _GenerateTurn(_TurnLogMixin, StreamTurn):
 
     async def _on_cancelled(self) -> None:
         write = await _write_interrupt_marker(self.session_id, self.ai_text, "cancelled")
-        _record_resumable_breakpoint(
+        await _record_resumable_breakpoint(
             self.session_id,
             write,
             reason="cancelled",
@@ -647,7 +651,7 @@ class _GenerateTurn(_TurnLogMixin, StreamTurn):
 
     async def _on_heartbeat_timeout(self, exc: HeartbeatTimeoutError) -> None:
         write = await _write_interrupt_marker(self.session_id, self.ai_text, "heartbeat_timeout")
-        _record_resumable_breakpoint(
+        await _record_resumable_breakpoint(
             self.session_id,
             write,
             reason="heartbeat_timeout",
@@ -705,7 +709,7 @@ class _ContinueTurn(_GenerateTurn):
         self._stale_reason: str | None = None
 
     async def _prepare(self) -> None:
-        breakpoint = read_breakpoint(self.session_id)
+        breakpoint = await asyncio.to_thread(read_breakpoint, self.session_id)
         if breakpoint is None:
             # The WS handler validates before dispatching; this is the race case.
             self._stale_reason = "no breakpoint"
@@ -715,11 +719,11 @@ class _ContinueTurn(_GenerateTurn):
         messages = await read_messages(self.session_id, self._agent)
         if not breakpoint_is_valid(messages, breakpoint):
             self._stale_reason = "transcript moved on"
-            clear_breakpoint(self.session_id)
+            await asyncio.to_thread(clear_breakpoint, self.session_id)
             return
         # One shot: consume the breakpoint BEFORE the first token. A cancelled
         # continuation records its own (the next marker id).
-        clear_breakpoint(self.session_id)
+        await asyncio.to_thread(clear_breakpoint, self.session_id)
         marker_id = str(breakpoint.get("marker_id") or "")
         partial_text = str(breakpoint.get("partial_text") or "")
         restored = await restore_interrupt_marker(
@@ -773,10 +777,6 @@ class _ResumeTurn(_TurnLogMixin, StreamTurn):
         self.decision = decision
         self.message = message
         self.edited_args = edited_args
-        # A HITL resume continues the same graph state but is a fresh turn from
-        # the user's point of view: the interrupted answer is no longer the tail
-        # the user could continue from.
-        clear_breakpoint(session_id)
         self._agent: Any = None
         self._config: Any = None
         self._resume_value: dict[str, Any] = {}
@@ -785,6 +785,10 @@ class _ResumeTurn(_TurnLogMixin, StreamTurn):
         logger.info(f"Agent resume started: session_id={self.session_id}, decision={self.decision}")
 
     async def _prepare(self) -> None:
+        # A HITL resume continues the same graph state but is a fresh turn from
+        # the user's point of view: the interrupted answer is no longer the tail
+        # the user could continue from (blocking register write, off the loop).
+        await asyncio.to_thread(clear_breakpoint, self.session_id)
         self._agent = await built_agent(force_rebuild=True)
         agent_core.hold_agent(self._agent)  # released in _cleanup
         self._config = build_agent_config(self.session_id)

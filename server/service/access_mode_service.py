@@ -45,6 +45,8 @@ from config.features import (
     PLAN_STATUS_IDLE,
     PLAN_STATUS_PLANNING,
 )
+from loguru import logger
+
 from runtime import state_register_mem
 
 #: The four modes the control offers, in presentation order (the read-only
@@ -115,6 +117,17 @@ def set_access_mode(session_id: str, mode: str) -> str:
     set_plan_state(sid, status=PLAN_STATUS_IDLE)
     if mode == FULL_ACCESS:
         set_session_yolo(sid)
+        # Full access bypasses every approval, so on a platform with no
+        # usable OS sandbox the session will run every command naked. Say so
+        # once at activation instead of letting it be discovered later.
+        from agent.tools.pub_base.sandbox import sandbox_effective
+
+        if not sandbox_effective(True):
+            logger.warning(
+                "Full access mode activated without OS sandboxing "
+                "(sandbox unavailable on this platform) — all commands will run "
+                "unsandboxed and without approval"
+            )
     elif mode == CONFIRM_ALL:
         set_session_confirm_all(sid)
     else:

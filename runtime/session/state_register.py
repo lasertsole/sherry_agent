@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import threading
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 from pathlib import Path
 from loguru import logger
 from config import SRC_DIR
@@ -25,20 +25,6 @@ def _log_state_db_failure(operation: str, exc: BaseException, **context: object)
         logger.opt(exception=exc).error(
             "state_register_db {}: unexpected error ({})", operation, details
         )
-
-
-@runtime_checkable
-class StateRegisterProtocol(Protocol):
-    """Full contract shared by the in-memory and DB-backed state registers."""
-
-    def set_state(self, session_id: str, key: str, value: Any) -> bool: ...
-    def get_state(self, session_id: str, key: str, default: Any = None) -> Any: ...
-    def get_all_states(self, session_id: str) -> dict[str, Any]: ...
-    def delete_state(self, session_id: str, key: str) -> bool: ...
-    def clear_session(self, session_id: str) -> bool: ...
-    def has_session(self, session_id: str) -> bool: ...
-    def has_key(self, session_id: str, key: str) -> bool: ...
-    def update_states(self, session_id: str, states: dict[str, Any]) -> bool: ...
 
 
 class StateRegisterMeM(SessionRegister):
@@ -274,8 +260,23 @@ class StateRegisterDB(SessionRegister):
             _log_state_db_failure("get_all_session_ids", exc)
         return []
 
-    # SessionRegister can't clear StateRegisterDB
     def clear_session(self, session_id: str) -> bool:
+        """Delete every persisted key of one session from the durable mirror.
+
+        Session deletion used to leave these rows behind forever (this method
+        returned False unconditionally). Returns True when at least one row was
+        removed; an absent session is a silent False, a DB fault is logged.
+        """
+        try:
+            with self._conn_lock:
+                conn = self._init_db()
+                affected = conn.execute(
+                    "DELETE FROM states WHERE session_id = ?", (session_id,)
+                ).rowcount
+                conn.commit()
+            return affected > 0
+        except Exception as exc:
+            _log_state_db_failure("clear_session", exc, session_id=session_id)
         return False
 
     def has_session(self, session_id: str) -> bool:
@@ -325,10 +326,6 @@ class StateRegisterDB(SessionRegister):
 
 state_register_db = StateRegisterDB()
 
-# Both implementations satisfy the shared register contract (static check).
-_mem_conforms_to_protocol: StateRegisterProtocol = state_register_mem
-_db_conforms_to_protocol: StateRegisterProtocol = state_register_db
-
 
 class ContextEpoch:
     """System-context snapshot lifecycle (from opencode-dev).
@@ -369,16 +366,21 @@ class ContextEpoch:
         """Load the epoch and decide: ok | reconcile | replace."""
         import json
 
-        # Reuse the register's shared connection: the previous inline
-        # sqlite3.connect() leaked a handle on every epoch check.
-        row = (
-            self._db.ensure_initialized()
-            .execute(
-                "SELECT baseline, snapshot, baseline_seq FROM context_epoch WHERE session_id = ?",
-                (session_id,),
+        # Reuse the register's shared connection UNDER its lock: the previous
+        # inline sqlite3.connect() leaked a handle on every epoch check, and a
+        # later version ran the SELECT outside ``_conn_lock`` while every writer
+        # held it (a shared, check_same_thread=False handle interleaving reads
+        # and writes can return torn data).
+        with self._db._conn_lock:
+            row = (
+                self._db._init_db()
+                .execute(
+                    "SELECT baseline, snapshot, baseline_seq FROM context_epoch "
+                    "WHERE session_id = ?",
+                    (session_id,),
+                )
+                .fetchone()
             )
-            .fetchone()
-        )
         if row is None:
             self.initialize(session_id, current_context)
             return current_context, "ok"

@@ -1,4 +1,38 @@
 {
+  "advanced": {
+    "tab": "詳細",
+    "globalHint": "これらの値は個別に上書きしていないすべてのセッションに適用され、変更は即時反映されます。",
+    "sessionHint": "変更していない項目はグローバル値を継承します。変更は次ターンから適用されます。",
+    "inherited": "グローバルから継承",
+    "inheritedWithGlobal": "グローバルから継承（{value}）",
+    "overridden": "このセッションで上書き",
+    "skillExtraction": {
+      "name": "経験学習",
+      "description": "タスク計画の完了後、経験を要約してスキル定義を更新し、以降の利用に供します。"
+    },
+    "flowExtraction": {
+      "name": "フロー再利用コンパイル",
+      "description": "成功したタスクフローを再利用スクリプト（ステップスクリプト + ワークフロースクリプト）にコンパイルし、繰り返しタスクをゼロ呼び出しで再利用可能にします。",
+      "globalOnly": "グローバル設定で制御されます（セッションは読み取り専用で継承）。",
+      "requiresSkill": "経験学習を先に有効にしてください。"
+    },
+    "iterationBudgetMain": {
+      "name": "メインエージェント反復上限",
+      "description": "メインエージェントの1ターンあたりのツール呼び出し反復上限。超過で要約圧縮をトリガーします。"
+    },
+    "iterationBudgetSub": {
+      "name": "サブエージェント反復上限",
+      "description": "サブエージェントの1ターンあたりのツール呼び出し反復上限。ロール固有のより低い上限が優先され、超過すると子タスクは終了します。"
+    },
+    "resetToGlobal": "グローバルに戻す",
+    "save": "保存",
+    "saved": "抽出設定を保存しました",
+    "savedPending": "保存しました（次ターンから適用）",
+    "saveFailed": "抽出設定の保存に失敗しました",
+    "loadFailed": "抽出設定の読み込みに失敗しました",
+    "invalidBudget": "{min}〜{max} の整数を入力してください。",
+    "subAboveMain": "サブエージェント上限はメインエージェント上限以下にしてください。"
+  },
   "a11y": {
     "previewImage": "画像をプレビュー",
     "language": "言語",
@@ -143,7 +177,8 @@
     "continueGeneration": "生成を続ける",
     "editMessage": "メッセージを編集",
     "editingMessage": "送信済みメッセージを編集中。送信するとそのターンを再実行します",
-    "forkFromHere": "この回答から新しいセッションを分岐"
+    "forkFromHere": "この回答から新しいセッションを分岐",
+    "imageZoom": "画像を開く"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",
@@ -356,7 +391,6 @@
     },
     "tabs": {
       "role": "キャラクター設定",
-      "agents": "操作指示",
       "soul": "人格・魂",
       "user": "ユーザー情報",
       "env": "モデル設定",
@@ -378,8 +412,7 @@
     "persona": {
       "preset": {
         "builtinPureName": "純粋",
-        "builtinCompanionName": "寄り添い",
-        "defaultName": "フル",
+        "defaultName": "橘雪莉",
         "defaultBadge": "デフォルト",
         "builtinBadge": "内蔵",
         "savePreset": "プリセット保存",
@@ -526,6 +559,10 @@
       "expand": "展開",
       "localModel": "ローカルモデル",
       "localUnused": "ローカルでは未使用",
+      "secretConfigured": "キー設定済み（値は表示されません）",
+      "secretUnset": "API キー未保存",
+      "secretKeep": "空欄のままにすると保存済みのキーを維持します",
+      "secretInput": "新しい API キーを入力",
       "localDownload": "ローカルモデルをダウンロード",
       "localDownloading": "ダウンロード中…",
       "localReady": "ローカルモデルはダウンロード済み",
@@ -572,7 +609,11 @@
         "tti": "テキスト→画像モデル：プロンプトから画像を生成。イラスト、ビジュアル草案、素材作成に使用。",
         "reranker": "リランカーモデル：検索結果を関連度で並べ替え。RAG/検索品質の向上に使用。",
         "embedding": "埋め込みモデル：テキストをベクトル化し、記憶・知識検索に使用。セマンティック検索と RAG 向け。",
-        "stt": "音声→テキストモデル：音声を文字起こし。音声入力、会議・録音の文字起こしに使用。"
+        "stt": "音声→テキストモデル：音声を文字起こし。音声入力、会議・録音の文字起こしに使用。",
+        "executor": "実行者サブエージェントのモデル：実際の作業（編集・コマンド・テスト）を担当します。強力でツール呼び出しが安定したモデルが最適です。空欄なら役割自身の既定ティア（同梱ロールは補助モデル）を維持します。",
+        "researcher": "リサーチャーサブエージェントのモデル：読み取り専用のコードベース / Web 調査。安価なモデルで通常十分です。空欄なら役割自身の既定ティアを維持します。",
+        "reviewer": "レビュアーサブエージェントのモデル：独立した受け入れ確認。実行者と別ファミリにすると同源の盲点を減らせます。空欄なら役割自身の既定ティアを維持します。",
+        "librarian": "ライブラリアンサブエージェントのモデル：読み取り専用の外部リポジトリ検索。安価なモデルで通常十分です。空欄なら役割自身の既定ティアを維持します。"
       },
       "test": "接続テスト",
       "testHint": "画面のパラメータで 1 回だけ試します（.env には書き込みません）",
@@ -582,8 +623,23 @@
       "testRequestFailed": "リクエスト失敗: バックエンドが応答しません",
       "groupTaskflow": "TaskFlow 決定モデル",
       "groupCompression": "圧縮モデル",
+      "groupExecutor": "実行者サブエージェントモデル",
+      "groupResearcher": "リサーチャーサブエージェントモデル",
+      "groupReviewer": "レビュアーサブエージェントモデル",
+      "groupLibrarian": "ライブラリアンサブエージェントモデル",
       "followsAuxiliary": "Provider と API Base が空のため、このグループは補助モデル（AUXILIARY_LLM_*）に従います。",
-      "compressionScope": "LLM 要約に使用します。メモリレビューはメインモデル、スキルレビューは補助モデルを使用します。"
+      "compressionScope": "LLM 要約に使用します。メモリレビューはメインモデル、スキルレビューは補助モデルを使用します。",
+      "followsRoleDefault": "Provider と API Base が空のため、この役割は自身の既定モデルティアを維持します（同梱ロールは補助モデルを使用）。",
+      "effectiveModel": "有効モデル：{model} — ソース：{source}",
+      "effectiveModelDepth": "有効モデル：子エージェントの depth ロールで決定",
+      "source": {
+        "configured": "このファミリの設定",
+        "local": "ローカルモデル（フォールバック側の GGUF を再利用）",
+        "auxiliary": "補助モデル",
+        "main": "メインモデル",
+        "depth": "子エージェントの depth ロール"
+      },
+      "heterogeneousJudge": "異種 judge：judge を実行者と別のモデルファミリで動かすと、同源の盲点（実行者と judge が同じ種類の入力で同時に誤る）を減らせます。推奨：実行者は最強モデルのまま、StepJudge / 完了 judge を別ファミリ（例：DeepSeek ↔ Claude）に向けます。空欄の場合、各 judge はカードに表示された継承関係に従います。"
     },
     "memory": {
       "addEntry": "項目を追加",
@@ -595,7 +651,6 @@
       "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
       "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）",
       "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
-      "agents": "Agent の操作指示と安全境界",
       "soul": "Agent 人格、トーン、性格",
       "user": "ユーザー情報と好み"
     },

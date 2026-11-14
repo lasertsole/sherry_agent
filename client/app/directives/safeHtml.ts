@@ -206,6 +206,48 @@ function markFormulaZoom(el: HTMLElement): void {
 }
 
 /**
+ * Make rendered markdown images clickable / keyboard-openable lightbox entries.
+ *
+ * The marks are added AFTER sanitization (`ALLOW_DATA_ATTR: false` strips raw
+ * data-* attributes). The loading class drives the shimmer until the image
+ * settles; an error adds the fallback class instead.
+ * @param el The rendered markdown element.
+ */
+function markMarkdownImages(el: HTMLElement): void {
+  const label = safeT('chatBox.imageZoom');
+  for (const image of el.querySelectorAll<HTMLImageElement>('img')) {
+    // An image inside a link/button keeps that element's native action.
+    if (image.closest('a, button')) continue;
+    image.classList.add('markdown-image', 'cursor-zoom-in');
+    image.dataset.act = 'image';
+    image.setAttribute('role', 'button');
+    image.setAttribute('tabindex', '0');
+    image.setAttribute('aria-label', label);
+    bindImageState(image);
+  }
+}
+
+/**
+ * One load/error listener per image, so a re-render cannot stack handlers.
+ * @param image
+ */
+function bindImageState(image: HTMLImageElement): void {
+  if (image.dataset.markdownImageBound === 'true') return;
+  image.dataset.markdownImageBound = 'true';
+  const settle = () => image.classList.remove('markdown-image-loading');
+  if (!image.complete) image.classList.add('markdown-image-loading');
+  image.addEventListener('load', settle, { once: true });
+  image.addEventListener(
+    'error',
+    () => {
+      image.classList.remove('markdown-image-loading');
+      image.classList.add('markdown-image-error');
+    },
+    { once: true }
+  );
+}
+
+/**
  * Upgrade one directive element's eligible blocks (async, fire-and-forget).
  * Skipped entirely while the element is marked `data-streaming="true"`.
  * @param el The element whose innerHTML was just rendered.
@@ -247,6 +289,18 @@ function delegatedAct(event: Event): void {
   const target = (event.target as HTMLElement | null)?.closest('[data-act]') as HTMLElement | null;
   if (!target) return;
   const act = target.dataset.act;
+  if (act === 'image') {
+    const image = target instanceof HTMLImageElement ? target : target.closest<HTMLImageElement>('img.markdown-image');
+    if (!image) return;
+    const bubble = image.closest('[data-message-id]') ?? image.parentElement;
+    const all = bubble ? [...bubble.querySelectorAll<HTMLImageElement>('img.markdown-image')] : [image];
+    const items = all.map(element => element.src);
+    const startIndex = Math.max(0, all.indexOf(image));
+    void import('~/composables/useImagePreview').then(({ useImagePreview }) => {
+      useImagePreview().openGallery(items, startIndex);
+    });
+    return;
+  }
   if (act === 'copy') {
     const pre = target.closest('pre');
     if (!pre) return;
@@ -294,12 +348,15 @@ const delegatedHandlers = new WeakMap<HTMLElement, (event: Event) => void>();
 const delegatedKeyHandlers = new WeakMap<HTMLElement, (event: KeyboardEvent) => void>();
 
 /**
- * Enter/Space on a focused formula mirrors its click-to-zoom.
+ * Enter/Space on a focused zoom control (formula or markdown image) mirrors
+ * its click.
  * @param event
  */
 function delegatedKey(event: KeyboardEvent): void {
   if (event.key !== 'Enter' && event.key !== ' ') return;
-  const target = (event.target as HTMLElement | null)?.closest('.katex[data-act="zoom"]') as HTMLElement | null;
+  const target = (event.target as HTMLElement | null)?.closest(
+    '[data-act="zoom"], img.markdown-image[data-act="image"]'
+  ) as HTMLElement | null;
   if (!target) return;
   event.preventDefault();
   target.click();
@@ -327,7 +384,10 @@ const renderStates = new WeakMap<HTMLElement, SafeHtmlRenderState>();
  */
 const render = (el: HTMLElement, value: string | null | undefined, fragment: boolean): void => {
   el.innerHTML = fragment ? safeHtmlOnly(value) : safeMarkdownHtml(value);
-  if (!fragment) markFormulaZoom(el);
+  if (!fragment) {
+    markFormulaZoom(el);
+    markMarkdownImages(el);
+  }
   renderStates.set(el, {
     value,
     fragment,

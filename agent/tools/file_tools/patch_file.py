@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
+from loguru import logger
+
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import SessionId
@@ -197,6 +199,14 @@ class PatchFileTool(BaseTool):
         if isinstance(outcome, str):
             return outcome
         content, new_content, strategy, match_count = outcome
+        # Keep an ALREADY-RUNNING language server on the new bytes. Fail-open:
+        # no server / a dead pipe costs nothing, and the edit has already landed.
+        try:
+            from agent.tools.pub_base.lsp_sync import sync_edited_file
+
+            sync_edited_file(str(resolved), new_content, session_id)
+        except Exception:  # noqa: BLE001 - advisory only
+            logger.debug("LSP edit sync skipped", exc_info=True)
         diff = _unified_diff(content, new_content, display_path(resolved, root))
 
         payload: dict[str, object] = {

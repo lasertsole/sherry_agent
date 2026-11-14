@@ -112,6 +112,17 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # default: the periodic heartbeat is opt-in, and the boot path reads this
     # value, so a session that never touches the switch never wakes the agent.
     "heartbeat.enabled": False,
+    # User-facing extraction switches (预设角色 → 高级). These are the GLOBAL
+    # values a session inherits; the session may override experience learning
+    # and the two iteration ceilings, while flow replay compilation is
+    # global-only (a session cannot override it). Defaults keep every
+    # extraction path ON, exactly like the pre-switch behaviour:
+    # 180 = the main agent's model-call ceiling, 90 = the executor's (a child
+    # role's own lower limit still wins, so this is a cap for children).
+    "extraction.skill_extraction_enabled": True,
+    "extraction.flow_extraction_enabled": True,
+    "extraction.iteration_budget_main": 180,
+    "extraction.iteration_budget_sub": 90,
     # LangSmith tracing moved to the .network file (LANGSMITH_* keys) — it is a
     # network service, and that file is gitignored while this one is tracked.
     "curator.enabled": True,
@@ -127,6 +138,10 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # sherry.jsonc stays complete; the per-event hook LISTS are read by
     # ``load_sherry_hooks`` (they are lists of objects, not scalars).
     "hooks.enabled": False,
+    # Browser debug capture (系统配置 → 应用配置): console / uncaught exceptions /
+    # failed requests for the agent's live browser page. The browser feature is
+    # itself opt-in; this switch only controls the passive CDP domains.
+    "browser.debug_capture": True,
     # Restart-recovery effect queue (runtime/effects/). OFF by default: an
     # untouched install keeps the existing boot sweepers. ``shadow_mode``
     # records intents while the original path still runs (observation only);
@@ -156,6 +171,8 @@ _INT_KEYS = frozenset(
         "effects.retry_initial_s",
         "effects.retry_max_s",
         "effects.max_attempts",
+        "extraction.iteration_budget_main",
+        "extraction.iteration_budget_sub",
     }
 )
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
@@ -167,6 +184,7 @@ _BOOL_KEYS = frozenset(
         "safety_filter.enabled",
         "heartbeat.enabled",
         "hooks.enabled",
+        "browser.debug_capture",
         "curator.enabled",
         "curator.consolidate",
         "curator.prune_builtins",
@@ -174,6 +192,8 @@ _BOOL_KEYS = frozenset(
         "effects.shadow_mode",
         "effects.worker_enabled",
         "effects.restart_replay",
+        "extraction.skill_extraction_enabled",
+        "extraction.flow_extraction_enabled",
     }
 )
 
@@ -228,6 +248,15 @@ def load_sherry_settings() -> dict[str, Any]:
         else:
             try:
                 settings[key] = _coerce(key, node)
+            except (TypeError, ValueError):
+                continue
+            continue
+        # The writer's append path (a group block missing from an older file)
+        # emits the dotted key as a FLAT literal. Read it here too, otherwise
+        # the value would be persisted by the UI and never seen by the loader.
+        if key in data:
+            try:
+                settings[key] = _coerce(key, data[key])
             except (TypeError, ValueError):
                 continue
     return settings

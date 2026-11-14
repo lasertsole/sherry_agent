@@ -1,5 +1,6 @@
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request, read_body
 from server.service import read_models_config, write_models_config
 
 
@@ -26,7 +27,9 @@ async def write_models_config_handler(request):
     types; the 200K floor applies to the MAX_TOKEN keys).
     Body: {"changes": {"KEY": "new value", ...}}
     """
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
 
     changes: dict[str, str] = request_json.get("changes", {}) or {}
     if not isinstance(changes, dict):

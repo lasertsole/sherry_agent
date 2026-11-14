@@ -286,7 +286,7 @@ export interface PresetCharacter {
 export interface SessionPresetBinding {
   /** Session id (primary key) */
   session_id: string;
-  /** Preset id at binding time: a built-in id ('sherry' | 'companion' | 'pure') or `user:<dexie id>` */
+  /** Preset id at binding time: a built-in id ('sherry' | 'pure') or `user:<dexie id>` */
   preset_id: string;
   /** Preset display name at binding time (fallback when a user preset was deleted) */
   preset_name: string;
@@ -376,6 +376,8 @@ class HistoryDb extends Dexie {
   shortcuts!: Table<ShortcutRow, string>;
   /** App-level flags, keyed by name (see {@link AppFlag}) */
   appFlags!: Table<AppFlag, string>;
+  /** Recently uploaded media, keyed by content hash (see {@link UploadCacheRow}) */
+  uploadCache!: Table<UploadCacheRow, number>;
 
   constructor() {
     super('ema-history-cache');
@@ -427,7 +429,32 @@ class HistoryDb extends Dexie {
     this.version(6).stores({
       appFlags: 'key'
     });
+    // version(7): recent uploads, keyed by content hash for the short-TTL
+    // dedupe cache. Additive bump — rows are disposable by design.
+    this.version(7).stores({
+      uploadCache: '++id, sha256, url, session_id, created_at, upload_id, file_name, total_chunks, status'
+    });
   }
+}
+
+/**
+ * One recently uploaded media row, keyed by the payload's SHA-256.
+ *
+ * The cache is a short-TTL dedupe (30 s): sending the same bytes twice in one
+ * compose window reuses the URL instead of re-uploading. `session_id` is
+ * provenance only — the served URL is shared by the per-kind static mount.
+ */
+export interface UploadCacheRow {
+  id?: number;
+  sha256: string;
+  url: string;
+  session_id: string;
+  created_at: number;
+  /** Server-side upload session, present while a chunked upload runs. */
+  upload_id?: string;
+  file_name?: string;
+  total_chunks?: number;
+  status?: 'uploading' | 'completed' | 'failed';
 }
 
 /**

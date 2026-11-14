@@ -19,6 +19,10 @@ export interface EnvEntry {
   key: string;
   value: string;
   value_edited: boolean;
+  /** True for a write-only credential: the backend never sends its value. */
+  secret?: boolean;
+  /** For a secret, whether the backend currently stores a non-empty value. */
+  configured?: boolean;
 }
 
 export interface EnvGroup {
@@ -112,6 +116,44 @@ async function readGroupedConfig(url: string): Promise<EnvConfigPayload> {
 /** Read the model configuration file (`.models`, gitignored). */
 export async function readModelsConfig(): Promise<EnvConfigPayload> {
   return readGroupedConfig('/models-config');
+}
+
+/** One judge / subagent role's effective model and where it came from. */
+export interface ModelRoleEffective {
+  /** Role id: step_judge / completion_judge / executor / researcher / … */
+  role: string;
+  /** The model-family prefix that serves it (`EXECUTOR_LLM`, …). */
+  family: string;
+  /** Whether the family carries its own provider / API base. */
+  configured: boolean;
+  /** Whether the family reuses its fallback family's local GGUF. */
+  local: boolean;
+  /** Inheritance source: configured / local / auxiliary / main / depth. */
+  source: 'configured' | 'local' | 'auxiliary' | 'main' | 'depth';
+  /** The provider the role will actually use ('' when depth-decided). */
+  effective_provider: string;
+  /** The model the role will actually use ('' when depth-decided). */
+  effective_model: string;
+  /** The family's output cap (null = provider default). */
+  max_output_tokens: number | null;
+}
+
+/**
+ * Read every judge / role row's effective model + inheritance source.
+ * A failed read answers an empty list: the panels fall back to their own
+ * badge logic instead of blocking the whole config tab.
+ */
+export async function readModelRoles(): Promise<ModelRoleEffective[]> {
+  try {
+    const res = await fetchApi<{ roles: ModelRoleEffective[] }>({
+      url: '/sherry-config/model-roles',
+      opts: { _ts: Date.now() },
+      method: 'get'
+    });
+    return res?.roles ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** Read the network service configuration file (`.network`, gitignored). */

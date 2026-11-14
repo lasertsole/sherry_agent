@@ -1,10 +1,10 @@
-# 🖼️ メディアパイプライン：圧縮、ネイティブ読み込み、履歴予算、Artifact
+# 🖼️ メディアパイプライン：圧縮、ネイティブ読み込み、履歴予算、Artifact、画像生成
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが画像と PDF をエンドツーエンドで扱う仕組み：すべてのアップロードは provider に届く前に 1 本の決定的な圧縮カスケードを通り、`read_file` は skill 経由ではなく画像や PDF をそのままモデルに見せることができ、履歴メディアは毎ターン剥がすのではなくバイト予算の中で新しい順に保持され、永続化されたアップロードは SHA-256 の内容アドレス型 artifact ストアに置かれ、同一バイトを重複排除して `sherry-artifact://` 参照で配信されます。
+> エージェントが画像と PDF をエンドツーエンドで扱う仕組み：すべてのアップロードは provider に届く前に 1 本の決定的な圧縮カスケードを通り、`read_file` は skill 経由ではなく画像や PDF をそのままモデルに見せることができ、履歴メディアは毎ターン剥がすのではなくバイト予算の中で新しい順に保持され、永続化されたアップロードは SHA-256 の内容アドレス型 artifact ストアに置かれ、同一バイトを重複排除して `sherry-artifact://` 参照で配信されます。`image_generation` はプロンプトから画像を生成し、同じ artifact ストアに保存します。
 
-一次情報：`pub/func/media/image_compress.py`、`agent/middlewares/media_pipeline/core.py`、`agent/middlewares/media_pipeline/media_handlers.py`、`agent/middlewares/media_pipeline/tool_media.py`、`agent/middlewares/media_pipeline/scrub.py`、`agent/tools/file_tools/read_file.py`、`agent/tools/pub_base/pdf_render.py`、`agent/tools/pub_base/artifact_store.py`、`agent/middlewares/summarization/media_offload.py`、`server/trigger/http/artifacts.py`、`client/app/composables/use-chat-media.ts`、`config/features/agent_side/media_pipeline.py`。本文書のすべての定数はこのコードと突き合わせて検証済みです。
+一次情報：`pub/func/media/image_compress.py`、`agent/middlewares/media_pipeline/core.py`、`agent/middlewares/media_pipeline/budget_projection.py`、`agent/middlewares/media_pipeline/media_handlers.py`、`agent/middlewares/media_pipeline/tool_media.py`、`agent/middlewares/media_pipeline/scrub.py`、`agent/tools/file_tools/read_file.py`、`agent/tools/pub_base/pdf_render.py`、`agent/tools/pub_base/artifact_store.py`、`agent/tools/image_gen.py`、`models/TTI_model/core.py`、`agent/middlewares/summarization/media_offload.py`、`server/trigger/http/artifacts.py`、`client/app/composables/use-chat-media.ts`、`config/features/agent_side/media_pipeline.py`、`config/features/agent_side/image_gen.py`。本文書のすべての定数はこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -23,6 +23,8 @@
   - [保存レイアウトと重複排除](#-保存レイアウトと重複排除)
   - [配信と描画](#-配信と描画)
   - [圧縮時の再利用](#-圧縮時の再利用)
+- [画像生成](#-画像生成)
+- [チャンクアップロード: `/upload/chunk`](#-チャンクアップロード-uploadchunk)
 - [設定リファレンス](#-設定リファレンス)
 - [テスト](#-テスト)
 - [限界](#-限界)
@@ -68,7 +70,7 @@ PNG 候補が収まる限り JPEG に変換しないため、通常経路では�
 - `server/service/messages.py::_get_content_list` は `data:` URL を組み立てる前に `image_base64_list` と `image_bytes_list` を圧縮します。
 - `agent/middlewares/media_pipeline/tool_media.py::_image_block` はスクリーンショットを埋め込む前に圧縮します。
 - `server/trigger/http/image.py::upload_image` は HTTP アップロードを書き込む前に圧縮します。
-- `pub/func/media/image.py::download_and_convert_to_base64` は image-to-text skill がダウンロードしたバイトを圧縮します。
+- `image_to_text` skill はリモート画像を `safe_fetch` で取得して ITTT モデルへ渡し、圧縮カスケードは通りません。旧 `pub/func/media/image.py` のダウンロード/base64 ヘルパーは削除されました——呼び出し元がなく、生の `requests` 経路が SSRF 面でした。
 
 `image_compress_enabled`（既定 `true`）を切ると以前のバイトそのままのパススルーが使えます。予算に収まらない画像はツール経路では省略され、HTTP アップロード経路では `413` を返します。ユーザーアップロード経路は元画像を保持し、添付を黙って失う代わりに provider の拒否に委ねます。
 
@@ -108,7 +110,7 @@ PDF 分岐は提供モデルの宣言能力で経路を選びます（セッシ�
 
 ### 🛡️ 順序とプレースホルダ
 
-`wrap_model_call`（および非同期版）は `_scrub_request` を先に、`_project_budget_request` を後に適用します。スクラブ層はモデルが読めないファミリをテキストのプレースホルダに置換し、予算層は残った各 `image_url` ブロックをデコード後の data URL バイト数で計量します（リモート URL は provider が取得するため 0 バイト）。そして `model_copy` の要求コピーを組み立てます。チェックポイントは決して書き換えません。
+`MediaBudgetProjectionMiddleware`（`agent/middlewares/media_pipeline/budget_projection.py`）が `wrap_model_call`（および非同期版）で `_project_media_budget` を適用します。`MultimodalProcessor` はアップロード / 永続化 / 能力スクラブの半分を保持し、`_scrub_request` を先に適用します。スクラブ層はモデルが読めないファミリをテキストのプレースホルダに置換し、予算ミドルウェアは残った各 `image_url` / `audio_url` / `video_url` ブロックをデコード後の data URL バイト数で計量します（リモート URL は provider が取得するため 0 バイト）。そして `model_copy` の要求コピーを組み立てます。チェックポイントは決して書き換えません。このミドルウェアは main と child の両チェーンに登録されるため、多数の画像を読むサブエージェントもメインエージェントと同じ予算で扱われます。
 
 最新の実ユーザーメッセージ（`metadata.origin == "user"`）は保護され、単独で予算を超えてもメディアが保持されます。そのマーカーがない記録では、最新のメディア付き `HumanMessage` にフォールバックします。保護バイトを先に予算から差し引き、残りをメッセージ位置の新しい順に受け入れます。収まらないブロックは次のテキストになります：
 
@@ -140,6 +142,36 @@ src/<session_id>/artifacts/
 
 圧縮がインラインメディアをオフロードするとき、`media_offload` はまずデコードしたバイトとメディアファミリで `find_artifact` を呼びます。ヒットすればアップロード経路がすでに保存済みなので、ブロックは 2 回目の書き込みなしで `[evicted to: <artifact path>]` ポインタになります。ミスした場合は従来のデコード + 書き込み経路（`SESSIONS_DIR/<session_id>/media/`）を維持し、音声や動画バイトなどパイプライン外のメディアもカバーします。
 
+## 🎨 画像生成
+
+`image_generation` はテキストプロンプトから画像を作るメインエージェント専用ツールです。`TTI_*` ファミリが設定済み（`TTI_API_NAME` + `TTI_API_KEY`、`TTI_MODEL_PROVIDER` と `TTI_API_BASE` で OpenAI 互換の Images API を指定）のときだけ登録され、サブエージェントには渡りません——生成は課金され、どのモデルを使うかは運用者の選択だからです。
+
+provider 側は `models/TTI_model/core.py::TTIModel` です。`POST /v1/images/generations` に `model`、`prompt`、`n`、`size` を送ります。`quality` は適用されるときだけ送り（gpt-image 系では旧来の `standard`/`hd` を落とします）、古い `dall-e-*` には `response_format="b64_json"` を強制し、`gpt-image-*` / `chatgpt-image-latest` では省略します。新モデル専用オプション（`background`、`output_format`、`output_compression`、`moderation`）は新モデルにだけ、DALL·E の `style` は旧モデルにだけ渡します。URL 応答はダウンロードし（50 MiB 上限）、`b64_json` と同様に扱います。
+
+画像枚数は二重に制限されます。モデル別の `IMAGE_GEN_MAX_OUTPUT`（`dall-e-3` = 1、`dall-e-2` と gpt-image ファミリ = 10、未知 = 1）と、`IMAGE_GEN["max_n"]`（10）の上限です。返された各画像は `write_artifact(session_id, data, media_type="image", ext=…)` で保存されるため、同一バイトは重複排除され、セッションごとの URI は安定します。ツールは保存済みアップロードと同じ Markdown 参照を返します：
+
+```
+Generated 2 image(s) with gpt-image-1:
+
+![generated image 1](sherry-artifact://<session>/image-<sha256[:16]>.png)
+
+![generated image 2](sherry-artifact://<session>/image-<sha256[:16]>.png)
+```
+
+チャットの既存の `resolveArtifactRefsInMarkdown` とギャラリー / lightbox 経路が最終回答の参照を描画します。**ツール結果**も同じ経路です：`ChatToolCard` が任意のツール結果から `sherry-artifact://` 参照を抽出し、`ArtifactImageGallery` のサムネイルグリッドを素の `<pre>` の代わりに表示します（折りたたまれたカードでもグリッドを表示するため、生成画像が折りたたみの奥に隠れません。クリックで共有の `useImagePreview` ギャラリーが開きます）。折りたたまれたターンも隠れた画像を示します：`classifyTurnFold` がツール行の参照を集め、`ChatTurnHistoryStatus` が展開トリガーの横に最大 4 枚のサムネイルを表示します。生成専用のレンダラーはありません——分岐はツール名ではなく URI で決まります。
+
+同じ provider が `text_to_image` skill の terminal 実行スクリプト（`skills/builtin/text_to_image/scripts/core.py`）も支えます。terminal ツールはすべての子プロセス環境（同期・非同期・バックグラウンド spawn）に `SHERRY_SESSION_ID` を注入し、スクリプトは `TTIModel` で生成して `write_artifact` で保存し、各 URI を **stdout に print** し、失敗時は `[error] …` を出力します。旧スクリプトは何も print せず `STATIC_DIR/images` に書いていたため、agent は画像の場所を知れませんでした。skill の素の URI 行と専用ツールの markdown 参照は同じサムネイル分岐を通ります。provider エラー、キー欠落、artifact 書き込み失敗は `Error: …` テキスト（ツール）または `[error] …` の stdout 行（スクリプト）として返り、例外がツールの外へ漏れません。ツール側の provider 呼び出しはワーカースレッドで実行され、イベントループを塞ぎません。
+
+フェーズ 1 は生成のみです。`inputImageMask` / `inputFidelity`（inpaint）とストリーミングの partial image イベントは配線していません。モデル能力カタログ（`config/model_capabilities.json`）は入力メディアを記述するものなので、画像生成モデルの上限は偽の入力能力として追加せず `models/TTI_model/core.py::IMAGE_GEN_MAX_OUTPUT` に置いています。
+
+## 📤 チャンクアップロード: `/upload/chunk`
+
+ブラウザと Tauri シェルは `bridge/upload-chunked.ts` 経由で添付を送ります。`CHUNK_SIZE`（512 KiB）以下は従来の一括 `/images|/audio|/video/upload` を使います。それより大きい場合は `POST /upload/begin`（session、filename、content type、`total_chunks`、`total_bytes`）でセッションを開き、各チャンクを `POST /upload/chunk?upload_id&chunk_index` で送り、最後に `POST /upload/complete?upload_id` を呼びます。
+
+1 ファイル内のチャンクは厳密に順序どおりです。サーバーは欠番（`code=chunkGap`）と再送（`code=chunkConflict`）を拒否し、ZCode と同じ制約になります。並列性はファイル間で、`uploadMultipleFiles` が `runPool` で最大 `max_concurrent_files`（8）レーンを走らせ、各レーン内は順序どおりです。`GET /upload/status` は連続して受信したチャンク数を返し `resumeUpload` が再開でき、`POST /upload/abort` はステージを破棄します。
+
+サーバーは `TEMP_DIR/upload_chunks/<upload_id>/` に `meta.json` とチャンクを置きます。`begin` は種別ごとのバイト上限とチャンク数/バイト数の整合性を検証し、`complete` が連結・SHA-256・`<sha256[:16]><ext>` の書き込みを行います。同一バイトは同じファイルと URL を再利用し、完了したアップロードはステージを削除、未完了は `400` でチャンクを残します。`bridge/upload-cache.ts` はペイロードを SHA-256 し、Dexie `uploadCache`（schema v7、実行中の upload id と status を含む）に `read_cache_ttl_ms`（30 秒）保持するため、その窓内の再送は再アップロードしません。キャッシュはフェイルオープンです。
+
 ## ⚙️ 設定リファレンス
 
 | 設定 | 既定値 | 意味 |
@@ -156,15 +188,25 @@ src/<session_id>/artifacts/
 | `history_media_budget_bytes` | `78643200` | 保持する履歴画像の予算（75 MiB）。 |
 | `preserve_latest_user_media` | `true` | 最新の実ユーザーメッセージのメディアを保護。 |
 | `artifact_store_enabled` | `true` | 内容アドレス型ストアを使用。無効ならタイムスタンプ付き `media/` コピー。 |
+| `chunk_size_bytes` | `524288` | 1 つの `/upload/chunk` body の最大バイト数。 |
+| `max_concurrent_files` | `8` | 1 回の複数添付送信で並行するファイルレーン数。 |
+| `read_cache_ttl_ms` | `30000` | アップロード済み URL のクライアント重複排除窓。 |
+| `IMAGE_GEN["max_n"]` | `10` | 1 回の生成要求の絶対上限（モデル別上限が先に効く）。 |
+| `IMAGE_GEN["default_size"]` | `"1024x1024"` | 呼び出し側がサイズを省略したときの既定値。 |
+| `IMAGE_GEN["default_quality"]` | `""` | 品質を省略したときの既定値（空 = provider 既定）。 |
+| `IMAGE_GEN["timeout_s"]` | `120.0` | provider と画像ダウンロードのタイムアウト。 |
 
 ## 🧪 テスト
 
 - `tests/pub/func/media/test_image_compress.py` — パススルー、品質段階、寸法上限、トークンゲート、WebP、`too_large`。
 - `tests/agent/tools/file_tools/test_read_file_image.py` と `test_read_file_pdf.py` — ネイティブブロック、skill フォールバック、上限、ページ範囲エラー。
 - `tests/agent/tools/pub_base/test_pdf_render.py` — PyMuPDF 経路、`pdftoppm` フォールバック、タイムアウト、レンダラ不在エラー。
-- `tests/agent/middlewares/media_pipeline/test_history_budget.py` — 全収容、新しい順の淘汰、最新ユーザー保護、リモート URL、全破棄。
+- `tests/agent/middlewares/media_pipeline/test_budget_projection.py` — 全収容、新しい順の淘汰、最新ユーザー保護、リモート URL、全破棄、両チェーン。
 - `tests/agent/tools/pub_base/test_artifact_store.py` と `tests/server/trigger/http/test_artifacts.py` — 重複排除、並行性、URI 解析、配信、セッションスコープ。
 - `tests/agent/middlewares/test_compression_media_offload.py` — artifact 再利用と従来のオフロード経路。
+- `tests/agent/middlewares/test_media_pipeline_e2e.py` — 実際の agent グラフ: サーバー圧縮 → artifact ストア + `/artifacts` → `read_file` の画像/PDF ブロック → 履歴予算の投影。
+- `tests/server/trigger/http/test_upload_chunked.py` とクライアントの `upload-chunked` / `upload-cache` スイート — ステージング、組み立て、内容ハッシュ重複排除、上限、短 TTL キャッシュ。
+- `tests/models/TTI_model/test_core.py` と `tests/agent/tools/test_image_gen.py` — 要求形状、モデル別上限、`response_format` ガード、URL ダウンロード、artifact 重複排除、エラーテキスト、登録ゲート。
 - `client/app/composables/__tests__/use-chat-media.test.ts` — 添付と Markdown 参照の URI 解決。
 
 ## ⚠️ 限界
@@ -173,3 +215,4 @@ src/<session_id>/artifacts/
 - 動画は 1 ペイロードあたりの上限（`video_max_bytes`、30 MiB）だけで、圧縮も累積履歴バケットもありません。ZCode も同じです。
 - 75 MiB の予算は要求サイズのヒューリスティックであり、トークン予測器ではありません。圧縮済み画像が多くても provider トークンは高くつき得るため、圧縮ミドルウェアが事後的な最後の砦です。
 - `artifact_store_enabled` を切る前に書かれた artifact URI は引き続き読めます。新しいアップロードはタイムスタンプ付き `media/` ファイルと `/media` エンドポイントに戻ります。
+- 画像生成は運用者が設定した provider に依存します。`TTI_API_NAME` と `TTI_API_KEY` がなければツール自体が存在せず、モデルは描けません。フェーズ 1 には編集 / inpaint もストリーミングプレビューもありません。

@@ -21,6 +21,7 @@ def should_update_run_outcome(current: RunOutcome | None, new_outcome: RunOutcom
     if current.status == RunOutcomeStatus.OK and new_outcome.status in (
         RunOutcomeStatus.ERROR,
         RunOutcomeStatus.TIMEOUT,
+        RunOutcomeStatus.BUDGET_EXHAUSTED,
     ):
         return True
     return False
@@ -43,6 +44,7 @@ def resolve_finalized_task_state(run: SubagentRunRecord) -> dict:
         RunOutcomeStatus.ERROR: "failed",
         RunOutcomeStatus.TIMEOUT: "timed_out",
         RunOutcomeStatus.KILLED: "cancelled",
+        RunOutcomeStatus.BUDGET_EXHAUSTED: "failed",
     }
 
     return {

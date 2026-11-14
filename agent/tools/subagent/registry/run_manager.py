@@ -40,6 +40,7 @@ def register_run(
     agent_id: str = "main",
     thinking: str | None = None,
     max_output_tokens: int | None = None,
+    run_timeout_seconds: float | None = None,
     depth: int = 1,
     label: str | None = None,
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
@@ -79,6 +80,7 @@ def register_run(
         agent_id=agent_id,
         thinking=thinking,
         max_output_tokens=max_output_tokens,
+        run_timeout_seconds=run_timeout_seconds,
         depth=depth,
         role=role,
         control_scope=control_scope,
@@ -208,8 +210,6 @@ def complete_run(
 
     runtime_ms = _compute_accumulated_runtime_ms(run)
     ended_reason = outcome_to_ended_reason(outcome.status).value
-    config = get_config()
-    archive_at = time.monotonic() + config.archive_after_minutes * 60
 
     updated = run.model_copy(
         update={
@@ -229,7 +229,6 @@ def complete_run(
             ),
             "accumulated_runtime_ms": runtime_ms,
             "ended_reason": ended_reason,
-            "archive_at": archive_at,
         }
     )
     memory.set_run(updated)
@@ -274,7 +273,6 @@ def replace_run_after_steer(
             "ended_reason": None,
             "pause_reason": "steer",
             "cleanup_completed_at": None,
-            "archive_at": None,
             "ended_hook_emitted": False,
         }
     )

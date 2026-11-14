@@ -222,6 +222,8 @@ blocked → ready → dispatched → done
 
 > `done` means "a result was injected and the step's configured gates passed" — with **no** expectation configured (`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`) it degrades to the older meaning: "a result was injected", so a failed child can still land `done` unless the caller reports `step_outcome="failure"`. The full rule, with what each gate does about it, is in [Judgement Gates](../gates/README.md).
 
+> A completion-judge budget exhaustion (the child's goal loop spent `goal_max_turns` turns without a `DONE` verdict) is reported as `step_outcome="blocked"`, not `failure` and not `OK`: the child did work, so the step keeps its partial result readable and its dependents stay `blocked` for the agent to retry, replan, or cancel. `failed` remains reserved for a definitive failure or an unrepairable schema miss.
+
 >
 
 > `failed`, `skipped` and `cancelled` never unlock dependents: a `failed` dependency leaves its dependents `blocked` (a failure must not be silently skipped over), and a `skipped`/`cancelled` dependency cascades `skipped` into its dependents so a dead branch settles instead of parking the flow forever.
@@ -274,7 +276,7 @@ Actual fields (`taskflow_step(action="resume")` records them on the result entry
 
 | `schema_validated`  | `true` / `false` / `null` (no schema configured) — the Tier 1 verdict.        |
 
-| `step_outcome`      | The caller's declaration when given (`success` / `failure` / `partial` / `skipped`). |
+| `step_outcome`      | The caller's declaration when given (`success` / `failure` / `partial` / `skipped` / `blocked`). |
 
 
 
@@ -747,7 +749,7 @@ Two tools enable parallel execution of independent steps:
 
 
 
-Validates the entire batch before any spawn (all-or-nothing). The batch then spawns CONCURRENTLY through the shared `_dispatch.dispatch_child` seam, bounded by `TASKFLOW_INFRA["max_parallel_dispatch"]` (2 by default: the SUBAGENT lane is the global backpressure, this cap only decides how many spawn calls are in flight at once). One spawn failing no longer aborts its siblings — every successful child is persisted in ONE `update_flow` call and every failed step id is named in the answer (`Error: dispatch failed for step_id(s) …; dispatched=[…]`). The `apply_dispatched_steps()` helper re-applys recorded dispatched-step payloads onto a freshly-read step list, matching by `step_id` — a spawned child is never lost to a concurrent writer that rewrote the step list. `max_parallel_dispatch = 1` restores the historical sequential behaviour exactly.
+Validates the entire batch before any spawn (all-or-nothing). The batch then spawns CONCURRENTLY through the shared `_dispatch.dispatch_child` seam, bounded by `TASKFLOW_INFRA["max_parallel_dispatch"]` (2 by default: the SUBAGENT lane is the global backpressure, this cap only decides how many spawn calls are in flight at once). One spawn failing no longer aborts its siblings — every successful child is persisted in ONE `update_flow` call and every failed step id is named in the answer (`Error: dispatch failed for step_id(s) …; dispatched=[…]`). A failed step also gets a persisted `last_spawn_error` (+ `last_spawn_failed_at`) marker — in the same write when anything spawned, in a marker-only write when nothing did — and a successful dispatch clears both, so the board can tell a retry target from work the next automatic wave will start. The `apply_dispatched_steps()` helper re-applys recorded dispatched-step payloads onto a freshly-read step list, matching by `step_id` — a spawned child is never lost to a concurrent writer that rewrote the step list. `max_parallel_dispatch = 1` restores the historical sequential behaviour exactly.
 
 
 
@@ -755,7 +757,7 @@ Validates the entire batch before any spawn (all-or-nothing). The batch then spa
 
 
 
-A resume starts the whole ready set, not only the dependents it unlocked (`auto_dispatch=True`, the default): `newly_ready ∪ all_ready` — the newly unlocked downstream plus sibling steps that were already `ready` but never dispatched — spawns concurrently through the same seam and the same `max_parallel_dispatch` bound. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]` (default true) controls the wider scan; set it false (or pass `auto_dispatch=False`) to keep the historical unlock-only/newly-unlocked behaviour. The spawned keys are persisted with the CAS-retried write (`update_flow_with_conflict_retry`) so a concurrent writer cannot drop them. Each step is dispatched exactly like `taskflow_step(action="dispatch")` does it (task bindings + any judge feedback). Failures are reported, never raised: a step that could not spawn stays `ready` and the resume's answer carries `auto_dispatch_failed=<step_id>: <error>` for a manual retry. Already-dispatched steps are filtered and re-checked under the flow lock, so the wider scan spawns each step exactly once.
+A resume starts the whole ready set, not only the dependents it unlocked (`auto_dispatch=True`, the default): `newly_ready ∪ all_ready` — the newly unlocked downstream plus sibling steps that were already `ready` but never dispatched — spawns concurrently through the same seam and the same `max_parallel_dispatch` bound. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]` (default true) controls the wider scan; set it false (or pass `auto_dispatch=False`) to keep the historical unlock-only/newly-unlocked behaviour. The spawned keys are persisted with the CAS-retried write (`update_flow_with_conflict_retry`) so a concurrent writer cannot drop them. Each step is dispatched exactly like `taskflow_step(action="dispatch")` does it (task bindings + any judge feedback). Failures are reported, never raised: a step that could not spawn stays `ready`, the resume's answer carries `auto_dispatch_failed=<step_id>: <error>` for a manual retry, and the step is stamped with `last_spawn_error` so the board keeps naming it as a retry target (a failed spawn that later succeeds clears the marker). Already-dispatched steps are filtered and re-checked under the flow lock, so the wider scan spawns each step exactly once.
 
 
 
@@ -875,7 +877,7 @@ Consequences: `get_active_flows_sync` excludes a superseded flow even while its 
 
 
 
-- **Database**: `agent/tools/taskflow/data/taskflow_registry.db`
+- **Database**: `src/data/registry.db` (`task_flows` table)
 
 - **Table**: `task_flows(flow_id TEXT PK, state_json TEXT NOT NULL, wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL, child_session_key TEXT)`
 

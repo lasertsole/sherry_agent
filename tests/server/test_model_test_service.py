@@ -63,6 +63,47 @@ def test_chat_group_probes_through_the_app_builder(monkeypatch):
     }
 
 
+def test_a_blank_api_key_falls_back_to_the_stored_models_value(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _Llm:
+        async def ainvoke(self, messages):
+            return type("_Reply", (), {"content": "pong"})()
+
+    monkeypatch.setattr(
+        "models.LLMs.main_llm.build_main_llm_for_profile",
+        lambda **kwargs: captured.update({"builder": kwargs}) or _Llm(),
+    )
+    monkeypatch.setattr(
+        service, "read_models_raw_values", lambda: {"MAIN_LLM_API_KEY": "sk-stored"}
+    )
+
+    result = asyncio.run(service.test_model_group("MAIN_LLM", _chat_params(MAIN_LLM_API_KEY="")))
+
+    assert result["ok"] is True
+    assert captured["builder"]["api_key"] == "sk-stored"
+
+
+def test_a_typed_api_key_wins_over_the_stored_value(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _Llm:
+        async def ainvoke(self, messages):
+            return type("_Reply", (), {"content": "pong"})()
+
+    monkeypatch.setattr(
+        "models.LLMs.main_llm.build_main_llm_for_profile",
+        lambda **kwargs: captured.update({"builder": kwargs}) or _Llm(),
+    )
+    monkeypatch.setattr(
+        service, "read_models_raw_values", lambda: {"MAIN_LLM_API_KEY": "sk-stored"}
+    )
+
+    asyncio.run(service.test_model_group("MAIN_LLM", _chat_params(MAIN_LLM_API_KEY="sk-typed")))
+
+    assert captured["builder"]["api_key"] == "sk-typed"
+
+
 def test_chat_group_reports_a_missing_model_name_without_building(monkeypatch):
     def exploding_builder(**kwargs):  # pragma: no cover - must not be reached
         raise AssertionError("the builder must not run without a model name")

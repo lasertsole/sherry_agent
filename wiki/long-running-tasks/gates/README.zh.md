@@ -34,7 +34,7 @@ Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该�
 
 - **未通过**记为 `schema_validated=false` 连同错误，并按失败处理、重试类型为 `schema_error`——它永远不花判别调用，且未被重试的未通过会把步骤标成 `failed`。
 - **未通过会教会这次重试。** schema 失败在判别之前短路，所以 `judge_feedback` 为空；替换子代理的 task 因此带上校验器自己的消息（`Your previous output failed schema validation: <字段路径, expected/got>.`）作为 `## Previous Attempt Feedback`，同时子代理继承该步骤的整套 spawn 契约（`response_schema` → 它的结构化输出要求、功能角色、模型覆盖、运行超时）——看不到 schema 也看不到失败原因的重试只能靠猜。
-- **形状在生成时就已经被约束。** 步骤声明 `response_schema` 时，子代理构建会带上 LangChain 的 `response_format`（原始 schema 解析为 `AutoStrategy`：provider 支持时走原生结构化输出，否则走结构化输出 tool 调用），所以明显的漏项在模型那一层就被拦下，而不是等到这里的校验器。schema 文本仍留在子代理的 system prompt 里作为 prompt 级兜底，而本 Tier 1 校验保留为第二道网——provider 的边角情况、或从不调用结构化输出 tool 的模型，仍会在这里被抓住。`sessions_spawn` 暴露同一个 `output_schema` 字段，工具驱动的子代理也能被同样约束。结构化输出被拒绝时会**逐级降级**而不是直接失败：级别 0（默认）把 schema 交给 LangChain；命名该策略的 400 会降到级别 1（子代理自己发 `response_format={"type":"json_object"}`，schema 留在 prompt 里，结果本地校验）；再报错则降到级别 2（级别 1 + 关闭思考）。降级级别按 `(provider, model)` 持久化在 `src/data/subagent_model_caps.json`，已经降级过的模型不会被后续子代理反复探测。
+- **形状在生成时就已经被约束。** 步骤声明 `response_schema` 时，子代理构建会带上 LangChain 的 `response_format`（原始 schema 解析为 `AutoStrategy`：provider 支持时走原生结构化输出，否则走结构化输出 tool 调用），所以明显的漏项在模型那一层就被拦下，而不是等到这里的校验器。schema 文本仍留在子代理的 system prompt 里作为 prompt 级兜底，而本 Tier 1 校验保留为第二道网——provider 的边角情况、或从不调用结构化输出 tool 的模型，仍会在这里被抓住。`sessions_spawn` 暴露同一个 `output_schema` 字段，工具驱动的子代理也能被同样约束。结构化输出被拒绝时会**逐级降级**而不是直接失败：级别 0（默认）把 schema 交给 LangChain；命名该策略的 400 会降到级别 1（子代理自己发 `response_format={"type":"json_object"}`，schema 留在 prompt 里，结果本地校验）；再报错则降到级别 2（级别 1 + 关闭思考）。降级级别按 `(provider, model)` 持久化在 `src/data/subagent_model_caps.json`，并带重探时钟：24 小时 → 48 小时 → 7 天后回退一级，spawn 成功会固化回退后的级别，瞬时 429 / 限流 / 超时 / 连接错误不会触发降级。系统配置 → 模型配置 可查看和清除这些标签。
 - **通过**则存入 `structured_result` + `schema_validated=true`，继续进入 Tier 2。结构本身从不证明内容正确——这正是第二层存在的理由。
 
 ### Tier 2 — 语义（辅助 LLM）
@@ -57,7 +57,7 @@ Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该�
 
 ### 然后是：`done` 意味着"配置的门都过了"
 
-步骤的 `done` 本身从不意味着"活儿是对的"。在**没有**配置任何期望（`response_schema`、`judge_criteria` / `validation_criteria`、`retry_policy`）时，它退化为旧含义——"注入了一个结果"——所以报了错的子代理照样能落到 `done` 并解锁后继。声明一个期望（`response_schema` 免费校验，且在判别调用之前）或上报 `step_outcome="failure"`，闭环才会抓住它：`failed` / `skipped` / `cancelled` 现在是真实的步骤状态，失败永不解锁其下游，而 `taskflow_flow(action="finish")` 拒绝在存在未决步骤时完成。
+步骤的 `done` 本身从不意味着"活儿是对的"。在**没有**配置任何期望（`response_schema`、`judge_criteria` / `validation_criteria`、`retry_policy`）时，它退化为旧含义——"注入了一个结果"——所以报了错的子代理照样能落到 `done` 并解锁后继。声明一个期望（`response_schema` 免费校验，且在判别调用之前）或上报 `step_outcome="failure"`，闭环才会抓住它：`failed` / `skipped` / `cancelled` 现在是真实的步骤状态，失败永不解锁其下游，而 `taskflow_flow(action="finish")` 拒绝在存在未决步骤时完成。goal loop 预算耗尽则上报 `step_outcome="blocked"`：步骤保留部分结果，依赖者保持阻塞，由 Agent 决定重试、重规划或取消。
 
 ## 流程层（`taskflow_flow(action="finish")`）
 
@@ -70,7 +70,7 @@ Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该�
 | **C — 证据** | 流程证据中没有 `FAIL`、没有 `[broken]`、也没有 `[stale]` 行（见[证据账本](../gates/evidence-ledger/README.zh.md)） | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 目标判别** | 辅助模型判断收集到的结果是否满足流程的 `description` | 拒绝文本会点名 `taskflow_flow(action="replan")` |
 
-每道门都是 **fail-open**：collector 不可读、模型出错或判定无法解析都放行，而不是阻塞完成。Gate E 只在流程有 `description` 且步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行——一两步的流程已由子级[完成判别器](../../subagent/README.zh.md)覆盖，再对同一份工作给出第二个判定正是那处重叠；`GOAL_GATE["enabled"]` 是它的总开关，`GOAL_GATE["max_result_chars"]`（4000）限定交给它的每个结果。
+Gate E 与回归重放是 **fail-open**：模型出错或判定无法解析都放行，而不是阻塞完成。Gate C 的证据**读取**不同：collector 不可读时会在流程 state 里记录 `evidence_unavailable` 并**拒绝**完成，无法验证的收口不会溜过去；真正**为空**的账本仍然放行。Gate E 只在流程有 `description` 且步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行——一两步的流程已由子级[完成判别器](../../subagent/README.zh.md)覆盖，再对同一份工作给出第二个判定正是那处重叠；`GOAL_GATE["enabled"]` 是它的总开关，`GOAL_GATE["max_result_chars"]`（4000）限定交给它的每个结果。
 
 ## 相邻的门（在别的页面，同一个思路）
 

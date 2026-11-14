@@ -5,6 +5,7 @@ import server.trigger.http.media
 import server.trigger.http.artifacts  # noqa: F401  (side-effect route registration)
 import server.trigger.http.workplace
 import server.trigger.http.image
+import server.trigger.http.upload_chunked  # noqa: F401  (side-effect route registration)
 import server.trigger.http.audio
 import server.trigger.http.video
 import server.trigger.http.skills
@@ -34,6 +35,7 @@ import server.trigger.http.session_settings  # noqa: F401  (side-effect route re
 import server.trigger.http.side_chat  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_project  # noqa: F401  (side-effect route registration)
 import server.trigger.http.agent_config  # noqa: F401  (side-effect route registration)
+import server.trigger.http.extraction  # noqa: F401  (side-effect route registration)
 import server.trigger.http.project_files  # noqa: F401  (side-effect route registration)
 import server.trigger.http.git  # noqa: F401  (side-effect route registration)
 import server.trigger.http.terminal  # noqa: F401  (side-effect route registration)
@@ -41,6 +43,7 @@ import server.trigger.http.browser  # noqa: F401  (side-effect route registratio
 import server.trigger.http.trajectory  # noqa: F401  (side-effect route registration)
 import server.trigger.http.health  # noqa: F401  (side-effect route registration)
 import server.trigger.http.mcp  # noqa: F401  (side-effect route registration)
+import server.trigger.http.lsp_config  # noqa: F401  (side-effect route registration)
 
 # The per-turn trajectory ledger is reached by agent-side producers through the
 # process-level hook registry (agent/** must not import server/**).

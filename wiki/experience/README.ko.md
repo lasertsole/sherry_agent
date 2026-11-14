@@ -2,15 +2,17 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review, 플랜이 턴 경계에서 완료될 때의 **스킬 리뷰**, 압축 후 todo fork, 그리고 메인 세션 삭제 시의 session-end salvage. 산출물은 네 개 저장소——MEMORY.md / USER.md / FACTS.md, `skills/auto/`, `todos.db`——와 감사용 원본 `handoff-tree.json`으로 들어갑니다. 아래 **Curator** 절은 스킬 리뷰의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
+이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review, 플랜이 턴 경계에서 완료될 때의 **스킬 리뷰**, 압축 후 todo fork, 그리고 메인 세션 삭제 시의 session-end salvage. 산출물은 네 개 저장소——MEMORY.md / USER.md / FACTS.md, `skills/auto/`, `registry.db`——와 감사용 원본 `handoff-tree.json`으로 들어갑니다. 아래 **Curator** 절은 스킬 리뷰의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
 > **저장소 업데이트(2026-11-04):** 아래에서 MEMORY.md / USER.md / FACTS.md라고 부르는 세 메모리 출력은 이제 MesMemory `memory_entries` 테이블의 행(대상 `memory` / `user` / `facts`)입니다. 이전 Markdown 파일은 부팅 시 `memory_migration.py`가 한 번 가져와 `*.md.bak`으로 이름을 바꿉니다. 로더는 `MemoryStore.load_from_store()`이며, 각 행은 `origin_session`(출처)과 `usage_count` / `last_used`(사용 피드백)를 가집니다.
+
+> **모듈 구성(2026-11-13):** 백그라운드 리뷰 작업은 이제 `agent/middlewares/summarization/` 아래의 전용 파일로 나뉘었습니다: `memory_review.py`, `session_end_salvage.py`, `handoff_tree.py`, `skill_review_runner.py`, `ptc_compile.py`, `compression_todo.py`, 공용 `background_scaffold.py` / `_common.py`; `skill_review.py`는 계속 게이트입니다. `background_reviews.py`는 재수출 facade이며, 모듈 프록시가 속성 쓰기를 구현 모듈로 전달하므로 기존 심볼과 monkeypatch 이음매는 그대로입니다.
 
 > 아래 모든 주장은 소스와 대조해 검증했습니다. 심볼 이름, 설정 키, 기본값, 경로는 모두 `agent/middlewares/`, `agent/tools/`, `config/features/` 코드에 실제로 존재합니다.
 
 ## 설계 원칙
 
-1. **모든 추출은 기존 저장소를 확장합니다.** 산출물은 MEMORY.md / USER.md / FACTS.md, `skills/auto/`, `todos.db` 중 하나로 들어갑니다. 원본 handoff tree는 감사용이며 모델 대상 지식 저장소가 아닙니다. 병렬 저장소를 만드는 추출 경로는 없습니다.
+1. **모든 추출은 기존 저장소를 확장합니다.** 산출물은 MEMORY.md / USER.md / FACTS.md, `skills/auto/`, `registry.db` 중 하나로 들어갑니다. 원본 handoff tree는 감사용이며 모델 대상 지식 저장소가 아닙니다. 병렬 저장소를 만드는 추출 경로는 없습니다.
 2. **전면 fail-open.** 모든 트리거는 자신의 실패를 기록하고 삼킵니다. todo 저장소 손상, plan 파일 읽기 불가, LLM 호출 실패가 메인 대화 턴을 막거나 중단시키지 않습니다.
 3. **턴 경로는 제로 블로킹.** 압축 후 todo fork와 압축 시점 백그라운드 리뷰는 모두 fire-and-forget 백그라운드 작업입니다. memory review와 스킬 리뷰는 BACKGROUND_REVIEW 레인에서 독립 자식 Agent로 실행되어 모델 호출을 절대 막지 않습니다.
 4. **모든 추출 경로에 도구가 필요합니다.** memory review, 스킬 리뷰, todo fork는 모두 `create_agent` fork이며 각각 `memory`, `skill_manage`, `todowrite`를 통해 기록합니다. 독립적인 순수 추출 호출은 남아 있지 않습니다.
@@ -22,7 +24,7 @@
 |---|---|---|
 | 압축마다 | memory review(`_execute_memory_review`): **버려질** 슬라이스만 **원문 그대로** 해당 턴이 사용한 모델 구성(`_build_session_model`)으로 보내고, 세션의 시스템 프롬프트와 도구 면도 재현해 프리픽스 캐시에 적중시킴; `BACKGROUND_REVIEW_CONFIG["memory_review_mode"] = "digest"`면 대신 접음(최근 24개는 원문, 그 이전은 한 줄로 절단) | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
 | 플랜 완료——턴 경계에서 모든 todo가 `completed` / `cancelled`(**압축 시점이 아님**) | 스킬 리뷰(`_run_skill_review`): 완료 훅(`PlanContinuationEnforcer` → `maybe_trigger_skill_review`)이 **보조 모델**로 전용 agent를 fork하고 `_SKILL_REVIEW_PROMPT`를 쓰며 **대화 기록을 전혀 넘기지 않음** | `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`); judge가 승인한 no-op 허용; 원본 `handoff-tree.json`은 먼저 감사용으로 기록 |
-| 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget 백그라운드 리뷰 agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `todos.db` |
+| 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget 백그라운드 리뷰 agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `registry.db` |
 | 메인 세션 삭제 시(purge 전) | session-end salvage(`salvage_session_memory`): checkpoint transcript를 스냅샷하고 모델/시스템 프롬프트/도구 면을 캡처하며, 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 독립적인 2파 memory review를 예약한다 — 1파는 버려질 프리픽스, 2파는 memory 재로드와 프롬프트 재구축 후 보존 꼬리 | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
 
 ## 트리거 상세
@@ -41,24 +43,28 @@
 
 `_detect_todo_all_complete(session_id)`는 플랜이 완료될 수 있는 각 턴에서 평가되고 완료 사이클마다 한 번 발화합니다: todos가 존재하고 모두 `completed` / `cancelled`이며 `skill_review_fired`가 설정되지 않음. fired 플래그를 세우고 목록이 불완전해지면 리셋합니다. 읽기는 fail-open이며, 완료 훅이 매 턴 확인하므로 짧은 세션도 추출됩니다.
 
-플래그만으로는 completed todo의 in-place 편집을 볼 수 없으므로 `_plan_snapshot_hash`(id + content + status + plan_ref)를 마지막 **성공** pass의 `skill_review_snapshot_hash`와 비교합니다. 내용이 바뀌면 다시 추출하고, 그대로면 건너뛰며, 실패 pass는 cooldown 후 재시도합니다.
+플래그만으로는 completed todo의 in-place 편집을 볼 수 없으므로 `_plan_snapshot_hash`(id + content + status + plan_ref)를 마지막 **소비된** pass(성공한 추출 또는 사전 판단이 비일반화로 판정한 계획)의 `skill_review_snapshot_hash`와 비교합니다. 내용이 바뀌면 다시 추출하고, 그대로면 건너뛰며, 실패 pass는 cooldown 후 재시도합니다.
 
 `skill_review_enabled`와 `skill_review_enabled`가 켜져 있으면 hook이 BACKGROUND_REVIEW 레인에서 `_run_skill_review`을 fire-and-forget으로 실행합니다:
 
 1. `_build_plan_context`는 plan 파일, todos, 자식 Agent runs(result_text 24 KB 제한), 그리고 제한된 `feedback`(최근 메시지의 `skill_view` 호출 + `.usage.json` 최근 항목 = `loaded_skills`, 최근 턴의 사용자 수정 = `user_corrections`)을 모읍니다. internal carrier, system reminder, workspace notice는 제외합니다. todo가 없으면 `{}`를 반환해 pass를 건너뜁니다.
 2. LLM 전에 원본 merged handoff tree를 `handoff-tree.json`에 원자적으로 써서 감사용으로 남깁니다. 모델 대상 지식 읽기 경로가 아닙니다.
 3. `_SKILL_REVIEW_PROMPT`를 압축 컨텍스트로 렌더링해 전용 agent(보조 모델, temperature=0, **대화 없음**)에 넘깁니다. 도구 면은 `skill_list` / `skill_view` / `skill_manage`만; `knowledge`와 `memory`는 없어 지식이나 FACTS를 쓸 수 없습니다.
-4. Prompt는 증거를 명시적으로 매핑합니다: `success_steps` → 절차/검증, `failed_branches` → pitfalls / `when_not_to_use`, `hard_constraints` → guardrails, `locked_decisions` → rationale, `user_corrections` → body / `when_to_use`. 이번에 로드한 skill, 기존 class-level umbrella, support file, 마지막으로 새 class-level skill 순서. 구체적 이유가 있는 no-op만 허용합니다.
+4. Prompt는 증거를 명시적으로 매핑합니다: `success_steps` → 절차/검증, `failed_branches` → pitfalls / `when_not_to_use`, `hard_constraints` → guardrails, `locked_decisions` → rationale, `user_corrections` → body / `when_to_use`. 이번에 로드한 skill, 기존 class-level umbrella, support file, 마지막으로 새 class-level skill 순서. 구체적 이유가 있는 no-op만 허용합니다. 가시성은 기본적으로 `scope`를 **생략**하며(메인 에이전트와 서브에이전트 모두 보임), 절차가 메인 전용 능력(`sessions_spawn` / `taskflow_*` / `todowrite` 같은 위임 오케스트레이션, `skill_manage`)에 의존할 때만 `main_only`, 순수 워커 실행 플레이북일 때만 `subagent_only`를 씁니다. 품질 judge는 `scope_valid`를 반환하며, 선언이 본문과 모순되면 실패로 처리하고 피드백과 함께 재시도합니다.
 
 구현: `summarization/background_reviews.py`의 `_run_skill_review`이 `_create_skill_review_agent`를 `skill_review_lock` 아래에서 사용합니다. `state_register_db`가 지문을 저장하고, `outcome`은 subagent runs에서 오며, 실패 플래그는 `False`입니다.
+
+LLM 작업 전에 **작업 수준 사전 판단**(`_judge_task_generalizability`)이 계획을 한 번 선별합니다. 짧은 보조 모델 호출 한 번에 계획 목표와 완료된 todo 요약만 전달하고(handoff 증거는 제외) `{"should_extract": bool, "reason": str}`를 받습니다. `false`이면 handoff tree와 리뷰 에이전트를 만들기 전에 반환하고 스냅샷 지문을 소비됨으로 기록합니다——성공 경로가 쓰는 것과 같은 `skill_review_snapshot_hash`——따라서 같은 계획에서 사전 판단이 다시 실행되지 않습니다. 응답이 잘못되었거나 사용할 수 없거나 호출이 실패하면 **추출을 계속하는 fail-open**입니다. 스킬 내용 품질은 기존의 전체 리뷰와 judge가 담당하고, 사전 판단은 "작업 종류"가 리뷰할 가치가 있는지만 결정합니다.
+
+**사용자 스위치.** 프리셋 캐릭터 → 고급의 경험 학습 스위치(`skill_extraction_enabled`: 전역은 `sherry.jsonc`, 세션에서 재정의 가능)는 완료 감지 전에 읽힙니다. 꺼져 있으면 포크하지 않고 계획도 추출됨으로 표시되지 않으므로, 나중에 다시 켜면 추출됩니다. 같은 패널의 플로우 재사용 컴파일(`flow_extraction_enabled`, 전역 전용——세션 쪽은 읽기 전용)은 아래의 PTC 컴파일과 LDW 컴파일을 제어하며, 경험 학습이 꺼지면 플로우도 강제로 꺼집니다. 유일한 판독 지점은 `runtime/session/extraction.py`입니다.
 
 스킬 리뷰는 snapshot/judge 트랜잭션으로 실행됩니다:
 
 - **snapshot**: `skill_review.snapshot_auto_skills()`가 첫 시도 전에 `skills/auto`(skill, support file, usage sidecar)를 캡처합니다.
 - **write**: 리뷰가 skill을 생성/수정합니다. `set_current_write_origin("background_review")`로 새 skill이 agent-created로 표시되어 curator 관리 대상이 됩니다.
-- **judge**: `skill_review.judge_skill_update()`가 보조 모델에 `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified`, `feedback`을 요청합니다. `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`, `trigger_quality >= 6`, grounded, reusable이 통과 조건이며 no-op은 `no_op_justified`가 필요합니다.
+- **judge**: `skill_review.judge_skill_update()`가 보조 모델에 `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified`, `scope_valid`, `feedback`을 요청합니다. **변경된 skill**은 `quality >= BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"]`, `trigger_quality >= 6`, grounded, reusable, `scope_valid`를 모두 만족해야 합니다. **정당화된 no-op**은 `no_op_justified`만으로 통과합니다——파일 변경이 없으면 채점할 내용이 없으므로 judge 호출 한 번으로 끝나고 재시도하지 않습니다.
 - **retry/rollback**: 거부된 시도는 pre-review snapshot으로 복원하고 judge feedback과 함께 재시도합니다(기본 최대 2회). 소진되면 다시 복원하고 `skill_review_failed_hash` + 시각을 기록하며 성공 fingerprint를 진행하지 않습니다. 이후 턴에서 `skill_review_failure_cooldown_s` 후 재시도할 수 있고, plan이 바뀌면 즉시 재시도합니다.
-- **선택적 PTC 컴파일(통과 후)**: `PTC["ptc_prefill_enabled"]`가 켜져 있으면 같은 백그라운드 작업이 성공한 TaskFlow step마다 `scripts/ptc__<plan_key>__<step_id>.py`를 업데이트된 skill에 컴파일합니다. best-effort이며 judge를 다시 실행하지 않고 승인된 skill을 롤백하지 않습니다.
+- **선택적 PTC 컴파일(통과 후)**: `PTC["ptc_prefill_enabled"]`와 프리셋 캐릭터 → 고급의 플로우 재사용 컴파일이 모두 켜져 있으면 같은 백그라운드 작업이 성공한 TaskFlow step마다 `scripts/ptc__<plan_key>__<step_id>.py`를 업데이트된 skill에 컴파일합니다. best-effort이며 judge를 다시 실행하지 않고 승인된 skill을 롤백하지 않습니다. 이 스위치는 컴파일만 제어하며 기존 스크립트의 재생을 막지 않습니다.
 
 이 경로는 knowledge(`task-*.json` / `wave-*.json` / `plan-summary.json`)도 FACTS도 쓰지 않습니다. 기존 knowledge 파일은 디스크에 남지만 legacy이며, 모델 대상 prompt block과 `knowledge` 도구는 retired입니다.
 
@@ -87,9 +93,9 @@ fork의 결과 메시지는 로그만 남깁니다. 메인 그래프나 그 chec
 
 ## Curator(스킬 큐레이션)
 
-**frontmatter 계약(인덱스 자체가 트리거).** `<available_skills>`는 스킬의 frontmatter만 렌더합니다 — 본문은 로드 후에 읽힙니다 — 따라서 이 필드들이 라우팅 신호입니다: `description`(능력 요약), `when_to_use`(**필수**: 이 경로들이 만들거나 고치는 모든 스킬에, 그것을 로드해야 하는 구체적 시나리오/사용자 의도를 명시), `when_not_to_use`(선택: 제외 조건과 대안). 로더는 두 태그를 CJK 인식 토큰 예산(60 / 50 / 50 토큰)으로 렌더하고 XML 이스케이프합니다. 클라이언트 스킬 툴팁도 같은 세 필드를 보여줍니다. 큐레이터는 더 좁은 두 번째 층을 더합니다: 엄브렐라의 frontmatter가 스킬 전체를 덮고, 각 `##` 하위 능력 섹션이 자체 `**When to use:**` 줄로 시작합니다(실제 제외가 있을 때만 `**When NOT to use:**`도). 그래서 모델은 `skill_view` 후 올바른 섹션을 고를 수 있습니다. 결정적 폴백도 같은 모양을 쓰며 조건은 병합 이유에서 추출합니다.
+**frontmatter 계약(인덱스 자체가 트리거).** `<available_skills>`는 스킬의 frontmatter만 렌더합니다 — 본문은 로드 후에 읽힙니다 — 따라서 이 필드들이 라우팅 신호입니다: `description`(능력 요약), `when_to_use`(**필수**: 이 경로들이 만들거나 고치는 모든 스킬에, 그것을 로드해야 하는 구체적 시나리오/사용자 의도를 명시), `when_not_to_use`(선택: 제외 조건과 대안). 선택적 `roles: [...]`는 스킬을 특정 서브에이전트 기능 역할로 좁힙니다(생략하면 모든 역할에 보이며, 메인 에이전트와 정체성 역할 GENERAL은 검사를 건너뜀). 로더는 두 태그를 CJK 인식 토큰 예산(60 / 50 / 50 토큰)으로 렌더하고 XML 이스케이프합니다. 클라이언트 스킬 툴팁도 같은 세 필드를 보여줍니다. 큐레이터는 더 좁은 두 번째 층을 더합니다: 엄브렐라의 frontmatter가 스킬 전체를 덮고, 각 `##` 하위 능력 섹션이 자체 `**When to use:**` 줄로 시작합니다(실제 제외가 있을 때만 `**When NOT to use:**`도). 그래서 모델은 `skill_view` 후 올바른 섹션을 고를 수 있습니다. 결정적 폴백도 같은 모양을 쓰며 조건은 병합 이유에서 추출합니다.
 
-Curator(`context_engine/curator/`)는 `skills/auto/` 스킬 라이브러리의 라이프사이클을 담당하는 백그라운드 패스이며, 바로 위의 추출 경로 2가 기록하는 대상입니다. 스킬만 읽고 씁니다. MEMORY.md / USER.md / FACTS.md와 `todos.db`는 범위 밖입니다.
+Curator(`context_engine/curator/`)는 `skills/auto/` 스킬 라이브러리의 라이프사이클을 담당하는 백그라운드 패스이며, 바로 위의 추출 경로 2가 기록하는 대상입니다. 스킬만 읽고 씁니다. MEMORY.md / USER.md / FACTS.md와 `registry.db`는 범위 밖입니다.
 
 **무엇인가.** 정기 cron이 아니라 유휴 트리거 오케스트레이터입니다. 서비스 엔트리포인트가 `context_engine.curator.init()`으로 데몬 스레드(`curator-timer`)를 시작합니다(`server/__main__.py:140`; HTTP-only 모드에서는 건너뜀, `server/__main__.py:66-73`). 스레드는 3600초마다 깨어나 `maybe_run_curator(idle_for_seconds=...)`를 호출합니다(`context_engine/curator/__init__.py:122-140`). 패키지 임포트는 부수 효과가 없으며 스레드를 시작하는 것은 `init()`뿐입니다(`context_engine/curator/__init__.py:151-165`).
 
@@ -104,7 +110,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 
 **LLM 통합.** `curator.consolidate`가 켜져 있으면(기본 켜짐), `run_curator_review()`가 비-pinned 스킬 후보 목록을 렌더링하고(`context_engine/curator/review.py:69`) 메인 LLM(temperature 0.3)에게 겹치는 좁은 스킬들을 클래스 레벨 umbrella 스킬로 병합하도록 요청합니다(`CURATOR_REVIEW_PROMPT`, `context_engine/curator/review.py:16`). 새 umbrella와 지원 파일은 `skills/auto/` 아래에 생성·영속화됩니다(`_generate_umbrella_skill`, `context_engine/curator/umbrella.py:86`; `_apply_consolidation`, `context_engine/curator/orchestrator.py:163`). 통합은 이 패스의 유일한 LLM 단계이며, 실패는 잡히고 실행은 계속됩니다.
 
-**네 개 추출 경로와의 관계.** 경로 2(압축 시점 skill review)가 생산자입니다: `skill_manage`를 통해 `skills/auto/`를 생성·패치합니다. Curator는 바로 그 산출물의 하류 유지보수자로, skill review이 만든 스킬을 전이·통합·정리합니다. 나머지 세 경로는 `skills/auto/`를 전혀 건드리지 않으므로(각각 MEMORY.md / USER.md / FACTS.md, `todos.db`, 삭제 시 memory salvage에 씀) Curator와 교차하지 않습니다.
+**네 개 추출 경로와의 관계.** 경로 2(압축 시점 skill review)가 생산자입니다: `skill_manage`를 통해 `skills/auto/`를 생성·패치합니다. Curator는 바로 그 산출물의 하류 유지보수자로, skill review이 만든 스킬을 전이·통합·정리합니다. 나머지 세 경로는 `skills/auto/`를 전혀 건드리지 않으므로(각각 MEMORY.md / USER.md / FACTS.md, `registry.db`, 삭제 시 memory salvage에 씀) Curator와 교차하지 않습니다.
 
 **상태와 경계.** 실행 상태는 `skills/.curator_state`(`context_engine/curator/constants.py:3`, `context_engine/curator/state.py`가 읽고 씀); 각 실행은 `logs/curator/{timestamp}/` 아래에 `run.json` + `REPORT.md`를 씁니다(`context_engine/curator/constants.py:4`; `context_engine/curator/report.py:196-205`). 범위는 `skills/auto/`뿐——내장 스킬은 절대 건드리지 않고, pinned 스킬은 모든 파괴적 전이를 우회하며, 패스 전체가 백그라운드 스레드에서 실행되어 대화 턴 경로를 차지하지 않습니다. 전체 세부사항: [curator/README.md](../../context_engine/curator/README.ko.md).
 
@@ -135,7 +141,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 | handoff audit | `workspace/knowledge/plans/<plan_key>/handoff-tree.json` | 리뷰 전에 쓰는 원본 handoff tree; prompt block 아님 |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/` / `templates/` / `scripts/` 지원 파일; PTC는 `ptc__<plan_key>__<step_id>.py`, LDW는 `ldw__<plan_key>.py` |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/`, `templates/`, `scripts/` 지원 파일 |
-| todos | `agent/tools/todolist/data/todos.db`(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |
+| todos | `src/data/registry.db` (`todos` table)(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |
 
 ## 설정 스위치
 
@@ -143,6 +149,8 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`(`config/features/agent_side/summarization.py`) | `True` | 압축 후 todo fork 활성화 |
 | `skill_review_enabled` | `BACKGROUND_REVIEW_CONFIG`(`config/features/agent_side/background_review.py`) | `True` | 스킬 리뷰 마스터 스위치(skill-only, knowledge 미기록) |
+| `extraction.skill_extraction_enabled` | `sherry.jsonc`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 경험 학습 스위치, 세션에서 재정의 가능 |
+| `extraction.flow_extraction_enabled` | `sherry.jsonc`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 플로우 재사용 컴파일 스위치(PTC + LDW, 전역 전용). 경험 학습이 꺼지면 강제 오프 |
 | `skill_review_max_attempts` | `BACKGROUND_REVIEW_CONFIG` | `2` | 최초 + judge feedback 재시도 최대 1회 |
 | `skill_review_quality_threshold` | `BACKGROUND_REVIEW_CONFIG` | `6` | 통과 최소 `quality` |
 | `skill_review_feedback_turns` / `_max_items` / `_chars` | `BACKGROUND_REVIEW_CONFIG` | `12` / `8` / `2000` | 제한된 사용자 수정 컨텍스트 |

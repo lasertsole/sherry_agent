@@ -6,9 +6,9 @@ execute a real bwrap).
 
 argv order is load-bearing:
 - ``--ro-bind / /`` first mounts the entire root read-only;
-- only the CALLER's roots (the session's project directory) plus TEMP_DIR are
-  then writable-mounted via ``--bind``; everything else stays read-only
-  (writable surface = these two directories);
+- only the CALLER's roots (the session's project directory and its own
+  ``SESSIONS_DIR`` tree) plus TEMP_DIR are then writable-mounted via
+  ``--bind``; everything else stays read-only;
 - ``--clearenv`` must precede every ``--setenv`` — combined, the two implement
   env allowlist semantics (upstream env_scrub already cleaned the env; only
   allowlisted variables are injected here);

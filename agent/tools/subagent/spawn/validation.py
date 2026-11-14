@@ -15,7 +15,7 @@ from ..config import get_config
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import FunctionalRole
 from ..roles import RoleDefinition
-from ..registry.read import count_active_runs_readonly
+from ..registry import queries
 from ..registry.spawn_budget import total_spawns
 from ..capabilities import can_spawn_children
 from .depth import (
@@ -184,7 +184,7 @@ def _validate_spawn_request(
     if not allowed:
         return child_depth, SpawnResult(status="forbidden", error=reason)
 
-    active_count = count_active_runs_readonly(requester_session_key)
+    active_count = queries.count_active_runs_for_session(requester_session_key)
     allowed, reason = validate_concurrent_children(active_count)
     if not allowed:
         return child_depth, SpawnResult(status="forbidden", error=reason)

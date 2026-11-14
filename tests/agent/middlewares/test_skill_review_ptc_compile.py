@@ -108,6 +108,36 @@ async def test_disabled_flag_writes_nothing(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_flow_extraction_off_writes_nothing(monkeypatch) -> None:
+    """The 高级 flow switch disables compilation even with PTC prefill enabled.
+
+    PTC compilation is flow-extraction work, so the user-facing switch gates it
+    BEFORE any owning-skill scan or compiler call. The gate is read from the
+    session's effective settings (fail-open when the read raises).
+    """
+    before, after = _snapshots()
+    writes: list[tuple] = []
+    compiled: list[dict] = []
+
+    async def _compile(**kwargs):
+        compiled.append(kwargs)
+        return "print('should not compile')\n"
+
+    monkeypatch.setitem(reviews.PTC, "ptc_prefill_enabled", True)
+    monkeypatch.setattr("runtime.session.extraction.flow_extraction_enabled", lambda _sid="": False)
+    monkeypatch.setattr("agent.tools.ptc.compiler.compile_step_script", _compile)
+    monkeypatch.setattr(
+        "agent.tools.skill_tools.skill_manage._write_file",
+        lambda *args: writes.append(args) or {"success": True},
+    )
+
+    await reviews._compile_ptc_scripts(_context(), before, after, "{}", session_id="sess-1")
+
+    assert compiled == []
+    assert writes == []
+
+
+@pytest.mark.asyncio
 async def test_no_changed_skill_md_writes_nothing(monkeypatch) -> None:
     before = SkillTreeSnapshot()
     after = SkillTreeSnapshot(files={"other/references/x.md": b"# Other\n"})

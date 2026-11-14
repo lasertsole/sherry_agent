@@ -15,7 +15,7 @@
   - [Plan Files (workspace/sessions/<session_id>/plans/*.md)](data/README.md#plan-files-workspacesessionssession_idplansmd)
   - [Boulder State (src/data/boulder.json)](data/README.md#boulder-state-srcdataboulderjson)
   - [Evidence Ledger](../gates/evidence-ledger/README.md)
-  - [todos.db — Session-Level TODO Storage](data/README.md#todosdb--session-level-todo-storage)
+  - [registry.db — Session-Level TODO Storage](data/README.md#registrydb--session-level-todo-storage)
 - [Service Layer](#service-layer)
 - [Tool Layer](#tool-layer)
 - [Orchestration Execution Layer](#orchestration-execution-layer)
@@ -41,7 +41,7 @@
 | Owner       | Planning & Discipline Layer (this doc)                                  | TaskFlow (existing system)                                                                |
 | Scope       | Single session, lightweight                                             | Cross-session, durable                                                                    |
 | State       | todo `content/status/priority/category/delegation`                      | step `depends_on/status/child_session_key/results`                                        |
-| Persistence | `todos.db` (session-level)                                              | `taskflow_registry.db` + flow `state_json`                                                |
+| Persistence | `registry.db` (`todos` table)                                              | `registry.db` (`task_flows` table) + flow `state_json`                                                |
 | Injection   | System prompt block (rebuilt after every compression, naturally immune) | Tool return text (`taskflow_inspect(action="summary")` re-read)                                             |
 | Main duty   | Planning, visibility, discipline enforcement (E1–E7)                    | Dependency satisfaction, block/unlock, parallel dispatch, bounded wait, result injection  |
 | Scheduling? | No                                                                      | Yes (`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`) |
@@ -52,11 +52,11 @@ One-liner: **the planning & discipline layer is responsible for "think clearly, 
 
 | Concern                                     | Authority             | Notes                                                               |
 | ------------------------------------------- | --------------------- | ------------------------------------------------------------------- |
-| Whether a todo is complete                  | `todos.db`            | Only `todowrite` can change todo status                             |
+| Whether a todo is complete                  | `registry.db`            | Only `todowrite` can change todo status                             |
 | Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_step(action="resume")` can mark a step `done` and unlock successors |
 | Whether a child session is still running    | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`              |
 | Plan file progress (checkboxes)             | `workspace/sessions/<id>/plans/*.md` | Orchestrator edits `- [ ]` → `- [x]`                                |
-| Execution evidence                          | `src/data/evidence-ledger.db` | SQLite `EvidenceLedger` (shared, WAL, retention/purge)   |
+| Execution evidence                          | `src/data/registry.db` (`evidence_events` table) | SQLite `EvidenceLedger` (shared, WAL, retention/purge)   |
 | Active work state                           | `src/data/boulder.json` | Plan activation/recovery                                            |
 
 ### Association (Single Source of Truth)
@@ -137,7 +137,7 @@ Layer 5  │ DAG Execution     │ Provided by TaskFlow: depends_on + blocked/re
 Layer 4  │ Orchestration     │ ulw-execute: plan→checkbox→sub-task→worker→verify, calls TaskFlow
 Layer 3  │ Tools             │ todowrite + todoread (DAG executed by taskflow_* tool family)
 Layer 2  │ Service           │ TodoService (EvidenceLedger moved to `pub_base/`, shared; DAG queries delegated to TaskFlow)
-Layer 1  │ Data Storage      │ todos.db (WAL) + boulder.json + ledger.db + plans/*.md + taskflow_registry.db
+Layer 1  │ Data Storage      │ registry.db (WAL, todos + evidence tables) + boulder.json + plans/*.md
 ─────────│──────────────────│
 E1       │ System Prompt     │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ Tool Description  │ todowrite docstring format rules
@@ -182,7 +182,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` is the SQLite store (`src/data/evidence-ledger.db`, WAL) behind the verification audit trail: `append` + `read_all` are the whole storage contract, every caller-facing row is immutable, and retention deletes old rows. Session-scoped views read the same shared DB. It moved out of `todolist/` into `pub_base/` and is shared by todolist, TaskFlow, terminal and the file tools — it is not a todolist-owned layer. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
+`agent/tools/pub_base/evidence_ledger.py` is the SQLite store (`src/data/registry.db` (`evidence_events` table), WAL) behind the verification audit trail: `append` + `read_all` are the whole storage contract, every caller-facing row is immutable, and retention deletes old rows. Session-scoped views read the same shared DB. It moved out of `todolist/` into `pub_base/` and is shared by todolist, TaskFlow, terminal and the file tools — it is not a todolist-owned layer. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
 
 ### WS Push
 
@@ -273,7 +273,7 @@ Phase 3: Execute next checkbox (scheduling delegated to TaskFlow)
   → Blocked steps not dispatched; ready steps via taskflow_step(action="dispatch")
   → taskflow_step(action="wait_all") → taskflow_step(action="resume") (inject result, unlock successors)
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.db
+Phase 4: Verify and record evidence → 5 gates → `src/data/registry.db` (`evidence_events` table)
 Phase 5: Mark progress → edit checkbox - [ ] → - [x], continue without asking
 ```
 
@@ -331,7 +331,7 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 
 | Block                      | Data source       | Context cost | Description                                                 |
 | -------------------------- | ----------------- | ------------ | ----------------------------------------------------------- |
-| `_build_todo_block()`      | todos.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
+| `_build_todo_block()`      | registry.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 lines     | Active work state                                           |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 

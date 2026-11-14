@@ -2,6 +2,8 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
+> **存储（2026-11-13）：** TaskFlow、todos、子代理注册表与证据账本现在共用 `src/data/registry.db`（`task_flows` / `todos` / `subagent_runs` / `evidence_events` 表）。启动时的一次性迁移会把旧的各存储 DB 复制进来，并改名为 `*.bak`。
+
 > Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_flow` / `taskflow_step` / `taskflow_inspect`，3 个分组工具覆盖 16 个 action）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，用 TaskFlow 决策模型（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）判别携带验收标准的步骤结果（`pass` / `retry` / `block`），按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
 事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/core.py`（TaskFlow 上下文区块）、`agent/middlewares/subagent_completion_drain/core.py`（记忆回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
@@ -42,7 +44,7 @@
 
 | # | 子系统 | 入口 | 持久化位置 |
 | :- | :--- | :--- | :--- |
-| 1 | **TaskFlow DAG 引擎** | `agent/tools/taskflow/` | `data/taskflow_registry.db`（SQLite，WAL） |
+| 1 | **TaskFlow DAG 引擎** | `agent/tools/taskflow/` | `src/data/registry.db`（SQLite，WAL） |
 | 2 | **Token / 成本预算** | `taskflow_flow(action="budget")`、`taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **截止时间** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **空闲检测** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` 中的过期标记 |
@@ -64,7 +66,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | 僵尸 todo | 活跃 todo 引用已 failed/cancelled 的 flow | todo 标 `cancelled` |
 | prune | 终态/superseded 行超过 `max_total_flows_per_session`（200） | 删除最旧的 |
 
-活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败、记录 detached 子代理，并在 `auto_kill_on_detach` 开启时**杀掉**它们——失败的 flow 永远收不到结果，留着只占 lane。`depends_on` 环在创建/更新时就被拒绝（深度优先，id 已先校验），而不是把 flow 钉到失活扫描为止；`supersede` 会递增 `expected_revision`，因此持旧 revision 的写者 CAS 失败，而不是把已取消的 flow 复活；陈旧 WAITING 标记写入载荷时**不碰 `updated_at`**——那一列正是扫描读取的失活时钟。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
+活子代理会否决回收；grace 窗口覆盖 `todos` 与 `task_flows` 表之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败、记录 detached 子代理，并在 `auto_kill_on_detach` 开启时**杀掉**它们——失败的 flow 永远收不到结果，留着只占 lane。`depends_on` 环在创建/更新时就被拒绝（深度优先，id 已先校验），而不是把 flow 钉到失活扫描为止；`supersede` 会递增 `expected_revision`，因此持旧 revision 的写者 CAS 失败，而不是把已取消的 flow 复活；陈旧 WAITING 标记写入载荷时**不碰 `updated_at`**——那一列正是扫描读取的失活时钟。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
 
 全量替换丢掉根 todo 时不再等待宽限期：`update_todos` 立即补偿孤儿 flow（策略：`TODOLIST_INFRA["orphan_flow_on_drop"]`），随后立即跑一次会话级 sweep；flow 进入终态时会立刻通知其根 todo。创建目标与活跃 flow 相似的新 flow 时会给出警告，除非设置 `ack_dup`。
 
@@ -74,12 +76,19 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 - `taskflow_flow(action="plan")` 自动生成的 id 现在是**稳定**的：`plan-<sha256(session_id + goal)[:10]>`；同一 session 重复规划同一 goal 会返回已有的**非终态** flow，作为幂等成功，不再创建第二个。终态 flow 仍返回错误（换一个 id，或用后继 flow）。种子包含 session id，因为 `flow_id` 是全局主键而归属于 session。创建后它会**自动派发所有初始 ready step**（无依赖的兄弟分支）；`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（默认 true）可恢复旧的「先审查再派发」行为，单个 spawn 失败是 fail-open（该 step 留 `ready`）。打印的 plan 显示派发后的状态。
 - `taskflow_step(action="resume")` 的 auto-dispatch 会扫描**整个 flow**，不只本次解锁的下游：`newly_ready ∪ all_ready` 作为一个有界并发波次派发。这样一直 ready 但没被点名的兄弟分支也会启动；`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（默认 true）可限制回只派发本次解锁集。已派发 step 会被过滤并在 flow 锁内重新确认，因此扩大扫描不会重复 spawn。
-- TaskFlow board reminder 会列出**所有 ready step**（`ready_to_dispatch: s3(...), s4(...)`），多于一个时追加 `[N steps ready — parallelize via taskflow_dispatch!]`。存在未派发 ready 时，cooldown 使用 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）；否则恢复正常的 5 轮（`only_if_changed` 仍会抑制逐字节相同的 board）。
+- TaskFlow board reminder 按「模型需要做什么」区分 ready 工作：带持久化 `last_spawn_error` 的 step 显示为 `dispatch failed: s1(...) — retry via taskflow_step(action='dispatch', step_ids=['s1'])`；普通 ready 只计数（`pending auto-dispatch: N step(s)`），因为下一波自动派发会启动它。blocked step 会计数并列出 `block_reason`（若因 DAG 依赖受阻则附加 `waiting on upstream: <dep>`），`next:` 提示也带状态。只有存在 spawn 失败或需要决策的 blocked step（有 `block_reason`；仅等待上游是运行中的正常状态）时，cooldown 才缩短到 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）；否则保持正常 5 轮，`only_if_changed` 仍会抑制逐字节相同的 board。任一波自动派发被关闭时，ready 又归模型处理，旧的 `ready_to_dispatch` / `parallelize` 文案恢复。
 - `taskflow_flow(action="create")` 对重复的**非终态** `flow_id` 返回幂等成功（revision + status）；终态 flow 或属于其他 session 的 id 仍返回错误。
 - 手动 `taskflow_step(action="dispatch")`、plan 的初始 ready 波次，以及 `taskflow_step(action="resume")` 的 auto-dispatch wave 共用 `_dispatch.flow_dispatch_lock(flow_id)`：完整的 read → validate → spawn → persist 序列按 flow 串行化，wave 拿到锁后会重新确认每个 step 仍为 `ready`。锁是**进程内**的（单后端进程、TaskFlow 工具 main-only）；多进程部署需要 DB lease。
 - **Mutating 重复测量（2026-10-22）：** 225 个 checkpoint 线程、204 次工具调用——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——**没有出现**连续同工具 + 同参数且成功的 mutating 调用。因此没有新增 `ToolCallSignature` 中间件；`ToolGuardrails` 继续负责循环检测，只有遥测出现真实重复时才考虑增加 mutating 计数。
 
 来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
+
+## 🧩 按角色的模型与异构 judge
+
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` 是可选的按功能角色家族。配置了家族（provider 或 api_base，或 `MODEL_LOCAL=true`，复用主模型的本地 GGUF）时，该角色的所有子代理都用它；**留空**则沿用角色定义自身的层级（内置角色声明 `model_tier: auxiliary`），因此不动这些新键行为完全不变。
+- 子代理选模型优先级：会话的按角色模型 profile → 具名 model override → **已配置**的角色家族 → 角色模型层级 → 深度角色。输出上限解析与持久化的结构化输出降级键都镜像这一顺序；spawn 日志和一条 `subagent_model` trajectory 事件会记录实际模型与来源（`role_profile` / `model_override` / `role_family` / `tier_*` / `depth_*`）。
+- `GET /sherry-config/model-roles` 返回每个 judge/角色的 `{family, configured, local, source, effective_provider, effective_model, max_output_tokens}`。模型配置面板把四个角色家族渲染成普通的模型 profile 卡片（含连通性测试），并显示「沿用角色默认层级」徽章和生效模型行。
+- 异构 judge：StepJudge 用 `TASKFLOW_LLM_*`（未配置回退辅助模型），完成 judge 用 `AUXILIARY_LLM_*`（没有 CJ_LLM 家族），executor 用其角色家族或层级。让 judge 与 executor 使用不同家族可减少同源盲点（同一模型在同类输入上一起犯错）；不做强制，留空时继承关系与之前完全一致。
 
 ## ⚙️ 配置注册表
 
@@ -87,13 +96,13 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **59** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
-| `config/features/infra_side/` | **30** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、联网搜索、模型定价、本地模型下载、日志保留、WS 限流） |
+| `config/features/agent_side/` | **60** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
+| `config/features/infra_side/` | **31** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、联网搜索、模型定价、本地模型下载、本地模型 daemon、日志保留、WS 限流） |
 | `config/features/_env.py` | 唯一的共享环境辅助函数 |
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **89 个 feature 对象**——Agent 侧 59 + 基础设施侧 30——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **91 个 feature 对象**——Agent 侧 60 + 基础设施侧 31——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -288,7 +297,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 89。** 配置注册表包含 89 个 feature 对象（Agent 侧 59 + 基础设施侧 30）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOGS` 和 `WS_RATE_LIMIT`（其默认值由专门的测试或各 feature 自己的测试套件覆盖）。
+- **注册表规模是 91。** 配置注册表包含 91 个 feature 对象（Agent 侧 60 + 基础设施侧 31）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOCAL_DAEMONS`、`LOGS` 和 `WS_RATE_LIMIT`（其默认值由专门的测试或各 feature 自己的测试套件覆盖）。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_step(action="dispatch")` 与 `taskflow_step(action="wait_all")` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_step(action="resume")` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。

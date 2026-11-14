@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Python 模块常量。它不存闭包、源码字符串或 `workflow.json` 边车文件。写入器使用 Python 字面量而不是 JSON 文本，因为 `json.dumps` 会输出小写 `true` / `false` / `null`，包含 `additionalProperties: false` 的 schema 因此会让脚本无法加载。
+LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Python 模块常量。它不存闭包、源码字符串或 `workflow.json` 边车文件。写入器使用 Python 字面量而不是 JSON 文本，因为 `json.dumps` 会输出小写 `true` / `false` / `null`，包含 `additionalProperties: false` 的 schema 因此会让脚本无法加载。加载器从不 `exec_module` 该文件：它只对这三个字面量赋值做 AST 解析，遇到其他内容（导入、调用、额外名称）一律拒绝，因此被篡改的脚本不会以编排器权限执行。
 
 ## ⚙️ 运行时与 Journal
 
@@ -82,6 +82,7 @@ LDW 运行失败且 `LDW["auto_degrade_enabled"]` 打开时，适配器会从**�
 |---|---|---|
 | `LDW["enabled"]` | `True` | 总开关；False 让所有重放继续走 TaskFlow |
 | `LDW["min_replays"]` | `3` | 计划停止走 TaskFlow 并编译 LDW 脚本前的重放次数 |
+| `extraction.flow_extraction_enabled`（预设角色 → 高级） | `True` | 面向用户的编译开关，全局只读：关闭时 `action=compile`、编译缺失脚本与修复重编译都被拒绝。已存在的脚本仍可重放 |
 | `LDW["script_max_bytes"]` | `65536` | 单个 `ldw__<plan_key>.py` 的上限 |
 | `LDW["journal_path"]` | `src/data/workflow_runs.db` | 跨进程 journal 位置 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 失败后创建并驱动 TaskFlow replay flow |
@@ -94,6 +95,7 @@ LDW 运行失败且 `LDW["auto_degrade_enabled"]` 打开时，适配器会从**�
 
 - 这是重放加速器，不是 sandbox，也不是重试引擎。
 - LDW leaf 继承角色工具策略；LDW 的 sandbox/deepagents 路径刻意不用。
+- journal 是**精确匹配**：对 `prompt` / `agent_type` / `model` / `schema` / `isolation` 做哈希，变体变化就重新执行。刻意不做 fuzzy 匹配，也不对 prompt 做空白/Unicode 归一化——step prompt 可能嵌入代码或结构化的上游结果，空白本身有语义，近似命中的缓存会把错误输出传给下游。miss 的代价是一次真实执行，成功后会回写。
 - 计划或变体变化会生成不同的 journal key 并重新执行；旧脚本绝不会压过当前 prompt。
 - 重新执行的失败 step 的副作用不会回滚；journal 只跳过之前成功过的 step。
 - 降级时成功 step 绝不会再次 spawn。失败 step 走 TaskFlow 的 retry/judge 行为；LDW 没有独立的重试循环。

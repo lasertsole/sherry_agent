@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | `MAIN` | 主 Agent turn（`server/service/input_queue_service.py::_run_executor`） | `min(16, max(8, CPU))`，向上钳制到不低于 `SUBAGENT + BACKGROUND_REVIEW` → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 子 Agent 执行（`spawn/core.py`、`control/steer.py`） | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `BACKGROUND_REVIEW` | 记忆评审 / 技能评审 / 压缩后 todo 更新（`agent/middlewares/summarization/background_reviews.py` 三处） | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
+| `BACKGROUND_REVIEW` | 记忆评审 / 技能评审 / 压缩后 todo 更新（`agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` 四处） | `4` | `LANE_SYSTEM["background_review_max_concurrent"]` |
 | `NESTED` | `sessions_send` 回复 turn（串行） | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 配置与校验
@@ -115,7 +115,7 @@ spawn ─► 负载闸（stop 期间暂缓）─► lane_slot(SUBAGENT) ─► P
 | `server/service/lane_lifecycle.py` | 启动校验、drain 门注册、有界退出 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT lane 包装器 + PENDING → RUNNING 提升 |
-| `agent/middlewares/summarization/background_reviews.py` | 3 处 BACKGROUND_REVIEW lane 调用点 |
+| `agent/middlewares/summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py` | 4 处 BACKGROUND_REVIEW lane 调用点 |
 | `agent/tools/subagent/tools/sessions_send.py` | 回复 turn 外层的 NESTED lane |
 | `server/service/input_queue_service.py` | `_run_executor` 外层的 MAIN lane |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤儿的 `pending_orphaned` 终结 |

@@ -101,3 +101,49 @@ async def test_a_timeout_or_kill_fails_the_step_instead_of_completing_it(isolate
     assert flow is not None
     assert flow["state"]["steps"][0]["status"] == StepStatus.FAILED.value
     assert flow["state"]["results"][0]["step_outcome"] == "failure"
+
+
+@pytest.mark.asyncio
+async def test_a_budget_exhausted_run_blocks_the_step_and_keeps_dependents_blocked(isolated_db):
+    """The goal loop spent its turns without proving completion.
+
+    The partial result must stay readable, the step must not be marked done
+    (which would unlock dependents), and it must not be marked failed either:
+    the agent decides whether to retry, replan, or cancel the flow.
+    """
+    from agent.tools.subagent.types.registry import RunOutcomeStatus
+
+    await store_sqlite.create_flow(
+        "flow-budget-run",
+        {
+            "steps": [
+                {
+                    "step_id": "s1",
+                    "task": "do the work",
+                    "status": StepStatus.DISPATCHED.value,
+                    "child_session_key": "agent:main:subagent:c1",
+                },
+                {
+                    "step_id": "s2",
+                    "task": "use the result",
+                    "status": StepStatus.BLOCKED.value,
+                    "depends_on": ["s1"],
+                },
+            ],
+            "results": [],
+        },
+        session_id="sess-parent",
+    )
+
+    run = _run_with_outcome(RunOutcomeStatus.BUDGET_EXHAUSTED, result="partial work")
+    assert await delivery._try_auto_resume_taskflow(run) is True
+
+    flow = await store_sqlite.get_flow("flow-budget-run", "sess-parent")
+    assert flow is not None
+    steps = {step["step_id"]: step for step in flow["state"]["steps"]}
+    assert steps["s1"]["status"] == StepStatus.BLOCKED.value
+    assert "blocked" in str(steps["s1"].get("block_reason") or "")
+    assert steps["s2"]["status"] == StepStatus.BLOCKED.value
+    result = flow["state"]["results"][0]
+    assert result["result"] == "partial work"
+    assert result["step_outcome"] == "blocked"

@@ -16,12 +16,15 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   set that let ``["echo ok", "rm -rf /"]`` slip through. On hit a
   ``ToolException`` is raised with the historical refusal message format
   (``handle_tool_error=True`` surfaces it as a tool error).
-- env scrub: ``env = scrub_env()`` reaches BOTH sync and async spawns,
-  unconditionally (even for ``sandbox=False`` calls).
+- env scrub: ``_child_env(session_id)`` reaches BOTH sync and async spawns,
+  unconditionally (even for ``sandbox=False`` calls): ``scrub_env()`` plus
+  ``SHERRY_SESSION_ID`` — the session tag a scripted skill uses to address the
+  session-scoped artifact store (the background path inherits the same env).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
   command is exec'd in list form via ``backend.wrap(["/bin/sh", "-c", ...])``
   (semantically identical to POSIX ``shell=True``); backend ``None``
-  (Windows / unavailable) degrades to the byte-identical pre-existing path
+  (Windows / unavailable) degrades to the byte-identical pre-existing path;
+  on the HITL path the degradation is approved BEFORE the tool runs
   (str join + ``shell=True`` / ``create_subprocess_shell``) with ONLY
   ``env=`` added, plus one loguru warning line for the AUTO degrade.
 - REQUIRED + unavailable backend: ``get_backend``'s RuntimeError is wrapped
@@ -72,7 +75,12 @@ from agent.tools.pub_base.stdout_fd import (
     read_or_evict_output,
 )
 from agent.security.terminal_output import strip_control_sequences
-from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.sandbox import (
+    SandboxPolicy,
+    get_backend,
+    read_policy,
+    with_own_session_root,
+)
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 from agent.tools.pub_base.evidence_recorder import record_verification_evidence
@@ -86,6 +94,20 @@ from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 #: Ceiling for a per-call ``timeout`` (see ``_resolve_timeout``).
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
+
+
+def _child_env(session_id: str) -> dict[str, str]:
+    """Scrubbed child environment, tagged with the session id.
+
+    ``SHERRY_SESSION_ID`` is what lets a scripted skill address the
+    session-scoped artifact store (``sherry-artifact://<session>/<name>``) and
+    any other per-session resource; it is not a secret, so the scrubbed
+    environment is the only base. Mirrors the user-hook spawn's contract.
+    """
+    env = scrub_env()
+    if session_id:
+        env["SHERRY_SESSION_ID"] = session_id
+    return env
 
 
 def _record_shell_writes(session_id: str) -> None:
@@ -423,7 +445,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         ``terminal`` a way around the external-path gate).
         """
         cwd = self._resolve_cwd(session_id)
-        return [Path(cwd)] if cwd else []
+        roots = [Path(cwd)] if cwd else []
+        return with_own_session_root(roots, session_id)
 
     def _resolve_sandbox_argv(
         self,
@@ -435,7 +458,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
 
         Returns ``(None, env)`` when the shell fallback must be used: policy
         OFF (get_backend never consulted) or no usable backend (ONE loguru
-        degrade warning line — the tool layer owns it, get_backend stays
+        degrade info line — the tool layer owns it, get_backend stays
         silent). REQUIRED + unavailable raises RuntimeError inside
         get_backend, wrapped here into a ToolException so
         handle_tool_error=True surfaces it as a tool error.
@@ -448,9 +471,10 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         except RuntimeError as exc:
             raise ToolException(str(exc)) from exc
         if backend is None:
-            logger.warning(
-                "terminal: sandbox requested but no backend available "
-                f"(policy={policy.value}) — degrading to unsandboxed shell execution"
+            logger.info(
+                "terminal: sandbox unavailable "
+                f"(policy={policy.value}) — running unsandboxed "
+                "(HITL-gated when an operator is in scope)"
             )
             return None, env
         # List-exec form for the sandbox: ["/bin/sh", "-c", cmd] is
@@ -634,6 +658,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         cmd_str = self._join_commands(commands)
         effective_timeout = _resolve_timeout(timeout)
         self._deny_sandbox_bypass(sandbox)
+        self._deny_unsandboxed_degrade(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
         bound_session = resolve_tool_session_id(session_id, run_manager)
@@ -643,7 +668,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         # take the turn's shadow snapshot before it runs. Fail-open.
         ensure_checkpoint(bound_session, reason=f"before_write:terminal:{cmd_str[:120]}")
 
-        env = scrub_env()
+        env = _child_env(bound_session)
         if sandbox:
             argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
             if argv is not None:
@@ -826,6 +851,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         cmd_str = self._join_commands(commands)
         effective_timeout = _resolve_timeout(timeout)
         self._deny_sandbox_bypass(sandbox)
+        self._deny_unsandboxed_degrade(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
         bound_session = resolve_tool_session_id(session_id, run_manager)
@@ -834,7 +860,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         # Same fail-open snapshot as the sync path.
         ensure_checkpoint(bound_session, reason=f"before_write:terminal:{cmd_str[:120]}")
 
-        env = scrub_env()
+        env = _child_env(bound_session)
 
         if run_in_background:
             return await self._run_background(

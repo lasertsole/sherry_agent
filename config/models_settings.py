@@ -55,6 +55,17 @@ APP_HOME = resolve_app_home(_CODE_ROOT)
 MODELS_CONFIG_PATH = APP_HOME / ".models"
 MODELS_CONFIG_TEMPLATE = _TEMPLATE_ROOT / ".models.example"
 
+#: Settings that hold credentials. The config reader NEVER returns their
+#: value to a client; it returns a ``configured`` flag instead. Writes still
+#: accept a new value (the panel's write-only password field).
+SECRET_MODEL_KEY_SUFFIX = "_API_KEY"
+
+
+def is_secret_model_key(key: str) -> bool:
+    """True when ``key`` names a model credential (write-only in the UI)."""
+    return str(key).endswith(SECRET_MODEL_KEY_SUFFIX)
+
+
 # Single source of truth for accepted keys and their typed defaults. The keys
 # mirror the historical ``.env`` spelling one-for-one, so a migration is a value
 # copy and the panels' prefix grouping keeps working.
@@ -101,6 +112,46 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
     "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
     "COMPRESSION_LLM_PRESENCE_PENALTY": "",
+    # Per-role subagent models: a configured family serves every child of that
+    # functional role (executor / researcher / reviewer / librarian); an empty
+    # family keeps the role's own model tier (the shipped definitions use
+    # AUXILIARY_LLM_*), so an existing deployment is unchanged.
+    "EXECUTOR_LLM_MODEL_LOCAL": False,
+    "EXECUTOR_LLM_PROVIDER": "",
+    "EXECUTOR_LLM_API_NAME": "",
+    "EXECUTOR_LLM_API_BASE": "",
+    "EXECUTOR_LLM_API_KEY": "",
+    "EXECUTOR_LLM_MAX_TOKEN": 200000,
+    "EXECUTOR_LLM_MAX_OUTPUT_TOKEN": "",
+    "EXECUTOR_LLM_FREQUENCY_PENALTY": "",
+    "EXECUTOR_LLM_PRESENCE_PENALTY": "",
+    "RESEARCHER_LLM_MODEL_LOCAL": False,
+    "RESEARCHER_LLM_PROVIDER": "",
+    "RESEARCHER_LLM_API_NAME": "",
+    "RESEARCHER_LLM_API_BASE": "",
+    "RESEARCHER_LLM_API_KEY": "",
+    "RESEARCHER_LLM_MAX_TOKEN": 200000,
+    "RESEARCHER_LLM_MAX_OUTPUT_TOKEN": "",
+    "RESEARCHER_LLM_FREQUENCY_PENALTY": "",
+    "RESEARCHER_LLM_PRESENCE_PENALTY": "",
+    "REVIEWER_LLM_MODEL_LOCAL": False,
+    "REVIEWER_LLM_PROVIDER": "",
+    "REVIEWER_LLM_API_NAME": "",
+    "REVIEWER_LLM_API_BASE": "",
+    "REVIEWER_LLM_API_KEY": "",
+    "REVIEWER_LLM_MAX_TOKEN": 200000,
+    "REVIEWER_LLM_MAX_OUTPUT_TOKEN": "",
+    "REVIEWER_LLM_FREQUENCY_PENALTY": "",
+    "REVIEWER_LLM_PRESENCE_PENALTY": "",
+    "LIBRARIAN_LLM_MODEL_LOCAL": False,
+    "LIBRARIAN_LLM_PROVIDER": "",
+    "LIBRARIAN_LLM_API_NAME": "",
+    "LIBRARIAN_LLM_API_BASE": "",
+    "LIBRARIAN_LLM_API_KEY": "",
+    "LIBRARIAN_LLM_MAX_TOKEN": 200000,
+    "LIBRARIAN_LLM_MAX_OUTPUT_TOKEN": "",
+    "LIBRARIAN_LLM_FREQUENCY_PENALTY": "",
+    "LIBRARIAN_LLM_PRESENCE_PENALTY": "",
     # Image-to-Text model
     "ITTT_MODEL_LOCAL": False,
     "ITTT_MODEL_PROVIDER": "",
@@ -165,6 +216,10 @@ _PENALTY_PREFIXES: tuple[str, ...] = (
     "AUXILIARY_LLM",
     "TASKFLOW_LLM",
     "COMPRESSION_LLM",
+    "EXECUTOR_LLM",
+    "RESEARCHER_LLM",
+    "REVIEWER_LLM",
+    "LIBRARIAN_LLM",
 )
 _PENALTY_KEYS = frozenset(
     f"{prefix}_{kind}"
@@ -184,6 +239,14 @@ _INT_KEYS = frozenset(
         "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
         "COMPRESSION_LLM_MAX_TOKEN",
         "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+        "EXECUTOR_LLM_MAX_TOKEN",
+        "EXECUTOR_LLM_MAX_OUTPUT_TOKEN",
+        "RESEARCHER_LLM_MAX_TOKEN",
+        "RESEARCHER_LLM_MAX_OUTPUT_TOKEN",
+        "REVIEWER_LLM_MAX_TOKEN",
+        "REVIEWER_LLM_MAX_OUTPUT_TOKEN",
+        "LIBRARIAN_LLM_MAX_TOKEN",
+        "LIBRARIAN_LLM_MAX_OUTPUT_TOKEN",
         "SKILL_SCANNER_ENABLED",
         "SKILL_SCANNER_LLM",
         "SKILL_SCANNER_TIMEOUT",
@@ -197,6 +260,10 @@ _MAX_OUTPUT_KEYS = frozenset(
         "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
         "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
         "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+        "EXECUTOR_LLM_MAX_OUTPUT_TOKEN",
+        "RESEARCHER_LLM_MAX_OUTPUT_TOKEN",
+        "REVIEWER_LLM_MAX_OUTPUT_TOKEN",
+        "LIBRARIAN_LLM_MAX_OUTPUT_TOKEN",
     }
 )
 _BOOL_KEYS = frozenset(
@@ -205,6 +272,10 @@ _BOOL_KEYS = frozenset(
         "AUXILIARY_LLM_MODEL_LOCAL",
         "TASKFLOW_LLM_MODEL_LOCAL",
         "COMPRESSION_LLM_MODEL_LOCAL",
+        "EXECUTOR_LLM_MODEL_LOCAL",
+        "RESEARCHER_LLM_MODEL_LOCAL",
+        "REVIEWER_LLM_MODEL_LOCAL",
+        "LIBRARIAN_LLM_MODEL_LOCAL",
         "ITTT_MODEL_LOCAL",
         "VTTT_MODEL_LOCAL",
         "RERANKER_MODEL_LOCAL",

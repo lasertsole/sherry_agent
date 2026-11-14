@@ -16,6 +16,7 @@ SAMPLE_MODELS = """// 模型配置模板
   "MAIN_LLM_PROVIDER": "openai",
   "MAIN_LLM_MAX_TOKEN": 200000,
   "MAIN_LLM_ENABLE_THINKING": false,
+  "MAIN_LLM_API_KEY": "sk-secret",
   "EMBEDDING_API_NAME": "bge-m3"
 }
 """
@@ -43,6 +44,31 @@ class TestReadModelsConfig:
             "MAIN_LLM_PROVIDER",
             "MAIN_LLM_MAX_TOKEN",
             "MAIN_LLM_ENABLE_THINKING",
+            "MAIN_LLM_API_KEY",
+        }
+
+    def test_api_key_values_never_leave_the_backend(self, models_file):
+        entries = {e["key"]: e for g in mc.read_models_config()["groups"] for e in g["entries"]}
+
+        secret = entries["MAIN_LLM_API_KEY"]
+        assert secret["value"] == ""
+        assert secret["secret"] is True
+        assert secret["configured"] is True
+        assert "sk-secret" not in str(entries)
+
+    def test_an_unset_api_key_reports_not_configured(self, tmp_path, monkeypatch):
+        path = tmp_path / ".models"
+        path.write_text('{\n  "TTI_API_KEY": ""\n}\n', encoding="utf-8")
+        monkeypatch.setattr(mc, "MODELS_CONFIG_PATH", path)
+
+        entry = mc.read_models_config()["groups"][0]["entries"][0]
+
+        assert entry == {
+            "key": "TTI_API_KEY",
+            "value": "",
+            "value_edited": False,
+            "secret": True,
+            "configured": False,
         }
 
     def test_values_render_as_ui_strings(self, models_file):

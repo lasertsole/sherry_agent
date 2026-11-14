@@ -25,22 +25,40 @@ type LspAvailability = Literal["available", "not_installed", "not_configured"]
 _FALLBACK_TOOLS = "`explore` (tree-sitter symbol index) or `terminal` (rg/grep)"
 
 
-def check_lsp_availability(language: str, cwd: str | None = None) -> tuple[LspAvailability, str]:
+def check_lsp_availability(
+    language: str,
+    cwd: str | None = None,
+    servers: dict[str, dict] | None = None,
+    enabled: list[str] | None = None,
+) -> tuple[LspAvailability, str]:
     """Check whether an LSP server is available for *language*.
 
     Returns ``(status, message)`` where an ``available`` message is the resolved
     binary path and the other two carry an actionable hint/explanation.
     """
-    if language not in LSP["lsp_enabled_languages"]:
-        enabled = ", ".join(LSP["lsp_enabled_languages"])
-        return "not_configured", f"Language '{language}' is not in the enabled list: {enabled}"
+    enabled_languages = enabled if enabled is not None else LSP["lsp_enabled_languages"]
+    if language not in enabled_languages:
+        configured = ", ".join(enabled_languages)
+        return "not_configured", f"Language '{language}' is not in the enabled list: {configured}"
+    if servers is not None and language not in servers:
+        return "not_configured", f"Language '{language}' has no LSP server declaration"
 
-    binary = resolve_lsp_server(language, cwd)
+    # The None branch keeps the historical 1/2-argument seams (and every
+    # caller that has no project table); the merged view passes ``servers``.
+    binary = (
+        resolve_lsp_server(language, cwd)
+        if servers is None
+        else resolve_lsp_server(language, cwd, servers)
+    )
     if binary:
         return "available", binary
 
-    hint = get_install_hint(language)
-    local_hint = get_local_install_hint(language)
+    hint = get_install_hint(language) if servers is None else get_install_hint(language, servers)
+    local_hint = (
+        get_local_install_hint(language)
+        if servers is None
+        else get_local_install_hint(language, servers)
+    )
     if local_hint:
         hint = f"{hint} (project-local: {local_hint})"
     return "not_installed", hint

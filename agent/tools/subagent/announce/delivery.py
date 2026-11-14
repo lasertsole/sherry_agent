@@ -32,6 +32,7 @@ from ..config import get_config
 from .idempotency import build_idempotency_key
 from .dispatch import AnnounceDeliveryResult, run_announce_dispatch
 from .completion_message import (
+    STATUS_BLOCKED,
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_INTERRUPTED,
@@ -42,6 +43,28 @@ _delivered_keys: set[str] = set()  # In-memory idempotency tracking
 _delivery_mirror: dict[str, str] = {}  # Content-based deduplication mirror
 # Max entries in the delivery mirror before eviction
 _MIRROR_MAX = SUBAGENT_INFRA["delivery_mirror_max"]
+
+#: Per-run blocked verdicts learned from the TaskFlow auto-resume.
+#:
+#: The resume runs BEFORE the human-facing delivery, so its post-resume step
+#: state is the only place the delivery layer can learn that an otherwise-OK
+#: child's step was BLOCKED (StepJudge BLOCK / caller-declared blocked). The
+#: notice, the third-path marker and the internal injection all read it, so the
+#: three channels agree instead of one saying "completed successfully".
+#: Process-local and bounded; an entry is dropped once delivery settles.
+_RESUME_BLOCKED: dict[str, str] = {}
+_RESUME_NOTES_MAX = 256
+
+
+def _remember_blocked_resume(run_id: str, reason: str) -> None:
+    if len(_RESUME_BLOCKED) >= _RESUME_NOTES_MAX:
+        _RESUME_BLOCKED.pop(next(iter(_RESUME_BLOCKED)), None)
+    _RESUME_BLOCKED[run_id] = reason or "blocked by its TaskFlow step"
+
+
+def _blocked_resume_reason(run_id: str) -> str | None:
+    return _RESUME_BLOCKED.get(run_id)
+
 
 _TRANSIENT_PATTERNS = [
     re.compile(r"timeout", re.IGNORECASE),
@@ -205,11 +228,19 @@ def _resolve_builder_status(run: SubagentRunRecord) -> str:
     """Map a registry outcome to the completion-message vocabulary.
 
     ``ok → completed`` and ``killed by user_stop → interrupted`` are the two
-    distinct terminal stories the parent must see; everything else is failed.
+    distinct terminal stories the parent must see. A run whose result reached
+    its TaskFlow step but the step ended BLOCKED (budget-exhausted goal loop or
+    a StepJudge BLOCK) is ``blocked`` — not completed and not failed: the work
+    is preserved but its completion was never proven.
     """
     outcome = run.execution.outcome
     status = outcome.status if outcome is not None else RunOutcomeStatus.UNKNOWN
+    if status == RunOutcomeStatus.BUDGET_EXHAUSTED:
+        return STATUS_BLOCKED
     if status == RunOutcomeStatus.OK:
+        run_id = str(getattr(run, "run_id", "") or "")
+        if run_id and _blocked_resume_reason(run_id) is not None:
+            return STATUS_BLOCKED
         return STATUS_COMPLETED
     if status == RunOutcomeStatus.KILLED and "user_stop" in (outcome.error or "").lower():
         return STATUS_INTERRUPTED
@@ -379,6 +410,7 @@ async def _deliver_subagent_announcement_impl(
         _mark_delivered(run)
         updated = mark_delivery_delivered(run)
         set_run_durable(updated)
+        _RESUME_BLOCKED.pop(run.run_id, None)
     elif not result.suspended:
         now = time.monotonic()
         from ..registry.delivery_state import should_discard_delivery
@@ -391,6 +423,7 @@ async def _deliver_subagent_announcement_impl(
             updated = mark_delivery_discarded(run, reason="max_retries_or_expiry")
             set_run_durable(updated)
             result.terminal = True
+            _RESUME_BLOCKED.pop(run.run_id, None)
         elif pending_count >= config.delivery_suspend_soft_cap:
             updated = mark_delivery_suspended(run)
             set_run_durable(updated)
@@ -493,13 +526,17 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
         # A run that timed out or was killed did NOT do the step's work, so the
         # step must fail rather than be marked done with an empty/short result:
         # a DONE step unlocks its dependents, and they would build on nothing.
+        # A budget-exhausted goal loop DID do work but never proved it complete:
+        # block the step (partial result preserved, dependents stay blocked) so
+        # the agent can read the partial output, retry, or replan.
         outcome_status = getattr(getattr(run, "execution", None), "outcome", None)
         outcome_status = getattr(outcome_status, "status", None)
-        declared_outcome = (
-            "failure"
-            if outcome_status in (RunOutcomeStatus.TIMEOUT, RunOutcomeStatus.KILLED)
-            else None
-        )
+        if outcome_status in (RunOutcomeStatus.TIMEOUT, RunOutcomeStatus.KILLED):
+            declared_outcome = "failure"
+        elif outcome_status == RunOutcomeStatus.BUDGET_EXHAUSTED:
+            declared_outcome = "blocked"
+        else:
+            declared_outcome = None
         answer = await taskflow_resume.coroutine(  # type: ignore[attr-defined]
             flow_id=flow_id,
             child_session_key=run.child_session_key,
@@ -525,10 +562,40 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
             flow_id,
             first_line,
         )
+        await _remember_blocked_step(run, flow_id, owner_session_id)
         return True
     except Exception:
         logger.debug("TaskFlow auto-resume skipped for run {}", run.run_id, exc_info=True)
         return False
+
+
+async def _remember_blocked_step(
+    run: SubagentRunRecord, flow_id: str, owner_session_id: str
+) -> None:
+    """Record a post-resume BLOCKED step so every notification channel agrees.
+
+    The resume answer's first line never says "blocked", so the step's own
+    post-resume state is the authority. Read once, best-effort: a read failure
+    leaves the delivery on the outcome-derived status (fail-open).
+    """
+    try:
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+        flow = await taskflow_store.get_flow(flow_id, owner_session_id)
+        steps = list(((flow or {}).get("state") or {}).get("steps") or [])
+        step = next((s for s in steps if s.get("child_session_key") == run.child_session_key), None)
+        if step is None or str(step.get("status") or "") != "blocked":
+            return
+        reason = " ".join(str(step.get("block_reason") or "").split())
+        _remember_blocked_resume(run.run_id, reason)
+        logger.info(
+            "TaskFlow auto-resume for run {} blocked step {}: {}",
+            run.run_id,
+            step.get("step_id"),
+            reason or "(no reason recorded)",
+        )
+    except Exception:
+        logger.debug("post-resume blocked-step read skipped for run {}", run.run_id)
 
 
 async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliveryResult:
@@ -610,7 +677,12 @@ async def _deliver_internal_injection(ctx: DeliveryContext) -> None:
     """Deliver result as an internal injection to a sub-agent requester session."""
     from ..events import InboundMessage, get_event_bus
 
-    status = "ok" if ctx.outcome.status == "ok" else ctx.outcome.status.value
+    if ctx.outcome.status == RunOutcomeStatus.BUDGET_EXHAUSTED or (
+        _blocked_resume_reason(ctx.run_id) is not None
+    ):
+        status = STATUS_BLOCKED
+    else:
+        status = "ok" if ctx.outcome.status == "ok" else ctx.outcome.status.value
     content = f"[Subagent Internal] {ctx.child_label or ctx.task[:30]}: {status}"
     if ctx.result_text:
         summary = ctx.result_text[:500]
@@ -639,7 +711,12 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
     from ..events import InboundMessage, get_event_bus
 
     status_text = "completed successfully"
-    if ctx.outcome.status == "killed":
+    blocked_reason = _blocked_resume_reason(ctx.run_id)
+    if blocked_reason:
+        status_text = f"blocked ({blocked_reason[:300]})"
+    elif ctx.outcome.status == RunOutcomeStatus.BUDGET_EXHAUSTED:
+        status_text = "blocked (budget exhausted — partial result, completion not proven)"
+    elif ctx.outcome.status == "killed":
         status_text = (
             "interrupted by the user"
             if "user_stop" in (ctx.outcome.error or "").lower()

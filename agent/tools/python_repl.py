@@ -16,7 +16,8 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   5: inheriting the server's launch directory is a defect).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
   interpreter argv is wrapped via ``backend.wrap`` (list exec form); backend
-  ``None`` degrades to the direct spawn with one loguru warning line.
+  ``None`` degrades to the direct spawn (HITL-gated on the main path) with one
+  loguru info line.
 """
 
 from __future__ import annotations
@@ -46,7 +47,12 @@ from agent.tools.pub_base.shadow_git import ensure_checkpoint
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import kill_process_tree
 from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
-from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.sandbox import (
+    SandboxPolicy,
+    get_backend,
+    read_policy,
+    with_own_session_root,
+)
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 from agent.tools.pub_base.safe_exec import validate_restricted_code
@@ -157,7 +163,8 @@ def _run_with_timeout(
     - ``sandbox=True`` + policy != OFF: ``get_backend`` resolves the OS
       sandbox — a usable backend wraps the interpreter argv (list exec form,
       no shell); ``None`` degrades to the direct unsandboxed spawn with one
-      loguru warning line. ``REQUIRED`` + unavailable backend raises
+      loguru info line (the HITL middleware already asked for approval when an
+      operator is in scope). ``REQUIRED`` + unavailable backend raises
       ``RuntimeError`` (surfaced as a tool error via ``handle_tool_error``).
 
     Extra ``**kwargs`` are absorbed for forward compatibility (/9 may
@@ -190,9 +197,10 @@ def _run_with_timeout(
                 argv, env = backend.wrap(argv, env, roots)
                 ran_sandboxed = True
             else:
-                logger.warning(
-                    "python_repl: sandbox requested but no backend available "
-                    f"(policy={policy.value}) — degrading to unsandboxed execution"
+                logger.info(
+                    "python_repl: sandbox unavailable "
+                    f"(policy={policy.value}) — running unsandboxed "
+                    "(HITL-gated when an operator is in scope)"
                 )
 
     proc: subprocess.Popen[bytes] | None = None
@@ -240,20 +248,25 @@ def _run_with_timeout(
 
     try:
         result = json.loads(stdout)
-        logger.debug("python_repl: result JSON decode failed", exc_info=True)
     except json.JSONDecodeError:
+        logger.debug("python_repl: result JSON decode failed", exc_info=True)
         return f"Error: failed to parse output\n{stdout[:500]}", ran_sandboxed
+    if not isinstance(result, dict) or "exc" not in result:
+        # A corrupted-but-valid JSON stdout used to raise KeyError here, which
+        # escaped the tool as an unhandled exception.
+        logger.debug("python_repl: malformed result envelope: {}", stdout[:200])
+        return f"Error: malformed REPL output\n{stdout[:500]}", ran_sandboxed
 
-    if result["exc"]:
+    if result.get("exc"):
         parts = [f"Error: {result['exc']}"]
-        if result["out"]:
+        if result.get("out"):
             parts.append(f"stdout:\n{result['out']}")
-        if result["err"]:
+        if result.get("err"):
             parts.append(f"stderr:\n{result['err']}")
         if result.get("tb"):
             parts.append(f"Traceback:\n{result['tb']}")
         return "\n".join(parts), ran_sandboxed
-    return result["out"] or "(no output)", ran_sandboxed
+    return result.get("out") or "(no output)", ran_sandboxed
 
 
 class PythonReplInput(BaseModel):
@@ -302,6 +315,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         session_id: SessionId = "",
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
+        self._deny_unsandboxed_degrade(sandbox)
         # Python can write files without the file tools; take the turn's shadow
         # snapshot first (fail-open).
         ensure_checkpoint(
@@ -309,13 +323,14 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
             reason=f"before_write:python_repl:{query[:120]}",
         )
         session_cwd = _resolve_session_cwd(run_manager, session_id)
+        bound_session = resolve_tool_session_id(session_id, run_manager)
         result, ran_sandboxed = _run_with_timeout(
             query,
             PYTHON_REPL_TIMEOUT,
             sandbox,
             session_cwd,
-            [Path(session_cwd)] if session_cwd else None,
-            session_id=resolve_tool_session_id(session_id, run_manager),
+            (with_own_session_root([Path(session_cwd)], bound_session) if session_cwd else None),
+            session_id=bound_session,
         )
         record_verification_evidence(
             query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
@@ -338,12 +353,14 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
+        self._deny_unsandboxed_degrade(sandbox)
         # Same fail-open snapshot as the sync path.
         ensure_checkpoint(
             resolve_tool_session_id(session_id, run_manager),
             reason=f"before_write:python_repl:{query[:120]}",
         )
         session_cwd = _resolve_session_cwd(run_manager, session_id)
+        bound_session = resolve_tool_session_id(session_id, run_manager)
         proc_out: list[subprocess.Popen[bytes]] = []
         try:
             result, ran_sandboxed = await asyncio.to_thread(
@@ -352,7 +369,11 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
                 PYTHON_REPL_TIMEOUT,
                 sandbox,
                 session_cwd,
-                [Path(session_cwd)] if session_cwd else None,
+                (
+                    with_own_session_root([Path(session_cwd)], bound_session)
+                    if session_cwd
+                    else None
+                ),
                 proc_out=proc_out,
             )
         except asyncio.CancelledError:

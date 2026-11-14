@@ -16,6 +16,7 @@ from config.features.agent_side import (
     EVIDENCE_LEDGER,
     HEARTBEAT_STALENESS,
     HITL_DEFAULTS,
+    IMAGE_GEN,
     ITERATION_BUDGET,
     LLM_CLIENT_DEFAULTS,
     LLM_RETRY,
@@ -43,6 +44,7 @@ from config.features.agent_side import (
     EvidenceLedgerConfig,
     HeartbeatStalenessConfig,
     HitlDefaultsConfig,
+    ImageGenConfig,
     IterationBudgetConfig,
     LlmClientDefaultsConfig,
     LlmRetryConfig,
@@ -90,6 +92,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (TOOLS_TIMEOUTS, ToolsTimeoutsConfig),
     (HITL_DEFAULTS, HitlDefaultsConfig),
     (MEDIA_PIPELINE, MediaPipelineConfig),
+    (IMAGE_GEN, ImageGenConfig),
     (BACKGROUND_REVIEW_CONFIG, BackgroundReviewConfig),
     (MEMORY_TOOL, MemoryToolConfig),
     (CONTEXT_GUARD, ContextGuardConfig),
@@ -293,6 +296,10 @@ SPOT_DEFAULTS = [
     (LDW, "min_replays", 3),
     (LDW, "script_max_bytes", 65_536),
     (LDW, "journal_path", "src/data/workflow_runs.db"),
+    (IMAGE_GEN, "max_n", 10),
+    (IMAGE_GEN, "default_size", "1024x1024"),
+    (IMAGE_GEN, "default_quality", ""),
+    (IMAGE_GEN, "timeout_s", 120.0),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]

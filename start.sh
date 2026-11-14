@@ -55,5 +55,10 @@ else
     echo "pnpm not found, skipping client frontend startup (backend only)"
 fi
 
-# Step 3: Start backend server in the foreground
+# Step 3: Start backend server in the foreground.
+# Development launcher: allow the Nuxt dev server origins explicitly. The
+# default gateway allowlist is Tauri-only (audit M4); a packaged backend must
+# never trust a local page on :3000 with /auth/token. A user-provided
+# SHERRY_ALLOWED_ORIGINS wins.
+export SHERRY_ALLOWED_ORIGINS="${SHERRY_ALLOWED_ORIGINS:-tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000}"
 "$VENV_BIN/python" -m server --fast --disable-openapi || { echo "Backend server exited with error"; exit 1; }

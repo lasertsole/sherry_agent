@@ -49,6 +49,7 @@ from .iteration_budget import IterationBudget
 from .llm_retry import LLMRetryMiddleware
 from .max_tokens_boost import MaxTokensBoostMiddleware
 from .media_pipeline import MultimodalProcessor
+from .media_pipeline.budget_projection import MediaBudgetProjectionMiddleware
 from .message_persistence import MessagePersistenceMiddleware
 from .output_repetition_guard import OutputRepetitionGuard
 from .path_guard import PathGuard
@@ -234,11 +235,29 @@ def _build_child_summarization(ctx: ChildBuildContext) -> Summarization:
     )
 
 
+def _main_iteration_cap(session_id: str) -> int:
+    """The session's effective main-agent ceiling (预设角色 → 高级).
+
+    Imported lazily: the resolver runs once per turn, not at chain build, so
+    the settings module (and the config file it reads) stays off the import
+    path. ``IterationBudget`` treats a raise as "keep the static default".
+    """
+    from runtime.session.extraction import effective_extraction_config
+
+    return int(effective_extraction_config(session_id)["iteration_budget_main"])
+
+
 def _build_main_iteration_budget(_ctx: MainBuildContext) -> IterationBudget:
-    return IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"])
+    return IterationBudget(
+        ITERATION_BUDGET["main_agent_max_iterations"], cap_resolver=_main_iteration_cap
+    )
 
 
 def _build_child_iteration_budget(ctx: ChildBuildContext) -> IterationBudget:
+    # The child factory already resolved the role limit AND the effective sub
+    # ceiling into ``iteration_limit`` (min of the two), so the instance is
+    # static here — a child agent is built per spawn, not shared across
+    # sessions.
     return IterationBudget(ctx.iteration_limit)
 
 
@@ -343,61 +362,79 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         child=ProfileBinding(4, lambda _ctx: ToolResourceLockMiddleware()),
         required_in=_BOTH,
     ),
+    # History-media byte-budget projection (images / audio / video), extracted
+    # from MultimodalProcessor so the CHILD chain gets the same protection. It
+    # runs after the tool locks and before eviction; the processor above keeps
+    # only the main-only upload/scrub half.
+    MiddlewareSpec(
+        name="MediaBudgetProjectionMiddleware",
+        cls=MediaBudgetProjectionMiddleware,
+        main=ProfileBinding(10, lambda _ctx: MediaBudgetProjectionMiddleware()),
+        child=ProfileBinding(5, lambda _ctx: MediaBudgetProjectionMiddleware()),
+        required_in=_BOTH,
+    ),
     # User-configurable lifecycle hooks (sherry.jsonc ``hooks``).
     MiddlewareSpec(
         name="UserHooksMiddleware",
         cls=UserHooksMiddleware,
-        main=ProfileBinding(10, lambda _ctx: UserHooksMiddleware()),
+        main=ProfileBinding(11, lambda _ctx: UserHooksMiddleware()),
     ),
     # Registered directly after ToolGuardrails, i.e. OUTER relative to PathGuard
-    # / HITL / MessagePersistenceMiddleware in the wrap chain.
+    # / HITL / MessagePersistenceMiddleware in the wrap chain. The child chain
+    # uses the SAME middleware with no special mode: the 20k tool-result net,
+    # the read_file slice and the human-message switch are identical. The
+    # child's own SESSIONS_DIR tree is readable (the self-path policy allows
+    # it), so the evicted-file preview pointer is recoverable there too; human
+    # eviction only matches origin="user" and a child's task messages never
+    # carry it.
     MiddlewareSpec(
         name="ContextEvictionMiddleware",
         cls=ContextEvictionMiddleware,
-        main=ProfileBinding(11, lambda _ctx: ContextEvictionMiddleware()),
-        required_in=frozenset({MAIN}),
+        main=ProfileBinding(12, lambda _ctx: ContextEvictionMiddleware()),
+        child=ProfileBinding(6, lambda _ctx: ContextEvictionMiddleware()),
+        required_in=_BOTH,
     ),
     MiddlewareSpec(
         name="ToolCallNormalize",
         cls=ToolCallNormalize,
-        main=ProfileBinding(12, lambda _ctx: ToolCallNormalize()),
-        child=ProfileBinding(7, lambda _ctx: ToolCallNormalize()),
+        main=ProfileBinding(13, lambda _ctx: ToolCallNormalize()),
+        child=ProfileBinding(9, lambda _ctx: ToolCallNormalize()),
         required_in=_BOTH,
     ),
     MiddlewareSpec(
         name="PathGuard",
         cls=PathGuard,
-        main=ProfileBinding(13, lambda _ctx: PathGuard()),
+        main=ProfileBinding(14, lambda _ctx: PathGuard()),
         required_in=frozenset({MAIN}),
     ),
     MiddlewareSpec(
         name="SubagentCompletionDrainMiddleware",
         cls=SubagentCompletionDrainMiddleware,
-        main=ProfileBinding(14, lambda _ctx: SubagentCompletionDrainMiddleware()),
+        main=ProfileBinding(15, lambda _ctx: SubagentCompletionDrainMiddleware()),
     ),
     MiddlewareSpec(
         name="TaskIntentMiddleware",
         cls=TaskIntentMiddleware,
-        main=ProfileBinding(15, lambda _ctx: TaskIntentMiddleware()),
+        main=ProfileBinding(16, lambda _ctx: TaskIntentMiddleware()),
     ),
     # Live-view reminders (<system-reminder> tags), injected from live state
     # once per turn after TaskIntent.
     MiddlewareSpec(
         name="DynamicReminderMiddleware",
         cls=DynamicReminderMiddleware,
-        main=ProfileBinding(16, lambda _ctx: DynamicReminderMiddleware()),
+        main=ProfileBinding(17, lambda _ctx: DynamicReminderMiddleware()),
     ),
     # Live-stream safety (OFF by default). The LLM review sits INSIDE the
     # keyword filter so a keyword block never pays for a review call.
     MiddlewareSpec(
         name="InputSafetyFilter",
         cls=InputSafetyFilter,
-        main=ProfileBinding(17, lambda _ctx: InputSafetyFilter()),
+        main=ProfileBinding(18, lambda _ctx: InputSafetyFilter()),
     ),
     MiddlewareSpec(
         name="LLMModerationMiddleware",
         cls=LLMModerationMiddleware,
-        main=ProfileBinding(18, lambda _ctx: LLMModerationMiddleware()),
+        main=ProfileBinding(19, lambda _ctx: LLMModerationMiddleware()),
     ),
     # Same class in both profiles. Children run via ``ainvoke`` so the guard's
     # non-streaming interception covers their whole model result before it is
@@ -405,8 +442,8 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="OutputRepetitionGuard",
         cls=OutputRepetitionGuard,
-        main=ProfileBinding(19, lambda _ctx: OutputRepetitionGuard()),
-        child=ProfileBinding(5, lambda _ctx: OutputRepetitionGuard()),
+        main=ProfileBinding(20, lambda _ctx: OutputRepetitionGuard()),
+        child=ProfileBinding(7, lambda _ctx: OutputRepetitionGuard()),
         required_in=_BOTH,
     ),
     # Children also run via ``ainvoke``: the non-streaming path means no
@@ -414,8 +451,8 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="MaxTokensBoostMiddleware",
         cls=MaxTokensBoostMiddleware,
-        main=ProfileBinding(20, lambda _ctx: MaxTokensBoostMiddleware()),
-        child=ProfileBinding(6, lambda _ctx: MaxTokensBoostMiddleware()),
+        main=ProfileBinding(21, lambda _ctx: MaxTokensBoostMiddleware()),
+        child=ProfileBinding(8, lambda _ctx: MaxTokensBoostMiddleware()),
         required_in=_BOTH,
     ),
     # Per-session thinking toggle: swaps the per-call model for the thinking
@@ -424,19 +461,19 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="ThinkingControlMiddleware",
         cls=ThinkingControlMiddleware,
-        main=ProfileBinding(21, _build_main_thinking_control),
+        main=ProfileBinding(22, _build_main_thinking_control),
     ),
     MiddlewareSpec(
         name="HeartbeatStaleness",
         cls=HeartbeatStaleness,
-        main=ProfileBinding(22, lambda _ctx: HeartbeatStaleness()),
-        child=ProfileBinding(8, lambda _ctx: HeartbeatStaleness()),
+        main=ProfileBinding(23, lambda _ctx: HeartbeatStaleness()),
+        child=ProfileBinding(10, lambda _ctx: HeartbeatStaleness()),
         required_in=_BOTH,
     ),
     MiddlewareSpec(
         name="HumanInTheLoop",
         cls=HumanInTheLoop,
-        main=ProfileBinding(23, lambda _ctx: HumanInTheLoop(HITLConfig())),
+        main=ProfileBinding(24, lambda _ctx: HumanInTheLoop(HITLConfig())),
         required_in=frozenset({MAIN}),
     ),
     # Registered directly after HITL so its after_model node runs FIRST —
@@ -444,7 +481,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="MessagePersistenceMiddleware",
         cls=MessagePersistenceMiddleware,
-        main=ProfileBinding(24, lambda _ctx: MessagePersistenceMiddleware()),
+        main=ProfileBinding(25, lambda _ctx: MessagePersistenceMiddleware()),
         required_in=frozenset({MAIN}),
     ),
     # Between HITL and Summarization: INNER relative to MaxTokensBoost and
@@ -452,7 +489,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="LLMRetryMiddleware",
         cls=LLMRetryMiddleware,
-        main=ProfileBinding(25, _build_main_llm_retry),
+        main=ProfileBinding(26, _build_main_llm_retry),
         required_in=frozenset({MAIN}),
     ),
     # Output-side keyword rules (OFF by default). Registered AFTER
@@ -460,14 +497,14 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="OutputSafetyFilter",
         cls=OutputSafetyFilter,
-        main=ProfileBinding(26, lambda _ctx: OutputSafetyFilter()),
+        main=ProfileBinding(27, lambda _ctx: OutputSafetyFilter()),
     ),
     # The child profile triggers on message count AND the shared compression
     # line; both parameter sets are declared in the two builders above.
     MiddlewareSpec(
         name="Summarization",
         cls=Summarization,
-        main=ProfileBinding(27, _build_main_summarization),
+        main=ProfileBinding(28, _build_main_summarization),
         child=ProfileBinding(0, _build_child_summarization),
         required_in=_BOTH,
     ),
@@ -479,8 +516,8 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     MiddlewareSpec(
         name="InvalidToolCallRepairMiddleware",
         cls=InvalidToolCallRepairMiddleware,
-        main=ProfileBinding(28, lambda _ctx: InvalidToolCallRepairMiddleware()),
-        child=ProfileBinding(9, lambda _ctx: InvalidToolCallRepairMiddleware()),
+        main=ProfileBinding(29, lambda _ctx: InvalidToolCallRepairMiddleware()),
+        child=ProfileBinding(11, lambda _ctx: InvalidToolCallRepairMiddleware()),
         required_in=_BOTH,
     ),
     # Main-agent-only soft delegation pressure, appended when its feature flag
@@ -489,7 +526,7 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
         name="DelegationPressureGate",
         cls=DelegationPressureGate,
         main=ProfileBinding(
-            29, lambda _ctx: DelegationPressureGate(), _delegation_pressure_enabled
+            30, lambda _ctx: DelegationPressureGate(), _delegation_pressure_enabled
         ),
     ),
 )

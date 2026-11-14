@@ -34,7 +34,11 @@ lock and silently put CUDA PyTorch back on Linux.
   `server.__main__.main` **statically** and calls it. That import is
   load-bearing: a `runpy.run_module("server")` is invisible to PyInstaller's
   analysis, which is how the first build shipped without the `server` package at
-  all. `main()` chdirs next to the executable when frozen.
+  all. `main()` chdirs next to the executable when frozen. It first checks for
+  `--sherry-daemon <module>`: the local model daemons re-execute this binary
+  (a frozen app cannot run `python -c`) and dispatch to that module's `main()`
+  **before** the server import, so a daemon child never boots logging,
+  event-loop patching or LangSmith.
 - **`build_backend.py`** — the PyInstaller **onedir** build (a onefile build
   would unpack gigabytes on every launch). It collects our packages with
   `--collect-submodules` (their `__getattr__` uses `importlib.import_module`,

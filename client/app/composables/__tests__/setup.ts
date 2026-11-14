@@ -157,11 +157,18 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
 // Nuxt auto-import used by `ChatBox.vue` / `home/index.vue` for image preview.
 // Mock the composable (module-scope `ref` in useImagePreview.ts would otherwise
 // run before the vueAutoImports loop above, so we don't import the real one).
+// `openGallery` + the gallery refs are part of the same contract: the artifact
+// image gallery (tool cards, folded turn header) opens multi-image previews.
 (globalThis as any).useImagePreview = vi.fn(() => ({
   previewSrc: Vue.ref(''),
+  galleryItems: Vue.ref([]),
+  currentIndex: Vue.ref(0),
   isPreviewVisible: Vue.ref(false),
   openPreview: vi.fn(),
-  closePreview: vi.fn()
+  openGallery: vi.fn(),
+  closePreview: vi.fn(),
+  nextImage: vi.fn(),
+  prevImage: vi.fn()
 }));
 
 // Nuxt auto-imports consumed at setup top-level by `home/index.vue` (:246-247)

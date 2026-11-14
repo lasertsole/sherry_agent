@@ -1,7 +1,8 @@
 """Shared SQLite connection + lazy schema-init skeleton for tool registries.
 
-The todolist, taskflow and subagent registries each own a separate SQLite
-database, but all three duplicated the same connection lifecycle:
+The todolist, taskflow and subagent registries historically owned separate
+SQLite databases (they now share ``src/data/registry.db`` as distinct tables),
+but all three still use the same connection lifecycle:
 
 * every connection sets ``PRAGMA busy_timeout`` as its FIRST statement, so a
   contended write waits for the lock instead of raising

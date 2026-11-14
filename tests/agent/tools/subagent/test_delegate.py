@@ -19,7 +19,10 @@ _SKILL_SCOPES = {
     "code_interpreter": "all",
     "skill_creator": "main_only",
     "clawhub": "main_only",
+    "exec_only": "all",
 }
+
+_SKILL_ROLES = {"exec_only": ["executor"]}
 
 
 def _scan_skills_stub(use_cache: bool = True) -> list[dict]:
@@ -28,6 +31,7 @@ def _scan_skills_stub(use_cache: bool = True) -> list[dict]:
         {"name": "code_interpreter", "scope": "all"},
         {"name": "skill_creator", "scope": "main_only"},
         {"name": "clawhub", "scope": "main_only"},
+        {"name": "exec_only", "scope": "all", "roles": _SKILL_ROLES["exec_only"]},
     ]
 
 
@@ -35,6 +39,7 @@ def _get_skills_text_stub(
     selected_skill_names: list[str] | None = None,
     *,
     caller_scope: str = "main",
+    caller_role: str | None = None,
 ) -> str:
     if not selected_skill_names:
         return ""
@@ -42,6 +47,11 @@ def _get_skills_text_stub(
         n
         for n in sorted(selected_skill_names)
         if not (caller_scope == "subagent" and _SKILL_SCOPES.get(n) == "main_only")
+        and not (
+            caller_role is not None
+            and _SKILL_ROLES.get(n) is not None
+            and caller_role not in _SKILL_ROLES[n]
+        )
     ]
     return "<skills>\n" + "\n".join(f'  <skill name="{n}"/>' for n in names) + "\n</skills>"
 
@@ -402,3 +412,21 @@ class TestResultPolling:
 
         assert out is handle
         assert out.result_text == "mock result"
+
+
+class TestLoadSkillsRoleFilter:
+    """Delegate injection honours a skill's ``roles: [...]`` restriction."""
+
+    def test_a_foreign_role_skill_is_excluded(self):
+        assert delegate._validate_load_skills(["exec_only"], "researcher") == []
+        assert delegate._validate_load_skills(["exec_only"], "executor") == ["exec_only"]
+
+    def test_the_identity_caller_keeps_the_skill(self):
+        assert delegate._validate_load_skills(["exec_only"]) == ["exec_only"]
+
+    def test_injection_omits_a_foreign_role_skill(self):
+        foreign = delegate._inject_skills("task", ["exec_only"], caller_role="researcher")
+        allowed = delegate._inject_skills("task", ["exec_only"], caller_role="executor")
+
+        assert "exec_only" not in foreign
+        assert "exec_only" in allowed

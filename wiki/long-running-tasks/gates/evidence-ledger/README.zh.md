@@ -28,14 +28,14 @@ terminal / python_repl 跑了一条命令
                  │
                  └─ 读取时：collect_evidence_summary()
                       ├─ 一条 evidence 行是 [stale] 的，当且仅当后面的 stale 事件的 file_path
-                      │   是该行 command 的子串
+                      │   在该行 modified_files 中（精确值或目录前缀），或匹配 command 中的路径 token
                       ├─ 方向重要：stale 在 evidence 之前 = 新鲜（已重新验证）
                       └─ 返回："  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
 **Changed-path 快照（B'）。** `write_file` / `patch_file` 还会调用 `EvidenceLedger.record_file_edit()`，累积该 session 编辑过的路径（去重，上限 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200；**验证后不重置**，因此同一批编辑后的 lint 与 test 共用一份快照）。记录时会按 session 的 project root 规范化路径：`./a.py`、`a/../a.py`、root 内绝对路径都变成 `a.py`；root 外绝对路径保留绝对。记录验证命令时，当前列表被复制进 evidence 行的 `modified_files`。之后任何对其中文件的写入都会使该 evidence 过期，即使命令从未点名该文件。
 
-**跨 session 传播。** 文件写入先标记 writer 自己的 session。当 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 为 true 时，`EvidenceLedger.mark_stale_for_path_all_sessions()` 扫描其他 session 中 `modified_files` 包含被编辑路径、command 以真实路径 token 点名该路径，或旧行 command 包含它的 evidence 行，并在每个受影响 session 下追加一行 `scope="cross_session"` 的 stale 事件。`source_session` 记录写入方；`max_sessions_scan` 限制扫描数量，`exclude_self` 跳过已单独标记的 writer。下方的读取侧推导无需改动——广播行就落在受影响 session 自己的序列里。
+**跨 session 传播。** 文件写入先标记 writer 自己的 session。当 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 为 true 时，`EvidenceLedger.mark_stale_for_path_all_sessions()` 扫描其他 session 中 `modified_files` 覆盖被编辑路径（精确值或目录前缀）或 command 以路径 token 点名该路径（`shlex` 词；旧行也参与）的 evidence 行，并在每个受影响 session 下追加一行 `scope="cross_session"` 的 stale 事件。裸子串不算匹配，因此 `a.py` 不会误标 `bla.py`。`source_session` 记录写入方；`max_sessions_scan` 限制扫描数量，`exclude_self` 跳过已单独标记的 writer。下方的读取侧推导无需改动——广播行就落在受影响 session 自己的序列里。
 
 **Finish 时重验。** `taskflow_flow(action="finish")` 的 Gate C 会先调用 `regression_gate.reverify_flow_evidence()`：把 flow 各 session 里每条 passed 命令去重后重跑一次（allowlist 可执行文件、不走 shell、受 `max_reverify_commands` 与单命令超时约束），工作目录是 flow 的项目根。通过时对曾被 stale/broken 的命令追加 `unmark`；失败时追加 `broken`。这是唯一能捕获跨文件 import 破坏的路径——即使没有任何 stale 行点名被改的源文件，它也会重跑 A 的测试命令。step 可以声明 `file_deps`；当其他 step 的写入命中其中之一时，`prioritized_sessions()` 会把该 step 的命令排到 `max_reverify_commands` 上限之前（`file_deps_mode="prioritize"`，默认）。可选的 `file_deps_mode="filter"` 只重放声明命中的 session——更便宜，但可能漏掉未声明 step 的破坏。
 
@@ -45,7 +45,7 @@ terminal / python_repl 跑了一条命令
 
 ## 存储
 
-**文件：** `src/data/evidence-ledger.db`（由 `config.path.resolve_evidence_ledger_path` 解析）
+**文件：** `src/data/registry.db` (`evidence_events` table)（由 `config.path.resolve_evidence_ledger_path` 解析）
 
 | 属性 | 值 |
 |------|----|
@@ -94,7 +94,7 @@ terminal / python_repl 跑了一条命令
 
 ### 2. 文件编辑 — stale 事件
 
-`write_file` 和 `patch_file` 用 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` 装饰。装饰器在 `finally` 块里运行，所以**每种**结果（成功、错误字符串、抛异常）都会追加一行 `{"event": "stale", "file_path": "..."}` 并调用 `EvidenceLedger.record_file_edit()`。跨 session 开关开启时，同一次调用还会向每个 evidence 覆盖该路径的其他 session（`modified_files` 命中，或旧行 command 子串）各追加一行 stale 事件。
+`write_file` 和 `patch_file` 用 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` 装饰。装饰器在 `finally` 块里运行，所以**每种**结果（成功、错误字符串、抛异常）都会追加一行 `{"event": "stale", "file_path": "..."}` 并调用 `EvidenceLedger.record_file_edit()`。跨 session 开关开启时，同一次调用还会向每个 `modified_files` 覆盖该路径（精确值或目录前缀）或 command 以路径 token 点名该路径的其他 session 各追加一行 stale 事件。
 
 ### 3. 子代理工作区合并 — stale 事件
 
@@ -142,7 +142,7 @@ terminal / python_repl 跑了一条命令
 
 过期**在读取侧推导**，从不存为标志。规则：
 
-> 一条 evidence 行是 stale 的，当且仅当一个**后来的** stale 事件（在追加顺序中索引更大）点名的 `file_path` 在该行的 `modified_files` 集合中，或被 command 作为真实路径 token 点名。没有 `modified_files` 的旧行降级到原来的 command 子串规则。
+> 一条 evidence 行是 stale 的，当且仅当一个**后来的** stale 事件（在追加顺序中索引更大）点名的 `file_path` 在该行的 `modified_files` 集合中、是其中某个文件的目录前缀，或被 command 作为真实路径 token 点名。没有 `modified_files` 的旧行使用同样的 token 级 command 匹配——不再是子串。
 
 ```python
 def derive_evidence_state(records, index):
@@ -159,17 +159,21 @@ def derive_evidence_state(records, index):
         elif event == "stale":
             path = str(later.get("file_path") or "")
             if modified:
-                stale = stale or (path in modified) or _command_references_path(command, path)
+                stale = stale or (
+                    path in modified
+                    or _path_covers_modified(path, modified)
+                    or _command_references_path(command, path)
+                )
             else:
-                stale = stale or (path in command)
+                stale = stale or _command_references_path(command, path)
     return broken, stale
 ```
 
 关键细节：
 
 - **方向重要：** 只有**后来的** stale 事件能使**先前的** evidence 行过期。stale 事件在 evidence 行之前意味着文件被编辑后又重新验证了——验证是新鲜的。
-- **新行精确集合：** `file_path in modified_files`，或 command 中的真实路径 token。能捕获命令从未点名的源文件（`pytest tests/test_beta.py` + 写入 `alpha.py`）以及 A 没写过的测试文件，同时避免旧的子串误报（`feature.py` vs `test_feature.py`）。
-- **旧行降级：** `file_path in command`。B' 之前的行保持原行为，故意宽松且不变。
+- **新行精确集合：** `file_path in modified_files`、某个 modified 文件的目录前缀，或 command 中的真实路径 token。能捕获命令从未点名的源文件（`pytest tests/test_beta.py` + 写入 `alpha.py`）以及 A 没写过的测试文件，同时避免旧的子串误报（`feature.py` vs `test_feature.py`）。
+- **旧行回退：** 旧行没有快照，因此只匹配 command 中的 `shlex` 路径 token——不再使用 `file_path in command` 子串规则。
 - **路径规范化：** 累积路径与 stale 事件都按写入方 session 的 project root 规范化（`./`、`..`、root 内绝对 → project-relative；root 外绝对保留绝对）。这是字符串规范化，不解析符号链接；不同 session root 不统一。
 - **按 session 分组：** `SessionEvidenceLedger.list_records()` 先按 `session_id` 过滤，派生只在一个 session 的序列内比较。因此跨 session 失效会**写进受影响 session 自己的组**（每个 session 一行），而不是留在写入方的组里。
 - **Broken 与 unmark：** 同 `command` 的更晚 `broken` 事件渲染为 `[broken]`（重验后命令失败）；同 `command` 的更晚 `unmark` 同时清除 `[stale]` 与 `[broken]`。`evidence_ledger.py` 的 `derive_evidence_state()` 是唯一实现，`[broken]` 优先于 `[stale]`。

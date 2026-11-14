@@ -63,6 +63,22 @@
     "enabled": false
   },
 
+  // User-facing extraction switches (预设角色 → 高级). These are the GLOBAL
+  // values: a session inherits them and may override experience learning and
+  // the two iteration limits; flow replay compilation is global-only. All four
+  // are ON by default, so an untouched install keeps extracting.
+  "extraction": {
+    // Experience learning: the plan-completion skill review (skills/auto).
+    "skill_extraction_enabled": true,
+    // Flow replay compilation: PTC step scripts + LDW workflow scripts.
+    // Forced off whenever skill_extraction_enabled is false.
+    "flow_extraction_enabled": true,
+    // Per-turn model-call ceilings for the main agent and its subagents.
+    // A child role's own (lower) limit still wins; this value is a cap.
+    "iteration_budget_main": 180,
+    "iteration_budget_sub": 90
+  },
+
   // LangSmith tracing lives in .network now (LANGSMITH_* keys): it is network-service
   // config, and .network is gitignored (this file is tracked and must not hold keys).
 
@@ -110,6 +126,14 @@
     // ,"Stop": [
     //   { "command": "curl -s -X POST http://localhost:9999/turn-done --data-binary @-", "matcher": "*", "timeout_ms": 3000 }
     // ]
+  },
+
+  // Browser debug capture: the agent's live browser page records console
+  // output, uncaught JS exceptions and failed requests (status >= 400 /
+  // loadingFailed). The browser feature itself is opt-in; this switch only
+  // controls the passive CDP domains. Read live — no restart needed.
+  "browser": {
+    "debug_capture": true
   },
 
   // Restart-recovery effect queue (runtime/effects/ + server/service/effects/).

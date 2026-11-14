@@ -1,4 +1,4 @@
-"""SQLite evidence ledger (``src/data/evidence-ledger.db``).
+"""SQLite evidence ledger (``src/data/registry.db``, ``evidence_events`` table).
 
 One row records the VERIFICATION trail: a recognized test / lint / build /
 typecheck / format command the agent ran (``terminal`` and ``python_repl``
@@ -72,10 +72,15 @@ CREATE TABLE IF NOT EXISTS verification_state (
 """
 
 _EVIDENCE_PATH_MATCH = (
-    "(instr(COALESCE(command, ''), ?) > 0 "
-    "OR EXISTS (SELECT 1 FROM json_each(COALESCE(modified_files_json, '[]')) "
-    "WHERE value = ?))"
+    "EXISTS (SELECT 1 FROM json_each(COALESCE(modified_files_json, '[]')) "
+    "WHERE value = ? OR value LIKE ? ESCAPE '\\')"
 )
+
+
+def _like_prefix(file_path: str) -> str:
+    """The escaped ``<path>/%`` prefix a directory write invalidates."""
+    escaped = file_path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "/%"
 
 
 def _active_flow_id(session_id: str) -> str | None:
@@ -397,13 +402,14 @@ class EvidenceLedger:
 
         Staleness stays derived on read: an evidence row is stale iff a LATER
         ``{"event": "stale"}`` row names a ``file_path`` present in its
-        ``modified_files`` set (or, for legacy rows, in its ``command``). The
-        count is for logging only.
+        ``modified_files`` set (or covers it as a directory prefix). Legacy rows
+        without a snapshot are not counted here; the read-side derivation still
+        applies its token-aware command match. The count is for logging only.
         """
         file_path = normalize_evidence_path(file_path, session_key)
         with cls._connection() as conn:
             conditions = ["event IS NULL", _EVIDENCE_PATH_MATCH]
-            params: list[object] = [file_path, file_path]
+            params: list[object] = [file_path, _like_prefix(file_path)]
             if session_key:
                 conditions.append("session_id = ?")
                 params.append(session_key)
@@ -434,12 +440,15 @@ class EvidenceLedger:
         """Broadcast a write to every OTHER session whose evidence covers ``file_path``.
 
         "Covers" means the path is in the evidence row's ``modified_files``
-        snapshot (a cross-file dependency), or — for legacy rows — in its
-        command string. The writer's own stale event is appended by
-        :meth:`SessionEvidenceLedger.mark_stale_for_path`; this method covers
-        the sessions that a later write can invalidate without touching their
-        ledger scope. One ``{"event": "stale"}`` row is appended per affected
-        session, carrying ``scope="cross_session"`` and
+        snapshot (exact path, or a directory prefix of a modified file), OR the
+        row's command names the path as a token (``shlex`` word, never a bare
+        substring — legacy rows included). The command prefilter keeps the scan
+        cheap; the token check is the authority, so ``pytest bla.py`` cannot
+        mark a session that only verified ``a.py``. The writer's own stale event
+        is appended by :meth:`SessionEvidenceLedger.mark_stale_for_path`; this
+        method covers the sessions that a later write can invalidate without
+        touching their ledger scope. One ``{"event": "stale"}`` row is appended
+        per affected session, carrying ``scope="cross_session"`` and
         ``source_session=<writer>``, so the existing per-session derivation
         sees it without a schema change. Returns how many session rows were
         appended.
@@ -456,30 +465,49 @@ class EvidenceLedger:
                 conditions = [
                     "event IS NULL",
                     "session_id != ''",
-                    _EVIDENCE_PATH_MATCH,
+                    f"({_EVIDENCE_PATH_MATCH} OR instr(COALESCE(command, ''), ?) > 0)",
                 ]
-                params: list[object] = [file_path, file_path]
+                params: list[object] = [file_path, _like_prefix(file_path), file_path]
                 if exclude_self and writer_session_id:
                     conditions.append("session_id != ?")
                     params.append(writer_session_id)
-                params.append(limit)
                 try:
-                    sessions = [
-                        str(row[0])
-                        for row in conn.execute(
-                            "SELECT DISTINCT session_id FROM evidence_events "
-                            f"WHERE {' AND '.join(conditions)} "
-                            "ORDER BY session_id LIMIT ?",
-                            tuple(params),
-                        ).fetchall()
-                        if str(row[0])
-                    ]
+                    rows = conn.execute(
+                        "SELECT session_id, command, modified_files_json "
+                        "FROM evidence_events "
+                        f"WHERE {' AND '.join(conditions)} "
+                        "ORDER BY session_id",
+                        tuple(params),
+                    ).fetchall()
                 except sqlite3.Error:
                     logger.warning(
                         "evidence cross-session stale scan failed (fail-open)",
                         exc_info=True,
                     )
                     return 0
+                sessions: list[str] = []
+                seen: set[str] = set()
+                for row in rows:
+                    session_key = str(row["session_id"] or "")
+                    if not session_key or session_key in seen:
+                        continue
+                    try:
+                        modified = json.loads(row["modified_files_json"] or "[]")
+                    except (TypeError, ValueError):
+                        modified = []
+                    if not isinstance(modified, list):
+                        modified = []
+                    covered = file_path in {
+                        str(item) for item in modified
+                    } or _path_covers_modified(file_path, [str(item) for item in modified])
+                    if not covered:
+                        covered = _command_references_path(str(row["command"] or ""), file_path)
+                    if not covered:
+                        continue
+                    seen.add(session_key)
+                    sessions.append(session_key)
+                    if len(sessions) >= limit:
+                        break
                 if not sessions:
                     return 0
                 timestamp = datetime.now(UTC).isoformat()
@@ -660,17 +688,27 @@ def _command_references_path(command: str, path: str) -> bool:
     return False
 
 
+def _path_covers_modified(path: str, modified: list[str]) -> bool:
+    """True when ``path`` is a directory write covering one of ``modified``."""
+    directory = str(path or "").rstrip("/")
+    if not directory:
+        return False
+    prefix = directory + "/"
+    return any(str(item or "").startswith(prefix) for item in modified)
+
+
 def _event_matches(event: dict, command: str) -> bool:
     """True when a stale/broken/unmark event applies to ``command``.
 
     Newer events carry the exact command. Older stale rows carry only
-    ``file_path``, so they keep the original substring rule.
+    ``file_path``; they are matched token-aware (never as a substring, so
+    ``a.py`` cannot match ``bla.py``).
     """
     event_command = event.get("command")
     if event_command:
         return str(event_command) == command
     file_path = str(event.get("file_path") or "")
-    return bool(file_path) and file_path in command
+    return bool(file_path) and _command_references_path(command, file_path)
 
 
 def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
@@ -698,12 +736,17 @@ def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
         elif event == "stale":
             path = str(later.get("file_path") or "")
             if modified:
-                # New row: exact changed-file set, plus a true path token the
-                # command names (a test file A did not author still matters).
-                if path and (path in modified or _command_references_path(command, path)):
+                # New row: the exact changed-file set, a directory prefix of a
+                # changed file, or a true path token the command names (a test
+                # file A did not author still matters).
+                if path and (
+                    path in modified
+                    or _path_covers_modified(path, modified)
+                    or _command_references_path(command, path)
+                ):
                     stale = True
             elif _event_matches(later, command):
-                # Legacy row: keep the original command-substring rule.
+                # Legacy row: token-aware command matching (never substring).
                 stale = True
     return broken, stale
 

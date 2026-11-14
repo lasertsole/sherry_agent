@@ -48,13 +48,16 @@ from config.path import is_safe_session_segment
 from pub.func.message.classify import is_user_message
 
 __all__ = [
+    "CLIPPED_PREFIX",
     "EVICTED_TO_KEY",
+    "build_clipped_preview",
     "build_file_preview",
     "build_human_preview",
     "build_preview",
     "evict_human_message",
     "evict_tool_result",
     "get_eviction_dir",
+    "hard_clip_tool_result",
     "human_eviction_notice",
     "load_evicted",
     "slice_read_file_result",
@@ -107,6 +110,22 @@ _HUMAN_PREVIEW_TEMPLATE = """\
 [full content: {total_chars} chars, evicted at {ts}]
 
 {notice}"""
+
+#: In-memory fallback preview: no file, no recovery pointer. Used when an
+#: offload fails on EITHER chain (the oversized payload must not reach state
+#: raw); the child pipeline uses normal file-backed eviction too, because its
+#: own session tree is readable/writable without HITL.
+_CLIPPED_PREFIX = "[output truncated: "
+CLIPPED_PREFIX = _CLIPPED_PREFIX
+_CLIPPED_PREVIEW_TEMPLATE = """\
+[output truncated: {total_chars} chars exceeded the context budget]
+--- head ({head_n} lines) ---
+{head}
+{midline}
+--- tail ({tail_n} lines) ---
+{tail}
+
+[The middle was discarded to keep the context bounded; re-run with a narrower range if needed.]{cut_note}"""
 
 # Execution-time read_file slice size (P2-4). The compression-time pass uses
 # SUMMARIZATION["max_tool_output_chars"] instead; see the module docstring.
@@ -286,6 +305,17 @@ def build_preview(content: str, file_path: Path) -> str:
     )
 
 
+def build_clipped_preview(content: str) -> str:
+    """Render the in-memory head/tail preview used when nothing is stored."""
+    return _build_preview(
+        _CLIPPED_PREVIEW_TEMPLATE,
+        content,
+        TOOL_RESULT_EVICTION["preview_head_lines"],
+        TOOL_RESULT_EVICTION["preview_tail_lines"],
+        total_chars=len(content),
+    )
+
+
 def human_eviction_notice(file_path: str | Path) -> str:
     """Model-facing recovery notice for an evicted human message."""
     return (
@@ -406,6 +436,33 @@ def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
     eviction_dir.mkdir(parents=True, exist_ok=True)
     file_path.write_text(text, encoding="utf-8")
     return msg.model_copy(update={"content": _build_evicted_content(msg.content, preview)})
+
+
+def hard_clip_tool_result(msg: ToolMessage) -> ToolMessage | None:
+    """Bound an oversized result IN MEMORY when offloading is unavailable.
+
+    Returns ``None`` when the result is not eligible (disabled, excluded tool,
+    multimodal content, at/under the threshold, already an eviction/clip
+    preview, or the head/tail render would not shrink it). Unlike
+    :func:`evict_tool_result` this never touches the filesystem, so it is the
+    fallback when an offload FAILS on either chain: the preview carries no file
+    pointer because there is no file.
+    """
+    if not TOOL_RESULT_EVICTION["enabled"]:
+        return None
+    if (getattr(msg, "name", "") or "") in TOOL_RESULT_EVICTION["excluded_tools"]:
+        return None
+    content = msg.content
+    if not isinstance(content, str):
+        return None
+    if len(content) <= TOOL_RESULT_EVICTION["evict_threshold_chars"]:
+        return None
+    if content.startswith(_EVICTION_PREFIX) or content.startswith(_CLIPPED_PREFIX):
+        return None
+    preview = build_clipped_preview(content)
+    if len(preview) >= len(content):
+        return None
+    return msg.model_copy(update={"content": preview})
 
 
 def load_evicted(file_path: str | Path) -> str | None:

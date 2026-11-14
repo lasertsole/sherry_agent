@@ -78,12 +78,8 @@ async def put_curator_settings_handler(request):
     Returns the persisted override along with the now-effective interval in
     hours.
     """
-    try:
-        body = request.json()
-    except Exception:
-        body = None
-
-    if not isinstance(body, dict) or "auto_interval_days" not in body:
+    body = read_body(request)
+    if body is None or "auto_interval_days" not in body:
         return {"success": False, "error": "Missing 'auto_interval_days'"}, {}, 400
 
     raw = body.get("auto_interval_days")

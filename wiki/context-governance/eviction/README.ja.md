@@ -31,6 +31,7 @@
 `ContextEvictionMiddleware.wrap_tool_call` はツール応答を**グラフ state に入る前に**傍受する（`agent/middlewares/context_eviction/core.py`；プリミティブは `pub/func/message/eviction.py`）：
 
 - 抽出テキストが **`evict_threshold_chars`（20 000 文字）を超える**汎用結果は `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt` に書き出され、メッセージ内容はファイルパスを運ぶ head/tail プレビューに置き換わる。
+- **子モードは完全に同じ設定を使う。** サブエージェントは同一のミドルウェアを登録する（旧トリムフラグは削除済み）：同じしきい値を超えると、結果は**子自身の** `evicted/` ディレクトリへ書き込まれ、通常の head/tail プレビューに置き換わる。このディレクトリはセッション私有の `SESSIONS_DIR` ツリー内で読み書きに HITL が不要なため、ポインタを復元できる。人間メッセージのスイッチも共有されるが、`origin="user"` のみに一致し、子のタスク/継続メッセージはそれを持たない。退避が失敗した場合はメモリ内の `[output truncated: …]` ハードクリップにフォールバックする。
 - `excluded_tools`（8 名 —— `read_file`、`write_file`、`patch_file`、`search_files`、`list_files`、`memory`、`skill_view`、`skill_list`）はそのまま通過する：ペイロードはすでにバックエンドのファイルシステム上にあるか、回収が安価である。`read_file` はさらに下のスライス経路を取る。
 - 置換は `ToolMessage.model_copy` で構築されるため、メッセージ `id`、`tool_call_id`、`name`、`status`、`additional_kwargs` がすべて生存する —— ペアリング、サニタイザ、ウォーターマークは同じ論理メッセージに一致し続ける。
 - マルチモーダルの非テキストブロック（画像／音声／動画）はそのまま保持され、テキストブロックのみ置換される。

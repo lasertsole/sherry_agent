@@ -49,7 +49,7 @@ def test_tool_surface_has_six_when_code_embedder_is_injected(
         "semantic_code_search",
     ]
     for tool in tools:
-        assert tool.metadata["scope"] == "researcher_only"
+        assert tool.metadata["scope"] == "code_intel"
 
 
 def test_semantic_tool_has_no_path_input(

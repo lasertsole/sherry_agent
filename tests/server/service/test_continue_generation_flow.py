@@ -8,6 +8,9 @@ transcript moved on.
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
 from langchain_core.messages import HumanMessage
 
@@ -47,14 +50,16 @@ def _write(**overrides) -> InterruptMarkerWrite:
 
 class TestRecordBreakpoint:
     def test_records_a_pure_text_interruption(self, _fresh_breakpoint) -> None:
-        messages_module._record_resumable_breakpoint(
-            SESSION,
-            _write(),
-            reason="cancelled",
-            turn_id="turn-1",
-            partial_text="half an answer",
-            has_visible_text=True,
-            has_reasoning=False,
+        asyncio.run(
+            messages_module._record_resumable_breakpoint(
+                SESSION,
+                _write(),
+                reason="cancelled",
+                turn_id="turn-1",
+                partial_text="half an answer",
+                has_visible_text=True,
+                has_reasoning=False,
+            )
         )
 
         payload = _fresh_breakpoint["value"]
@@ -64,77 +69,95 @@ class TestRecordBreakpoint:
         assert payload["is_reasoning_only"] is False
 
     def test_a_tool_call_interruption_is_not_resumable(self, _fresh_breakpoint) -> None:
-        messages_module._record_resumable_breakpoint(
-            SESSION,
-            _write(healed_calls=2),
-            reason="cancelled",
-            turn_id="turn-1",
-            partial_text="text",
-            has_visible_text=True,
-            has_reasoning=False,
+        asyncio.run(
+            messages_module._record_resumable_breakpoint(
+                SESSION,
+                _write(healed_calls=2),
+                reason="cancelled",
+                turn_id="turn-1",
+                partial_text="text",
+                has_visible_text=True,
+                has_reasoning=False,
+            )
         )
 
         assert "value" not in _fresh_breakpoint
 
     def test_an_idempotent_marker_rewrite_is_not_resumable(self, _fresh_breakpoint) -> None:
-        messages_module._record_resumable_breakpoint(
-            SESSION,
-            _write(wrote_checkpointer=False),
-            reason="cancelled",
-            turn_id="turn-1",
-            partial_text="text",
-            has_visible_text=True,
-            has_reasoning=False,
+        asyncio.run(
+            messages_module._record_resumable_breakpoint(
+                SESSION,
+                _write(wrote_checkpointer=False),
+                reason="cancelled",
+                turn_id="turn-1",
+                partial_text="text",
+                has_visible_text=True,
+                has_reasoning=False,
+            )
         )
 
         assert "value" not in _fresh_breakpoint
 
     def test_a_failed_marker_write_is_not_resumable(self, _fresh_breakpoint) -> None:
-        messages_module._record_resumable_breakpoint(
-            SESSION,
-            None,
-            reason="heartbeat_timeout",
-            turn_id="turn-1",
-            partial_text="text",
-            has_visible_text=True,
-            has_reasoning=False,
+        asyncio.run(
+            messages_module._record_resumable_breakpoint(
+                SESSION,
+                None,
+                reason="heartbeat_timeout",
+                turn_id="turn-1",
+                partial_text="text",
+                has_visible_text=True,
+                has_reasoning=False,
+            )
         )
 
         assert "value" not in _fresh_breakpoint
 
     def test_reasoning_only_gets_its_own_prompt_flag(self, _fresh_breakpoint) -> None:
-        messages_module._record_resumable_breakpoint(
-            SESSION,
-            _write(),
-            reason="heartbeat_timeout",
-            turn_id="turn-2",
-            partial_text="",
-            has_visible_text=False,
-            has_reasoning=True,
+        asyncio.run(
+            messages_module._record_resumable_breakpoint(
+                SESSION,
+                _write(),
+                reason="heartbeat_timeout",
+                turn_id="turn-2",
+                partial_text="",
+                has_visible_text=False,
+                has_reasoning=True,
+            )
         )
 
         assert _fresh_breakpoint["value"]["is_reasoning_only"] is True
         assert _fresh_breakpoint["value"]["reason"] == "heartbeat_timeout"
 
     def test_nothing_to_continue_from_is_skipped(self, _fresh_breakpoint) -> None:
-        messages_module._record_resumable_breakpoint(
-            SESSION,
-            _write(),
-            reason="cancelled",
-            turn_id="turn-1",
-            partial_text="   ",
-            has_visible_text=False,
-            has_reasoning=False,
+        asyncio.run(
+            messages_module._record_resumable_breakpoint(
+                SESSION,
+                _write(),
+                reason="cancelled",
+                turn_id="turn-1",
+                partial_text="   ",
+                has_visible_text=False,
+                has_reasoning=False,
+            )
         )
 
         assert "value" not in _fresh_breakpoint
 
 
 class TestTurnBoundaries:
-    def test_a_new_generation_turn_clears_the_breakpoint(self, _fresh_breakpoint) -> None:
+    @pytest.mark.asyncio
+    async def test_a_new_generation_turn_clears_the_breakpoint(
+        self, _fresh_breakpoint, monkeypatch
+    ) -> None:
+        """The clear is an async step now (the register DB is blocking)."""
+        monkeypatch.setattr(messages_module, "built_agent", AsyncMock(return_value=object()))
+        monkeypatch.setattr(messages_module.agent_core, "hold_agent", lambda _agent: None)
         _fresh_breakpoint["value"] = {"marker_id": "x"}
 
-        _GenerateTurn(SESSION, messages=[HumanMessage("hi")])
+        turn = _GenerateTurn(SESSION, messages=[HumanMessage("hi")])
+        assert "value" in _fresh_breakpoint, "constructing the turn must not touch the disk"
+        await turn._prepare()
 
         assert "value" not in _fresh_breakpoint
 

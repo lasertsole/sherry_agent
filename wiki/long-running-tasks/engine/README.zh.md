@@ -65,7 +65,7 @@ blocked ──(依赖满足)──▶ ready ──(派发)──▶ dispatched �
 
 | 状态 | 含义 | 由谁设置 |
 | :--- | :--- | :--- |
-| `blocked` | 至少有一个 `depends_on` 尚未 `done`；不生成子 Agent | `taskflow_step(action="run_task")` |
+| `blocked` | 子 Agent 无法推进：至少有一个 `depends_on` 尚未 `done`（不生成子 Agent），**或**该步骤的结果未被证明（`step_outcome="blocked"` / StepJudge BLOCK）；下游保持 blocked | `taskflow_step(action="run_task")` / `taskflow_step(action="resume")` / `taskflow_step(action="update_steps")` |
 | `ready` | 所有依赖已满足，等待派发 | 注册时，或恢复后的 `unlock_dependents` |
 | `dispatched` | 已派发一个分离的子会话；记录 `child_session_key` 与 `dispatched_at` | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
 | `done` | 已由 `taskflow_step(action="resume")` 注入结果 | `taskflow_step(action="resume")` |

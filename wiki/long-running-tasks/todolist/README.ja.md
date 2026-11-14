@@ -15,7 +15,7 @@
   - [計画ファイル (workspace/sessions/<session_id>/plans/*.md)](data/README.ja.md#計画ファイル-workspacesessionssession_idplansmd)
   - [Boulder 状態 (src/data/boulder.json)](data/README.ja.md#boulder-状態-srcdataboulderjson)
   - [エビデンス台帳](../gates/evidence-ledger/README.ja.md)
-  - [todos.db — セッションレベル TODO ストレージ](data/README.ja.md#todosdb--セッションレベル-todo-ストレージ)
+  - [registry.db — セッションレベル TODO ストレージ](data/README.ja.md#registrydb--セッションレベル-todo-ストレージ)
 - [サービスレイヤー](#サービスレイヤー)
 - [ツールレイヤー](#ツールレイヤー)
 - [オーケストレーション実行レイヤー](#オーケストレーション実行レイヤー)
@@ -41,7 +41,7 @@
 | 所有者           | 計画・規律レイヤー（本文書）                                     | TaskFlow（既存システム）                                                                    |
 | スコープ         | 単一セッション、軽量                                             | クロスセッション、永続的                                                                    |
 | 状態             | todo の content/status/priority/category/delegation              | step の depends_on/status/child_session_key/results                                         |
-| 永続化           | `todos.db`（セッションレベル）                                   | `taskflow_registry.db` + flow `state_json`                                                  |
+| 永続化           | `registry.db`（`todos` テーブル）                                   | `registry.db`（`task_flows` テーブル）+ flow `state_json`                                                  |
 | 注入方式         | システムプロンプトブロック（毎回圧縮後に再構築、天然で圧縮免疫） | ツール戻り値テキスト（`taskflow_inspect(action="summary")` で再読取）                                         |
 | 主な責務         | 計画、可視性、規律強制（E1–E7）                                  | 依存関係充足、ブロック/アンロック、並行ディスパッチ、有界待機、結果注入                     |
 | スケジューリング | なし                                                             | あり（`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`） |
@@ -52,11 +52,11 @@
 
 | 関心事                                 | 権威ソース            | 説明                                                           |
 | -------------------------------------- | --------------------- | -------------------------------------------------------------- |
-| todo が完了したか                      | `todos.db`            | `todowrite` のみが todo ステータスを変更可能                   |
+| todo が完了したか                      | `registry.db`            | `todowrite` のみが todo ステータスを変更可能                   |
 | step が完了したか / 依存が充足したか   | TaskFlow `state_json` | `taskflow_step(action="resume")` のみが step を `done` にして後続をアンロック |
 | 子セッションが実行中か                 | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`         |
 | 計画ファイルの進捗（チェックボックス） | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator が `- [ ]` → `- [x]` に編集                       |
-| 実行エビデンス                         | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`（共有、WAL、保持期間/パージ）          |
+| 実行エビデンス                         | `src/data/registry.db` (`evidence_events` table)   | SQLite `EvidenceLedger`（共有、WAL、保持期間/パージ）          |
 | アクティブワーク状態                   | `src/data/boulder.json`   | 計画のアクティベーション/復元                                  |
 
 ### 関連付け（唯一の真実のソース）
@@ -127,7 +127,7 @@ Layer 5  │ DAG 実行 ★        │ TaskFlow が提供: depends_on + blocked/
 Layer 4  │ オーケストレーション ★ │ ulw-execute: plan→checkbox→sub-task→worker→verify、TaskFlow を呼び出し
 Layer 3  │ ツール            │ todowrite + todoread（DAG は taskflow_* ツールファミリーが実行）
 Layer 2  │ サービス           │ TodoService（EvidenceLedger は `pub_base/` に移動して共有、DAG 状態クエリは TaskFlow に委譲）
-Layer 1  │ データストレージ   │ todos.db (WAL) + boulder.json + ledger.db + plans/*.md + taskflow_registry.db
+Layer 1  │ データストレージ   │ registry.db (WAL, todos + evidence tables) + boulder.json + plans/*.md
 ─────────│──────────────────│
 E1       │ システムプロンプト  │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ ツール説明          │ todowrite docstring フォーマットルール
@@ -172,7 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` は検証監査トレイルを支える SQLite ストア（`src/data/evidence-ledger.db`、WAL）です：`append` + `read_all` がストレージ契約のすべてで、呼び出し側から見た行は不変のまま、保持期間が古い行を削除します。セッションスコープのビューは同じ共有 DB を読みます。`todolist/` から `pub_base/` に移され、todolist・TaskFlow・terminal・ファイルツールで共有されるため、todolist 専用の層ではありません。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
+`agent/tools/pub_base/evidence_ledger.py` は検証監査トレイルを支える SQLite ストア（`src/data/registry.db` (`evidence_events` table)、WAL）です：`append` + `read_all` がストレージ契約のすべてで、呼び出し側から見た行は不変のまま、保持期間が古い行を削除します。セッションスコープのビューは同じ共有 DB を読みます。`todolist/` から `pub_base/` に移され、todolist・TaskFlow・terminal・ファイルツールで共有されるため、todolist 専用の層ではありません。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
 
 ### WS プッシュ
 
@@ -273,7 +273,7 @@ Phase 3: 次のチェックボックスを実行（スケジューリングは�
   → blocked はディスパッチしない；ready は taskflow_step(action="dispatch") で一括ディスパッチ
   → taskflow_step(action="wait_all") → taskflow_step(action="resume")（結果注入、後続アンロック）
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: 検証とエビデンス記録 → 5 gates → src/data/evidence-ledger.db
+Phase 4: 検証とエビデンス記録 → 5 gates → `src/data/registry.db` (`evidence_events` table)
 Phase 5: 進捗マーク → checkbox - [ ] → - [x]、継続するか尋ねない
 ```
 
@@ -327,7 +327,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 
 | Block                      | データソース      | コンテキストコスト | 説明                                                      |
 | -------------------------- | ----------------- | ------------------ | --------------------------------------------------------- |
-| `_build_todo_block()`      | todos.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
+| `_build_todo_block()`      | registry.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5行               | アクティブワーク状態                                      |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 

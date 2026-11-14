@@ -41,6 +41,50 @@ export function artifactUriToHttp(uri: string): string | null {
   return ref ? artifactUrl(ref.sessionId, ref.name) : null;
 }
 
+/** One artifact reference extracted from free text plus its served URL. */
+export interface ResolvedArtifactImage {
+  /** The raw `sherry-artifact://` reference. */
+  uri: string;
+  /** The backend `/artifacts` URL an `<img>` can load. */
+  url: string;
+}
+
+/**
+ * Every artifact reference in free text (a tool result, a markdown answer).
+ *
+ * The match stops at whitespace, quotes, brackets and markdown punctuation, so
+ * `![shot](sherry-artifact://…)`, a JSON-quoted URI and a bare line all yield
+ * the same reference. Order is preserved and duplicates collapse: the same
+ * image referenced twice renders once.
+ * @param text Arbitrary text possibly containing artifact references
+ * @returns The references in first-seen order, deduplicated
+ */
+export function extractArtifactUris(text: string | null | undefined): string[] {
+  const source = text ?? '';
+  if (!source.includes(ARTIFACT_URI_PREFIX)) return [];
+  const seen = new Set<string>();
+  const uris: string[] = [];
+  for (const match of source.matchAll(/sherry-artifact:\/\/[^\s)\]}"'<>]+/g)) {
+    if (!seen.has(match[0])) {
+      seen.add(match[0]);
+      uris.push(match[0]);
+    }
+  }
+  return uris;
+}
+
+/**
+ * Resolve every artifact image reference in free text to displayable images.
+ * @param text Arbitrary text possibly containing artifact references
+ * @returns One entry per resolvable reference (unresolvable ones are dropped)
+ */
+export function resolveArtifactImages(text: string | null | undefined): ResolvedArtifactImage[] {
+  return extractArtifactUris(text).flatMap(uri => {
+    const url = artifactUriToHttp(uri);
+    return url ? [{ uri, url }] : [];
+  });
+}
+
 /**
  * Build the backend `/media` URL for a persisted media file.
  *

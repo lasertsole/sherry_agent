@@ -22,7 +22,6 @@
 - **グローバル同時実行上限を追加**: `max_concurrent = 8` — 当初は spawn パイプラインで強制し、超過 spawn は `forbidden` を返していました。**グローバル SUBAGENT lane に置き換え**: 超過 spawn は `PENDING` としてキューに入り、lane のスロットが空き次第開始します（このフィールドは後方互換のためだけに残っています）。registry に `count_all_active_runs` / `count_all_active_runs_readonly` を追加 — どちらも `PENDING` run をアクティブとして数えます（キュー内の子も admission スロットを占有するため）。
 - **`max_spawn_depth` デフォルト 3 → 2、ハード上限化**：2 超過の値は構築時と代入時の両方で拒否。`delegate_task(max_spawn_depth=...)` は上限超過で `ValueError` を送出。深度ツリー: MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 - **`run_timeout_seconds` デフォルト 300 → 0.0（タイムアウトなし）**：spawn と steer は子を直接呼び出し。followup のタイムアウト検査はスキップ。sweeper の 2 時間 stale 検出が安全網。（**2026-10-15 に反転**：デフォルトは再び 600 秒——上のノート参照。）
-- **`archive_after_minutes` 1440 → 60**。
 - **`delegate_task`**：呼び出し毎の `max_concurrent` オーバーライドは非推奨 — グローバル同時実行は SUBAGENT lane がキューイングするため、渡すと `DeprecationWarning` を出すだけです（値は呼び出し毎に適用・復元されます）。
 - 本ドキュメント群（en/zh/ko/ja）とルート README の全設定テーブル・図を新デフォルト値に同期済み。
 
@@ -62,7 +61,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 1. 検証（Validation）
   │     ├── task は非空。task_name は正規化（[^a-zA-Z0-9_-] → _、重複圧縮、
-  │     │   64 文字に切り詰め — task_name.py）
+  │     │   64 文字に切り詰め — text_helpers.py）
   │     ├── target_policy：agent_id は allow_agents ホワイトリスト内
   │     │   （* ワイルドカード対応）
   │     ├── depth = 親の深さ + 1、max_spawn_depth（2）以下
@@ -81,7 +80,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │         researcher / librarian）——MAIN/general は無制限
   │
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
-  │     spawn/thinking.py）
+  │     spawn/text_helpers.py）
   │     ├── thinking の優先順位：明示指定 → リクエスタ → 対象エージェントの既定
   │     └── タイムアウト：spawn ごとの上書き（ツール入力は [600, 7200] に clamp）、
   │           なければ run_timeout_seconds（デフォルト 600 秒、0 = タイムアウトなし）
@@ -825,7 +824,6 @@ agent/tools/subagent/
 │   ├── work_admission.py      Gateway 非依存のルート作業アドミッション + pending カウント
 │   ├── lifecycle.py           ライフサイクルコントローラ（completeRun/resume/announce/pressurePrune/gracePeriod）
 │   ├── state.py               persist/restore ブリッジ（settle-wake 永続化リカバリを含む）
-│   ├── read.py                外部読み取り専用 API（find_run_by_task_name + run record 主クエリ）
 │   ├── task_refs.py           asyncio.Task 参照管理（register/get/remove/cancel）
 │   ├── yield_events.py        asyncio.Event 管理（yield 起床 / 子孫の決着）
 │   ├── sweeper.py             失敗バックオフ付きバックグラウンドスキャナ（階層式期限切れ：cron=2h, subagent=6h, interactive=24h）
@@ -845,15 +843,12 @@ agent/tools/subagent/
 │   ├── target_policy.py       allowAgents 検証
 │   ├── depth.py               深度の計算と制限
 │   ├── attachments.py         子 workspace への添付ファイル実体化（Unicode C0+DEL 制御文字検出、重名検出、厳格な base64 検証を含む）
-│   ├── task_name.py           taskName 正規化
+│   ├── text_helpers.py        taskName 正規化、受理ノート、最初の user message 封筒、thinking レベルの優先順位
 │   ├── system_prompt.py       子エージェントの system prompt 生成（6 部構成：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
-│   ├── initial_message.py     子エージェントの最初の user message（構造化エンベロープ：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  ツール許可/拒否リストの継承
 │   ├── runtime_isolation.py   ランタイム分離とセキュリティ境界 + workspace 継承
 │   ├── origin_routing.py      リクエスト元オリジンルーティング解決 + fingerprint 生成（build_origin_fingerprint を外部 API として公開）
 │   ├── gateway_dispatch.py    最小権限 scope 解決 + SubagentLaunchAuthorization + scope→deny マッピング
-│   ├── accepted_note.py       SpawnResult.note の内容生成
-│   ├── thinking.py            thinking レベル上書き解析
 │   └── completion_judge.py    CompletionJudge — 補助 LLM の done/continue 判定（goal loop）
 │
 ├── announce/                  完了通知パイプライン
@@ -932,7 +927,7 @@ registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
   ↑                    ↑                              ↑
 registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
                                                          ↑
-                                                    registry/read.py
+                                                    registry/memory.py + registry/queries.py
 
 swarm/fifo.py ← swarm/collector.py ← types/swarm.py
 
@@ -944,7 +939,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/initial_message.py ← spawn/task_name.py
+spawn/text_helpers.py（初期メッセージ ← taskName 正規化）
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 
@@ -997,7 +992,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 稼働未終了ランの stale 閾値 |
 | `recent_ended_window_seconds` | 1800 | 直近終了の表示ウィンドウ |
 | `steer_rate_limit_ms` | 2000 | Steer のレート制限 |
-| `archive_after_minutes` | 60 | 自動アーカイブまでの分数 |
 | `attachments_enabled` | True | 添付を許可するか |
 | `attachments_max_files` | 50 | spawn あたりの最大ファイル数 |
 | `attachments_max_file_bytes` | 1MB | 単一ファイルのサイズ上限 |

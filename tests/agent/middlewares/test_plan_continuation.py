@@ -498,6 +498,87 @@ async def test_a_broken_taskflow_read_degrades_to_the_todo_half(
     assert "TaskFlow board" not in content
 
 
+_BLOCKED_ONLY_MARKER = "[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]"
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_only_flow_asks_for_a_decision_not_more_work(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """Every remaining step blocked: "continue working" cannot advance it."""
+    _patch_todos(monkeypatch, [])
+    blocked = _step("step-2", "blocked", deps=["step-1"])
+    blocked["block_reason"] = "StepJudge blocked: no evidence"
+    cascade = _step("step-3", "blocked", deps=["step-2"])
+    _patch_flows(monkeypatch, [_flow([_step("step-1", "done"), blocked, cascade])])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    content = spy_auto_turn[0][1].content
+    assert _BLOCKED_ONLY_MARKER in content
+    assert _CONTINUATION_MARKER not in content
+    assert "do NOT mark it done" in content
+    assert "taskflow_flow(action='replan'" in content
+    assert "taskflow_flow(action='cancel'" in content
+    assert "step step-2 (blocked): task-step-2" in content
+
+
+@pytest.mark.asyncio
+async def test_a_pending_todo_keeps_the_normal_continuation(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """A todo the model CAN advance means the plan is not blocked-only."""
+    _patch_todos(monkeypatch, [_todo("write the docs", "pending")])
+    _patch_flows(monkeypatch, [_flow([_step("step-1", "blocked")])])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    content = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in content
+    assert _BLOCKED_ONLY_MARKER not in content
+
+
+@pytest.mark.asyncio
+async def test_a_ready_sibling_keeps_the_normal_continuation(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """One in-flight/ready step means the flow can still move by itself."""
+    _patch_todos(monkeypatch, [])
+    _patch_flows(
+        monkeypatch,
+        [_flow([_step("step-1", "blocked"), _step("step-2", "ready")])],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    content = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in content
+    assert _BLOCKED_ONLY_MARKER not in content
+
+
+@pytest.mark.asyncio
+async def test_a_settled_but_open_flow_keeps_the_normal_continuation(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """Closing a settled flow is actionable even when another flow is blocked."""
+    _patch_todos(monkeypatch, [])
+    _patch_flows(
+        monkeypatch,
+        [
+            _flow([_step("step-1", "blocked")]),
+            _flow([_step("other-1", "done")], flow_id="flow-2"),
+        ],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    content = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in content
+    assert _BLOCKED_ONLY_MARKER not in content
+    assert "taskflow_flow(action='finish')" in content
+
+
 # ===========================================================================
 # todowrite-usage accounting + the tracking nudge (plan: todo_reminder)
 # ===========================================================================

@@ -100,6 +100,24 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 {todo_status}
 {flow_status}"""
 
+# Blocked-only directive: every remaining TaskFlow step is blocked, so
+# "continue working on the next pending task" would point at work the model
+# cannot advance. The decision it CAN make is named instead.
+_BLOCKED_ONLY_PROMPT = """[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]
+
+All remaining work is blocked — continuing to work cannot advance it. A blocked
+step's result was never proven (a failed judge verdict, a budget-exhausted child,
+or an upstream that settled without a result), so do NOT mark it done.
+
+Review the block reasons in the board and pick one action per blocked step:
+- replan around the blocker: taskflow_flow(action='replan', flow_id=..., reason=...)
+- cancel the blocked branch: taskflow_step(action='update_steps', ...) with that step cancelled,
+  or cancel the whole flow: taskflow_flow(action='cancel', flow_id=..., reason=...)
+- resolve the step by injecting the missing result: taskflow_step(action='resume', flow_id=...)
+
+{todo_status}
+{flow_status}"""
+
 # Recovery directive (behavior contract of this module).
 _RECOVERY_PROMPT = """[SYSTEM DIRECTIVE: RECOVERY MODE]
 
@@ -253,6 +271,29 @@ def _step_settled(step: dict) -> bool:
     return str(step.get("status") or "ready") not in _STEP_INCOMPLETE_STATUSES
 
 
+def _blocked_only(todos: list[dict], flows: list[dict]) -> bool:
+    """True when the only remaining work is blocked TaskFlow steps.
+
+    A pending/in-progress todo is work the model CAN advance, a ready or
+    dispatched step is pending action or in flight, and a flow whose steps are
+    all settled but still open needs a finish call — only an all-blocked step
+    set with none of those makes "continue working" the wrong instruction.
+    """
+    if any(t.get("status") in ("pending", "in_progress") for t in todos):
+        return False
+    flow_statuses: list[str] = []
+    for flow in flows:
+        steps = steps_of(flow)
+        if steps and all(_step_settled(step) for step in steps):
+            return False  # the remaining action is taskflow_flow(action='finish')
+        flow_statuses.extend(
+            status
+            for step in steps
+            if (status := str(step.get("status") or "ready")) in _STEP_INCOMPLETE_STATUSES
+        )
+    return bool(flow_statuses) and all(status == "blocked" for status in flow_statuses)
+
+
 def _build_flow_block(flows: list[dict]) -> str:
     """Render the TaskFlow half of the directive (empty when nothing is open)."""
     if not flows:
@@ -283,10 +324,11 @@ def _build_flow_block(flows: list[dict]) -> str:
                 "taskflow_flow(action='finish') (or taskflow_flow(action='cancel') if the work is abandoned)"
             )
     lines.append(
-        "Board actions: dispatched steps need taskflow_step(action='wait_all') then taskflow_step(action='resume') "
-        "to inject their results; ready steps need taskflow_step(action='run_task') (or "
-        "taskflow_step(action='dispatch') for a parallel batch); blocked steps wait on a "
-        "dependency — resolve it or cancel that branch."
+        "Board actions: dispatched steps need taskflow_step(action='wait_all') then "
+        "taskflow_step(action='resume') to inject their results; ready steps are "
+        "auto-dispatched (retry a failed spawn with taskflow_step(action='dispatch')); "
+        "blocked steps need a decision — replan, cancel that branch, or inject the "
+        "missing result."
     )
     return "\n".join(lines)
 
@@ -621,7 +663,8 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 session_id,
                 len(incomplete),
             )
-            prompt = _CONTINUATION_PROMPT.format(
+            template = _BLOCKED_ONLY_PROMPT if _blocked_only(todos, flows) else _CONTINUATION_PROMPT
+            prompt = template.format(
                 todo_status=_build_status_block(todos), flow_status=flow_status
             )
             if verify_only:

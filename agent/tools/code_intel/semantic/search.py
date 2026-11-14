@@ -292,7 +292,7 @@ class SemanticCodeSearchTool(BaseTool):
         "websockets', 'session cleanup on disconnect'."
     )
     args_schema: type[BaseModel] = SemanticSearchInput
-    metadata: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
+    metadata: dict[str, Any] = {"scope": "code_intel", "idempotent": True}
 
     _engine: SemanticSearch = PrivateAttr()
     _root: Path = PrivateAttr()

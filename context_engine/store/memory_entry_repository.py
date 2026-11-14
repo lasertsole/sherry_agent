@@ -117,17 +117,34 @@ class MemoryEntryRepository:
 
     @contextmanager
     def transaction(self) -> Iterator[ConnectionLike]:
-        """One explicit transaction (migration imports are all-or-nothing)."""
+        """One explicit transaction (migration imports are all-or-nothing).
+
+        The shared MesMemory handle serializes statements ONE at a time, so
+        BEGIN/COMMIT alone do not isolate the unit: a concurrent SELECT could
+        land between two INSERTs on the same connection and observe a
+        half-applied write (the PUT /memory path runs at runtime, not just at
+        boot). The proxy's begin/end pair holds its statement lock for the whole
+        transaction; a private SQLite connection (tests / one-off tools) has no
+        proxy and keeps the plain BEGIN/COMMIT behavior.
+        """
         with self._lock:
             conn = self.db
-            conn.execute("BEGIN IMMEDIATE")
+            begin = getattr(conn, "begin_transaction", None)
+            if begin is not None:
+                begin()
             try:
-                yield conn
-            except BaseException:
-                conn.execute("ROLLBACK")
-                raise
-            else:
-                conn.execute("COMMIT")
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    yield conn
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+                else:
+                    conn.execute("COMMIT")
+            finally:
+                end = getattr(conn, "end_transaction", None)
+                if end is not None:
+                    end()
 
     def _write(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
         with self._lock:

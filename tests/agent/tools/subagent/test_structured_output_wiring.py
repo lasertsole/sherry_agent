@@ -286,6 +286,32 @@ class TestDegradationTrigger:
         assert _is_structured_output_rejection(RuntimeError("connection reset")) is False
         assert _is_structured_output_rejection(TimeoutError("timeout")) is False
 
+    def test_a_transient_error_mentioning_the_strategy_does_not_degrade(self):
+        from agent.tools.subagent.spawn.core import _is_structured_output_rejection
+
+        assert (
+            _is_structured_output_rejection(
+                RuntimeError("429 rate limit exceeded while processing response_format")
+            )
+            is False
+        )
+        assert (
+            _is_structured_output_rejection(
+                RuntimeError("Too many requests: structured output unavailable temporarily")
+            )
+            is False
+        )
+
+    def test_a_genuine_400_still_degrades(self):
+        from agent.tools.subagent.spawn.core import _is_structured_output_rejection
+
+        assert (
+            _is_structured_output_rejection(
+                RuntimeError("400 This model does not support response_format")
+            )
+            is True
+        )
+
     def test_the_identity_mirrors_the_selection_precedence(self, monkeypatch):
         from agent.tools.subagent.spawn.core import _child_model_identity
         from agent.tools.subagent.types import FunctionalRole

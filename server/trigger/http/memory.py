@@ -1,5 +1,6 @@
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request, read_body
 from server.service import read_memory_files, write_memory_files
 
 
@@ -20,7 +21,9 @@ async def write_memory_handler(request):
     Body: {"file_to_content": {"MEMORY.md": "...", "USER.md": "...", "FACTS.md": "..."}}
     Only provided files are overwritten; others are left unchanged.
     """
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
 
     file_to_content: dict[str, str] = request_json.get("file_to_content", {})
     file_count = len(file_to_content)

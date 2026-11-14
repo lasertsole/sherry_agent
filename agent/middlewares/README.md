@@ -98,6 +98,7 @@ middleware = [
     TokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
     UserHooksMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
@@ -143,6 +144,8 @@ middleware = [
     ChildTokenBudget(),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
+    MediaBudgetProjectionMiddleware(),
+    ContextEvictionMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -160,7 +163,7 @@ Differences vs the main agent:
 - A tighter iteration budget (60 instead of 90).
 - No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `PlanContinuationEnforcer`, no `WorkspaceNoticeMiddleware`.
 - No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
-- No `ContextEvictionMiddleware`: child transcripts keep their full tool results (no eviction files, no read_file slice) and oversized human messages are never tagged/truncated.
+- `ContextEvictionMiddleware` runs in the child chain too, with the SAME configuration as the main chain: tool results over 20 000 chars are written to the child's own `SESSIONS_DIR/<session_id>/evicted/` and `read_file` results are sliced. Human-message eviction only matches `origin="user"`, which child task/continuation messages never carry.
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
@@ -175,7 +178,7 @@ Differences vs the main agent:
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent` (list order)               | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                                                                         |
 | `before_model` (list order)               | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn)                                                                                                             |
-| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
+| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → MediaBudgetProjectionMiddleware → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
 | `after_model` (reverse order)             | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush)                                                                                                                                                                                                          |
 | `wrap_tool_call` (outermost → innermost)  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
 | `after_agent` (reverse order)             | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn)                                                                                                                                                                                                              |
@@ -251,11 +254,18 @@ The gate applies only while a plan is open; a session outside plan mode sees the
 - A model rejection classified as `multimodal_not_supported` makes `LLMRetryMiddleware` write `"unsupported"` for the media families actually present and rewrite the request onto the skill path, so later sessions and turns in the same process skip the native probe. The rejection is cached against the **serving** model: when the call was rebound to a fallback candidate, `LLMRetryMiddleware` rewrites `_multimodal_native_model` to that candidate before caching (see its section).
 - **Silent-degradation detection** (`main_llm_silent_degradation_detection`, default on): when a native attempt **succeeds** but the reply self-reports media blindness or asks the user to describe the attachment, `LLMRetryMiddleware` caches every media family present as `"unsupported"` against the serving model, so later turns skip the doomed native probe. The detector (`media_pipeline/degradation.py::detect_media_blindness`) is a precision-first regex over EN/ZH/JA/KO: a blindness/describe phrase only counts when a media word sits near it. The literal "the reply never mentions the media" heuristic is deliberately absent — a capable model can describe an image without any media keyword, and a false positive would force the slower skill path forever.
 - Persisted image references (`sherry-artifact://<session_id>/<name>`, or legacy media paths) and audio/video paths are stored in `additional_kwargs["images"]` / `["audios"]` / `["videos"]` and later written to MesMemory for history rendering.
-- `image_url` blocks are not stripped per turn: `wrap_model_call` projects history media against `history_media_budget_bytes` (75 MiB), newest-first, protecting the latest real user message, and replaces only the blocks that no longer fit. The checkpoint is never rewritten.
+- History media projection moved to `MediaBudgetProjectionMiddleware` (registered in BOTH chains): this processor keeps the upload / persistence / capability-scrub half; the shared budget layer below projects history media on every model request.
 
 `wrap_model_call` / `awrap_model_call` runs on **every model request** (auto mode only) and scrubs the request copy: each media block whose family is cached `"unsupported"` is replaced by a text placeholder naming the stripped media, its on-disk path and the matching skill (`image_to_text` / `speech_to_text` / `video_text_to_text`); supported and unprobed blocks pass through untouched. The rebuild is `request.override(messages=...)` — state, checkpointer and MesMemory are never touched — and the original request object is returned unchanged when nothing needs scrubbing. The capability lookup uses the env main-model key (`get_model_key()`): this layer wraps outside `LLMRetryMiddleware` and so cannot observe a sticky fallback candidate rebound deeper in the chain; that candidate's rejection is still covered by the `multimodal_not_supported` → skill-path rewrite, which stamps the serving candidate into `_multimodal_native_model` before caching.
 
 `after_agent` cleans `mutil_temp`: deletes files whose stem is not a pure numeric timestamp or that are older than 7 days.
+
+### MediaBudgetProjectionMiddleware
+
+**Module:** `agent/middlewares/media_pipeline/budget_projection.py` · **Class:** `MediaBudgetProjectionMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call`
+
+Keeps history media newest-first within `history_media_budget_bytes` (75 MiB) in BOTH the main and child chains. It measures `image_url` / `audio_url` / `video_url` data-URL payloads, protects the latest real user message's media, and replaces only the blocks that no longer fit with a type-named text placeholder. Remote URLs cost nothing and are kept; a budget of `0` drops every non-protected block (the explicit skill-path mode also drops the latest user media). The checkpoint is never rewritten. `required_in=_BOTH`: a subagent that reads several images cannot accumulate unbounded media history even though `MultimodalProcessor` is main-only.
 
 ### IterationBudget
 
@@ -364,6 +374,7 @@ Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `aft
 - **Continuation budget**: `mark_injected` also counts the turn, so the counter is the number of consecutive continuation turns actually DELIVERED (a directive the trigger refused — `busy` / `already_pending` — is not counted and is retried at the next turn end; recovery directives count too). At `TODOLIST_INFRA["max_continuation_turns"]` (15) the gate delivers one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive, latches the session, and stays silent until a turn it did not itself inject — a real user message, or a subagent completion — resets the budget and the latch. This bounds the shape the stagnation check cannot see: a plan edited just enough each turn to keep the snapshot moving.
 - Fail-open: any error is logged and the turn ends normally.
 - **todowrite nudge**: the hook counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, reset by a `todowrite` call in the turn) and, past `TODOLIST_INFRA["todo_write_nudge_turns"]` (10), APPENDS a `[REMINDER: TODO TRACKING]` block to the continuation directive — the one shape the snapshot stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode keeps its own, stronger todowrite guidance and gets no nudge.
+- **Blocked-only directive**: when every remaining TaskFlow step is `blocked` and no todo is still actionable, the gate sends `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]` instead of the continuation prompt — "continue working on the next pending task" cannot advance blocked work. It tells the model not to mark the step done and names the three decisions: replan (`taskflow_flow(action='replan')`), cancel the branch/steps or the flow (`taskflow_step(action='update_steps')` / `taskflow_flow(action='cancel')`), or inject the missing result (`taskflow_step(action='resume')`). A ready/dispatched sibling or a pending todo keeps the normal continuation.
 
 ### DynamicReminderMiddleware
 
@@ -372,7 +383,7 @@ Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `aft
 
 Registered immediately AFTER `TaskIntentMiddleware` (whose per-turn dedup needs the user message still last when it runs). On the turn's FIRST model call it injects the LIVE views as `<system-reminder source="…">` HumanMessages: plan mode, the working directory, the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index. The system prompt itself now carries only stable content (persona + memory + skills index) — a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it, and a prompt only rebuilt on a config change / compaction showed a STALE todo list in between.
 
-- **The catalogue decides**: each source declares a builder, a per-source cap, a priority, `cooldown_turns` (the TaskFlow board / boulder: at most once per 5 turns) and `only_if_changed` (an identical payload is not repeated). The total is bounded by `REMINDER_CATALOG["total_budget_chars"]` (30 000) — over budget the lowest priority is dropped WHOLE, never truncated mid-thought. The throttle advances only for sources actually injected.
+- **The catalogue decides**: each source declares a builder, a per-source cap, a priority, `cooldown_turns` (the boulder: at most once per 5 turns; the TaskFlow board shortens to `taskflow_reminder_cooldown_when_ready` while a failed spawn or a decision-blocked step is outstanding, and keeps 5 otherwise) and `only_if_changed` (an identical payload is not repeated). The total is bounded by `REMINDER_CATALOG["total_budget_chars"]` (30 000) — over budget the lowest priority is dropped WHOLE, never truncated mid-thought. The throttle advances only for sources actually injected.
 - **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer's labels.
 - **After a compaction** the catalogue is reset, so the next turn re-derives every source from live state — the layer never depends on the older reminders surviving the compression.
 - Fail-open throughout: a broken builder or an unreadable register costs a reminder, never a turn (the chain has no per-session switches).
@@ -466,7 +477,7 @@ The shared batch pipeline (both hooks):
 **Module:** `agent/middlewares/context_eviction/core.py` · **Class:** `ContextEvictionMiddleware(AgentMiddleware)`
 **Hooks:** `wrap_tool_call` / `awrap_tool_call` (P0-2/P2-4) and `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call` (P1-9)
 
-Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split for tool results: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Not registered in the worker pipeline: child transcripts keep their full tool results.
+Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split for tool results: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Registered in the worker pipeline with the SAME configuration: the evicted file lands in the CHILD's own `SESSIONS_DIR/<session_id>/evicted/`, which the session may read back without HITL. Human-message eviction only matches `origin="user"`, which child task messages never carry.
 
 **Untrusted tool results are fenced.** After eviction, a result from an attacker-facing tool (`web_search` — one tool whichever backend serves it, plus the `tavily_search` name it carried before the rename — `message_search`, and any `mcp_` tool) is wrapped in an `<untrusted_tool_result source="…" id="…">` block whose advisory states the content is data, not instructions. Any closing tag inside the payload is rewritten to `</untrusted-tool-result>` before wrapping, so it cannot end the block early, and only this model view is fenced — the raw text the inner boundary persisted is untouched. Switch and wording live in `config/features/agent_side/untrusted_output.py`.
 The same pass masks credentials in results from tools that leak them for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`) — **evict → redact → fence**, in that order; file tools stay verbatim so a read-then-write round trip cannot corrupt a config. Switch: `REDACTION["tool_output_enabled"]`.
@@ -1060,7 +1071,15 @@ agent/middlewares/
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
 │   ├── media_offload.py         # compression-time inline-media offload
-│   ├── background_reviews.py    # compression-time review scheduling + prompts
+│   ├── background_reviews.py    # re-export facade for the split review modules
+│   ├── _common.py               # shared text/rendering helpers
+│   ├── background_scaffold.py   # shared review-agent scaffolding
+│   ├── memory_review.py         # compression-time memory review + consolidation
+│   ├── session_end_salvage.py   # session-end memory salvage
+│   ├── handoff_tree.py          # handoff aggregation + plan context
+│   ├── skill_review_runner.py   # plan-completion skill review
+│   ├── ptc_compile.py           # PTC replay-script compilation
+│   └── compression_todo.py      # post-compression todo reconciliation
 │   ├── plan_context.py          # active-plan detection for the skill review
 │   └── summary_doc.py           # SummaryDoc schema + deterministic Markdown renderer
 ├── task_intent/                 # TaskIntentMiddleware

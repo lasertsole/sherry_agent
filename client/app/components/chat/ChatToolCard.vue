@@ -39,6 +39,12 @@
           { 'rotate-180': expanded }
         ]"></span>
     </button>
+    <!-- A tool that produced pictures must not hide them behind the fold:
+         thumbnails are visible while the card is collapsed (the expanded body
+         renders the same grid in the result slot). -->
+    <ArtifactImageGallery
+      v-if="!expanded && artifactUris.length"
+      :uris="artifactUris" />
     <!-- Expanded details: args + result (expanding to view live args/progress is also
          allowed while the tool is running) -->
     <div
@@ -52,11 +58,21 @@
       </div>
       <div v-if="message.toolResult">
         <div class="text-xs font-semibold mb-1">{{ resultLabel }}</div>
+        <!-- Any result carrying sherry-artifact:// references renders as image
+             thumbnails (a generated picture, a browser screenshot); any prose
+             beside the references (the skill's warnings) stays below them. -->
+        <template v-if="artifactUris.length">
+          <ArtifactImageGallery :uris="artifactUris" />
+          <pre
+            v-if="artifactResultRemainder"
+            class="mt-2 text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600"
+            >{{ artifactResultRemainder }}</pre>
+        </template>
         <!-- patch_file / write_file results carry a real unified diff: render
              it inline. Everything else (and every unparseable shape) falls
              back to the plain <pre> — fail-open by construction. -->
         <DiffPreview
-          v-if="toolDiff"
+          v-else-if="toolDiff"
           :diff="toolDiff" />
         <DiffPreview
           v-else-if="newFileDiff"
@@ -86,6 +102,7 @@ import { computed, onUnmounted, ref } from 'vue';
 import type { MessageItem } from '~/pages/home/type';
 import { allAddedDiff, parseToolDiff, writeReportedNewFile } from '~/utils/tool-diff';
 import DiffPreview from './DiffPreview.vue';
+import ArtifactImageGallery from './ArtifactImageGallery.vue';
 import { formatElapsed, formatToolDuration } from '~/common/utils';
 
 interface Props {
@@ -125,6 +142,26 @@ const toolDiff = computed(() =>
 const isNewWrite = computed(() =>
   props.message.toolResult ? writeReportedNewFile(props.message.toolName, props.message.toolResult) : false
 );
+
+/** `sherry-artifact://` references in the result: the card renders them as images. */
+const artifactUris = computed(() => extractArtifactUris(props.message.toolResult));
+
+/**
+ * What the result says BESIDES its images (a `[warn]` line, a caption).
+ *
+ * The image grid replaces the raw output for a pure image result; when the
+ * result also carries prose (the skill's warnings, the tool's "Generated N
+ * image(s)" line), that remainder stays readable under the grid on expand.
+ */
+const artifactResultRemainder = computed(() => {
+  const result = props.message.toolResult;
+  if (!result || artifactUris.value.length === 0) return '';
+  let remainder = result;
+  for (const uri of artifactUris.value) remainder = remainder.split(uri).join('');
+  // Drop the empty markdown-image shells the URI removal leaves behind.
+  remainder = remainder.replace(/!\[[^\]]*\]\(\s*\)/g, '');
+  return remainder.trim();
+});
 
 /** The new file's content: the write's own `text` argument, rendered all-green. */
 const newFileDiff = computed(() => {

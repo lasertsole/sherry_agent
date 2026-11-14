@@ -1,6 +1,6 @@
 """SQLite persistence layer for TaskFlow state (task_flows table).
 
-Database path: agent/tools/taskflow/data/taskflow_registry.db
+Database path: the shared src/data/registry.db (task_flows table)
 Table schema: task_flows(flow_id TEXT PK, state_json TEXT NOT NULL,
 wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL,
 child_session_key TEXT, total_tokens INTEGER DEFAULT 0,
@@ -36,17 +36,17 @@ import json
 import sqlite3
 import threading
 import time
-from pathlib import Path
 
 import aiosqlite
 from loguru import logger
 
 from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
+from config.path import resolve_registry_db_path
 from config.features import TASKFLOW_INFRA
 from ..config import INITIAL_REVISION, TABLE_NAME, TERMINAL_STATUSES, StepStatus, TaskFlowStatus
 
-_DB_DIR = Path(__file__).resolve().parent.parent / "data"
-_DB_PATH = _DB_DIR / "taskflow_registry.db"
+_DB_PATH = resolve_registry_db_path()
+_DB_DIR = _DB_PATH.parent
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this

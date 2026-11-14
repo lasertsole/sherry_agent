@@ -28,14 +28,14 @@ terminal / python_repl がコマンドを実行
                  │
                  └─ 読み取り時: collect_evidence_summary()
                       ├─ evidence 行が [stale] になるのは、より後の stale イベントの file_path が
-                      │   その行の command の部分文字列である場合
+                      │   その行の modified_files に一致（完全一致またはディレクトリ接頭辞）するか、command 内のパストークンに一致する場合
                       ├─ 方向が重要: evidence より前の stale = 新鮮（再検証済み）
                       └─ 返す: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
 **Changed-path スナップショット（B'）。** `write_file` / `patch_file` は `EvidenceLedger.record_file_edit()` も呼び、そのセッションで編集したパスを蓄積します（重複排除、上限 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200。**検証ごとにリセットしない**ため、同じ編集の後の lint と test が同じスナップショットを共有します）。記録時にセッションの project root へ正規化します: `./a.py`、`a/../a.py`、root 内の絶対パスはすべて `a.py` になり、root 外の絶対パスは絶対のままです。検証コマンドの記録時に現在のリストが evidence 行の `modified_files` にコピーされます。その後そのいずれかのファイルへの書き込みは、コマンドがそのファイルを名指ししていなくても evidence を無効化します。
 
-**クロスセッション伝播。** ファイル書き込みはまず書き込み側セッションをマークします。`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` が true のとき、`EvidenceLedger.mark_stale_for_path_all_sessions()` が他のセッションの evidence 行から、`modified_files` に編集パスを含むもの、command が実パスのトークンとして名指すもの、または旧行の command が含むものを探し、影響を受ける各セッションの下に `scope="cross_session"` の stale 行を 1 行ずつ追加します。`source_session` は書き込み側を記録し、`max_sessions_scan` は走査数を制限し、`exclude_self` は既に個別マーク済みの書き込み側を飛ばします。読み取り側の導出は変更不要です——ブロードキャスト行は影響を受けるセッション自身の行順に入るためです。
+**クロスセッション伝播。** ファイル書き込みはまず書き込み側セッションをマークします。`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` が true のとき、`EvidenceLedger.mark_stale_for_path_all_sessions()` が他のセッションの evidence 行から、`modified_files` が編集パスをカバーするもの（完全一致またはディレクトリ接頭辞）、または command がパストークンとして名指すもの（`shlex` の語。旧行も対象）を探し、影響を受ける各セッションの下に `scope="cross_session"` の stale 行を 1 行ずつ追加します。裸の部分文字列は一致しないため、`a.py` が `bla.py` を stale にすることはありません。`source_session` は書き込み側を記録し、`max_sessions_scan` は走査数を制限し、`exclude_self` は既に個別マーク済みの書き込み側を飛ばします。読み取り側の導出は変更不要です——ブロードキャスト行は影響を受けるセッション自身の行順に入るためです。
 
 **Finish 時の再検証。** `taskflow_flow(action="finish")` の Gate C は最初に `regression_gate.reverify_flow_evidence()` を呼びます: flow の各セッションの passed コマンドを重複排除して 1 回ずつ再実行し（allowlist の実行ファイル、シェルなし、`max_reverify_commands` とコマンド単位タイムアウトで制限）、作業ディレクトリは flow のプロジェクトルートです。成功したら stale/broken だったコマンドに `unmark` を追加し、失敗したら `broken` を追加します。これは変更されたソースファイルを stale 行が名指ししていなくても A のテストコマンドを再実行するため、クロスファイル import 破壊を検出できる唯一の経路です。ステップは `file_deps` を宣言でき、他のステップの書き込みがそのいずれかに触れた場合、`prioritized_sessions()` がそのステップのコマンドを `max_reverify_commands` 上限より前に移動します（`file_deps_mode="prioritize"`、既定）。オプトインの `file_deps_mode="filter"` は宣言が命中したセッションだけを再実行します——安価ですが、未宣言ステップの破壊を見逃す可能性があります。
 
@@ -45,7 +45,7 @@ terminal / python_repl がコマンドを実行
 
 ## ストレージ
 
-**ファイル:** `src/data/evidence-ledger.db`（`config.path.resolve_evidence_ledger_path` で解決）
+**ファイル:** `src/data/registry.db` (`evidence_events` table)（`config.path.resolve_evidence_ledger_path` で解決）
 
 | 項目 | 値 |
 |------|----|
@@ -94,7 +94,7 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 
 ### 2. ファイル編集 — stale イベント
 
-`write_file` と `patch_file` は `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` でデコレートされています。デコレータは `finally` ブロックで実行されるため、**すべての**結果（成功・エラー文字列・例外送出）が `{"event": "stale", "file_path": "..."}` 行を追記し、`EvidenceLedger.record_file_edit()` を呼びます。クロスセッションスイッチがオンの場合、同じ呼び出しが、evidence がそのパスをカバーする他の各セッション（`modified_files` 命中、または旧行の command 部分文字列）にも stale 行を追加します。
+`write_file` と `patch_file` は `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` でデコレートされています。デコレータは `finally` ブロックで実行されるため、**すべての**結果（成功・エラー文字列・例外送出）が `{"event": "stale", "file_path": "..."}` 行を追記し、`EvidenceLedger.record_file_edit()` を呼びます。クロスセッションスイッチがオンの場合、同じ呼び出しが、`modified_files` がそのパスをカバーする（完全一致またはディレクトリ接頭辞）か、command がパストークンとして名指す他の各セッションにも stale 行を追加します。
 
 ### 3. サブエージェントワークスペースマージ — stale イベント
 
@@ -142,7 +142,7 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 
 古さは**読み取り側で導出**され、フラグとして保存されません。ルール:
 
-> evidence 行が stale になるのは、**より後の** stale イベント（追記順序でインデックスが大きい）が名指す `file_path` がその行の `modified_files` 集合に含まれるか、command が実パスのトークンとして名指す場合。`modified_files` のない旧行は元の command 部分文字列ルールに降格します。
+> evidence 行が stale になるのは、**より後の** stale イベント（追記順序でインデックスが大きい）が名指す `file_path` がその行の `modified_files` 集合に含まれるか、そのいずれかのファイルのディレクトリ接頭辞であるか、command が実パスのトークンとして名指す場合。`modified_files` のない旧行は同じトークン単位の command マッチを使います——部分文字列ではありません。
 
 ```python
 def derive_evidence_state(records, index):
@@ -159,17 +159,21 @@ def derive_evidence_state(records, index):
         elif event == "stale":
             path = str(later.get("file_path") or "")
             if modified:
-                stale = stale or (path in modified) or _command_references_path(command, path)
+                stale = stale or (
+                    path in modified
+                    or _path_covers_modified(path, modified)
+                    or _command_references_path(command, path)
+                )
             else:
-                stale = stale or (path in command)
+                stale = stale or _command_references_path(command, path)
     return broken, stale
 ```
 
 重要なポイント:
 
 - **方向が重要:** **より後の** stale イベントだけが**より前の** evidence 行を無効化します。evidence より前の stale イベントは、ファイルが編集された後に再検証されたことを意味し、検証は新鮮です。
-- **新行の正確な集合:** `file_path in modified_files`、または command の実パストークン。コマンドが名指ししないソースファイル（`pytest tests/test_beta.py` + `alpha.py` への書き込み）と、A が書いていないテストファイルを捕まえ、旧来の部分文字列誤報（`feature.py` vs `test_feature.py`）を避けます。
-- **旧行のフォールバック:** `file_path in command`。B' 以前の行は元の動作のままです。
+- **新行の正確な集合:** `file_path in modified_files`、modified ファイルのディレクトリ接頭辞、または command の実パストークン。コマンドが名指ししないソースファイル（`pytest tests/test_beta.py` + `alpha.py` への書き込み）と、A が書いていないテストファイルを捕まえ、旧来の部分文字列誤報（`feature.py` vs `test_feature.py`）を避けます。
+- **旧行のフォールバック:** 旧行にはスナップショットがないため、command 内の `shlex` パストークンのみに一致します——`file_path in command` の部分文字列ルールは廃止されました。
 - **パス正規化:** 蓄積パスと stale イベントの両方を書き込み側セッションの project root に対して正規化します（`./`、`..`、root 内絶対 → project-relative、root 外絶対は絶対のまま）。文字列正規化であり、シンボリックリンクは解決しません。異なる session root は統一されません。
 - **セッショングループ:** `SessionEvidenceLedger.list_records()` は `session_id` でフィルタリングし、導出は 1 つのセッションの行順の中だけで比較します。したがってクロスセッションの無効化は、影響を受けるセッション自身のグループに**書き込まれ**（セッションごとに 1 行）、書き込み側のグループには残りません。
 - **Broken と unmark:** 同じ `command` のより後の `broken` イベントは `[broken]`（再検証で失敗）として描画され、同じ `command` のより後の `unmark` は `[stale]` と `[broken]` の両方を消します。`evidence_ledger.py` の `derive_evidence_state()` が唯一の実装で、`[broken]` は `[stale]` より優先されます。

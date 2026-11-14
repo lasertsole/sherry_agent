@@ -281,6 +281,17 @@ async def replay_plan(
 
         meta = load_ldw_script(plan_key)
         if meta is None:
+            # 预设角色 → 高级: flow replay compilation is global-only. An
+            # EXISTING script still replays (the switch governs compilation,
+            # not playback); a missing one is not compiled while it is off.
+            from runtime.session.extraction import flow_extraction_enabled
+
+            if not flow_extraction_enabled(sid):
+                return {
+                    "status": "flow_extraction_disabled",
+                    "plan_key": plan_key,
+                    "replay_count": count,
+                }
             knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
             if knowledge is None:
                 return {"status": "no_workflow", "plan_key": plan_key, "replay_count": count}

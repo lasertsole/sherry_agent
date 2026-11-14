@@ -42,12 +42,13 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (89 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (91 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
 | `models/`                            | LLM/model wrappers (main, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
+| `models/daemon/`                     | Shared lifecycle for the local GGUF daemons (embed / reranker / local chat / vision / STT): pid file, detached spawn, readiness, kill, idle watchdog                      | `models/daemon/base.py`                              |
 | `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
 | `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
 | `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
@@ -78,7 +79,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → PlanModeToolGate → MultimodalProcessor → IterationBudget
-  │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → UserHooks → ContextEviction(P0-2/P2-4)
+  │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → MediaBudgetProjection → UserHooks → ContextEviction(P0-2/P2-4)
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
@@ -159,7 +160,17 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     before_model tags only an oversized trailing USER HumanMessage
   │     (`is_user_message`: `metadata.origin == "user"`; reminders, notices and
   │     every other injected carrier are never tagged) and wrap_model_call
-  │     truncates only the model view)
+  │     truncates only the model view. The CHILD chain registers the SAME
+  │     middleware with NO special mode (the old trimmed child flags are
+  │     gone): the same 20 000-char tool-result threshold, the same
+  │     `read_file` slice and the same human-message switch, with tool results
+  │     written to the child's OWN `evicted/` directory. That tree is part of
+  │     the session's private `SESSIONS_DIR` state (readable/writable without
+  │     HITL — see the self-path policy), so the preview pointer is recoverable
+  │     there too. Human eviction only matches `origin="user"`, which a child's
+  │     task/continuation messages never carry, so their instructions are not
+  │     offloaded. A failed offload falls back to an in-memory hard clip (M12),
+  │     so an oversized payload never reaches state raw)
   │    ThinkingControl: per-session thinking control (client switch / level
   │     picker → PUT /sessions/thinking → state register); swaps request.model
   │     for the variant built by build_main_llm(thinking=... / level=...) when
@@ -227,8 +238,16 @@ User message → Robyn WS → agent.core.built_agent() graph
 
      spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
      `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
-     callers bypass the clamp and keep their own bounds), and after a
-     timeout/kill whose completion notice has no Result the caller can pull the
+     callers bypass the clamp and keep their own bounds). The timeout is a
+     SUBTREE budget: the effective value is frozen on the run
+     (`SubagentRunRecord.run_timeout_seconds`), and a descendant spawn is
+     capped by its parent's remaining wall clock (`started_at + timeout - now`,
+     with a 1 s fail-fast floor), so a grandchild can never outlive the root
+     run. When a parent ends without OK (timeout / killed / error / budget
+     exhausted), `_kill_descendants_after_failure` cascade-kills its live
+     descendants — they can never have their results collected and would
+     otherwise hold SUBAGENT lane slots. After a timeout/kill whose completion
+     notice has no Result the caller can pull the
      child's transcript — `sessions_messages` reads its checkpoint by
      session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
      budgeted, spawner-only)
@@ -253,9 +272,12 @@ User message → Robyn WS → agent.core.built_agent() graph
      `on_turn_finished` does the same for its session before the drain starts
      (HITL-pending sessions skip it). Deleting a main session cascades through
      every descendant run: suppress/kill, then delete each child's registry row,
-     checkpoint thread, session dir, planning rows and attachments. After
-     `init_registry()` a boot sweep deletes every orphan subtree whose root main
-     session or parent run is gone, in one fail-open pass.
+     checkpoint thread, session dir, planning rows and attachments.
+     `purge_session_data` also drops the module-level per-session dictionaries
+     (guardrail / interaction locks and shadow-git's turn counters, dedup pairs
+     and floors) that no register covers. After `init_registry()` a boot sweep
+     deletes every orphan subtree whose root main session or parent run is gone,
+     in one fail-open pass.
 
      A restart is a STATE TRANSITION, not a no-op (`registry/state.py`). No task
      survives it, so a restored RUNNING run is terminalized as a TIMEOUT with
@@ -269,9 +291,7 @@ User message → Robyn WS → agent.core.built_agent() graph
      REBASED onto the restore point (`_rebase_restored_clock`):
      `time.monotonic()` is process-relative, so an old value can read as hours
      old or as a future time and silently disable each `now - timestamp` expiry
-     check; `archive_at` is a deadline and gets a fresh window rather than being
-     rebased to "now" (which would archive on the first sweep). Killing an
-     INTERRUPTED run also releases its per-session guard state
+     check. Killing an INTERRUPTED run also releases its per-session guard state
      (`release_child_session_state`) — there is no live child agent whose
      `finally` would.
 
@@ -318,7 +338,8 @@ User message → Robyn WS → agent.core.built_agent() graph
   counter; a failed spawn does not reset, writes alone do not reset, and
   `after_agent` also resets at the turn boundary.
 
-  completion gates (all always-on, all fail-open):
+  completion gates (all always-on; Gate C's evidence READ is the one
+  unavailable-means-reject rule while the rest fail open):
     · Tier 1 schema gate — a step's response_schema is validated on
       taskflow_step(action="resume") (json parse + validate_structured_output); a miss is a
       retry signal ("schema_error") that never spends a judge call, and an
@@ -342,10 +363,20 @@ User message → Robyn WS → agent.core.built_agent() graph
       `bind_tools`, which returns the inner model; tools are bound strict
       because OpenAI's auto-parse path demands it), keeps the schema in its
       prompt, and the local validation FAILS the run on a shape miss — and, if
-      that also errors, level 2 adds thinking OFF. The rung is PERSISTED per
-      `(provider, model)` in `src/data/subagent_model_caps.json`, so a model
-      that already degraded is never probed again (the runner retries from a
-      clean checkpoint thread under ONE shared wall-clock budget)
+      that already errors, level 2 adds thinking OFF. The rung is PERSISTED per
+      `(provider, model)` in `src/data/subagent_model_caps.json` with
+      `escalated_at` + `reprobe_count`; `get_level` decays one rung once the
+      backoff interval (24 h → 48 h → 7 d) passes, `confirm_level` commits the
+      lower level after a successful spawn (a spawn at the persisted level is a
+      no-op, so steady use cannot pin a degradation), and re-reaching the same
+      rung refreshes the clock instead of restarting it. TRANSIENT errors
+      (429/rate-limit/timeout/connection) never degrade a model even when their
+      text mentions `response_format`. The learned labels are visible and
+      clearable in 系统配置 → 模型配置 (GET/DELETE
+      `/sherry-config/model-caps`, `server/service/model_caps_service.py`), so a
+      provider that later accepts the default strategy can be retried without
+      editing the JSON by hand. The runner retries from a clean checkpoint
+      thread under ONE shared wall-clock budget)
     · StepJudge — step_judge.py, on taskflow_step(action="resume") for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
@@ -356,15 +387,25 @@ User message → Robyn WS → agent.core.built_agent() graph
       a caller passes); continue injects a follow-up turn. The judge's FIRST
       call is skipped when the opening turn produced a result AND the child
       session's ledger shows a passing, non-stale row — the ledger already
-      carries the verdict a simple spawn would otherwise pay a model call for
+      carries the verdict a simple spawn would otherwise pay a model call for.
+      Exhausting `goal_max_turns` WITHOUT a DONE verdict is
+      `RunOutcomeStatus.BUDGET_EXHAUSTED` (never `OK`): the child did work but
+      never proved completion, so delivery declares `step_outcome="blocked"`,
+      the step keeps its partial result and its dependents stay blocked (the
+      agent may retry, replan, or cancel). TIMEOUT/KILLED still declare
+      `failure`.
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
       stale events in SQLite (WAL; lazy retention + session/boot purge); each
       session accumulates edited paths in `verification_state` (project-relative
       normalization; capped 200, not reset per verification) and every verification snapshots them into
       `modified_files`; a write also broadcasts a `scope="cross_session"` stale
-      row to every OTHER session whose evidence command names the path OR whose
-      `modified_files` contains it (gated by EVIDENCE_CROSS_SESSION_STALENESS;
-      the writer's own session is marked separately); at taskflow_flow(action="finish") the regression gate replays the flow's
+      row to every OTHER session whose `modified_files` snapshot contains the
+      path EXACTLY or as a directory prefix (gated by
+      EVIDENCE_CROSS_SESSION_STALENESS; the writer's own session is marked
+      separately). A row whose command names the path as a `shlex` token also
+      matches (legacy rows included); a mere substring does not, so `a.py`
+      cannot stale `bla.py`. At taskflow_flow(action="finish") the
+      regression gate replays the flow's
       passed verification commands once (allowlisted, no shell, capped) and
       writes broken / unmark events, so a cross-file regression is confirmed
       while a false-positive stale is cleared — a rewriting formatter cannot be
@@ -378,8 +419,9 @@ User message → Robyn WS → agent.core.built_agent() graph
       `LIST_SETTING_KEYS` in `config/sherry_settings.py` — validating every entry
       for lowercase/no-shell-metacharacters/bounds, with the built-in defaults
       never removable); read side derives
-      broken/stale using the exact `modified_files` set, falling back to the
-      command substring for legacy rows (evidence_collector.py)
+      broken/stale using exact / directory-prefix `modified_files` matches plus
+      `shlex`-token command matches, with the same token rule for legacy rows
+      (evidence_collector.py)
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's evidence read by `flow_id` FIRST (step children are stamped at
@@ -390,7 +432,10 @@ User message → Robyn WS → agent.core.built_agent() graph
       stamp is memory-only — so an EMPTY flow-scoped result falls back to the
       flow's OWN sessions (its step children plus the creator, never the whole
       session), which is the only way evidence that still exists can gate the
-      finish. Then Gate E's goal judge (only for a flow with a description and
+      finish. An UNREADABLE collector is not treated as empty: the finish
+      is rejected and the reason is recorded in the flow state as
+      `evidence_unavailable` (an empty-but-readable ledger still passes). Then
+      Gate E's goal judge (only for a flow with a description and
       at least GOAL_GATE["min_steps"] = 3 steps)
     · TaskFlow state-machine guards — `validate_steps_list` refuses a
       `depends_on` CYCLE at create/update time (depth-first over the
@@ -433,11 +478,38 @@ User message → Robyn WS → agent.core.built_agent() graph
       as if it were verified
 ```
 
+## Middleware Spec Table (`agent/middlewares/specs.py`)
+
+`MIDDLEWARE_SPECS` is the ONE declarative source for both chains. Each row is a
+`MiddlewareSpec` with an optional `main` / `child` `ProfileBinding(position,
+builder)` and `required_in` (the safety baseline). `agent/core.py`,
+`child_agent_factory.py`, `scaffolding._MAIN_REQUIRED` / `_SUBAGENT_REQUIRED`,
+`catalog.MIDDLEWARE_ORDER`, `chain_for()` and both builders all derive from it —
+never edit a derived list as a second source. The import-time `_validate_table()`
+enforces unique contiguous positions per profile and that every
+`required_in` member has a binding.
+
+Adding a middleware: add one row; positions of later entries in the SAME profile
+shift by one. Marking it safety-critical: set `required_in` (a subset of
+`{MAIN, CHILD}`; `_BOTH` is both). Renaming a required class: change the row and
+update name-based tests; the derived sets follow. Demoting a required entry:
+remove its `required_in` only with a recorded reason and update its
+non-required test. The order-pinning tests are
+`tests/agent/core/test_middleware_order.py` and
+`tests/agent/middlewares/test_scaffolding.py`; the chain contracts and
+per-middleware sections live in `agent/middlewares/README.md` (four languages).
+
+`MediaBudgetProjectionMiddleware` (main 10 / child 5, `required_in=_BOTH`) is
+the extracted history-media budget layer: `MultimodalProcessor` stays
+main-only, while both chains project `image_url` / `audio_url` / `video_url`
+blocks newest-first within `history_media_budget_bytes`, protecting the latest
+real user message and never rewriting the checkpoint.
+
 ## PTC Replay (`agent/tools/ptc/`)
 
 `execute_code` is the manual PTC tool (executor-only; the LLM writes and calls the script). The replay path is a second, **system-triggered** use of `run_ptc`, gated by `PTC["ptc_prefill_enabled"]` (shipped `False` for observation):
 
-- After a skill review passes, the same background task may compile one `skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step (`compiler.py`; source is validated statically and written through `skill_manage`, never executed there). Compile failure never rolls back the accepted skill.
+- After a skill review passes, the same background task may compile one `skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py` per successful TaskFlow step (`compiler.py`; source is validated statically and written through `skill_manage`, never executed there). Compile failure never rolls back the accepted skill. Compilation additionally requires the user-facing `flow_extraction_enabled` switch (see Extraction Settings); the switch never gates REPLAYING an existing script.
 - On a step subagent spawn, `_execute_subagent_scoped` (before `_build_child_agent`) resolves the plan key from the normalized root main session and asks `scripts.py` for the unique script. Only `PTC_ROLES` (executor) runs the prefill, so the role boundary is not widened.
 - The call is `run_ptc` directly with a role-filtered tool map (`PTC["ptc_allowed_tools"]` ∩ the spawn's policy) and the child session id; it is not a tool call.
 - Success = `status=ok`, exit 0, non-empty stdout, a non-empty `calls_log` with every call `ok`, and the step's `output_schema` passing when present. A hit skips child build / LLM / goal loop and returns stdout as `result_text` (`handoff=None`).
@@ -449,13 +521,65 @@ User message → Robyn WS → agent.core.built_agent() graph
 
 The LDW core is vendored whole under `vendor/ldw/` (no `deepagents` dependency): `vendor/ldw/_bootstrap.py` installs a minimal stub before the package imports, and `agent/tools/subagent/ldw_shim.py` is the stable import seam. The main agent has a main-only `workflow_replay` tool (`action=status|compile|replay`); it is not a subagent tool.
 
-- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored.
+- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored. The loader never `exec_module`s the file: it AST-parses those three literal assignments (nothing else — an import, call or extra name refuses the script), so a tampered skill file cannot run code in the orchestrator.
 - `compile_plan_to_workflow` consumes the current TaskFlow flow DAG and preserves the step contract (`response_schema`, `step_model`, judge/validation criteria, retry policy, skills, timeout); `build_orchestrate` injects `variant_input`, hard constraints and each predecessor's result into the step prompt, so the journal key partitions by variant and upstream output. `agent_type` carries the step suffix because PTC scripts are step-scoped. A schema-bound step calls `ctx.agent(..., schema=...)`.
 - `register_roster` registers one BUILDER per step (so LDW can request a schema-bound runnable). Leaves reuse `_assemble_child_tools`: the role allow-list plus code intelligence, ast-grep and executor-only PTC. `session_id` travels in the runnable config, not a baked graph. An executor leaf may run its PTC script first (hard gate; failure appends `[PTC Pre-run Progress]` and falls back to ReAct; a PTC schema miss is failure). A schema leaf forces thinking off.
 - `SqliteWorkflowStore` at `src/data/workflow_runs.db` backs cross-process resume; repeated replay with the same prompt/agent_type/model/schema is zero-call (`journal_hits` / `leaf_calls` are reported). Per-plan locks serialize concurrent replay; `LDW["real_replay_timeout_s"]` bounds one run.
 - LDW has no step retry/judge. A failed node is `None` and skips dependents. `taskflow_adapter.run_taskflow_fallback` is the automatic L2: it creates a NEW `ldw-<first 8 chars of plan_key>-<8-char uuid>` flow from the same verified DAG (never resets the old flow), seeds every succeeded LDW result as DONE with a synthetic `ldw-journal:<flow>:<step>` child key (so those steps spawn nothing), dispatches only failed/unfinished steps through normal TaskFlow (retry/schema/StepJudge/child semantics intact), polls `taskflow_wait_all`, injects each settled child through `taskflow_resume`, and terminalizes a rejected/unfinished flow instead of leaving an active orphan. It writes successful TaskFlow results back to the LDW journal, so the next same-variant replay is zero-call; `auto_degrade_enabled` / `repair_enabled` / `max_failed_steps` gate the path.
 - Repair: when steps failed, `repair_extraction` reads the replay flow's child handoffs, merges the actual success path and failure branches into plan knowledge, persists `success-steps.json` via `KnowledgeStore`, and recompiles the LDW script. Persistence/recompile errors are returned, never raised. PTC scripts remain owned by the skill-review compiler; LDW repair only recompiles its own artifact.
 - Tests: `tests/agent/tools/subagent/test_ldw_shim.py`, `tests/agent/tools/ldw/test_compiler.py`, `test_scripts.py`, `test_replay.py`, `test_leaf.py`, `test_taskflow_adapter.py`, `test_repair.py`, `test_tool.py`, `tests/full/test_ldw_replay_e2e.py`, and the real TaskFlow/model e2e `tests/full/test_ldw_real_plan_e2e.py`; four-language docs in `wiki/ldw/`.
+
+## Extraction Settings (`预设角色 → 高级`, `runtime/session/extraction.py`)
+
+One user-facing surface controls four values at two scopes. The single reader is
+`runtime/session/extraction.py::effective_extraction_config(session_id)`; every
+gate calls it, and every read is fail-open.
+
+| value | UI label | global | session | default |
+|---|---|---|---|---|
+| `skill_extraction_enabled` | 经验学习 / Experience Learning | yes | override | `True` |
+| `flow_extraction_enabled` | 流程复用编译 / Flow Replay Compilation | yes | **read-only** | `True` |
+| `iteration_budget_main` | 主智能体迭代上限 | yes | override | 180 |
+| `iteration_budget_sub` | 子智能体迭代上限 | yes | override | 90 (a cap) |
+
+- **Global** lives in `sherry.jsonc`'s `extraction` group (`extraction.*` dotted
+  keys registered in `config/sherry_settings.py`), is read LIVE on each call and
+  written through `PUT /extraction/global` → `write_sherry_config` (typed,
+  comment-preserving).
+- **Session** lives in `StateKey.EXTRACTION` with the parked twin
+  `EXTRACTION_PENDING` (promoted at the turn boundary by
+  `promote_pending_settings_sync`), written through `PUT /sessions/extraction`.
+  Only experience learning and the two ceilings are accepted; a payload naming
+  `flow_extraction_enabled` is refused by name (global-only). The panel persists
+  ONLY the fields that differ from the global values, so a field left alone
+  keeps inheriting later global changes.
+- Resolution is session → global → default. `skill_extraction_enabled=False`
+  forces flow off (parent-off forces child-off); `iteration_budget_sub` is
+  clamped to `iteration_budget_main`, and both to 1..1000.
+- Gates: `maybe_trigger_skill_review` checks `skill_extraction_enabled` BEFORE
+  the completion detector (a disabled pass never marks the plan extracted);
+  `_compile_ptc_scripts`, `workflow_replay(action="compile")`,
+  `replay_plan`'s compile-on-miss and the TaskFlow repair recompile check
+  `flow_extraction_enabled`. Replaying an EXISTING script is never gated — the
+  switch governs compilation, not playback.
+- `IterationBudget` (main) takes a per-session `cap_resolver` and stores each
+  turn's cap beside the counter in `before_agent`, so one process-level instance
+  serves sessions with different ceilings. A child's role limit is
+  `min(role_limit, iteration_budget_sub)` resolved from the child session's ROOT
+  main session (`root_session_id`); the 180/90 defaults reproduce the previous
+  180 / 60-90 limits exactly.
+- UI: `ExtractionSettingsPanel.vue` is the LAST tab of both the global persona
+  panel (`PersonaPanel.vue`) and the session preset panel
+  (`SessionPresetPanel.vue`); the session entry renders the flow row locked with
+  a "controlled by global" hint. Labels are the central four-language
+  `advanced.*` keys. API surface: `GET|PUT /extraction/global`,
+  `GET|PUT /sessions/extraction`.
+- Tests: `tests/runtime/test_extraction_settings.py`,
+  `tests/server/trigger/http/test_extraction_api.py`,
+  `test_iteration_budget.py`, `test_scaffolding.py` (child cap),
+  `test_skill_review_trigger.py`, `test_skill_review_ptc_compile.py`,
+  `tests/agent/tools/ldw/test_tool.py` / `test_replay.py`, and the client
+  `extraction-bridge.test.ts` + `ExtractionSettingsPanel.integration.test.ts`.
 
 ## Queued User Input (`server/service/input_queue_service.py`)
 
@@ -705,7 +829,7 @@ Three layers, OFF by default (`sherry.jsonc` `safety_filter.*`, read LIVE throug
 
 - **Rules** (`rules.py`): `{pattern, type: exact|contains|regex, action: block|replace|warn, scope: input|output|both, replacement}`; validated (count / pattern / replacement caps, regex compiles) before writing, compiled with an mtime cache so an edit applies without a restart, and fail-open (a broken file reads as no rules).
 - **Input** (`InputSafetyFilter`, `awrap_model_call`): a `block` hit returns `safe_refusal_message` WITHOUT calling the provider; `warn`/`replace` pass through and only notify (the input side never rewrites the user's own text).
-- **LLM review** (`LLMModerationMiddleware`, inner to the keyword filter so a keyword block never pays for it): needs ALL THREE of the master switch, a non-`off` strategy (`on_keyword_hit` / `always`) and a model name — `safety_filter.llm_moderation_model` EMPTY keeps the review off whatever the strategy says, and the tab's switch is disabled until one is typed. The call reuses the auxiliary family's provider/credentials with the name overridden (`build_auxiliary_llm(model_name=…)`) and FAILS OPEN: timeout (20 s), request failure or an unparseable verdict lets the turn through.
+- **LLM review** (`LLMModerationMiddleware`, inner to the keyword filter so a keyword block never pays for it): needs ALL THREE of the master switch, a non-`off` strategy (`on_keyword_hit` / `always`) and a model name — `safety_filter.llm_moderation_model` EMPTY keeps the review off whatever the strategy says, and the tab's switch is disabled until one is typed. The call reuses the auxiliary family's provider/credentials with the name overridden (`build_auxiliary_llm(model_name=…)`). Its failure policy follows the strategy: `always` fails CLOSED — a timeout (20 s), request failure or unparseable verdict blocks the turn with the safe refusal — while `on_keyword_hit` fails OPEN, because the keyword layer already produced a verdict.
 - **Output** (`OutputSafetyFilter`, `aafter_model`): registered between `LLMRetry` and `Summarization`, so the reverse `after_model` chain runs it BEFORE `MessagePersistence` stores the row — `block` replaces the whole answer, `replace` substitutes the hit, `warn` only reports; the row is upserted with the same message id.
 - **Streaming** (`stream_guard.py::StreamTextGuard`): holds the last `stream_buffer_window` (20) characters and releases ONLY scanned text. A `block` anywhere in the buffer latches (buffered text dropped, the replacement notice emitted once), a `replace` ending inside the releasable prefix is substituted, one the release point would cut in half holds the release back. A pattern longer than the window can only complete in the tail, so at most `len(match) - 1` characters can be visible before the end-of-stream flush cuts. A streamed answer therefore never reaches `OutputSafetyFilter` — the guard scrubs chunks before they become frames, so the client and the persisted row agree (`StreamTurn._safety_guard`, re-armed per phase).
 - **Surface**: `GET|PUT /safety-filter/rules`, `POST /safety-filter/test`, `GET /safety-filter/log` (`server/trigger/http/safety_filter.py`); switches/model ride `PUT /sherry-config`. Every decision records one bounded per-session event and pushes a `safety_filter` WS frame; the client toasts it (block = error level). Tests: `tests/agent/middlewares/safety_filter/` + `SafetyFilterPanel.integration.test.ts`.
@@ -718,7 +842,7 @@ A four-step tour (welcome → preset → core controls → ready) shown once per
 
 ## Desktop Window Frame (`TitleBar.vue` / `common/titlebar.ts`)
 
-The Tauri shell runs undecorated (`decorations:false` in `tauri.conf.json`, with start-dragging/minimize/maximize/close window permissions in `capabilities/default.json`). ONE `TitleBar.vue` is mounted in `layouts/default.vue` at `z-60`, height 36 px: its left edge is the sidebar width only on `/home` with the left sidebar expanded and the right sidebar not maximized, otherwise 0. The middle+right content gets a matching `padding-top` (persisted in `content-shell`), the left sidebar stays full height, the right sidebar's maximized overlay starts at `top:36px`, and the floating-window slot/clamp/anchors plus the input-only pill stay below the bar. The Web build renders no titlebar and uses zero inset. The close button calls the SAME Rust `CloseRequested` → `close_ack` → `CloseToTrayDialog` flow as the OS button; minimize/maximize use the Tauri window plugin.
+The Tauri shell runs undecorated (`decorations:false` in `tauri.conf.json`, with start-dragging/minimize/maximize/close window permissions in `capabilities/default.json`). ONE `TitleBar.vue` is mounted in `layouts/default.vue` at `z-60`, height 36 px: its left edge is the sidebar width only on `/home` with the left sidebar expanded and the right sidebar not maximized, otherwise 0. The middle+right content gets a matching `padding-top` (persisted in `content-shell`), the left sidebar stays full height, the right sidebar's maximized overlay starts at `top:36px`, and the floating-window slot/clamp/anchors plus the input-only pill stay below the bar. The Web build renders no titlebar and uses zero inset. The drag region is EMPTY (no title text). On Windows/Linux the three controls render inline 10x10 SVG glyphs (line / square / two overlapping squares / X) with `stroke="currentColor"`, matching the OS titlebar; macOS keeps the PrimeIcons traffic-light path. The close button calls the SAME Rust `CloseRequested` → `close_ack` → `CloseToTrayDialog` flow as the OS button; minimize/maximize use the Tauri window plugin.
 
 ## Composer Input Triggers (`inputBox.vue` / `use-input-trigger.ts`)
 
@@ -794,6 +918,90 @@ attempt surfaces the real error. An UNCONFIGURED mic stays clickable too — a
 disabled button cannot speak — so the click toasts `chatInput.voiceUnavailable`
 and no recording starts; the tooltip carries the same text. Insertion failures
 never touch the box's content; `chatInput.voice*` keys cover the four languages.
+
+## Local Model Daemons (`models/daemon/base.py`)
+
+The local GGUF models live in detached child processes, not in the orchestrator.
+`models/daemon/base.py` owns the ONE lifecycle the four daemons share:
+`DaemonSpec` (host/port/pid file/import target/budgets), `is_ready` (strict:
+`/healthy` must answer `{"ready": true}`), `spawn` (detached, pid file, log file,
+no duplicate when a recorded pid is alive), `wait_until_ready`, `ensure_ready`
+(returns `ReadyState.READY | WARMING | UNAVAILABLE`), `kill` (SIGTERM → SIGKILL,
+reaps its own child; it first verifies the recorded pid's command line names
+this daemon through psutil and treats an uninspectable pid as FOREIGN — a stale
+pid file plus PID reuse must never signal an unrelated process) and
+`IdleWatchdog` (the daemon exits itself after its idle window). The STT daemon
+was refactored onto it (same `.stt_daemon.pid` location in a checkout, now under
+`APP_HOME` so a packaged build can write it); embed, reranker and local chat are
+built on it.
+
+Spawn is packaging-aware: a checkout runs `python -c "from <module> import main;
+main()"`; a frozen build re-executes the packaged backend with
+`--sherry-daemon <module>` and `packaging/backend_entry.py` dispatches to that
+module's `main()` BEFORE booting the server (a daemon child must not initialise
+logging/event-loop patching/LangSmith). `--sherry-home` and `--sherry-desktop`
+are propagated so the child resolves the same writable home.
+
+- **Embed** (`models/embed_model/text/daemon.py`, port 9012,
+  `.embed_daemon.pid`): `GET /healthy`, `POST /embeddings {input: list[str]}`
+  → `{"data":[{"index","embedding"}]}`. One warm `Llama(embedding=True)`,
+  inference serialised by a lock. The client (`_LocalEmbeddingBackend`) keeps
+  the L2 normalisation, sends the same batches the call sites already build
+  (`memory_embeddings` 32/batch, the indexer 64/batch), retries once after a
+  daemon error (an idle exit is invisible), and falls back to the historical
+  in-process load/close only when no daemon process can be STARTED — a WARMING
+  daemon is a retryable error, never a reason to load a second copy.
+- **Reranker** (`models/reranker_model/daemon.py`, port 9013,
+  `.reranker_daemon.pid`): `POST /rerank|/filter|/predict`; one warm
+  `CrossEncoderGGUF`. Its local scoring is BATCHED: up to 8 pairs share one
+  `llama_encode` (bounded by the context's ubatch token budget), with a
+  per-pair fallback when the native batch call fails. Measured 32 pairs
+  12.0 s → 8.4 s; batched kernels can shift near-tie scores by ~0.04 while the
+  0.5 filter decisions stayed identical in probes. `_LocalGgufBackend` sends the
+  calls and keeps the in-process loader for `RERANKER_DAEMON_ENABLED=false` /
+  unavailable spawns.
+- **Local chat** (`models/LLMs/local_daemon/server.py`, port 9014,
+  `.llm_daemon.pid`): `POST /v1/chat/completions`, a thin wrapper over
+  `Llama.create_chat_completion`. The local path's tool calls and structured
+  output are PROMPT-driven (`LocalToolBinder` / instructor), so the bridge is a
+  client shim (`client.py`) implementing exactly
+  `create_chat_completion` + `create_chat_completion_openai_v1`, not a new
+  LangChain model. When the daemon cannot be started — or is still warming past
+  its budget — `_LocalAuxiliaryChatModel` falls back to in-process `Llama`.
+- **Vision chat** (same server, port 9015, `.vision_daemon.pid`): the daemon
+  reads `SHERRY_LOCAL_LLM_MMPROJ_PATH` and adds `Qwen25VLChatHandler` with
+  `n_batch = n_ubatch = n_ctx`, exactly mirroring the in-process
+  `LocalMultimodalLlamaChatBase`. ITTT/VTTT resolve the same Qwen2.5-VL
+  weights + mmproj, so both share the one vision daemon; a second distinct
+  vision model would need its own port. The base tries the daemon first and
+  falls back to the historical in-process client on an unavailable spawn.
+- Config is `LOCAL_DAEMONS` (`config/features/infra_side/local_daemons.py`);
+  every value has an env override (`EMBEDDING_DAEMON_PORT`,
+  `*_DAEMON_IDLE_TIMEOUT_S`, `AUXILIARY_LLM_N_CTX`, `VISION_LLM_DAEMON_*`,
+  `*_DAEMON_ENABLED`, …).
+  `AUXILIARY_LLM_N_CTX` defaults to the historical 40 960; lowering it also caps
+  the local `max_tokens` at half the window so a smaller KV cache cannot be
+  paired with an oversized completion request.
+- Measured on this host (bge-m3 q8_0): daemon first call 3.8 s (spawn + load),
+  warm call 0.49 s vs 2.88 s in-process; main-process RSS during embedding
+  46.5→47.3 MB while the daemon held 1 045 MB; cosine similarity to the
+  in-process vectors 1.0. Reranker (bge-reranker-v2-m3 Q8_0): first call 32.8 s
+  (spawn + 606 MB GGUF load), warm rank 1.33 s for 4 documents vs 31.5 s
+  in-process (reload included), main RSS 46.6→46.9 MB / daemon 898 MB, scores
+  and order identical. Local chat (Qwen2.5-0.5B-Instruct Q4, a real GGUF used
+  to validate the bridge): first invoke 3.33 s (spawn + load), warm 0.77 s,
+  main RSS 65.3→65.9 MB while the daemon held 600 MB, tool call and structured
+  output both worked; loading the same model in-process added 538 MB to the
+  main process. Vision (Qwen2.5-VL-3B Q4 + mmproj, 96 px red square): first
+  invoke 13.61 s (CPU image encode + prompt), warm 7.44 s, main RSS
+  67.3→20.2 MB while the port-9015 daemon held 3 571 MB; the answer was `Red`
+  (correct). ITTT/VTTT share that daemon's weights. Direction 3 (lazy heavy imports) was skipped by its MEASURED
+  kill criterion: the full boot import chain contains none of `torch` /
+  `transformers` / `cv2` / `mineru_vl_utils` / `leidenalg` / `snkv` /
+  `tree_sitter` / `gguf` / `llama_cpp`; importing them alone costs ~490 MB /
+  5.9 s (`torch`) and ~41 MB / 9.9 s (`transformers`), so they are already
+  where the optimization wants them. `tests/perf/test_boot_import_set.py`
+  guards the absent set. Wiki: `wiki/local-model-daemons/`.
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 
@@ -917,15 +1125,30 @@ gotchas), not project conventions (those go to `memory` or the project's
 AGENTS.md). The memory review states this routing; the plan-completion skill review is
 skill-only and does not write FACTS or knowledge, so it never migrates facts.
 
-**Skill review (plan completion).** `_run_skill_review` reads the plan,
-compact success/failure evidence, loaded skills and bounded user corrections, then
+**Skill review (plan completion).** `_run_skill_review` first screens the plan
+with a task-level pre-check (`_judge_task_generalizability`): one short
+auxiliary call receiving only the goal + completed todo summaries (never the
+handoff evidence) answers `{should_extract, reason}`. A false verdict returns
+BEFORE the handoff tree and the review agent are built, and stores the snapshot
+fingerprint as consumed in `skill_review_snapshot_hash` (the same key the
+success path writes), so the same plan never re-runs the pre-check; a
+malformed/unavailable/failed call fails OPEN to extraction. The pre-check judges
+the TASK class — the gap the judge's `reusable` field (which scores the produced
+skill) does not cover. It then reads the plan, compact success/failure evidence,
+loaded skills and bounded user corrections, and
 asks the auxiliary model to update a class-level skill. Its tool face is only
 `skill_list` / `skill_view` / `skill_manage`; knowledge and memory are absent.
 It snapshots `skills/auto`, runs the review, and sends the changed files plus the
 evidence to `skill_review.judge_skill_update()` (grounded / reusable / trigger /
-quality). A rejected attempt restores the snapshot and retries with judge feedback;
+quality / scope_valid). On visibility the review prompt OMITS `scope` by default
+(visible to the main agent and subagents), asks for `main_only` only when the
+procedure depends on main-agent-only capabilities (delegation orchestration via
+`sessions_spawn` / `taskflow_*` / `todowrite`, `skill_manage`) and for
+`subagent_only` only on a pure worker playbook; the judge returns
+`scope_valid` and a scope that contradicts the body fails the attempt with
+feedback. A rejected attempt restores the snapshot and retries with judge feedback;
 exhaustion records `skill_review_failed_hash` and leaves the success
-fingerprint untouched. A no-op is allowed only when the judge accepts its reason.
+fingerprint untouched. A no-op is allowed only when the judge accepts its reason: a JUSTIFIED no-op passes on `no_op_justified` ALONE (no files changed, so `reusable` / `trigger_quality` / `quality` / `scope_valid` have no content to score) and terminates the review after one judge call; only CHANGED content goes through the full quality chain.
 `handoff-tree.json` remains the raw audit file; `task-*.json` / `wave-*.json` /
 `plan-summary.json` are legacy and the `knowledge` tool/prompt block are retired.
 
@@ -983,8 +1206,9 @@ approval prompt names the session's root, not the checkout.
 File browsing (`GET /project/tree`, `GET /project/file`,
 `server/service/project_files_service.py`) is read-only and hard-refused to the
 session's root: `resolve_within(base, path)` runs the same gate order as the
-tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
-size (413), non-UTF-8 (415), depth and entries per level. Since the 2026-11-09
+tools, reads go through `_open_no_follow` (component-wise `O_NOFOLLOW` walk, so a
+parent directory swapped for a symlink cannot redirect the read), and
+`FILE_BROWSER` bounds size (413), non-UTF-8 (415), depth and entries per level. Since the 2026-11-09
 audit (H1) an UNBOUND session cannot read files at all (its fallback root is the
 sherry checkout, so `path=.env` used to return the model API keys), and a bound
 checkout still refuses sherry's own root config/credential files through the
@@ -1123,7 +1347,11 @@ there is no typing channel. That picker is the one deliberate exception to the
 in-root rule (`GET /system/dirs`, `server/service/system_folders_service.py`):
 it lists the direct **subdirectories** of one absolute path (names only, no
 files, no contents; `FILE_BROWSER` caps the level) and sits behind the same
-gateway auth/CORS/CSRF middleware as every other route. The toolbar's files
+gateway auth/CORS/CSRF middleware as every other route. The path must be inside
+an allowed browse root — the server user's home, the process default project
+directory and `TEMP_DIR`, extended by `SHERRY_DIR_PICKER_ROOTS`
+(os.pathsep-separated) — so the endpoint is not a whole-disk enumeration
+oracle; ``parent`` is omitted when the go-up target would be refused. The toolbar's files
 button (`pages/home/index.vue`) exists only while a session is open AND its
 project directory is bound — the tree it opens is scoped to both, so an unbound
 session shows no control at all (nothing to press, no empty picker) — and the
@@ -1296,8 +1524,8 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
   (`SANDBOX_*`, `SHERRY_GATEWAY_*`, `SHERRY_AUTH_*`). Never put a key here.
 - **`.models`** (gitignored; template `.models.example`) — the model families:
   provider / endpoint / key / local-model switch for main, auxiliary, TaskFlow
-  decisions, compression, ITTT, VTTT, TTI, reranker, embedding and STT, plus
-  the scanner's LLM selection. Loaded by
+  decisions, compression, the four per-role subagent families, ITTT, VTTT, TTI,
+  reranker, embedding and STT, plus the scanner's LLM selection. Loaded by
   `config/models_settings.py`.
 - **`.network`** (gitignored; template `.network.example`) — network services:
   `TAVILY_API_KEY` + the `SEARXNG_*` backends, the `SHERRY_BROWSER_*` switches
@@ -1326,6 +1554,29 @@ are deliberately NOT part of the per-session agent config):
   summary (`_create_summary` / `_acreate_summary`). It does NOT serve memory
   review (the MAIN model, cache-warm by design) or the skill review (the
   auxiliary model).
+- `EXECUTOR_LLM_*` / `RESEARCHER_LLM_*` / `REVIEWER_LLM_*` / `LIBRARIAN_LLM_*` —
+  one family per functional subagent role. A CONFIGURED family (provider or
+  api_base, or `MODEL_LOCAL=true`) serves every child of that role and outranks
+  the role's `model_tier`; an EMPTY family changes nothing — the shipped role
+  definitions declare `model_tier: auxiliary`, so an untouched deployment is
+  byte-for-byte unchanged. `build_role_llm(role)`'s own fallback is MAIN
+  (matching the per-role documentation), but the spawn resolver reaches it only
+  when `role_llm_configured(role)` is true; `general` has no family.
+  `_RoleFamilyResolver` sits after the session per-role profile and the named
+  model override, before the tier/depth resolvers, and the output-cap resolver
+  (`output_caps.resolve_child_max_output_tokens`) plus the structured-output
+  identity (`_child_model_identity`) mirror that precedence — a configured
+  family's `MAX_OUTPUT_TOKEN` drives the result-text caps and its
+  `(provider, model)` keys the persisted degradation rung. The selected source
+  (`role_profile` / `model_override` / `role_family` / `tier_main` /
+  `tier_auxiliary` / `depth_main` / `depth_auxiliary`) is logged at spawn and
+  recorded as one `subagent_model` trajectory event, and
+  `GET /sherry-config/model-roles` answers every judge/role's
+  `{family, configured, local, source, effective_provider, effective_model,
+  max_output_tokens}` for the panel's inheritance labels. StepJudge stays on
+  `TASKFLOW_LLM_*`; the completion judge reuses `AUXILIARY_LLM_*` (no CJ_LLM
+  family) — making those two a different family from the executor is the
+  heterogeneous-judge setup, and the Model Config tab says so.
 
 Both are built by `models/LLMs/family_llm.py::build_family_llm` (exposed as
 `build_taskflow_llm` / `build_compression_llm`): an empty provider + api_base
@@ -1335,9 +1586,13 @@ timeout / retries / per-provider max-output), and `*_MODEL_LOCAL=true` reuses
 the auxiliary GGUF — there is no second local model to download. A configured
 `*_MAX_TOKEN` must be >= 200000 (200K) and `*_MAX_OUTPUT_TOKEN` empty or
 >= 8192 (8K): the save path refuses a smaller value and the boot/runtime gates
-abort, exactly like the main/auxiliary keys. The Model Config tab renders both
-families as model-profile cards, whose local entry reports the aux family's
-download progress; a pre-existing `.models` gains a wholly missing family block
+abort, exactly like the main/auxiliary keys. The Model Config tab renders every
+family as a model-profile card (the internal families' local entry reports the
+aux family's download progress, the per-role families' reports the main
+model's; the Test button probes the role families too), and an empty role
+family shows a "keeps the role default tier" badge plus the backend's
+effective-model/source line. A pre-existing `.models` gains a wholly missing
+family block
 on import (`ensure_models_config_file`), because the panel only renders keys the
 file contains. A configured-but-unbuildable remote model (unknown provider)
 logs a warning and falls back to auxiliary instead of stranding TaskFlow or
@@ -1354,7 +1609,11 @@ the file to edit). `GET/PUT /models-config` and `GET/PUT /network-config`
 sources and routes each group's save back to its own endpoint, while the
 Model Network tab writes Tavily / SearXNG through `PUT /network-config`.
 `.env` no longer gets a `.env.bak` (it is tracked — git is the backup);
-`.models` / `.network` keep one.
+`.models` / `.network` keep one. `GET /models-config` NEVER returns an
+`*_API_KEY` value: each such entry is `{value: "", secret: true,
+configured: bool}`, the panel renders a write-only password field, a blank
+field on save/apply means "keep the stored key", and the connectivity probe
+fills a blank key server-side from `.models` (the browser never holds it).
 
 The Model Config panel's built-in local entry (embedding, reranker, ITTT / VTTT,
 auxiliary) prefetches the same GGUFs the runtime would download lazily, with a
@@ -1489,8 +1748,8 @@ budget. `config/features/agent_side/llm_retry.py::LLM_RETRY` defaults:
 `max_retries=10` (11 total attempts), `base_delay=2.0`, `backoff_factor=2.0`,
 `max_delay=60.0`, `jitter_mode="full"` (0.5–1.0×), `respect_retry_after=True`,
 `retry_after_cap_s=300`, `empty_completion_retries=1`, `emit_retry_events=True`,
-`max_fallback_switches=1`, `stale_giveup_scope="turn"`,
-`stale_giveup_threshold=5`. `pub/func/retry_policy.py` owns the delay math and
+`max_fallback_switches=1`, `max_physical_calls_per_turn=200`,
+`stale_giveup_scope="turn"`, `stale_giveup_threshold=5`. `pub/func/retry_policy.py` owns the delay math and
 `Retry-After` parsing (`retry-after-ms`, seconds, HTTP-date; read off the SDK
 exception's `headers`/`response.headers` and carried by
 `ClassifiedError.retry_after_s`).
@@ -1505,12 +1764,18 @@ resets the budget: fallback activation, multimodal skill degradation and a
 content-filter rebind. Empty completion CONSUMES one ordinary retry (and is
 separately capped by `empty_completion_retries`); auth-refresh / signature-repair
 extra attempts (not implemented — no provider seam) would use subtraction, not a
-reset. `before_agent` resets the per-turn `llm_fallback_switches` counter and,
-when `stale_giveup_scope="turn"`, the cross-call `llm_stale_streak`; the breaker
-still aborts the current turn at 5 consecutive timeouts, but a later turn gets a
-fresh chance instead of being wedged forever. `max_fallback_switches` caps model
-switches per turn (0 disables fallback, including a sticky candidate); the
-session-level sticky `llm_fallback_index` is unchanged.
+reset. `before_agent` resets the per-turn `llm_fallback_switches`,
+`llm_turn_physical_calls` counters and, when `stale_giveup_scope="turn"`, the
+cross-call `llm_stale_streak`; the breaker still aborts the current turn at 5
+consecutive timeouts, but a later turn gets a fresh chance instead of being
+wedged forever. `max_fallback_switches` caps model switches per turn (0 disables
+fallback, including a sticky candidate); the session-level sticky
+`llm_fallback_index` is unchanged. The per-call budgets still MULTIPLY across
+nested layers (boost / overflow recovery / stub recall each re-enter this
+middleware), so `max_physical_calls_per_turn` (default 200, `0` disables) counts
+EVERY physical request in the session state register and raises
+`CallBudgetExceededError` once the cap is spent. It sits above the main
+IterationBudget (180 logical calls), so an ordinary long turn is unaffected.
 
 The loop re-calls on classified retryable failures, emits one
 `model_retry` event per scheduled/succeeded/exhausted transition, and keeps the
@@ -1721,24 +1986,21 @@ live switches.
 - **The agent-config tabs split into sub-tabs** where the catalogue has two natures: Tools =
   Built-in / MCP (`group === 'mcp'`), Skills = Built-in / Third-party (`builtin` flag), Agent model = Main agent /
   Sub-agent. The pills are a VIEW filter — the preset's draft stays whole, and the count (selected n/m) spans the whole catalogue.
-- **Three built-in presets**, in display order — the whole spectrum
-  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): Pure (nobody named, every
-  persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
-  off), Emotional companion (the full role-play
-  persona with the Tasks & Planning / Sub-agent tool groups off, every optional middleware off, the
-  required chain plus every skill outside the coding work-flow set
-  (`COMPANION_EXCLUDED_SKILLS`), the
-  task-orchestration sections stripped out of Operating Rules — `stripTaskSections`, a per-language
-  heading/label filter pinned by a test that reads the four shipped templates — and the
-  couple-relationship line stripped out of SOUL — `stripRelationshipLines` plus
-  `COMPANION_DROPPED_RELATIONSHIP_MARKERS`, the same per-language-template pin, so a companion
-  session keeps the persona's warmth without the shipped templates' romantic pairing) and Full (the
-  DEFAULT — the same full persona with everything on and every skill in the index).
-  Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
-  (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
-  throws instead of silently applying every tool. The `sherry` id names Full (the label
-  changed; sessions already bound to it keep the stored name), and its shipped character is
-  still Sherry.
+- **Two built-in presets**, in display order
+  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): **Pure** (the full Operating
+  Rules, a blank SOUL/USER/ROLE, nobody named) and **橘雪莉** (the DEFAULT — the same rules plus
+  SOUL and the shipped character). Both return `{}` from `builtinAgentConfig`, so they share every
+  skill, tool and middleware; the ONLY differences are SOUL and the character block. Neither ships
+  a USER profile. The `sherry` id is unchanged (sessions already bound keep it); only its label
+  became 橘雪莉. The old Emotional-companion preset, its strip helpers (`stripTaskSections`,
+  `stripRelationshipLines`, `COMPANION_*`) and `builtinSkills` are gone.
+- **AGENTS.md is not user-editable.** The persona panel's 运行守则 tab and the preset preview's
+  AGENTS tab are removed; `EDITABLE_SYSTEM_FILE_NAMES` is the community set
+  (`COMMUNITY_SYSTEM_FILE_NAMES` = SOUL/USER/ROLE), so the ordinary `PUT|PATCH /system_prompt`
+  refuses AGENTS.md. `GET /system_prompt` still returns it (template loading needs it), and only
+  preset creation writes it, through the creation-only `PUT /system_prompt/preset`
+  (`write_preset_system_prompt_file`, backed by `_PresetFileStore`); `createSessionFromPreset`
+  routes an AGENTS-bearing payload there and an ordinary apply through the community write.
 
 ## User Login (`server/service/auth_service.py`)
 
@@ -1754,7 +2016,15 @@ even looked at. The per-boot token is re-fetched by the CLIENT before every
 socket (re)connect (`requestApi.refreshGatewayToken`, called from
 `ws-ticket.ts::prepareWsTicket`), so a page that survives a backend restart
 heals within one reconnect cycle instead of replaying a dead token until a
-manual reload. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
+manual reload. The token is NOT a global response header: only the
+`/auth/token` bootstrap returns it (body + one-shot `token` header); ordinary
+responses carry no credential, so an unrelated fetch cannot hand a same-origin
+script the token (2026-11-09 audit M3). The Origin allowlist defaults to the
+Tauri webview origins ONLY; the Nuxt dev-server origins are an explicit
+`SHERRY_ALLOWED_ORIGINS` opt-in (start.sh and the Tauri checkout auto-start
+export them), so a local page or compromised dev server on :3000 cannot fetch
+`/auth/token` or call the API in a packaged install (audit M4).
+`server/trigger/cors.py::cors_origin_echo` (an `after_request`
 handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 
@@ -1831,7 +2101,7 @@ codes in, no generic toasts) and the transport's own 401 → refresh-once → re
 `terminal(run_in_background=True)` starts a child that OUTLIVES the turn, so stopping it cannot go through the turn's cancel: the WS `stop` frame cancels the turn's own asyncio task, and the background child is a separate process group with its own watcher. This feature is the missing verb — stop ONE command, leave the turn and the session's other commands alone.
 
 - `BackgroundTaskRegistry.kill_task(task_id, session_id=None)` reuses `kill_session_tasks`' tree kill (the process group recorded at spawn, SIGTERM → bounded SIGKILL) scoped to one id. It refuses (returns False, signals nothing) for an unknown id, another session's task (the id IS the ownership boundary), and one whose process already exited. `kill_session_tasks` (session deletion) is unchanged.
-- The watcher keeps the story straight: after `proc.wait()` a task whose status is already `killed` only records `exit_code` (a killed process exits non-zero, and rewriting that as `failed` would make the panel flicker killed → failed); the exit frame carries `status` + `reason` (`killed` / `exited`), and the auto-turn notice says "stopped by user" instead of "FAILED". A natural failure still reads `failed` / `exited`.
+- The watcher keeps the story straight: after `proc.wait()` a task whose status is already `killed` only records `exit_code` (a killed process exits non-zero, and rewriting that as `failed` would make the panel flicker killed → failed); the exit frame carries `status` + `reason` (`killed` / `exited`). The auto-turn content is ZCode's `<task-notification>` XML, built by `_build_task_notification` with `_normalize_status` (`killed`/`cancelled`/`timed_out`/`stopped` → `<status>killed</status>`, `completed`, everything else `failed`): `<task-id>`, `<output-file>` when a log exists, `<status>`, and `<summary>` — `Background command "<cmd>" was stopped`, `… completed (exit code N)`, or `… failed with exit code N`. There is NO restart instruction or restart tool; whether the agent asks to restart is emergent model behaviour (ZCode parity).
 - Two entry points, one method: the agent's `terminal_bg(action="kill", task_id=...)` (main-agent-only, like the other actions) and the UI's `terminal_bg_kill` WS frame, which answers `terminal_bg_kill_ack {ok, task_id, reason}` and lets the watcher's `terminal_bg_exit` confirm the final state.
 - Live updates: `_run_background` pushes `terminal_bg_started` after registering the task, so an open popover adds the row without polling; `GET /terminal/bg?session_id=` is the snapshot for mount / reconnect (the registry is process-level and NOT persisted — after a restart an empty list is correct, not lost work).
 - The display lives in the toolbar's terminal entry — the third icon above the input box (`TasksButton.vue`), whose popover already lists running sub-agents and foreground tool calls; its third section is `BackgroundCommandsSection.vue` (command / status chip, pid in the row tooltip, Stop on each row), rendered only while the session has commands STILL RUNNING — a settled command leaves the FRONTEND list (its notification is the chat's background card, its log stays on the backend and its record stays readable through `terminal_bg`), and the header counts the running ones only. Nothing about background commands is persisted client-side: the composable is in-memory (snapshot + frames), and no Dexie table holds them. The entry's badge counts sub-agents + foreground calls + running background commands, so a lone detached command is still visible. `use-background-tasks.ts` owns the state (snapshot + the three frames) and `index/[sid].vue` passes it down, so the section is a pure view. It used to be a collapsible strip under the message list; that slot is now free for the chat.
@@ -1888,14 +2158,30 @@ The shell is one flex row — left session column, conversation, right sidebar �
   floor — so a tab's width never follows its title (Whiteboard and Browser 2 are the
   same width) and a crowded strip narrows ALL tabs equally before anything
   scrolls. Only when N tabs at their 60px floor no longer fit
-  (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with the
-  scrollbar hidden and a gradient fade mask (`tabs-mask-left/right`, anchored
-  to the wrapper so they do not scroll with the content) marking the cut-off
-  side. The title fades at its right edge with a `mask-image` instead of an
+  (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with a THIN
+  VISIBLE horizontal scrollbar (4px, so the off-screen tabs stay reachable) and
+  a gradient fade mask (`tabs-mask-left/right`, anchored to the wrapper so they
+  do not scroll with the content) marking the cut-off side. The title fades at its right edge with a `mask-image` instead of an
   ellipsis (the span is the tab's flexible item, so the close button's width is
   already excluded — no per-state offset), and the close X is always in the
   layout but only fully opaque on the ACTIVE tab (idle tabs show it on hover),
   so hovering never shifts the title.
+
+- **Narrow-height panels own one vertical scroll**: `SkillsPanel.vue` keeps the
+  flex chain intact (`h-full min-h-0` root → `flex-1 min-h-0` content wrapper →
+  split `flex-1 min-h-0` → each column `min-h-0` + `overflow-y-auto`). The root
+  scrolls HORIZONTALLY only (`overflow-x-auto overflow-y-hidden`; the 520px
+  `min-w` floor), and the old `max-height: 72vh` caps are gone — a viewport-relative
+  cap could exceed a short panel and create the second scrollbar.
+- **The history skeleton has a 200ms grace** (`use-session-activation.ts`): a
+  new session's empty history resolves immediately and must not flash a
+  skeleton, so `isHistoryLoading` is armed by a 200ms timer that a fast
+  `syncHistory` clears; a slower switch still shows it.
+- **Dark theme is neutral**: Aura 4.5's dark `surface` scale carries a warm/red
+  tint, so `NoirPreset` overrides `colorScheme.dark.surface` with the Tailwind
+  zinc scale and `surface.0 = #0a0a0a`, and `html.dark` sets
+  `background-color: #0a0a0a`. The shell and every teleported overlay (Dialog /
+  Menu / Popover) therefore share a neutral near-black background.
 
 The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the Menu button. The interface language lives in the Menu's FIRST entry, System Config, as its LAST tab (Internationalization): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
 
@@ -2098,7 +2384,7 @@ question unanswerable by traversal. `path_search.py` adds the explicit layer
   regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
   total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
 
-## Media Pipeline: Compression, Native Reads, History Budget & Artifacts
+## Media Pipeline: Compression, Native Reads, History Budget, Artifacts & Image Generation
 
 Every image the agent sends passes one compression cascade
 (`pub/func/media/image_compress.py::prepare_for_model`, aligned with ZCode's
@@ -2113,13 +2399,17 @@ placeholder per image and `ContextLimitGuard` keeps using the provider-reported
 already fits, then a format-preserving re-encode (PNG optimize; JPEG quality
 80 → 60 → 40 → 20), a resize to the max edge, 75/50/25% downscale steps, and a
 hard JPEG-q20 ladder at 1000 → 200 px; when nothing fits it raises
-`ImageTooLargeError` and the caller falls back to its text/skill path. Four
+`ImageTooLargeError` and the caller falls back to its text/skill path. Three
 sites use it: `server/service/messages.py::_get_content_list` (WS/Tauri sends),
 `agent/middlewares/media_pipeline/tool_media.py::_image_block` (tool
-screenshots), `server/trigger/http/image.py::upload_image` (browser-mode HTTP
-upload), and `pub/func/media/image.py::download_and_convert_to_base64` (the
-image-to-text skill's download). `image_compress_enabled` turns the cascade off
-for byte-exact passthrough.
+screenshots), and `server/trigger/http/image.py::upload_image` (browser-mode HTTP
+upload). The `image_to_text` skill downloads remote images through `safe_fetch`
+(SSRF guard, DNS pinning, per-hop redirect re-check and a 50 MiB cap) and hands
+the file to its own ITTT model; the old `pub/func/media/image.py` download and
+base64 helpers had no live caller and were removed — their bare
+`requests.get`/`requests.head` path was an SSRF surface. `is_url` is a shape
+check only and must never gate a fetch. `image_compress_enabled` turns
+the cascade off for byte-exact passthrough.
 
 `read_file` reads media natively instead of handing the model mojibake or a
 skill detour:
@@ -2146,16 +2436,20 @@ skill detour:
   embed the whole base64 payload and cut the media block away.
 
 History media is projected against a byte budget at REQUEST time — there is no
-checkpoint rewrite and no unconditional strip. In `wrap_model_call` the
-capability scrub runs first (`scrub_messages`: unsupported families become text
-placeholders), then `_project_history_media_budget` keeps every `image_url`
-block that fits `history_media_budget_bytes` (75 MiB, ZCode's `Mui`) choosing
-newest-first by message index. The latest real user message's media is
-PROTECTED (`preserve_latest_user_media`, resolved through
-`is_user_message`; a transcript without `metadata.origin == "user"` falls back
-to the newest media-bearing HumanMessage) and is kept even over budget. Only
-inline data-URL payloads are measured (decoded size; a remote URL is fetched by
-the provider and costs zero), and a dropped block becomes
+checkpoint rewrite and no unconditional strip. The capability scrub
+(`scrub_messages`: unsupported families become text placeholders) stays in
+`MultimodalProcessor.wrap_model_call` and runs first; the budget half is the
+separate `MediaBudgetProjectionMiddleware`
+(`agent/middlewares/media_pipeline/budget_projection.py`, registered in BOTH the
+main and child chains, so a subagent reading many images is budgeted too). It
+keeps every `image_url` / `audio_url` / `video_url` block that fits
+`history_media_budget_bytes` (75 MiB, ZCode's `Mui`) choosing newest-first by
+message index. The latest real user message's media is PROTECTED
+(`preserve_latest_user_media`, resolved through `is_user_message`; a transcript
+without `metadata.origin == "user"` falls back to the newest media-bearing
+HumanMessage) and is kept even over budget. Only inline data-URL payloads are
+measured (decoded size; a remote URL is fetched by the provider and costs zero),
+and a dropped block becomes
 `[Attached image]\n[Media omitted from provider request … media budget.]` in a
 `model_copy` request copy. A session under budget therefore keeps all its
 images; the old `_strip_history_images` (which dropped history media after every
@@ -2178,6 +2472,90 @@ instead of decoding and writing a second copy at compression time.
 `artifact_store_enabled` (default true) off restores the legacy timestamped
 `media/<ts><ext>` copy and the `/media` URL; artifact URIs written earlier stay
 readable.
+
+**Image generation** is the reverse direction over the same store.
+`agent/tools/image_gen.py::ImageGenerationTool` (`image_generation`, main-agent
+only — registered by `build_image_gen_tool`, which returns `[]` unless the
+`TTI_*` family names both a model and a key) calls
+`models/TTI_model/core.py::TTIModel.generate`. The provider half sends the
+OpenAI-compatible Images API request: `model`/`prompt`/`n`/`size` always,
+`quality` only when applicable (a legacy `standard`/`hd` is dropped for a
+gpt-image model), `response_format="b64_json"` forced for `dall-e-*` and
+omitted for `gpt-image-*`/`chatgpt-image-latest`, and the newer-only
+`background`/`output_format`/`output_compression`/`moderation` plus DALL·E
+`style` routed to the model family that accepts them. A URL response is
+downloaded with a 50 MiB cap. `n` is clamped twice — per model
+(`IMAGE_GEN_MAX_OUTPUT`: `dall-e-3` 1, `dall-e-2` and gpt-image 10, unknown 1)
+and `IMAGE_GEN["max_n"]` (10). Each returned image is persisted with
+`write_artifact(..., media_type="image")` (same SHA-256 dedupe and
+`sherry-artifact://` namespace as uploads) and the tool answers Markdown
+`![generated image N](sherry-artifact://…)` lines the existing gallery/lightbox
+renders; a provider/configuration/artifact failure comes back as `Error: …`
+text. The provider call runs in `asyncio.to_thread`. Phase 1 is generation only
+(`inputImageMask`/inpainting and partial-image streaming are not wired), the
+`TTI_*` keys live in `.models` (already present in 模型配置), and the
+input-media capability catalog is deliberately NOT extended — output-model
+limits live in `IMAGE_GEN_MAX_OUTPUT`.
+
+The same provider backs the `text_to_image` skill's terminal-run script
+(`skills/builtin/text_to_image/scripts/core.py`). The terminal tool injects
+`SHERRY_SESSION_ID` into every child environment (sync, async and background
+spawns — `_child_env`), the script generates through `TTIModel`, stores each
+image with `write_artifact`, PRINTS every URI to stdout and reports failures as
+`[error] …`; the previous script printed nothing and saved under
+`STATIC_DIR/images`, so the agent never learned where the image went.
+
+Tool results render through the same artifact store: `ChatToolCard` extracts
+`sherry-artifact://` references from ANY tool result and shows an
+`ArtifactImageGallery` thumbnail grid in place of the plain `<pre>` (the
+collapsed card shows it too, so a generated picture cannot hide behind the
+fold), clicking opens the shared `useImagePreview` gallery, and a collapsed
+TURN (`use-chat-turn-fold.ts::classifyTurnFold` → `ChatTurnHistoryStatus`)
+peeks up to four of the hidden tool rows' thumbnails beside its expand trigger.
+The skill's plain URI lines and the tool's markdown references ride the same
+branch.
+
+The end-to-end surface is `tests/agent/middlewares/test_media_pipeline_e2e.py`:
+a scripted stub model drives the real `create_agent` graph through server
+compression → the artifact store and `GET /artifacts` → `read_file` image/PDF
+blocks → the history budget (fit, then a zero-budget drop), with no network.
+
+Chunked media upload (ZCode parity) is the browser/Tauri transport for
+attachments over one POST's practical size. `bridge/upload-chunked.ts` opens a
+session with `POST /upload/begin?session_id&filename&content_type&total_chunks&total_bytes`,
+then posts every chunk as `POST /upload/chunk?upload_id&chunk_index` and finishes
+with `POST /upload/complete?upload_id`; a single-chunk payload keeps the
+whole-body `/images|/audio|/video/upload` route. Chunks for ONE file are sent
+strictly in order — the server (`server/trigger/http/upload_chunked.py`) rejects
+a gap (`code=chunkGap`) or a replay (`code=chunkConflict`), so file-level
+parallelism lives in `uploadMultipleFiles`/`runPool` (up to
+`max_concurrent_files`, 8 lanes), never inside one file. `GET /upload/status`
+returns the contiguous received count for `resumeUpload`; `POST /upload/abort`
+discards the staging directory. Staging lives in
+`TEMP_DIR/upload_chunks/<upload_id>/` with a `meta.json` (session, filename,
+content type, totals); `begin` validates the declared size against the per-kind
+cap and the chunk count against `ceil(total_bytes/chunk_size)`, `complete`
+concatenates, hashes, and writes `<sha256[:16]><ext>` into the SAME per-kind
+directory the whole-body route uses — identical bytes reuse one file and URL.
+`bridge/upload-cache.ts` hashes each payload with SHA-256 and keeps a 30 s Dexie
+`uploadCache` row (`schema v7`, including the live `upload_id`/status so a
+refresh can resume), so sending the same bytes twice reuses the first URL;
+caching is fail-open. The socket passes the real session id to
+`uploadRequestMedia`, which decodes each base64 entry and routes the whole list
+through `uploadMultipleWithCache`; `uploadBase64ToUrls` remains the whole-body
+fallback.
+
+Markdown images are a gallery: after sanitization `safeHtml.ts::markMarkdownImages`
+marks every `img` outside a link/button (class `markdown-image`, `data-act="image"`,
+`role=button`, `tabindex=0`, aria label, loading/error classes), and the
+delegated click/keyboard handler collects the `img.markdown-image` elements in
+the same `[data-message-id]` bubble and calls
+`useImagePreview.openGallery(items, startIndex)`. The existing
+`ImagePreviewOverlay` now renders previous/next buttons, ArrowLeft/Right,
+a `current / total` counter, and cycles its tab stops; `openPreview(src)` stays
+for single-image consumers (attachment thumbnails, Mermaid figures). Loading
+images carry `.markdown-image-loading` (shimmer in `assets/css/main.css`), a
+broken one gets `.markdown-image-error`. Alt text/`src` are untouched.
 
 ## Multimodal Capability Catalog (`config/model_capabilities.py`)
 
@@ -2291,14 +2669,32 @@ bar through `Page.frameNavigated` (a `chrome-error://` page keeps the URL the
 user asked for); the screencast stops when nobody watches a page.
 
 **Agent side** — the merged `browser` tool (action =
-navigate / snapshot / click / type / press / scroll / screenshot) lives in the
+navigate / snapshot / click / type / press / scroll / screenshot / console /
+network) lives in the
 `browser` catalogue group, is MAIN-AGENT-ONLY (`metadata["scope"] =
 "main_only"` — the subagent tool policy drops it unconditionally), and is taught
 by the `browser` playbook skill (`skills/builtin/core/browser/SKILL.md`,
-scriptless, hidden from the index while the feature is off). The seven verbs are
+scriptless, hidden from the index while the feature is off). The nine verbs are
 thin handlers over the same manager; the original `browser_*` classes remain
 internal handlers and are exposed only by `build_legacy_browser_tools()` for
-tests. Since the 2026-11-09 audit (H5) navigation and reads reuse the
+tests.
+
+**Passive debug capture** — controlled live by the App Config key
+`browser.debug_capture` (系统配置 → 应用配置; `SHERRY_BROWSER_DEBUG_CAPTURE`
+overrides it for one launch), every ordinary page enables `Runtime.enable` /
+`Network.enable` / `Log.enable` through `_BrowserDebugCaptureMixin`.
+`Runtime.consoleAPICalled`, `Runtime.exceptionThrown` (text + up to 10 stack
+frames) and `Log.entryAdded` land in per-page ring buffers
+(`debug_buffer_max`, 200); `Network.responseReceived` keeps only status >= 400
+and `Network.loadingFailed` resolves its URL through the `requestWillBeSent`
+map — headers, cookies and bodies are never read. A main-frame
+`Page.frameNavigated` and every explicit navigate / history move clear the
+buffers. `browser(action="console")` reads console output plus uncaught
+exceptions (level filter, optional exceptions), `browser(action="network")`
+reads failed requests (`min_status`, `include_failures`); with the switch off
+both answer a disabled notice instead of pretending the page was quiet.
+
+Since the 2026-11-09 audit (H5) navigation and reads reuse the
 `web_fetch` SSRF verdict: `agent/tools/browser/tools/_shared.py::validate_navigation_url`
 allows http(s) only, refuses local/private/metadata targets unless
 `SHERRY_BROWSER_ALLOW_LOCAL=1`, and resolves public names through
@@ -2456,7 +2852,7 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------- |
 | `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + BACKGROUND_REVIEW` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
 | `SUBAGENT` | child-agent executions (spawn + steer)                       | 8                                                                     | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `BACKGROUND_REVIEW`    | background-review calls (`summarization/background_reviews.py`, 4 sites) | 4                                                                     | `LANE_SYSTEM["background_review_max_concurrent"]`    |
+| `BACKGROUND_REVIEW`    | background-review calls (`summarization/{memory_review,skill_review_runner,compression_todo,ptc_compile}.py`, 4 sites) | 4                                                                     | `LANE_SYSTEM["background_review_max_concurrent"]`    |
 | `NESTED`   | `sessions_send` reply turns (serial)                         | 1                                                                     | `LANE_SYSTEM["nested_max_concurrent"]`   |
 
 - Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + background_review` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
@@ -2469,9 +2865,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 59 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, delegation_pressure, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
-| `config/features/infra_side/` | 30 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 89 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/agent_side/` | 60 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, delegation_pressure, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, image_gen, ...) |
+| `config/features/infra_side/` | 31 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, local_daemons, ...)                         |
+| `config/features/__init__.py` | Aggregator — all 91 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._; LangSmith moved to `.network` / `config/network_settings.py`)                                                                                                                                          |
@@ -2503,8 +2899,77 @@ independent implementation; `impact()` is untouched (C2) and still returns its
 `importers_of`, `inherits_from`, `subclasses_of`, `mixins_of`, `mixins_in_by`,
 `god_nodes` (pure SQL degree) and `communities` / `community_of` (networkx
 Louvain on demand with a connected-components fallback when networkx is absent).
-The tool name is `path`; the tool set is still `scope=researcher_only` and never
-joins `_MAIN_TOOLS_BUILDERS` (C5).
+The tool name is `path`; the tool set is `scope=code_intel` and never joins
+`_MAIN_TOOLS_BUILDERS` (C5).
+
+`CODE_INTEL_ROLES` (`agent/tools/subagent/types/functional_role.py`) is the
+single source of the tool face and its prompt section: **researcher, librarian,
+executor and general** get the tree-sitter suite plus the nine LSP tools
+(`lsp_hover` is the addition); reviewer and the main agent do not. The four share ONE injected set — the role
+branch is prompt-only: `CODE_INTEL_WRITE_ROLES` (executor/general) may pass
+`dry_run=false` / `write=true` to apply a rename or formatting edit, while the
+read-only roles are told to stay in preview mode (the tool defaults remain
+preview). A write role does lightweight lookups directly and still spawns a
+researcher for a heavy investigation; the single-hop spawn allow-list is
+unchanged because code-intel is local analysis and never spawns a child. The LSP
+manager's shared pool is `lsp_max_concurrent_servers = 3` to absorb the extra
+roles; `lsp_idle_shutdown_s` stays 300.
+
+**Edit-time consistency and auto-diagnostics (2026-11-12)** — `LSPClient`
+`sync_document` sends `didOpen` / `didChange` (FULL text) + `didSave`;
+`patch_file`, `write_file`, `lsp_format(write=true)` and direct-file
+`ast_grep_rewrite` call `agent/tools/pub_base/lsp_sync.py`, which pushes the new
+bytes only to an ALREADY-ACQUIRED server (`LspServerManager.peek`; no server is
+started, so LSP stays lazy). Identical content is a no-op, which also lets
+`lsp_diagnostics` return its cache without waiting instead of depending on the
+server republishing an unchanged file. `lsp_diagnostics` refreshes the server
+from disk and waits for a NEW publish generation
+(`diagnostics_generation` / `wait_diagnostics_since`), so an edit is never
+analyzed as the previous version. A process-level registry
+(`agent/tools/code_intel/lsp/diagnostics.py`) aggregates publishes per file,
+tracks delivery per SESSION, and resets delivery only when the diagnostic
+content actually changed; the `lsp_diagnostics` reminder source (priority 84,
+`transient`, error severity only, capped by files/errors, session-root scoped)
+injects the undelivered errors once per generation. The same edit path schedules
+a debounced background diagnostics pass (`AUTO_DIAGNOSTICS_*` in the LSP
+config) that appends an evidence row (`kind="lsp_diagnostics"`, `auto=true`);
+`taskflow_flow(action="finish")`'s regression gate replays those rows through
+the LSP client (not the shell allowlist): pass → `unmark`, fail → `broken`, no
+server/timeout → skipped. Robustness: a crashed server is restarted at most
+`lsp_max_restarts` (default 3) times before the tools degrade to
+tree-sitter/grep, and `-32801` ContentModified is retried with 500/1000/2000 ms
+backoff (`lsp_content_modified_max_retries` / `_backoff_s`).
+
+**LSP configuration layers (2026-11-12).** The server table is a three-layer
+merge (`agent/tools/code_intel/lsp/config_merge.py`): builtin
+`LSP["lsp_supported_servers"]` → skill `<skill_dir>/lsp.json` (only under a
+`SKILL.md` in builtin/auto/plugins) → project `<project>/.sherry/lsp.json`,
+precedence left-to-right with WHOLE-spec replacement. `effective_lsp_servers(root)`
+returns `servers` + `sources` + the merged `enable` list + validation errors;
+reads are mtime-cached. Every declaration is validated (bare executable
+`command[0]`, shell-free argv, dot-prefixed extensions, bounded sizes/items);
+the binary is still chosen only by the five-tier resolver, so a declaration
+cannot inject an arbitrary path. The LSP tools acquire servers in the session's
+PROJECT root (not the process cwd), which is the same key `pub_base/lsp_sync.py`
+and the finish-time diagnostics replay use. The HTTP face
+(`server/trigger/http/lsp_config.py` + `server/service/lsp_config_service.py`)
+serves GET `/lsp/config`, GET/PUT/POST `/lsp/config/project` (POST = uploaded
+JSON text), DELETE `/lsp/config/project/language` and POST `/lsp/config/test`
+(a one-shot real `initialize` probe). The frontend is 系统配置 → LSP / 代码智能
+(`LspConfigSection.vue`): a read-only builtin/skill table with installed state,
+an editable project table, add/delete, `lsp.json` upload, and per-server test.
+`config_merge` never starts a server; the tab's test button does, bounded by
+the LSP start timeout and shut down immediately.
+
+Kill-criteria decisions (2026-11-12): browser capture has no per-site opt-out —
+the browser feature is itself opt-in and `SHERRY_BROWSER_DEBUG_CAPTURE=0` is the
+global isolation switch; passive injection is already narrowed to error
+severity, the session's project root and files/error caps (narrow it to the
+current file only if noise appears); auto-diagnostics never starts a server at
+edit time, so there is no cold-start stall, and the finish replay covers a
+project whose server was reaped; a project with a false-positive-heavy checker
+turns the evidence rows off with `AUTO_DIAGNOSTICS_ENABLED=0` (the passive
+reminder keeps working). Wiki: `wiki/debug-loop/`.
 
 `skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index(repo_name,
 db_path)` turns a code_intel SQLite DB into a deterministic, zero-LLM wiki
@@ -2660,15 +3125,61 @@ each suite is the version-controlled reference (threshold + model id).
 - **File naming**: snake_case enforced by pre-commit hook
 - **Line length**: 100 chars (ruff)
 
+## Skill Index & Per-Role Visibility (`skills/loader.py`)
+
+`scan_skills()` is the one skill index (`name` / `description` / `when_to_use` /
+`when_not_to_use` / `location` / `scope` / `roles` / `active`), cached in
+`skills_snapshot.json` (rebuilt at boot by `build_skills_snapshot()` and after
+every `skill_manage` write). `get_skills_text` renders the prompt block,
+`skill_list` reads the index live (`use_cache=False`), and `skill_view` reads the
+target `SKILL.md` directly.
+
+- `scope` (all / main_only / subagent_only) separates the main agent from
+  subagents.
+- Discovery is root-contained AFTER resolution: `is_allowed_skill_path` resolves
+  BOTH the candidate and the skills root before `relative_to`, so a symlinked
+  `SKILL.md` or skill directory that lexically sits under builtin/auto/plugins
+  but resolves outside the tree is ignored (an unresolvable path fails closed),
+  while a symlink resolving back inside — or a symlinked root itself — stays
+  allowed.
+- `roles` is ORTHOGONAL: a list of functional-role names (general / researcher /
+  executor / reviewer / librarian). Absent = every role (the backward-compatible
+  default); present = only the listed roles may see the skill.
+  `skill_manage._validate_frontmatter` refuses a non-list value or an unknown
+  role name; the loader's all-invalid fallback reads as absent (fail-open
+  visibility — the write path is the strict gate).
+- The role reaches the tools through the spawn tool policy:
+  `apply_tool_policy(..., caller_role=...)` stamps `metadata["caller_role"]`
+  next to `caller_scope`; `_assemble_child_tools` passes the specialized
+  functional role and `None` for the identity GENERAL role (the default
+  delegation path keeps the pre-role full view). `skill_list` / `skill_view`
+  pass the stamp to `skill_visible_to(skill, caller_scope, caller_role)`;
+  `skill_view`'s not-found hints and the delegate `load_skills` validation use
+  the same filter. `agent.tools.pub_base.skill_utils.skill_visible_to` and the
+  loader's duplicated `_skill_visible_to` are kept in lockstep.
+- Builtins tagged today: `multimodal_rag` and `llm_wiki`
+  (`[general, researcher, reviewer, librarian]` — every role except the
+  executor), `bugfix-contract` (`[executor, reviewer]`). The multimedia chain
+  and `code_wiki` stay untagged (all-visible) on purpose. The skill-review
+  prompt tells new skills to declare `roles` when the procedure is role-specific.
+- `scope` is assigned DELIBERATELY by that same review prompt: omitted by
+  default (visible to main + subagents), `main_only` only for procedures that
+  depend on main-agent-only capabilities, `subagent_only` only for a pure
+  worker playbook. The judge's `scope_valid` field fails a contradictory scope
+  (the prompt and the judge came from the pre-role skill index, where auto
+  skills silently defaulted to all).
+
 ## Known Pitfalls
 
 - `workspace/` in `.gitignore` is anchored (`/workspace/`) — live persona files are NOT tracked
 - `tests/agent/tools/subagent/conftest.py` pollutes `sys.modules` globally — use stub-tolerant imports in cross-suite tests
 - `agent/core.py::init()` imports `skills` lazily and calls `build_skills_snapshot()` at assembly time (server boot); a process that never calls `init()` still gets a live disk scan from `scan_skills(use_cache=True)`
 - `Summarization` has both sync (`_apply_compression`) and async (`_aapply_compression`) paths — changes must cover both
+- the subagent registry, TaskFlow, todolist and evidence ledger share ONE SQLite file (`src/data/registry.db`, tables `subagent_runs`/`task_flows`/`todos`/`evidence_events`); `server/service/registry_migration.py` copies the legacy per-store DBs into it at boot (column-intersection, type-checked, `*.bak` backup, idempotent). Tests isolate through each store's `_DB_PATH`/`EvidenceLedger.LEDGER_PATH`
+- the background-review jobs are split into `summarization/{memory_review,session_end_salvage,handoff_tree,skill_review_runner,ptc_compile,compression_todo}.py` with shared `background_scaffold.py` / `_common.py` and the `skill_review.py` gate; `background_reviews.py` is a re-export facade whose module proxy forwards attribute writes to those modules, preserving the historical test monkeypatch seams
 - `taskflow_step(action="resume")` and `taskflow_step(action="run_task")` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
-- `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
+- lanes are an explicit FIFO waiter queue with a LIVE limit (no semaphore swap): `set_max` applies immediately even while the lane is saturated — raising admits parked waiters, lowering stops new grants until releases free capacity — and a waiter cancelled after its grant returns that slot. A cross-loop `acquire()` logs a warning and drops the old loop's parked futures.
 - a session's BOUND project directory is snapshotted into the GLOBAL bare
   store `APP_HOME/checkpoints/store` before the first write of each turn
   (`agent/tools/pub_base/shadow_git.py::ensure_checkpoint`): write_file,
@@ -2721,12 +3232,18 @@ each suite is the version-controlled reference (threshold + model id).
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
 - the eviction PREVIEW marks a mid-line cut instead of letting it read as a line ending: the in-memory renderer appends `\u2026`, the file-on-disk reader detects the cut by peeking past `_PREVIEW_LINE_MAX_BYTES` (and, for the tail window, by checking whether the byte before the walk's stop is a newline), and either path appends one note naming the same fallback tools — a normal preview is byte-identical to before (the note is absent, never empty).
 - `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`). A 0-byte result becomes `(no output)` before the tool returns — never an empty ToolMessage, which the pairing sanitizer would otherwise turn into a misleading missing placeholder — and the eviction preview starts with `[evicted to: <path>]` plus an explicit `read_file` hint.
+- both spawn sites build the child environment through `_child_env(session_id)`: the scrubbed environment PLUS `SHERRY_SESSION_ID` (the session the tool resolved for this call). A scripted skill reaches the session-scoped artifact store through it (the `text_to_image` script is the first consumer); the variable is not a secret, so `scrub_env` still owns every other filter, and a background command inherits the same env.
 - the sandbox IS the write barrier for `terminal` / `python_repl` / `execute_code`
   (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
 writable_roots)` takes the caller's write surface, which each tool resolves from
   the SESSION's project directory (so a project bound outside the checkout is
-  writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
-  an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=auto` (the same
+  writable and the checkout itself is not); `terminal` / `python_repl` append the
+  session's OWN `SESSIONS_DIR/<session_id>` tree (`with_own_session_root`, created
+  on demand — it lets a session create/modify/delete its private files with `rm`
+  even when the project is bound elsewhere, and adds exactly one session
+  directory, never the shared root or another session); `TEMP_DIR` is appended
+  centrally, and an empty list raises. The tracked `.env` ships
+  `SANDBOX_POLICY=auto` (the same
   as the unset fallback: the packaged desktop app has no OS sandbox backend on
   macOS/Windows, where `required` would refuse every command — a server
   deployment that wants the hard guarantee sets `required` itself) — boot logs
@@ -2735,13 +3252,25 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
+  On an `auto` policy with NO usable backend, a `sandbox=True` terminal /
+  python_repl call is routed through the existing sandbox-bypass HITL card
+  BEFORE the tool runs (`sandbox_degraded()`; the card says OS sandbox
+  unavailable); confirm-all keeps its own card and appends the note; a headless
+  turn auto-denies; YOLO keeps bypassing by design and `set_access_mode` logs a
+  warning when full access is activated without a sandbox. `off` keeps its
+  no-approval semantics and `required` still refuses in the tool layer. The
+  child chain, background graphs and PTC carry no HITL middleware, so under
+  `auto` without a backend they now REFUSE before the spawn
+  (`_deny_unsandboxed_degrade`; PTC returns `status: sandbox_unavailable`); only
+  an explicit `off` keeps the unsandboxed path.
   The `sandbox` switch is SERVER-owned since the 2026-11-09 audit (H2): it is
   NOT in the model-facing `SafeShellInput` / `PythonReplInput` schemas (a forged
   argument is dropped by validation), while internal `_run(sandbox=False)`
   callers keep the scope/policy guard and the HITL card. `python_repl` and PTC
   also refuse class-introspection escapes statically
   (`pub_base/safe_exec.py::validate_restricted_code`: no dunder attributes,
-  no `__builtins__`), and their restricted builtins omit
+  no `__builtins__`, and a literal `str.format`/`format_map` field that reaches a
+  dunder is refused too — a non-literal template can only ever yield a string), and their restricted builtins omit
   `getattr`/`type`/`dir`/`vars` (H4).
   `PathGuard` additionally screens the command-string arguments (`commands` /
   `query`) against the hard-deny floor AND the sherry-self policy — read-looking
@@ -2803,20 +3332,24 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   session root IS the checkout, so the in-root test used to call the whole
   source tree — and the credentials beside it — safe; a WHITELIST replaces that
   assumption. WRITE allows only `<project>/.sherry/`, the CURRENT session's
-  `plans|attachments|uploads`, `TEMP_DIR`, `STATIC_DIR`,
+  ENTIRE private `SESSIONS_DIR/<session_id>/` tree (`plans`/`attachments`/
+  `uploads`/`evicted`/scratch files), `TEMP_DIR`, `STATIC_DIR`,
   `SRC_DIR/{images,audio,video}` and `SRC_DIR/rag/uploads`. READ is broader by
   design — the whole source tree is readable (reading breaks nothing, leaks
   nothing) — and denies `.env` `.models` `.network` `sherry.jsonc` and their
   `.example`s, `src/data/**`, `src/checkpoints/**`, the workspace persona files
   and `workspace/{memory,knowledge}/**`, model-weight suffixes, `mcp_servers/**`,
   the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory
-  ledger and every session directory except the CURRENT session's `plans/`.
-  Enforced in `resolve_tool_path` (including its IN-ROOT success branch, and
-  `search_files`' own resolve) and in `resolve_external_path`; a path in a
-  DIFFERENT session project directory is the user's workspace and never reaches
-  it. The main agent gets one-shot HITL (`sherry_self_access`, approve/reject
-  only — no YOLO, no session allowlist), a SUBAGENT is refused with no card,
-  and outside an agent run (no runnable context to ask) the access fails CLOSED.
+  ledger and every session directory except the CURRENT session's ENTIRE
+  private tree. Enforced in `resolve_tool_path` (including its IN-ROOT success
+  branch, and `search_files`' own resolve) and in `resolve_external_path`; the
+  latter also has an explicit own-session bypass, so a session (main OR child)
+  reads/writes its own directory without HITL even when that directory sits
+  outside the project root. A path in a DIFFERENT session project directory is
+  the user's workspace and never reaches it. The main agent gets one-shot HITL
+  (`sherry_self_access`, approve/reject only — no YOLO, no session allowlist)
+  for sherry's OTHER files, a SUBAGENT is refused there with no card, and
+  outside an agent run (no runnable context to ask) the access fails CLOSED.
   Internal writers are untouched: `memory`, `skill_manage`, `exit_plan_mode`,
   the ledger, shadow-git, the checkpointer, trajectory and the knowledge index
   build paths from `config.path` constants and never call those resolvers.
@@ -2858,11 +3391,27 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `auto_dispatch=False` keeps the "unlock only" shape). `taskflow_flow(action="plan")`
   also starts its initial ready set through the same batch path
   (`auto_dispatch_initial_ready`), leaving only dependency-blocked steps parked.
-  The TaskFlow board reminder lists every ready step with a
-  `[N steps ready — parallelize via taskflow_dispatch!]` marker and shortens its
-  cooldown to `taskflow_reminder_cooldown_when_ready` (1) while that set exists.
+  The TaskFlow board reminder splits ready work by what the model owes: a step
+  carrying a persisted `last_spawn_error` is listed as
+  `dispatch failed: s1(...) — retry via taskflow_step(action='dispatch', step_ids=['s1'])`,
+  ordinary ready work is only counted (`pending auto-dispatch: N step(s)`), and
+  blocked steps are counted + listed with their `block_reason` (plus
+  `waiting on upstream: <dep>` when the DAG is the cause; `next:` carries the
+  status). Its cooldown shortens to `taskflow_reminder_cooldown_when_ready` (1)
+  only while a failed spawn or a DECISION-blocked step (a recorded
+  `block_reason`; dependency-blocked is normal mid-run state) is outstanding,
+  and with either auto-dispatch wave disabled the old `ready_to_dispatch` /
+  `parallelize` wording returns.
   The AI still supervises the exceptions — judge BLOCK, failures,
-  planning and the final finish — instead of driving every step. `taskflow_flow(action="replan")`
+  planning and the final finish — instead of driving every step. A blocked step
+  reaches every channel as `blocked`: `_try_auto_resume_taskflow` reads the
+  post-resume step state, remembers a StepJudge BLOCK / caller-declared blocked
+  verdict, and the completion notice, third-path marker
+  (`[subagent:{name} blocked]`) and sub→sub internal injection all use it (a
+  BUDGET_EXHAUSTED goal loop maps there directly). The plan-continuation gate
+  sends `[SYSTEM DIRECTIVE: TASKFLOW BLOCKED]` instead of the normal
+  continuation when every remaining step is blocked and no todo is actionable,
+  naming replan / cancel / resume as the decisions. `taskflow_flow(action="replan")`
   regenerates a flow's REMAINING steps from the goal, the done results and the
   failure reason (transitively invalidated steps go back to `blocked`; bounded by
   `REPLAN_MAX` replans per flow), and `taskflow_flow(action="finish")`
@@ -2931,7 +3480,11 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   are in flight at once. A partial wave failure persists every successful child
   (via `update_flow_with_conflict_retry`, so a concurrent writer cannot drop a
   spawned key) and names the failed step ids (`auto_dispatch_failed=…` on the
-  resume answer). `taskflow_step(action="resume")`'s normal path also writes through that
+  resume answer). Each failed step also gets a persisted `last_spawn_error` /
+  `last_spawn_failed_at` marker — in the same write when anything spawned, in a
+  marker-only CAS write when the whole wave failed — and a successful dispatch
+  clears both; the board reads that marker to tell "retry me" from "the next
+  wave starts me". `taskflow_step(action="resume")`'s normal path also writes through that
   CAS-retry: the `build_state` callback re-applies the ALREADY-DECIDED verdict +
   result onto the freshly-read state and re-derives the unlock set from what was
   actually persisted — two children completing at once both land, and the same

@@ -22,23 +22,26 @@
       class="flex flex-1 items-center justify-center">
       <ProgressSpinner style="width: 1.5rem; height: 1.5rem" />
     </div>
-    <p
-      v-else-if="!payload"
-      class="m-0 text-xs text-gray-400"
-      data-test="session-preset-unavailable">
-      {{ unavailableHint }}
-    </p>
     <div
       v-else
       class="flex min-h-0 flex-1 flex-col gap-2">
-      <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+      <div
+        v-if="payload"
+        class="text-xs font-medium text-gray-500 dark:text-gray-400">
         {{ t('personaPreset.contentTitle') }}
       </div>
+      <p
+        v-else
+        class="m-0 text-xs text-gray-400"
+        data-test="session-preset-unavailable">
+        {{ unavailableHint }}
+      </p>
       <TabView class="session-preset-preview">
         <!-- Agent models tab (FIRST: the session's own model pair is what this viewer is
              opened for): 主代理 mirrored read-only from the session-model control,
              子代理 editable — a change parks until the next turn. -->
         <TabPanel
+          v-if="payload"
           value="agentSubagents"
           :header="t('config.agent.tabs.subagents')">
           <div
@@ -148,6 +151,7 @@
         </TabPanel>
 
         <TabPanel
+          v-if="payload"
           value="role"
           :header="t('config.tabs.role')">
           <div class="flex flex-col gap-1 text-xs">
@@ -166,14 +170,14 @@
           </div>
         </TabPanel>
         <TabPanel
-          v-for="item in PREVIEW_FILES"
+          v-for="item in visiblePreviewFiles"
           :key="item.file"
           :value="item.tabKey"
           :header="t(`config.tabs.${item.tabKey}`)">
           <pre
             class="m-0 overflow-auto whitespace-pre-wrap break-words text-xs"
             :data-test="`session-preset-content-${item.file}`"
-            >{{ payload.content[item.file] || t('personaPreset.empty') }}</pre>
+            >{{ payload?.content[item.file] || t('personaPreset.empty') }}</pre>
         </TabPanel>
         <!-- The SESSION's own agent config, in the same tabs the Presets & Role
              panel edits: skills are read-only here (change them in 菜单-预设角色),
@@ -184,6 +188,7 @@
         <!-- Skills tab: which skill index entries the SESSION keeps in its system
              prompt (read-only here — the 预设 panel edits it). -->
         <TabPanel
+          v-if="payload"
           value="agentSkills"
           :header="t('config.agent.tabs.skills')">
           <div
@@ -236,6 +241,18 @@
             </label>
           </div>
         </TabPanel>
+        <!-- LAST tab: the SESSION's extraction overrides. Always present (even
+             with no bound preset): experience learning and the two iteration
+             ceilings are editable and park until the next turn; flow replay
+             compilation is read-only here because it is a global decision. -->
+        <TabPanel
+          value="advanced"
+          :header="t('advanced.tab')"
+          data-test="session-preset-advanced-tab">
+          <ExtractionSettingsPanel
+            scope="session"
+            :session-id="sessionId" />
+        </TabPanel>
       </TabView>
     </div>
   </div>
@@ -243,6 +260,7 @@
 
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue';
+import ExtractionSettingsPanel from './ExtractionSettingsPanel.vue';
 import ThinkingCustomMappingPanel from './ThinkingCustomMappingPanel.vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
@@ -261,10 +279,12 @@ const agentStore = useAgentConfigStore();
  * header (the same `config.tabs.*` labels the preset panel uses).
  */
 const PREVIEW_FILES: ReadonlyArray<{ file: string; tabKey: string }> = [
-  { file: 'AGENTS.md', tabKey: 'agents' },
   { file: 'SOUL.md', tabKey: 'soul' },
   { file: 'USER.md', tabKey: 'user' }
 ];
+
+/** The preview tabs only exist when there is a bound preset to show. */
+const visiblePreviewFiles = computed(() => (payload.value ? PREVIEW_FILES : []));
 
 /** The saved presets (shared singleton); built-ins come from the catalogue. */
 const { presets } = usePersonaPresets();
@@ -443,7 +463,7 @@ const loadBinding = async () => {
     // The catalogue backs both the agent tabs and a built-in preset's agent
     // block (Pure / Companion derive theirs from it); loading is idempotent.
     await agentStore.loadCatalog();
-    payload.value = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
+    payload.value = await loadPresetPayload(entry, locale.value, t);
   } catch (e) {
     logUtil.e('[SessionPresetPanel] Failed to load the preset content:', e);
     payload.value = null;

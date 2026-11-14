@@ -26,7 +26,8 @@ TASKFLOW_CALL_SITES = (
 
 NON_TASKFLOW_CALL_SITES = (
     "agent/tools/subagent/spawn/completion_judge.py",
-    "agent/middlewares/summarization/background_reviews.py",
+    "agent/middlewares/summarization/skill_review.py",
+    "agent/middlewares/summarization/skill_review_runner.py",
     # The child LLM selection moved out of the spawn facade when core.py was
     # split by responsibility; the source pin follows the call site.
     "agent/tools/subagent/spawn/child_agent_factory.py",

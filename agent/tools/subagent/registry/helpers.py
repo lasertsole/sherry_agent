@@ -36,12 +36,6 @@ def resolve_announce_retry_delay_seconds(
     return resolve_announce_retry_delay_ms(attempt, base_ms) / 1000.0
 
 
-def resolve_archive_after_ms(config: SubagentConfig | None = None) -> int:
-    """Return the archive-after threshold in milliseconds from config."""
-    config = config or SubagentConfig()
-    return config.archive_after_minutes * 60 * 1000
-
-
 def is_live_unended_run(run: SubagentRunRecord) -> bool:
     """Return True if the run is PENDING, RUNNING, or INTERRUPTED (not yet terminated)."""
     return run.execution.status in (

@@ -63,6 +63,10 @@ class StepOutcome(StrEnum):
     FAILURE = "failure"
     PARTIAL = "partial"
     SKIPPED = "skipped"
+    #: The run produced work but its completion was never proven (e.g. the
+    #: child's goal loop hit its turn budget). The step blocks instead of
+    #: failing: the partial result stays readable and the caller may retry.
+    BLOCKED = "blocked"
 
 
 # Terminal flows are immutable: every mutating tool rejects them.

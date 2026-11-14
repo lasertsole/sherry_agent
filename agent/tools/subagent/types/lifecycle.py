@@ -20,6 +20,7 @@ class LifecycleEndedOutcome(StrEnum):
     ERROR = "error"
     TIMEOUT = "timeout"
     KILLED = "killed"
+    BUDGET_EXHAUSTED = "budget_exhausted"
     UNKNOWN = "unknown"
 
 

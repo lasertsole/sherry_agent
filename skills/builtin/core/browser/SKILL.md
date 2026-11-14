@@ -13,7 +13,7 @@ The session's browser is a real Chromium page, shown in the right sidebar's
 moment** — your clicks and theirs land on the same tab. Treat it like a pair
 programming session: act in small, verifiable steps.
 
-The tool family: `browser(action="navigate"|"snapshot"|"click"|"type"|"press"|"scroll"|"screenshot")`
+The tool family: `browser(action="navigate"|"snapshot"|"click"|"type"|"press"|"scroll"|"screenshot"|"console"|"network")`
 (+ `browser_evaluate`, a separate tool present only when the escape hatch is enabled).
 
 ## The loop that works: snapshot → act → verify
@@ -51,6 +51,23 @@ The tool family: `browser(action="navigate"|"snapshot"|"click"|"type"|"press"|"s
   browser profile.
 - **Multi-step flows**: one snapshot, one action, one verify. If two actions
   need the same knowledge, you are missing a snapshot in between.
+
+## Debugging the page (console + failed requests)
+
+The browser records what the page actually did while it was loaded:
+
+- `browser(action="console", level="error")` — console errors and uncaught JS
+  exceptions, with their stack. `level` accepts all / error / warn / info /
+  debug; exceptions count as error.
+- `browser(action="network", min_status=400)` — failed HTTP responses plus
+  requests that never completed (DNS/TLS/refused/aborted). Only URL, status and
+  the failure reason are kept; never headers or bodies.
+
+Both buffers are cleared by a navigation (that is the diagnosis: "what happened
+since this load"). A typical frontend loop: edit the code, `navigate`/reload,
+then read `console`/`network` and fix the first real error. If the tools answer
+"capture is disabled", the operator set `SHERRY_BROWSER_DEBUG_CAPTURE=0`; do not
+invent console output.
 
 ## Escape hatch (`browser_evaluate`, when enabled)
 

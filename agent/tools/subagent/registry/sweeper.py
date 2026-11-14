@@ -218,6 +218,12 @@ async def _do_sweep() -> None:
     if swept > 0:
         logger.debug("Sweeper pruned {} stale lifecycle entries", swept)
 
+    from ..control.steer import prune_stale_steer_marks
+
+    stale_steers = prune_stale_steer_marks()
+    if stale_steers > 0:
+        logger.debug("Sweeper pruned {} stale steer mark(s)", stale_steers)
+
     expired_flows = await _expire_overdue_taskflows()
     if expired_flows > 0:
         logger.warning("Sweeper: {} TaskFlow(s) exceeded deadline, marked as failed", expired_flows)

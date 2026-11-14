@@ -1,5 +1,6 @@
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request, read_body
 from server.service import read_heartbeat_file, write_heartbeat_file
 from server.service.heartbeat_control import get_heartbeat_status, set_heartbeat_enabled
 
@@ -21,7 +22,9 @@ async def write_heartbeat_handler(request):
     Body: {"file_to_content": {"HEARTBEAT.md": "..."}}
     Only the provided file is overwritten; others are left unchanged.
     """
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
 
     file_to_content: dict[str, str] = request_json.get("file_to_content", {})
     file_count = len(file_to_content)
@@ -51,7 +54,9 @@ async def set_heartbeat_status_handler(request):
     Body: {"enabled": bool}
     Returns: {"success": bool, "enabled": bool, "running": bool, "interval_s": int}
     """
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
 
     enabled = request_json.get("enabled", None)
     if not isinstance(enabled, bool):

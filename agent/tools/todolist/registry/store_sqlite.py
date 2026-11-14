@@ -1,6 +1,6 @@
 """SQLite persistence layer for the session todo list (todos table).
 
-Database path: agent/tools/todolist/data/todos.db
+Database path: the shared src/data/registry.db (todos table)
 Table schema: todos(session_id TEXT NOT NULL, content TEXT NOT NULL,
 status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'medium',
 position INTEGER NOT NULL, category TEXT NOT NULL DEFAULT 'quick',
@@ -35,11 +35,11 @@ import asyncio
 import json
 import sqlite3
 import threading
-from pathlib import Path
 
 from loguru import logger
 
 from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
+from config.path import resolve_registry_db_path
 from config.features import TODOLIST_INFRA
 from ..config import (
     DEFAULT_CATEGORY,
@@ -49,8 +49,8 @@ from ..config import (
     TABLE_NAME,
 )
 
-_DB_DIR = Path(__file__).resolve().parent.parent / "data"
-_DB_PATH = _DB_DIR / "todos.db"
+_DB_PATH = resolve_registry_db_path()
+_DB_DIR = _DB_PATH.parent
 
 # Wait (up to) this long for a contended SQLite lock on EVERY connection. The
 # journal-mode switch is the one operation that does not reliably honor this

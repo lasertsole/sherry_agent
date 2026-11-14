@@ -264,7 +264,9 @@ class TestEvictionSkips:
 
         response = eviction.wrap_tool_call(_request(bad), _sync_handler(original))
 
-        assert response is original
+        # No file can be written for an unsafe segment, but the oversized
+        # payload must still be bounded in memory (M12 fail-open fallback).
+        assert response.content.startswith("[output truncated:")
         assert not isolated_sessions.exists() or not any(isolated_sessions.rglob("*"))
 
     def test_disabled_flag_is_passthrough(self, isolated_db, isolated_sessions, sid, monkeypatch):

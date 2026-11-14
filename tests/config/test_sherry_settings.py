@@ -76,6 +76,22 @@ class TestLoadSherrySettings:
         assert settings["heartbeat.enabled"] is False
         assert settings["curator.interval_hours"] == 24
 
+    def test_a_flat_dotted_key_reads_like_its_grouped_form(self, sherry_file):
+        """An older file's first write appends ``"group.key": value`` flat."""
+        sherry_file.write_text(
+            json.dumps(
+                {
+                    "extraction.iteration_budget_main": "120",
+                    "extraction.flow_extraction_enabled": "false",
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = sherry_settings.load_sherry_settings()
+        assert settings["extraction.iteration_budget_main"] == 120
+        # Coerced to bool, not the truthy string.
+        assert settings["extraction.flow_extraction_enabled"] is False
+
     def test_unparseable_file_yields_defaults(self, sherry_file):
         sherry_file.write_text("{ not json at all", encoding="utf-8")
         assert sherry_settings.load_sherry_settings() == dict(

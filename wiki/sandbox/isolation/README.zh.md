@@ -70,7 +70,7 @@ bwrap
 - `BwrapBackend.probe()`：以 3 秒超时冒烟运行 `bwrap --ro-bind / / --proc /proc --dev /dev true`。二进制存在并不代表可用；Ubuntu 24.04+ 的 AppArmor 非特权 user namespace 限制可以在 uid-map 阶段杀死所有 bwrap，所以真实的冒烟运行才是诚实的检查。
 - `SeatbeltBackend.probe()`：仅 `shutil.which("sandbox-exec")`；sbpl 没有基于退出码的冒烟探测可用。
 
-**PTC 复用这套后端。** `execute_code`（程序化工具调用）不暴露 `sandbox` 开关，因此在任何策略下都表现得像 `sandbox=True` 调用：后端可用时包装 `[sys.executable, script_path]`；`SANDBOX_POLICY=required` 且无后端时返回 `status: "sandbox_unavailable"` 信封且不派生子进程；`auto` 记录恰好一条警告后降级为无沙箱运行。PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net`：子进程必须能连到父进程的 loopback RPC 监听，写/读沙箱不变。见 [PTC 页](../../ptc/README.zh.md)。
+**PTC 复用这套后端。** `execute_code`（程序化工具调用）不暴露 `sandbox` 开关，因此在任何策略下都表现得像 `sandbox=True` 调用：后端可用时包装 `[sys.executable, script_path]`；`SANDBOX_POLICY=required` 且无后端时返回 `status: "sandbox_unavailable"` 信封且不派生子进程；`SANDBOX_POLICY=auto` 且无后端时同样返回 `status: "sandbox_unavailable"` 且不派生子进程（PTC 无 HITL 路径，因此拒绝降级）；只有 `off` 才无沙箱运行。PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net`：子进程必须能连到父进程的 loopback RPC 监听，写/读沙箱不变。见 [PTC 页](../../ptc/README.zh.md)。
 
 ### 3. 危险命令拦截（仅 terminal）
 
@@ -140,7 +140,7 @@ bwrap
 
 **搜索 containment（`_stays_within_root`）。** `os.walk` 不会进入目录符号链接，但文件符号链接仍会出现在列表里。两种搜索模式都用 `_stays_within_root(candidate, root)`（`candidate.resolve().relative_to(root.resolve())`，遇 `ValueError` / `OSError` / `RuntimeError` 即跳过）过滤每个命中，因此经符号链接解析到搜索树之外的文件绝不会返回——指向 `/etc/passwd` 的文件符号链接会被跳过。搜索根本身始终是已解析路径（项目内搜索还额外受 `ROOT_DIR` 约束），所以已获批准的外部目录搜索仍可正常工作。
 
-**扫描边界。** 两种模式还通过 `TOOLS_TIMEOUTS`（`config/features/agent_side/tools_timeouts.py`）限制扫描本身：`file_tools_search_time_budget_s`（默认 5.0 秒）到期即停止遍历，`file_tools_search_max_matches`（默认 10,000）限制收集到的命中数，`file_tools_search_prune_dirs`（默认 `proc`、`sys`、`dev`）在 `dirnames[:]` 中被过滤，伪文件系统绝不会被进入。被截断的扫描绝不静默：JSON 结果会带上 `scan_truncated: true`、`scan_stop_reason`（`time_budget` / `max_matches`）与提示；剪枝发生时另有 `pruned_dir_count`。文件名匹配走 `fnmatch`（不支持花括号展开），因此无需展开数上限。
+**扫描边界。** 两种模式还通过 `TOOLS_TIMEOUTS`（`config/features/agent_side/tools_timeouts.py`）限制扫描本身：`file_tools_search_time_budget_s`（默认 5.0 秒）到期即停止遍历，`file_tools_search_max_matches`（默认 10,000）限制收集到的命中数，`file_tools_search_prune_dirs`（默认 `proc`、`sys`、`dev`）在 `dirnames[:]` 中被过滤，伪文件系统绝不会被进入。被截断的扫描绝不静默：JSON 结果会带上 `scan_truncated: true`、`scan_stop_reason`（`time_budget` / `max_matches`）与提示；剪枝发生时另有 `pruned_dir_count`。调用开始时预算就已耗尽的情况会在两个引擎启动前被直接拒绝——只靠 ripgrep 看门狗会把先跑完的小目录误报为完整结果——同样返回 `time_budget` 标记。文件名匹配走 `fnmatch`（不支持花括号展开），因此无需展开数上限。
 
 **与 deepagents 参考实现的设计差异。** 参考实现把每个路径锚定到虚拟命名空间（`virtual_mode`），使穿越在设计上不可能；Sherry 则保留真实文件系统路径——`prompt_builder`、技能工具与 terminal 的 cwd 都依赖它们——改在解析**之后**做 containment（上文三道门），并用 `O_NOFOLLOW` 关闭 TOCTOU。其 `BackendProtocol`、`CompositeBackend`、`StateBackend` 与完整的虚拟路径命名空间被刻意弃用：那是架构重写，而 Sherry 没有多后端场景。
 
@@ -177,7 +177,7 @@ bwrap
 | 2 | `required` | `True` | 否 | 任意 | `RuntimeError` / 工具错误；不产生任何子进程 |
 | 3 | `required` | `False` | （不查询） | 任意 | 工具层 `ToolException`，绝不是 `GraphInterrupt`；不产生子进程 |
 | 4 | `auto` | `False` | （不查询） | 主会话，非 YOLO | HITL 中断：批准 → 执行（仍清洗），拒绝 → 错误 `ToolMessage` |
-| 5 | `auto` | `True` | 否 | 任意 | 降级：直接无沙箱执行，恰好一条警告，环境仍然清洗 |
+| 5 | `auto` | `True` | 否 | 主会话（非 YOLO） | 降级：先弹沙箱绕过 HITL 卡；批准 → 无沙箱执行（环境仍清洗），拒绝/headless → 拒绝。恰好一条 INFO 日志 |
 | 6 | `off` | `True` / `False` | 从不探测 | 主会话 | 无沙箱、无审批、无警告；直接执行 |
 
 补充说明：

@@ -8,7 +8,7 @@
        The Web build keeps the browser's own chrome and draws nothing. -->
   <div
     v-if="visible"
-    class="titlebar fixed top-0 right-0 z-[60] flex select-none items-center border-b border-solid border-gray-light bg-white dark:border-gray-dark dark:bg-[#181820]"
+    class="titlebar fixed top-0 right-0 z-[60] flex select-none items-center border-b border-solid border-gray-light bg-white dark:border-gray-dark dark:bg-[#0a0a0a]"
     data-test="titlebar"
     :data-maximized="isMaximized ? 'true' : 'false'"
     :style="{ left: `${leftOffset}px`, height: TITLEBAR_HEIGHT_CSS }">
@@ -38,7 +38,7 @@
       class="flex h-full min-w-0 flex-1 items-center px-3"
       data-tauri-drag-region
       data-test="titlebar-drag">
-      <span class="truncate text-xs text-gray-500 dark:text-gray-400">{{ appTitle }}</span>
+      <!-- Pure drag region: no title text. -->
     </div>
 
     <!-- Windows / Linux convention: the window controls sit on the right. -->
@@ -57,7 +57,83 @@
         :data-test="btn.testId"
         @pointerdown.stop
         @click="btn.handler">
-        <i :class="btn.icon" />
+        <!-- Windows 10/11 titlebar glyphs: 10x10, 1px currentColor stroke. -->
+        <svg
+          v-if="btn.action === 'minimize'"
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          aria-hidden="true">
+          <line
+            x1="0"
+            y1="5"
+            x2="10"
+            y2="5"
+            stroke="currentColor"
+            stroke-width="1" />
+        </svg>
+        <svg
+          v-else-if="btn.action === 'toggleMaximize' && !isMaximized"
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          aria-hidden="true">
+          <rect
+            x="0.5"
+            y="0.5"
+            width="9"
+            height="9"
+            stroke="currentColor"
+            stroke-width="1" />
+        </svg>
+        <svg
+          v-else-if="btn.action === 'toggleMaximize' && isMaximized"
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          aria-hidden="true">
+          <!-- Back square, drawn only where the front square does not cover it. -->
+          <path
+            d="M2.5 0.5 H9.5 V7.5 H7.5 M2.5 0.5 V2.5"
+            stroke="currentColor"
+            stroke-width="1"
+            fill="none" />
+          <rect
+            x="0.5"
+            y="2.5"
+            width="7"
+            height="7"
+            stroke="currentColor"
+            stroke-width="1" />
+        </svg>
+        <svg
+          v-else-if="btn.action === 'close'"
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          aria-hidden="true">
+          <line
+            x1="0"
+            y1="0"
+            x2="10"
+            y2="10"
+            stroke="currentColor"
+            stroke-width="1" />
+          <line
+            x1="10"
+            y1="0"
+            x2="0"
+            y2="10"
+            stroke="currentColor"
+            stroke-width="1" />
+        </svg>
+        <i
+          v-else
+          :class="btn.icon" />
       </button>
     </div>
   </div>
@@ -97,8 +173,6 @@ const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgen
 const uiStore = useUiStore();
 const rightSidebarStore = useRightSidebarStore();
 const sidebarWidthStore = useSidebarWidthStore();
-
-const appTitle = computed(() => t('chatBox.defaultAiName'));
 
 /** Whether the window currently fills the screen (drives the maximize label). */
 const isMaximized = ref(false);

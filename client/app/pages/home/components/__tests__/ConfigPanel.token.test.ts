@@ -39,7 +39,8 @@ vi.mock('@/composables/env', () => ({
   readNetworkConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: [] })),
   writeEnvConfig: vi.fn(async () => true),
   writeModelsConfig: writeModelsConfigMock,
-  writeNetworkConfig: vi.fn(async () => true)
+  writeNetworkConfig: vi.fn(async () => true),
+  readModelRoles: vi.fn(async () => [])
 }));
 
 vi.mock('@/composables/model-config', () => ({
@@ -187,7 +188,8 @@ describe('ConfigPanel shortcut-bindings tab', () => {
       '国际化',
       '快捷键',
       '直播安全',
-      '桌面'
+      '桌面',
+      'LSP / 代码智能'
     ]);
 
     // The tab body is the (stubbed) section; it saves on its own, so the

@@ -461,6 +461,13 @@ class _Sandbox:
         # the recorder has to wrap to see its runs.
         monkeypatch.setattr(review_mod, "_create_skill_review_agent", recording_plan_create)
 
+        async def _generalizable(_context):
+            # The cadence suite counts review-agent calls; the task-level
+            # pre-check is a different (separately tested) call.
+            return review_mod._GeneralizabilityVerdict(True, "cadence e2e")
+
+        monkeypatch.setattr(review_mod, "_judge_task_generalizability", _generalizable)
+
         original_memory = review_mod._execute_memory_review
         original_plan = review_mod._run_skill_review
 

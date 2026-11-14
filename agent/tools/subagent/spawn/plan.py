@@ -1,5 +1,7 @@
 """Run-plan resolution for sub-agents — timeout, model selection, and thinking level."""
 
+import time
+
 from ..config import get_config
 
 
@@ -8,6 +10,50 @@ def resolve_run_timeout_seconds(timeout: float | None = None) -> float:
     if timeout is not None and timeout > 0:
         return timeout
     return get_config().run_timeout_seconds
+
+
+def remaining_parent_run_budget(requester_session_key: str) -> float | None:
+    """Seconds left on the PARENT run's wall clock, or ``None``.
+
+    A grandchild's spawn reads its parent run by the requester's child session
+    key: the frozen ``run_timeout_seconds`` plus the monotonic ``started_at``
+    give the remaining subtree budget. ``None`` means "not a child run" (a
+    main-agent requester), "no stored timeout" (a legacy/unbounded run), or a
+    registry read failure — the caller then keeps the regular timeout.
+    """
+    key = (requester_session_key or "").strip()
+    if not key:
+        return None
+    try:
+        from ..registry.queries import get_run_by_child_session_key
+
+        parent = get_run_by_child_session_key(key)
+    except Exception:
+        return None
+    if parent is None:
+        return None
+    timeout = parent.run_timeout_seconds
+    started = parent.execution.started_at
+    if not timeout or timeout <= 0 or started is None:
+        return None
+    return float(started) + float(timeout) - time.monotonic()
+
+
+def resolve_run_timeout_for_requester(
+    requester_session_key: str, timeout: float | None = None
+) -> float:
+    """Effective timeout for a child spawn, capped by the parent's remaining budget.
+
+    The subtree rule: a descendant may never outlive its parent (the root's
+    subtree budget). A spent budget still grants a 1 s floor so the child fails
+    fast instead of hanging; a main-agent requester keeps the regular resolver
+    result.
+    """
+    base = resolve_run_timeout_seconds(timeout)
+    remaining = remaining_parent_run_budget(requester_session_key)
+    if remaining is None:
+        return base
+    return max(1.0, min(base, remaining))
 
 
 def clamp_run_timeout_seconds(timeout: float | None) -> float | None:
@@ -121,7 +167,7 @@ def resolve_model_and_thinking_plan(
     pick the LLM by role instead of depth. ``None`` means no functional-role
     override (pre-migration depth-based selection).
     """
-    from .thinking import resolve_thinking_override, resolve_initial_session_patch
+    from .text_helpers import resolve_thinking_override, resolve_initial_session_patch
 
     resolved_model = None
     model_applied = False

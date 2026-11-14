@@ -38,6 +38,7 @@ from ._retry import (
 from agent.tools.pub_base import SessionId
 from ._shared import (
     apply_dispatched_steps,
+    apply_spawn_failures,
     build_task_with_bindings,
     build_task_with_dep_results,
     deps_satisfied,
@@ -45,6 +46,7 @@ from ._shared import (
     not_found_error,
     requester_session_key,
     result_hash,
+    spawn_failure_record,
     step_status,
     steps_summary,
     terminal_error,
@@ -114,11 +116,13 @@ async def taskflow_resume(
       result text.
 
     ``step_outcome`` lets the caller state how the run ended
-    (``success``/``failure``/``partial``/``skipped``), which outranks the
-    gates: ``failure`` marks the step ``failed`` and skips the judge,
-    ``skipped`` marks it ``skipped`` (its dependents cascade ``skipped``), and
-    ``success``/``partial`` are recorded on the result while the gates still
-    run. A ``failed`` step never unlocks its dependents.
+    (``success``/``failure``/``partial``/``skipped``/``blocked``), which
+    outranks the gates: ``failure`` marks the step ``failed`` and skips the
+    judge, ``blocked`` leaves it ``blocked`` with the partial result readable
+    (its dependents stay blocked), ``skipped`` marks it ``skipped`` (its
+    dependents cascade ``skipped``), and ``success``/``partial`` are recorded
+    on the result while the gates still run. A ``failed`` step never unlocks
+    its dependents.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -279,6 +283,16 @@ async def taskflow_resume(
                 fail_reason=f"step_outcome=failure: {(result or '')[:200]}",
             )
             outcome_text = "\n  outcome: failed (declared by the caller)"
+        elif declared_outcome == StepOutcome.BLOCKED.value:
+            # The run did work but completion was never proven (budget/time
+            # exhausted). Keep the partial result readable and the dependents
+            # blocked; the agent can retry, replan, or cancel the flow.
+            set_step_status(
+                step,
+                StepStatus.BLOCKED,
+                block_reason=f"step_outcome=blocked: {(result or '')[:200]}",
+            )
+            outcome_text = "\n  outcome: blocked (declared by the caller)"
         elif declared_outcome == StepOutcome.SKIPPED.value:
             set_step_status(step, StepStatus.SKIPPED, skip_reason="step_outcome=skipped")
             outcome_text = "\n  outcome: skipped (declared by the caller)"
@@ -630,9 +644,16 @@ async def _auto_dispatch_ready_locked(
     spawned = await asyncio.gather(*(_bounded(sid) for sid in ready_ids))
 
     records: list[dict] = []
+    failed_records: list[dict] = []
     for sid, child_key, failure, feedback in spawned:
         if failure is not None or child_key is None:
-            failures.append(failure or f"{sid}: dispatch returned no child key")
+            message = failure or f"{sid}: dispatch returned no child key"
+            failures.append(message)
+            # Persisted so the board can tell "waiting for the automatic wave"
+            # from "this step's spawn failed and needs a manual retry".
+            failed_records.append(
+                spawn_failure_record(sid, message.removeprefix(f"{sid}: "), time.time())
+            )
             continue
         if feedback:
             by_id[sid].pop("judge_feedback", None)
@@ -646,14 +667,18 @@ async def _auto_dispatch_ready_locked(
         )
         dispatched.append(sid)
 
-    if records:
+    if records or failed_records:
         # Persist through the CAS-retry helper: the children are ALREADY alive,
         # so a concurrent writer must not be able to drop their keys — the
         # callback re-applies the records onto the fresh step list instead.
+        # Failed-spawn markers ride the same write, so a retryable step is
+        # visible on the board even when the whole wave failed.
         def build_state(fresh_flow: dict, _attempt: int) -> dict:
             fresh_state = dict(fresh_flow["state"])
             fresh_steps = list(fresh_state.get("steps") or [])
-            fresh_state["steps"] = apply_dispatched_steps(fresh_steps, records)
+            fresh_state["steps"] = apply_spawn_failures(
+                apply_dispatched_steps(fresh_steps, records), failed_records
+            )
             return fresh_state
 
         updated, error = await update_flow_with_conflict_retry(
@@ -665,11 +690,19 @@ async def _auto_dispatch_ready_locked(
             session_id=session_id,
         )
         if updated is None:
-            # The children ARE running; the dispatch record failed. A later
-            # resume / dispatch pass reconciles the bookkeeping.
-            logger.error(
-                "taskflow auto-dispatch state write failed for flow {}: {}", flow_id, error
-            )
+            if records:
+                # The children ARE running; the dispatch record failed. A later
+                # resume / dispatch pass reconciles the bookkeeping.
+                logger.error(
+                    "taskflow auto-dispatch state write failed for flow {}: {}", flow_id, error
+                )
+            else:
+                # No child to protect: the board marker is the only casualty.
+                logger.warning(
+                    "taskflow auto-dispatch: failed-spawn markers not persisted for flow {}: {}",
+                    flow_id,
+                    error,
+                )
             if error:
                 failures.append(error)
     return dispatched, failures

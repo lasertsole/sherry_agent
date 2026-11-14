@@ -426,6 +426,7 @@ class MemoryStore:
         *,
         reason: str = "evicted",
         archive: bool = True,
+        max_entries: int | None = None,
     ) -> list[dict[str, Any]]:
         """Remove least-active entries (in place) until the joined text fits.
 
@@ -441,7 +442,10 @@ class MemoryStore:
         # Only persisted rows are candidates: the caller's new-entry stub (no
         # ``id``) must never be chosen, or the add would evict the very entry
         # it is about to insert and still exceed the limit.
-        while len(entries) > 1 and len(self._joined([e["content"] for e in entries])) > limit:
+        while len(entries) > 1 and (
+            len(self._joined([e["content"] for e in entries])) > limit
+            or (max_entries is not None and len(entries) > max_entries)
+        ):
             candidates = [entry for entry in entries if "id" in entry]
             if not candidates:
                 break
@@ -520,19 +524,23 @@ class MemoryStore:
 
         new_entry_stub = {"content": content}
         all_entries: list[dict[str, Any]] = entries + [new_entry_stub]  # type: ignore[list-item]
+        max_entries = int(MEMORY_TOOL["max_entries_per_target"])
         evicted: list[dict[str, Any]] = []
         if target == "facts":
-            evicted = self._evict_least_active_to_fit(all_entries, limit, archive=False)
+            evicted = self._evict_least_active_to_fit(
+                all_entries, limit, archive=False, max_entries=max_entries
+            )
 
         new_total = len(self._joined([e["content"] for e in all_entries]))
-        if new_total > limit:
+        if new_total > limit or len(all_entries) > max_entries:
             # Nothing was archived yet: a refused add must not delete rows.
             current = len(self._joined(contents))
             self._set_target(target, entries)
             return {
                 "success": False,
                 "error": (
-                    f"Memory at {current:,}/{limit:,} chars. "
+                    f"Memory at {current:,}/{limit:,} chars and {len(entries):,} "
+                    f"entries (entry limit {max_entries:,}). "
                     f"Adding this entry ({len(content)} chars) would exceed the limit. "
                     f"Replace or remove existing entries first."
                 ),
@@ -578,13 +586,14 @@ class MemoryStore:
             {"content": entry}
             for entry in new_items  # type: ignore[list-item]
         ]
+        max_entries = int(MEMORY_TOOL["max_entries_per_target"])
         if target == "facts":
-            self._evict_least_active_to_fit(all_entries, limit)
+            self._evict_least_active_to_fit(all_entries, limit, max_entries=max_entries)
         else:
             # MEMORY / USER keep the old oldest-first rollover.
-            while (
-                len(all_entries) > 1
-                and len(self._joined([e["content"] for e in all_entries])) > limit
+            while len(all_entries) > 1 and (
+                len(self._joined([e["content"] for e in all_entries])) > limit
+                or len(all_entries) > max_entries
             ):
                 victim = all_entries.pop(0)
                 if "id" in victim:

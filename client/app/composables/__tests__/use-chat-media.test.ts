@@ -11,6 +11,7 @@ import {
   resolveArtifactRefsInMarkdown,
   useChatMedia
 } from '../use-chat-media';
+import { extractArtifactUris, resolveArtifactImages } from '../media-resolver';
 import { CHAT_ROLE } from '@/types/chat-role';
 import type { MessageItem } from '@/pages/home/type';
 
@@ -130,5 +131,39 @@ describe('useChatMedia', () => {
     expect([...failedImageSources]).toEqual(['http://x/broken.png']);
     onImageError(new Event('error'), 'http://x/broken.png');
     expect(failedImageSources.size).toBe(1);
+  });
+});
+
+describe('artifact image extraction', () => {
+  it('finds references in markdown, JSON-quoted and bare shapes', () => {
+    const uri = 'sherry-artifact://s1/image-0123456789abcdef.png';
+    const text = [
+      `![generated](sherry-artifact://s1/image-0123456789abcdef.png)`,
+      `"screenshot": "sherry-artifact://s1/image-fedcba9876543210.png",`,
+      uri
+    ].join('\n');
+    expect(extractArtifactUris(text)).toEqual([uri, 'sherry-artifact://s1/image-fedcba9876543210.png']);
+  });
+
+  it('collapses duplicates and ignores text without references', () => {
+    const uri = 'sherry-artifact://s1/image-0123456789abcdef.png';
+    expect(extractArtifactUris(`${uri}\n${uri}`)).toEqual([uri]);
+    expect(extractArtifactUris('plain tool output')).toEqual([]);
+    expect(extractArtifactUris(null)).toEqual([]);
+  });
+
+  it('does not swallow markdown/JSON punctuation', () => {
+    expect(extractArtifactUris('![x](sherry-artifact://s1/image-0123456789abcdef.png), done')).toEqual([
+      'sherry-artifact://s1/image-0123456789abcdef.png'
+    ]);
+  });
+
+  it('resolves references to their /artifacts URLs', () => {
+    expect(resolveArtifactImages('sherry-artifact://s1/image-0123456789abcdef.png')).toEqual([
+      {
+        uri: 'sherry-artifact://s1/image-0123456789abcdef.png',
+        url: 'http://localhost:8080/artifacts/s1/image-0123456789abcdef.png'
+      }
+    ]);
   });
 });

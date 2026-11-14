@@ -174,25 +174,57 @@ class LocalMultimodalLlamaChatBase(LocalLlamaChatBase):
         return block
 
     def _ensure_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+
+        client = self._build_daemon_client()
+        if client is not None:
+            self._client = client
+            atexit.register(self._release_client)
+            return self._client
+
         from llama_cpp import Llama
         from llama_cpp.llama_chat_format import Qwen25VLChatHandler
 
-        if self._client is None:
-            chat_handler = Qwen25VLChatHandler(
-                clip_model_path=self._resolved_mmproj_path,
-                verbose=self.verbose,
-            )
-            self._client = Llama(
-                model_path=self._resolved_path,
-                chat_handler=chat_handler,
-                n_ctx=self.n_ctx,
-                n_batch=self.n_ctx,
-                n_ubatch=self.n_ctx,  # Must match or exceed n_tokens per encoder step
-                n_gpu_layers=self.n_gpu_layers,
-                verbose=self.verbose,
-            )
-            atexit.register(self._release_client)
+        chat_handler = Qwen25VLChatHandler(
+            clip_model_path=self._resolved_mmproj_path,
+            verbose=self.verbose,
+        )
+        self._client = Llama(
+            model_path=self._resolved_path,
+            chat_handler=chat_handler,
+            n_ctx=self.n_ctx,
+            n_batch=self.n_ctx,
+            n_ubatch=self.n_ctx,  # Must match or exceed n_tokens per encoder step
+            n_gpu_layers=self.n_gpu_layers,
+            verbose=self.verbose,
+        )
+        atexit.register(self._release_client)
         return self._client
+
+    def _build_daemon_client(self) -> Any | None:
+        """The vision daemon shim when it can serve; else None (in-process).
+
+        The ITTT/VTTT weights are the same Qwen2.5-VL pair, so both families
+        share one vision daemon. A daemon that cannot start — or is still
+        warming past its budget — falls back to the historical in-process
+        llama-cpp client, so the feature never regresses on isolation alone.
+        """
+        from config.features import LOCAL_DAEMONS
+
+        if not LOCAL_DAEMONS["vision_daemon_enabled"]:
+            return None
+        from models.LLMs.local_daemon.client import build_daemon_chat_client
+
+        client = build_daemon_chat_client(
+            model_path=self._resolved_path,
+            mmproj_path=self._resolved_mmproj_path,
+            n_ctx=self.n_ctx,
+            n_gpu_layers=self.n_gpu_layers,
+            verbose=self.verbose,
+            vision=True,
+        )
+        return client if client.available() else None
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:

@@ -582,7 +582,7 @@ async def _handle_edit_message(
     # stale by construction.
     from server.service.resumable_breakpoint import clear_breakpoint
 
-    clear_breakpoint(session_id)
+    await asyncio.to_thread(clear_breakpoint, session_id)
 
     if rollback_skipped:
         await _send_ws(
@@ -637,13 +637,13 @@ async def _handle_continue_generation(
     if active is not None and not active.done():
         reason = "busy"
     else:
-        breakpoint = read_breakpoint(session_id)
+        breakpoint = await asyncio.to_thread(read_breakpoint, session_id)
         if breakpoint is None:
             reason = "stale"
         elif not await validate_breakpoint(session_id, breakpoint):
             # The transcript moved past the marker: drop the dead breakpoint so
             # the flag does not resurrect on the next history load.
-            clear_breakpoint(session_id)
+            await asyncio.to_thread(clear_breakpoint, session_id)
             reason = "stale"
     await _send_ws(
         websocket,

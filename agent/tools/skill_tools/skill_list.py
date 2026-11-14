@@ -52,15 +52,19 @@ class SkillList(BaseTool):
                     ensure_ascii=False,
                 )
 
-            # Scope visibility: subagent-stamped tool instances carry
-            # metadata["caller_scope"] = "subagent" (set by the spawn tool
-            # policy); they must not see skills scoped "main_only". Absent
-            # metadata (main agent) defaults to "main" — unchanged behavior.
+            # Scope + role visibility: subagent-stamped tool instances carry
+            # metadata["caller_scope"] = "subagent" and (for a specialized
+            # functional role) metadata["caller_role"], both set by the spawn
+            # tool policy. They must not see skills scoped "main_only" or
+            # tagged with a ``roles: [...]`` list that omits their role. Absent
+            # metadata (main agent / identity role) defaults to "main" / None —
+            # unchanged behavior.
             metadata = getattr(self, "metadata", None)
             caller_scope = (
                 metadata.get("caller_scope", "main") if isinstance(metadata, dict) else "main"
             )
-            all_skills = [s for s in all_skills if skill_visible_to(s, caller_scope)]
+            caller_role = metadata.get("caller_role") if isinstance(metadata, dict) else None
+            all_skills = [s for s in all_skills if skill_visible_to(s, caller_scope, caller_role)]
 
             # Filter by category if specified
             if category:

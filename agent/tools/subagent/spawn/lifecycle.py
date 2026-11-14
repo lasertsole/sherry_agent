@@ -508,7 +508,7 @@ async def _run_goal_loop(
             return result_text, None
         if turns_used >= goal_max_turns:
             return result_text, RunOutcome(
-                status=RunOutcomeStatus.OK,
+                status=RunOutcomeStatus.BUDGET_EXHAUSTED,
                 error="goal_loop_budget_exhausted",
             )
         if not judge_result.continuation_prompt.strip():
@@ -697,6 +697,12 @@ async def _execute_subagent_scoped(
                 raise
             break
 
+        # The model accepted this rung: if get_level had decayed it, commit the
+        # lower level now (a spawn at the persisted level is a no-op, so steady
+        # use cannot pin a degradation forever).
+        if output_schema is not None:
+            model_caps.confirm_level(*identity, strategy_level)
+
         # Extract the last substantive assistant text as the result text.
         # The last message in the returned state is frequently an AIMessage with
         # empty content (only tool_calls) or a ToolMessage — both carry tool output,
@@ -766,6 +772,32 @@ async def _execute_subagent_scoped(
     finally:
         await seams.release_child_resources(run, child_agent)
         await seams.finalize_child_run(run, outcome, result_text, handoff)
+        await _kill_descendants_after_failure(run, outcome)
+
+
+async def _kill_descendants_after_failure(run: SubagentRunRecord, outcome: RunOutcome) -> None:
+    """Cascade-kill descendants when this run did not end OK.
+
+    A timed-out/killed/failed parent can never collect its children's results,
+    and every live grandchild would keep a SUBAGENT lane slot. The run is
+    already FINALIZED here, so this is advisory: a kill problem must never
+    rewrite its outcome (per-run fail-open inside the cascade).
+    """
+    if outcome.status is RunOutcomeStatus.OK:
+        return
+    try:
+        from ..control.kill import kill_descendants_of_run
+
+        killed = await kill_descendants_of_run(run.run_id, f"parent {outcome.status.value}")
+        if killed:
+            logger.info(
+                "Subagent run {} ended {}: cascade-killed {} descendant(s)",
+                run.run_id,
+                outcome.status.value,
+                len(killed),
+            )
+    except Exception:
+        logger.warning("Subagent cascade kill failed for run {}", run.run_id, exc_info=True)
 
 
 async def _rollback_spawn(

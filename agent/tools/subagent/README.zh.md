@@ -22,7 +22,6 @@
 - **新增全局并发上限**：`max_concurrent = 8` —— 起初在 spawn 管线中强制执行，超限返回 `forbidden`（"Global concurrent ..."）。**已由全局 SUBAGENT lane 取代**：超限 spawn 现在以 `PENDING` 排队，待 lane 空出 slot 后开始执行（该字段仅为向后兼容保留）。registry 新增查询：`count_all_active_runs` / `count_all_active_runs_readonly` —— 两者都把 `PENDING` run 计入活跃，因为排队中的 child 仍占用准入名额。
 - **`max_spawn_depth` 默认 3 → 2，现为硬上限**：构造与赋值均拒绝 > 2；`delegate_task(max_spawn_depth=...)` 超限抛出 `ValueError`。深度树：MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
 - **`run_timeout_seconds` 默认 300 → 0.0（无超时）**：spawn 与 steer 直接调用子代理；followup 超时检查跳过；sweeper 的 2 小时 stale 检测仍是兜底。（**2026-10-15 已反转**：默认值恢复为 600 秒——见上方记录。）
-- **`archive_after_minutes` 1440 → 60**。
 - **`delegate_task`**：per-call `max_concurrent` 覆盖，现已被废弃 —— 全局并发由 SUBAGENT lane 排队，传入该参数只会发出 `DeprecationWarning`（值仍会按调用应用并恢复）。
 - 本目录文档（en/zh/ko/ja）及根 README 的全部配置表与图示已同步新默认值。
 
@@ -62,7 +61,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 1. 校验（Validation）
   │     ├── task 非空；task_name 规范化（[^a-zA-Z0-9_-] → _、重复压缩、
-  │     │   截断至 64 字符 — task_name.py）
+  │     │   截断至 64 字符 — text_helpers.py）
   │     ├── target_policy：agent_id 必须在 allow_agents 白名单内（支持 * 通配）
   │     ├── depth = 父深度 + 1，不得超过 max_spawn_depth（2）
   │     ├── 活跃子 Agent 数 < max_children_per_agent（5）
@@ -79,7 +78,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │         （自身角色；executor 额外可派生只读的 researcher / librarian）
   │         ——MAIN/general 不受限制
   │
-  ├── 3. 模型与思考计划（Model & Thinking Plan，spawn/plan.py、spawn/thinking.py）
+  ├── 3. 模型与思考计划（Model & Thinking Plan，spawn/plan.py、spawn/text_helpers.py）
   │     ├── thinking 优先级：显式指定 → 请求方 → 目标 Agent 默认
   │     └── 超时：每次 spawn 可覆盖（工具输入 clamp 到 [600, 7200]），否则用
   │           run_timeout_seconds（默认 600 秒；0 = 无超时）
@@ -816,7 +815,6 @@ agent/tools/subagent/
 │   ├── work_admission.py      不依赖 Gateway 的根任务准入 + pending 计数
 │   ├── lifecycle.py           生命周期控制器（completeRun/resume/announce/pressurePrune/gracePeriod）
 │   ├── state.py               persist/restore 桥接（含 settle-wake 持久化恢复）
-│   ├── read.py                外部只读 API（find_run_by_task_name + run record 主查询）
 │   ├── task_refs.py           asyncio.Task 引用管理（register/get/remove/cancel）
 │   ├── yield_events.py        asyncio.Event 管理（yield 唤醒 / 后代结算）
 │   ├── sweeper.py             带失败退避的后台扫描器（分层过期：cron=2h, subagent=6h, interactive=24h）
@@ -836,15 +834,12 @@ agent/tools/subagent/
 │   ├── target_policy.py       allowAgents 校验
 │   ├── depth.py               深度计算与限制
 │   ├── attachments.py         附件物化到子 workspace（含 Unicode C0+DEL 控制字符检测、重名检测、严格 base64 校验）
-│   ├── task_name.py           taskName 规范化
+│   ├── text_helpers.py        taskName 规范化、接受提示文本、首条 user message 信封、thinking 级别优先级
 │   ├── system_prompt.py       子 agent system prompt 生成（6 段结构：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
-│   ├── initial_message.py     子 agent 首条 user message（结构化信封：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  工具白/黑名单继承
 │   ├── runtime_isolation.py   运行时隔离与安全边界 + workspace 继承
 │   ├── origin_routing.py      请求方来源路由解析 + fingerprint 生成（build_origin_fingerprint 暴露为外部 API）
 │   ├── gateway_dispatch.py    最小权限 scope 解析 + SubagentLaunchAuthorization + scope→deny 映射
-│   ├── accepted_note.py       SpawnResult.note 内容生成
-│   ├── thinking.py            thinking 级别覆盖解析
 │   └── completion_judge.py    CompletionJudge —— 辅助 LLM 的 done/continue 判定（goal loop）
 │
 ├── announce/                  完成通知管道
@@ -923,7 +918,7 @@ registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
   ↑                    ↑                              ↑
 registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
                                                          ↑
-                                                    registry/read.py
+                                                    registry/memory.py + registry/queries.py
 
 swarm/fifo.py ← swarm/collector.py ← types/swarm.py
 
@@ -935,7 +930,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/initial_message.py ← spawn/task_name.py
+spawn/text_helpers.py（初始消息 ← taskName 规范化）
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 
@@ -988,7 +983,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `stale_unended_threshold_seconds` | 7200 | 存活未结束 run 的 stale 阈值 |
 | `recent_ended_window_seconds` | 1800 | 近期结束展示窗口 |
 | `steer_rate_limit_ms` | 2000 | Steer 限流 |
-| `archive_after_minutes` | 60 | 自动归档分钟数 |
 | `attachments_enabled` | True | 是否允许附件 |
 | `attachments_max_files` | 50 | 每次 spawn 最大文件数 |
 | `attachments_max_file_bytes` | 1MB | 单文件大小上限 |

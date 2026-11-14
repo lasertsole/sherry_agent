@@ -149,6 +149,14 @@ async def test_apply_compression_fails_open_under_foreign_lock(lock_db, monkeypa
         need_update_system_prompt=False,
     )
     request = _make_request(sid)
+    # Keep the real lock (and the foreign holder) but shorten its acquire
+    # deadline: the production default is 10 s, which only makes this test slow.
+    acquire = mw._compaction_lock.acquire
+
+    def short_acquire(session_id: str, timeout_s: float = 0.2):
+        return acquire(session_id, timeout_s=timeout_s)
+
+    monkeypatch.setattr(mw._compaction_lock, "acquire", short_acquire)
 
     # Fail-open: the untouched request comes back, no LLM call was made.
     result = await mw._aapply_compression(request, sid)

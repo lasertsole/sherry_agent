@@ -8,6 +8,7 @@ from .workplace import (
     read_system_prompt_file as read_system_prompt_file,
     write_system_prompt_file as write_system_prompt_file,
     update_system_prompt_file as update_system_prompt_file,
+    write_preset_system_prompt_file as write_preset_system_prompt_file,
     read_system_prompt_template as read_system_prompt_template,
 )
 from .messages import (
@@ -31,10 +32,16 @@ from .sherry_config import (
     write_sherry_list as write_sherry_list,
     write_sherry_config as write_sherry_config,
 )
+from .model_caps_service import (
+    clear_all_model_caps as clear_all_model_caps,
+    clear_model_cap as clear_model_cap,
+    read_model_caps as read_model_caps,
+)
 from .models_config import (
     read_models_config as read_models_config,
     write_models_config as write_models_config,
 )
+from .model_roles_service import read_model_roles as read_model_roles
 from .network_config import (
     network_file_values as network_file_values,
     read_network_config as read_network_config,

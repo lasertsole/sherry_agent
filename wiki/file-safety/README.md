@@ -45,7 +45,7 @@ Seven mechanisms answer that, in the order a write meets them:
 
 Two deliberate edges:
 
-- A symlinked final component is REFUSED (`ELOOP`, via `_open_no_follow`), so the helper cannot reuse `pub/func/atomic_replace.py`, which follows a link on purpose.
+- Symlinks are REFUSED at EVERY component: `_open_no_follow` walks the parent directory from `/` with `O_NOFOLLOW` + `dir_fd`, and the temp file, the `os.replace` and the in-place fallback all ride that ONE verified parent fd. A directory swapped for a symlink after validation therefore cannot redirect the read or the write (Linux may report `ENOTDIR` for an intermediate link). The helper cannot reuse `pub/func/atomic_replace.py`, which follows a link on purpose.
 - When the filesystem refuses the rename, the helper degrades to an in-place write — availability over atomicity, logged at WARNING.
 
 ### 2. Two-layer CAS

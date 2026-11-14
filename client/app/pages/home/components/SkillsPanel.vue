@@ -186,12 +186,12 @@
 <template>
   <!-- Right-sidebar tab body: mounted with the tab (load, onMounted) and unmounted
        with it (state reset, onBeforeUnmount); the sidebar owns the tab strip. -->
-  <div class="flex flex-col h-full min-h-0 overflow-auto p-4 min-w-[520px]">
+  <div class="flex flex-col h-full min-h-0 overflow-x-auto overflow-y-hidden p-4 min-w-[520px]">
     <!-- The sidebar baseline (RIGHT_SIDEBAR_PANEL_MIN_WIDTH) is an INLINE
          min-width on the panel root, which would win over this root's class;
          repeating the two-column floor on the content wrapper is what actually
          makes the panel wider than that baseline and scroll here. -->
-    <div class="flex min-w-[520px] flex-col gap-3">
+    <div class="flex min-w-[520px] flex-1 min-h-0 flex-col gap-3">
       <!-- Loading skeleton mirrors the real layout (category chips + list +
            editor) instead of a lone spinner, so the panel does not jump when
            the data arrives. -->
@@ -240,10 +240,8 @@
             size="small"
             @click="activeCategory = cat.key" />
         </div>
-        <div
-          class="flex gap-3"
-          style="min-height: 60vh">
-          <div class="w-72 shrink-0 flex flex-col gap-1 pr-1">
+        <div class="flex flex-1 min-h-0 gap-3">
+          <div class="w-72 shrink-0 flex min-h-0 flex-col gap-1 pr-1">
             <div
               v-if="activeCategory === 'auto'"
               class="flex flex-col gap-2 pb-2">
@@ -364,9 +362,7 @@
                 </li>
               </ul>
             </div>
-            <div
-              class="overflow-auto flex flex-col gap-1 pr-1"
-              style="max-height: 72vh">
+            <div class="flex flex-1 min-h-0 flex-col gap-1 overflow-y-auto pr-1">
               <div
                 v-for="skill in currentSkills"
                 :key="skill.location"
@@ -432,9 +428,7 @@
               </div>
             </div>
           </div>
-          <div
-            class="flex-1 flex flex-col overflow-hidden rounded-lg bg-gray-50 dark:bg-gray-800/50"
-            style="max-height: 72vh">
+          <div class="flex-1 flex min-h-0 flex-col overflow-hidden rounded-lg bg-gray-50 dark:bg-gray-800/50">
             <div
               v-if="detailLoading"
               class="flex items-center justify-center h-full">
@@ -462,11 +456,10 @@
                     size="small" />
                 </div>
               </div>
-              <div class="flex flex-1 overflow-hidden border-t border-gray-200 dark:border-gray-700">
+              <div class="flex flex-1 min-h-0 overflow-hidden border-t border-gray-200 dark:border-gray-700">
                 <div
                   v-if="skillTree.length"
-                  class="w-64 shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-700 py-2"
-                  style="max-height: 72vh">
+                  class="w-64 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-gray-700 py-2">
                   <div
                     v-for="row in skillTree"
                     :key="row.key"
@@ -499,8 +492,7 @@
                 </div>
                 <pre
                   v-if="selectedContent !== null"
-                  class="text-sm whitespace-pre-wrap font-mono m-0 p-4 overflow-auto flex-1"
-                  style="max-height: 72vh">
+                  class="text-sm whitespace-pre-wrap font-mono m-0 p-4 overflow-y-auto flex-1 min-h-0">
                   {{ selectedContent }}
                 </pre>
               </div>

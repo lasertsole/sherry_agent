@@ -40,6 +40,9 @@ class RunOutcomeStatus(StrEnum):
     ERROR = "error"
     TIMEOUT = "timeout"
     KILLED = "killed"
+    #: The goal loop ran out of turns without the judge declaring DONE. Not OK:
+    #: the step is blocked (its partial result is preserved) rather than done.
+    BUDGET_EXHAUSTED = "budget_exhausted"
     UNKNOWN = "unknown"
 
 
@@ -112,6 +115,10 @@ class SubagentRunRecord(BaseModel):
     #: The serving model's configured max-output budget, frozen at spawn. ``None``
     #: = the user left it unset, so the legacy result caps apply.
     max_output_tokens: int | None = None
+    #: The EFFECTIVE wall-clock ceiling frozen at spawn (already capped by the
+    #: parent's remaining subtree budget). Descendant spawns read it to
+    #: derive their own remaining budget; ``None`` = unbounded/legacy row.
+    run_timeout_seconds: float | None = None
 
     depth: int = 1
     role: SubagentSessionRole = SubagentSessionRole.LEAF
@@ -128,7 +135,6 @@ class SubagentRunRecord(BaseModel):
     ended_reason: str | None = None
     pause_reason: str | None = None
     wake_on_descendant_settle: bool = False
-    archive_at: float | None = None
     cleanup_completed_at: float | None = None
     accumulated_runtime_ms: float = 0.0
     ended_hook_emitted: bool = False
@@ -205,7 +211,7 @@ class SubagentRunRecord(BaseModel):
             }
         )
 
-    def rebase_clock(self, now: float, *, archive_window_seconds: float) -> SubagentRunRecord:
+    def rebase_clock(self, now: float) -> SubagentRunRecord:
         """Move every persisted monotonic timestamp onto THIS process's clock."""
 
         def _at(value: float | None) -> float | None:
@@ -235,9 +241,6 @@ class SubagentRunRecord(BaseModel):
                     if self.kill_reconciliation is not None
                     else None
                 ),
-                # A DEADLINE, not a timestamp: rebasing it to "now" would archive
-                # the run on the first sweep. Give it a fresh window instead.
-                "archive_at": now + archive_window_seconds if self.archive_at is not None else None,
                 "cleanup_completed_at": _at(self.cleanup_completed_at),
             }
         )

@@ -35,7 +35,6 @@
 - **Global concurrency cap added**: `max_concurrent = 8` — originally enforced in the spawn pipeline; excess spawns returned `forbidden` ("Global concurrent ..."). **Superseded by the global SUBAGENT lane**: over-limit spawns now queue as `PENDING` and start when a lane slot frees (the cap field is retained for backward compatibility only). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly` — both count `PENDING` runs as active, since a queued child still holds an admission slot.
 - **`max_spawn_depth` default 3 → 2, now a hard cap**: values > 2 are rejected at construction and assignment; `delegate_task(max_spawn_depth=...)` raises `ValueError` beyond the cap. Depth tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
 - **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net. (**Reversed on 2026-10-15**: the default is 600 s again — see the note above.)
-- **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: per-call `max_concurrent` override, now deprecated — global concurrency is queued by the SUBAGENT lane, so passing it only emits a `DeprecationWarning` (the value is still applied and restored per call).
 - All configuration tables and diagrams in these docs (en/zh/ko/ja) plus the root READMEs were synced to the new defaults.
 
@@ -75,7 +74,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 1. Validation
   │     ├── task non-empty; task_name normalized ([^a-zA-Z0-9_-] → _,
-  │     │   repeats collapsed, truncated to 64 chars — task_name.py)
+  │     │   repeats collapsed, truncated to 64 chars — text_helpers.py)
   │     ├── target_policy: agent_id in allow_agents whitelist (wildcard *)
   │     ├── depth = parent_depth + 1, must be ≤ max_spawn_depth (2)
   │     ├── active children < max_children_per_agent (5)
@@ -92,7 +91,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │         spawn roles on its allow-list (own role; executor also researcher /
   │         librarian, read-only) — MAIN/general are unrestricted
   │
-  ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/thinking.py)
+  ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/text_helpers.py)
   │     ├── thinking precedence: explicit → requester → target agent default
   │     └── timeout: per-spawn override (tool input clamped to [600, 7200]) or
   │           run_timeout_seconds (default 600 s; 0 = no timeout)
@@ -847,7 +846,6 @@ agent/tools/subagent/
 │   ├── work_admission.py      Gateway-independent root work admission + pending count
 │   ├── lifecycle.py           Lifecycle controller (completeRun/resume/announce/pressurePrune/gracePeriod)
 │   ├── state.py               persist/restore bridge (incl. settle-wake persistence recovery)
-│   ├── read.py                External read-only API (find_run_by_task_name + run record primary queries)
 │   ├── task_refs.py           asyncio.Task reference management (register/get/remove/cancel)
 │   ├── yield_events.py        asyncio.Event management (yield wake / descendant settle)
 │   ├── sweeper.py             Background scanner with failure backoff (tiered expiry: cron=2h, subagent=6h, interactive=24h)
@@ -867,15 +865,12 @@ agent/tools/subagent/
 │   ├── target_policy.py       allowAgents validation
 │   ├── depth.py               Depth calculation & limits
 │   ├── attachments.py         Attachment materialization to the child workspace (incl. Unicode C0+DEL control-char detection, duplicate-name detection, strict base64 validation)
-│   ├── task_name.py           taskName normalization
+│   ├── text_helpers.py        Task-name normalization, acceptance note, initial user-message envelope, thinking-level precedence
 │   ├── system_prompt.py       Child-agent system prompt generation (6-part structure: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
-│   ├── initial_message.py     Child-agent first user message (structured envelope: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  Tool allow/deny inheritance
 │   ├── runtime_isolation.py   Runtime isolation & security boundary + workspace inheritance
 │   ├── origin_routing.py      Requester origin routing resolution + fingerprint generation (build_origin_fingerprint exposed as external API)
 │   ├── gateway_dispatch.py    Least-privilege scope resolution + SubagentLaunchAuthorization + scope→deny mapping
-│   ├── accepted_note.py       SpawnResult.note content generation
-│   ├── thinking.py            Thinking-level override parsing
 │   └── completion_judge.py    Completion judge — auxiliary-LLM done/continue verdict (goal loop)
 │
 ├── announce/                  Completion notification pipeline
@@ -954,7 +949,7 @@ registry/generation.py ← registry/terminal_gen.py ← registry/lifecycle.py
   ↑                    ↑                              ↑
 registry/settle_wake.py  registry/work_admission.py    registry/sweeper.py
                                                          ↑
-                                                    registry/read.py
+                                                    registry/memory.py + registry/queries.py
 
 swarm/fifo.py ← swarm/collector.py ← types/swarm.py
 
@@ -966,7 +961,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/initial_message.py ← spawn/task_name.py
+spawn/text_helpers.py (initial message ← task-name sanitization)
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 
@@ -1019,7 +1014,6 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `stale_unended_threshold_seconds` | 7200 | Stale unended run threshold |
 | `recent_ended_window_seconds` | 1800 | Recent ended window for display |
 | `steer_rate_limit_ms` | 2000 | Steer rate limit |
-| `archive_after_minutes` | 60 | Auto-archive after minutes |
 | `attachments_enabled` | True | Whether attachments are allowed |
 | `attachments_max_files` | 50 | Max files per spawn |
 | `attachments_max_file_bytes` | 1MB | Max single file size |

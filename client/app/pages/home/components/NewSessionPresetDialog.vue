@@ -120,7 +120,6 @@ const confirm = async () => {
     await createSessionFromPreset(entry, {
       locale: locale.value,
       t,
-      facts: presetCatalogFacts(agentStore),
       router,
       localePath,
       ensureCharacter: ensureSessionCharacter

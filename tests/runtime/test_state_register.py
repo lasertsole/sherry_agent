@@ -200,25 +200,28 @@ class TestStateRegisterDBFailures:
         assert not any("database error" in record for record in error_logs)
 
 
-class TestStateRegisterProtocolConformance:
-    """Both implementations expose the full StateRegisterProtocol contract."""
-
+class TestStateRegisterDBClearSession:
     @pytest.fixture
-    def fresh_db_reg(self, tmp_path, monkeypatch):
-        import runtime.session.state_register as mod
+    def db_reg(self, tmp_path, monkeypatch):
+        import runtime.session.state_register as state_register_mod
 
-        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
-        return mod.StateRegisterDB()
+        monkeypatch.setattr(state_register_mod, "SRC_DIR", tmp_path)
+        return state_register_mod.StateRegisterDB()
 
-    def test_mem_conforms(self, fresh_db_reg):
-        import runtime.session.state_register as mod
+    def test_clear_session_deletes_only_that_sessions_rows(self, db_reg):
+        db_reg.set_state("s1", "a", 1)
+        db_reg.set_state("s1", "b", 2)
+        db_reg.set_state("s2", "a", 3)
 
-        assert isinstance(mod.state_register_mem, mod.StateRegisterProtocol)
+        assert db_reg.clear_session("s1") is True
 
-    def test_db_conforms(self, fresh_db_reg):
-        import runtime.session.state_register as mod
+        assert db_reg.get_all_states("s1") == {}
+        assert db_reg.has_session("s1") is False
+        assert db_reg.get_state("s2", "a") == 3
+        assert db_reg.get_all_session_ids() == ["s2"]
 
-        assert isinstance(fresh_db_reg, mod.StateRegisterProtocol)
+    def test_clearing_an_absent_session_is_false(self, db_reg):
+        assert db_reg.clear_session("missing") is False
 
 
 class TestStateRegisterDBLazyInit:
