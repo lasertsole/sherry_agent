@@ -1,6 +1,11 @@
 <template>
-  <div class="flex flex-col gap-4 min-w-[320px]" data-test="lsp-config">
-    <p v-if="error" class="m-0 text-sm text-red-600 dark:text-red-400" data-test="lsp-error">
+  <div
+    class="flex flex-col gap-4 min-w-[320px]"
+    data-test="lsp-config">
+    <p
+      v-if="error"
+      class="m-0 text-sm text-red-600 dark:text-red-400"
+      data-test="lsp-error">
       {{ error }}
     </p>
 
@@ -96,7 +101,10 @@
       </div>
       <small class="text-xs text-gray-400 dark:text-gray-500">{{ t('lspConfig.projectHint') }}</small>
 
-      <p v-if="!rows.length" class="m-0 text-xs text-gray-400" data-test="lsp-project-empty">
+      <p
+        v-if="!rows.length"
+        class="m-0 text-xs text-gray-400"
+        data-test="lsp-project-empty">
         {{ t('lspConfig.empty') }}
       </p>
 
@@ -167,6 +175,10 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+// Explicit specifiers keep the component testable under bare Vitest (the
+// Nuxt auto-import injection is compile-time only); the rule's own exception
+// is used here rather than relying on the global module config.
+/* eslint-disable @typescript-eslint/no-restricted-imports */
 import {
   deleteLspLanguage,
   readLspConfig,
@@ -179,6 +191,7 @@ import {
   type LspTestResult
 } from '@/composables/lspConfig';
 import { toastError, toastSuccess } from '@/composables/toast';
+/* eslint-enable @typescript-eslint/no-restricted-imports */
 import { logUtil } from '~/utils/log';
 
 interface ProjectRow {
@@ -202,8 +215,7 @@ const errors = ref<string[]>([]);
 const results = ref<Record<string, LspTestResult>>({});
 const uploadInput = ref<HTMLInputElement | null>(null);
 
-const resultFor = (language: string): LspTestResult | undefined =>
-  language ? results.value[language] : undefined;
+const resultFor = (language: string): LspTestResult | undefined => (language ? results.value[language] : undefined);
 
 function toRows(payload: LspConfigPayload): ProjectRow[] {
   return Object.entries(payload.project?.servers ?? {}).map(([language, spec]) => ({
@@ -356,7 +368,7 @@ onMounted(load);
       "installed": "已安装",
       "notInstalled": "未安装",
       "project": "项目级配置（可编辑）",
-      "projectHint": "保存到 <项目>/.sherry/lsp.json；命令第一个词必须是 PATH 中可发现的 server 名，参数空格分隔。上传会整体替换项目层。",
+      "projectHint": "保存到项目根目录的 .sherry/lsp.json；命令第一个词必须是 PATH 中可发现的 server 名，参数空格分隔。上传会整体替换项目层。",
       "add": "添加语言",
       "upload": "上传 lsp.json",
       "save": "保存项目配置",
@@ -389,7 +401,7 @@ onMounted(load);
       "installed": "installed",
       "notInstalled": "not installed",
       "project": "Project configuration (editable)",
-      "projectHint": "Saved to <project>/.sherry/lsp.json. The first command word must be a server discoverable on PATH; separate arguments with spaces. Uploading replaces the whole project layer.",
+      "projectHint": "Saved to .sherry/lsp.json in the project root. The first command word must be a server discoverable on PATH; separate arguments with spaces. Uploading replaces the whole project layer.",
       "add": "Add language",
       "upload": "Upload lsp.json",
       "save": "Save project config",
@@ -422,7 +434,7 @@ onMounted(load);
       "installed": "インストール済み",
       "notInstalled": "未インストール",
       "project": "プロジェクト設定（編集可能）",
-      "projectHint": "<project>/.sherry/lsp.json に保存されます。コマンドの先頭は PATH で見つかる server 名である必要があり、引数は空白区切りです。アップロードはプロジェクト層全体を置き換えます。",
+      "projectHint": "プロジェクトルートの .sherry/lsp.json に保存されます。コマンドの先頭は PATH で見つかる server 名である必要があり、引数は空白区切りです。アップロードはプロジェクト層全体を置き換えます。",
       "add": "言語を追加",
       "upload": "lsp.json をアップロード",
       "save": "プロジェクト設定を保存",
@@ -455,7 +467,7 @@ onMounted(load);
       "installed": "설치됨",
       "notInstalled": "미설치",
       "project": "프로젝트 설정 (편집 가능)",
-      "projectHint": "<project>/.sherry/lsp.json에 저장됩니다. 명령의 첫 단어는 PATH에서 찾을 수 있는 server 이름이어야 하며 인수는 공백으로 구분합니다. 업로드는 프로젝트 계층 전체를 교체합니다.",
+      "projectHint": "프로젝트 루트의 .sherry/lsp.json에 저장됩니다. 명령의 첫 단어는 PATH에서 찾을 수 있는 server 이름이어야 하며 인수는 공백으로 구분합니다. 업로드는 프로젝트 계층 전체를 교체합니다.",
       "add": "언어 추가",
       "upload": "lsp.json 업로드",
       "save": "프로젝트 설정 저장",
