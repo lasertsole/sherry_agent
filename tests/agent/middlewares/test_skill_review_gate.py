@@ -201,3 +201,61 @@ def test_the_judge_prompt_asks_for_scope_validation():
 
     assert '"scope_valid"' in prompt
     assert "main_only" in prompt and "subagent_only" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_justified_no_op_passes_without_content_scores(monkeypatch):
+    """M30: a one-off plan's correct no-op must stop the retry loop immediately.
+
+    The judge returns reusable/quality/trigger = 0 and even verdict="retry"
+    (the historical shape); with no files changed, ``no_op_justified`` alone is
+    the decision — the review must accept it, not burn every attempt.
+    """
+    _install_judge(
+        monkeypatch,
+        _verdict(
+            verdict="retry",
+            grounded_in_run=False,
+            reusable=False,
+            trigger_quality=0,
+            quality=0,
+            no_op_justified=True,
+            feedback="one-off task; nothing reusable",
+        ),
+    )
+
+    result = await quality.judge_skill_update(
+        {"success_steps": []}, _Snapshot({}), _Snapshot({}), "no reusable signal"
+    )
+
+    assert result.passed is True
+    assert result.no_op_justified is True
+
+
+@pytest.mark.asyncio
+async def test_a_changed_skill_still_needs_the_full_quality_chain(monkeypatch):
+    """The no-op fast path must not bypass quality for changed content."""
+    _install_judge(
+        monkeypatch,
+        _verdict(verdict="pass", reusable=False, no_op_justified=True),
+    )
+    before = _Snapshot({})
+    after = _Snapshot({"demo/SKILL.md": b"new"})
+
+    result = await quality.judge_skill_update(
+        {"success_steps": [{"step": "run tests"}]}, before, after, "claimed no-op"
+    )
+
+    assert result.passed is False
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_with_reusable_evidence_still_retries(monkeypatch):
+    """An unjustified no-op remains a retry (no fast path)."""
+    _install_judge(monkeypatch, _verdict(no_op_justified=False))
+
+    result = await quality.judge_skill_update(
+        {"failed_branches": ["a real pitfall"]}, _Snapshot({}), _Snapshot({}), "no signal"
+    )
+
+    assert result.passed is False

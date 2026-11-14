@@ -1085,7 +1085,7 @@ procedure depends on main-agent-only capabilities (delegation orchestration via
 `scope_valid` and a scope that contradicts the body fails the attempt with
 feedback. A rejected attempt restores the snapshot and retries with judge feedback;
 exhaustion records `skill_review_failed_hash` and leaves the success
-fingerprint untouched. A no-op is allowed only when the judge accepts its reason.
+fingerprint untouched. A no-op is allowed only when the judge accepts its reason: a JUSTIFIED no-op passes on `no_op_justified` ALONE (no files changed, so `reusable` / `trigger_quality` / `quality` / `scope_valid` have no content to score) and terminates the review after one judge call; only CHANGED content goes through the full quality chain.
 `handoff-tree.json` remains the raw audit file; `task-*.json` / `wave-*.json` /
 `plan-summary.json` are legacy and the `knowledge` tool/prompt block are retired.
 

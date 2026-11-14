@@ -50,7 +50,13 @@ class SkillTreeSnapshot:
 
 @dataclass(frozen=True)
 class SkillJudgement:
-    """The judge's verdict for one review attempt."""
+    """The judge's verdict for one review attempt.
+
+    ``passed`` is True for a changed skill that clears every quality gate, OR
+    for a JUSTIFIED no-op (no files changed + ``no_op_justified``): the correct
+    no-op for a one-off plan must terminate the review instead of retrying to
+    exhaustion.
+    """
 
     passed: bool
     verdict: str
@@ -236,6 +242,10 @@ Criteria:
 - If no file changed, `no_op_justified` is true only when the evidence contains
   no reusable procedure, pitfall, or hard constraint. A no-op with reusable
   evidence is a retry.
+- A JUSTIFIED no-op is a final pass: when `no_op_justified` is true, set
+  `verdict` to "pass". The other scores (`reusable`, `trigger_quality`,
+  `quality`, `scope_valid`) judge CHANGED skill content only; there is none, so
+  they must not turn a correct no-op into a retry.
 - If files changed, `no_op_justified` must be false.
 - `feedback` must name what to add/fix/remove.
 """
@@ -326,15 +336,24 @@ async def judge_skill_update(
     feedback = str(data.get("feedback") or "").strip()
     threshold = int(BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"])
 
-    passed = (
-        verdict == "pass"
+    # A JUSTIFIED no-op is a final, correct outcome for a one-off plan: no skill
+    # file changed, so `reusable` / `trigger_quality` / `quality` / `scope_valid`
+    # have nothing to score and must not turn it into a retry. Accepting it here
+    # stops the loop after ONE judge call instead of exhausting
+    # skill_review_max_attempts (audit M30). Only CHANGED content goes through
+    # the full quality chain.
+    changed_files = bool(changed)
+    no_op_accepted = not changed_files and no_op_ok
+    content_accepted = (
+        changed_files
+        and verdict == "pass"
         and grounded
         and reusable
         and trigger >= 6
         and quality >= threshold
-        and (bool(changed) or no_op_ok)
         and scope_valid
     )
+    passed = no_op_accepted or content_accepted
     if not feedback:
         if scope_valid:
             feedback = (
