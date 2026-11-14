@@ -5,6 +5,12 @@ Uses ``urllib.parse`` for strict URL parsing with a common scheme
 whitelist, avoiding regex edge cases (ReDoS on long input,
 misinterpreting encoded characters, etc.).
 
+SHAPE CHECK ONLY — it accepts ``file:`` / ``data:`` and any hostname, so it
+must never gate a network fetch by itself. Fetch paths use the shared SSRF
+guard: :func:`pub.func.validator.public_url.is_public_url` and
+:func:`pub.func.validator.safe_fetch.safe_fetch` (public http(s) only, DNS
+pinning, per-hop redirect re-check, body cap).
+
 Usage:
     from pub.func.validator.is_url import is_url
 

@@ -2336,9 +2336,12 @@ hard JPEG-q20 ladder at 1000 → 200 px; when nothing fits it raises
 sites use it: `server/service/messages.py::_get_content_list` (WS/Tauri sends),
 `agent/middlewares/media_pipeline/tool_media.py::_image_block` (tool
 screenshots), `server/trigger/http/image.py::upload_image` (browser-mode HTTP
-upload), and `pub/func/media/image.py::download_and_convert_to_base64` (the
-image-to-text skill's download). `image_compress_enabled` turns the cascade off
-for byte-exact passthrough.
+upload), and `pub/func/media/image.py::download_and_convert_to_base64` (a
+legacy helper with no live caller; the `image_to_text` skill now downloads
+remote images through `safe_fetch` — SSRF guard, DNS pinning, per-hop redirect
+re-check and a 50 MiB cap — instead of a bare `requests.get`; `is_url` is a
+shape check only and must never gate a fetch). `image_compress_enabled` turns
+the cascade off for byte-exact passthrough.
 
 `read_file` reads media natively instead of handing the model mojibake or a
 skill detour:
