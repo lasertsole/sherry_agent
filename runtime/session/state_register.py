@@ -366,16 +366,21 @@ class ContextEpoch:
         """Load the epoch and decide: ok | reconcile | replace."""
         import json
 
-        # Reuse the register's shared connection: the previous inline
-        # sqlite3.connect() leaked a handle on every epoch check.
-        row = (
-            self._db.ensure_initialized()
-            .execute(
-                "SELECT baseline, snapshot, baseline_seq FROM context_epoch WHERE session_id = ?",
-                (session_id,),
+        # Reuse the register's shared connection UNDER its lock: the previous
+        # inline sqlite3.connect() leaked a handle on every epoch check, and a
+        # later version ran the SELECT outside ``_conn_lock`` while every writer
+        # held it (a shared, check_same_thread=False handle interleaving reads
+        # and writes can return torn data).
+        with self._db._conn_lock:
+            row = (
+                self._db._init_db()
+                .execute(
+                    "SELECT baseline, snapshot, baseline_seq FROM context_epoch "
+                    "WHERE session_id = ?",
+                    (session_id,),
+                )
+                .fetchone()
             )
-            .fetchone()
-        )
         if row is None:
             self.initialize(session_id, current_context)
             return current_context, "ok"

@@ -90,6 +90,14 @@ def consume_frame(socket_id: str) -> tuple[bool, bool]:
         return False, notify  # the transition edge is the ONE notice per burst
     except Exception:  # noqa: BLE001 — the limiter must never break the socket
         return True, False
+    finally:
+        # Every frame is a chance to retire dead sockets: without this the
+        # bucket map only ever grows (consume_ws_ticket pruned its own, this
+        # one never did).
+        try:
+            _prune(_frames, time.monotonic())
+        except Exception:  # noqa: BLE001, S110 — pruning must not mask the answer
+            pass
 
 
 def consume_ws_ticket(ip_addr: str) -> bool:

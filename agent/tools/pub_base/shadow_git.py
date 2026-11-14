@@ -359,6 +359,28 @@ def _current_turn(session_id: str) -> int:
     return _turn_counts.get(session_id, 0)
 
 
+def clear_session_state(session_id: str) -> int:
+    """Drop one session's in-memory snapshot bookkeeping (session purge).
+
+    The turn counter, the per-turn dedup pairs and the persisted floor entries
+    are all keyed by session id; nothing else removes them when a session is
+    deleted. The floor is also dropped from each loaded root's in-memory map,
+    so the next save of that root rewrites without it (disk rewrite is
+    best-effort by design).
+    """
+    removed = 0
+    with _floors_lock:
+        if _turn_counts.pop(session_id, None) is not None:
+            removed += 1
+        for key in [key for key in _dedup if key[0] == session_id]:
+            _dedup.discard(key)
+            removed += 1
+        for key in [key for key in _floors if key[1] == session_id]:
+            _floors.pop(key, None)
+            removed += 1
+    return removed
+
+
 def _state_path(project_root: Path) -> Path:
     return shadow_meta(project_root)
 

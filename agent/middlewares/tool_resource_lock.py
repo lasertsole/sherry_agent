@@ -41,6 +41,18 @@ _SYNC_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
+def clear_session_locks(session_id: str) -> int:
+    """Drop one session's interaction locks on every live loop (session purge)."""
+    removed = 0
+    with _LOCKS_GUARD:
+        if _SYNC_LOCKS.pop(f"interaction:{session_id}", None) is not None:
+            removed += 1
+        for by_key in _ASYNC_LOCKS.values():
+            if by_key.pop(f"interaction:{session_id}", None) is not None:
+                removed += 1
+    return removed
+
+
 def _session_id(state: Any) -> str:
     if isinstance(state, dict):
         value = state.get("session_id")

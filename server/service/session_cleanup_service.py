@@ -185,6 +185,25 @@ async def purge_session_data(session_id: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to reset the subagent spawn budget for {session_id}: {e}")
 
+    # (3.7) Module-level per-session dicts (audit M18): guardrail / interaction
+    # locks and the shadow-git turn bookkeeping are keyed by session id and had
+    # no other pruning path; a long-lived server would retain one entry per
+    # session ever used. Fail-open per module.
+    try:
+        from agent.middlewares.tool_guardrails.core import (
+            clear_session_state as clear_guardrail_locks,
+        )
+        from agent.middlewares.tool_resource_lock import clear_session_locks
+        from agent.tools.pub_base.shadow_git import (
+            clear_session_state as clear_shadow_git_state,
+        )
+
+        clear_guardrail_locks(session_id)
+        clear_session_locks(session_id)
+        clear_shadow_git_state(session_id)
+    except Exception as e:
+        logger.warning(f"Failed to clear module-level session state for {session_id}: {e}")
+
     # (4) Session folder under the sessions directory.
     path = Path(_session_folder(session_id))
     if path.exists() and path.is_dir():
