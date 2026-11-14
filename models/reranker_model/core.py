@@ -766,8 +766,41 @@ class CloudReranker:
         return max(0.0, min(1.0, float(data["results"][0]["relevance_score"])))
 
     def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """Score a list of (query, passage) pairs."""
-        return [self.predict(q, p) for q, p in pairs]
+        """Score a list of (query, passage) pairs in ONE request per query.
+
+        The API scores many documents against one query, so a per-pair POST (up
+        to 30 s each) made an N-pair call O(N) round-trips. Pairs are grouped by
+        query, duplicate passages are sent once, and the returned ``index``
+        values are mapped back to the original positions (the list order is the
+        caller's contract). Empty input makes no request.
+        """
+        if not pairs:
+            return []
+        scores: list[float] = [0.0] * len(pairs)
+        by_query: dict[str, list[int]] = {}
+        for index, (query, _passage) in enumerate(pairs):
+            by_query.setdefault(query, []).append(index)
+
+        for query, slots in by_query.items():
+            documents = [pairs[slot][1] for slot in slots]
+            unique: list[str] = []
+            positions: dict[str, int] = {}
+            for document in documents:
+                if document not in positions:
+                    positions[document] = len(unique)
+                    unique.append(document)
+            response = self._http.post_json(
+                "/rerank",
+                {"model": self._model, "query": query, "documents": unique},
+                timeout=60,
+            )
+            by_index = {
+                int(entry["index"]): max(0.0, min(1.0, float(entry["relevance_score"])))
+                for entry in response["results"]
+            }
+            for slot, document in zip(slots, documents, strict=True):
+                scores[slot] = by_index[positions[document]]
+        return scores
 
     # ── rank ─────────────────────────────────────────────────────────────
 
