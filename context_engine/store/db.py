@@ -37,6 +37,12 @@ enabled in the database header, ``busy_timeout`` (``MES_MEMORY["busy_timeout_s"]
 10s) is set on the connection, and connect itself retries a locked boot up to
 ``connect_attempts`` times. Any future consolidation should keep this handle
 model rather than force the store into the short-lived base.
+
+The 2026-11-13 audit's single-connection serialization item (M16) was reviewed
+against this contract and kept: a pool of connections would change the
+``with _shared_db():`` commit semantics call sites depend on and reintroduce
+the silent-lost-row failure the statement lock closed. The serialized
+throughput ceiling is an accepted trade-off, not an unresolved defect.
 """
 
 import threading

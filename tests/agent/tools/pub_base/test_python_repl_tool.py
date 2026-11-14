@@ -369,6 +369,49 @@ def test_scope_subagent_sandbox_true_unaffected(monkeypatch: pytest.MonkeyPatch)
     assert len(calls) == 1
 
 
+def _install_payload_popen(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> None:
+    """A Popen double that writes *payload* into the fd-direct stdout handle."""
+
+    class _Proc:
+        returncode = 0
+
+        def __init__(self, *args: object, **kwargs: object):
+            handle = kwargs.get("stdout")
+            if hasattr(handle, "write"):
+                handle.write(payload)
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(python_repl.subprocess, "Popen", lambda *a, **kw: _Proc(*a, **kw))
+
+
+def test_a_malformed_envelope_is_a_clean_tool_error(monkeypatch: pytest.MonkeyPatch):
+    """M19: valid JSON without ``exc`` must not raise KeyError out of the tool."""
+    _install_payload_popen(monkeypatch, b'{"out": "partial"}')
+
+    result = build_python_repl_tool()._run("print(1)")
+
+    assert result.startswith("Error: malformed REPL output")
+
+
+def test_an_undecodable_stdout_is_a_clean_tool_error(monkeypatch: pytest.MonkeyPatch):
+    _install_payload_popen(monkeypatch, b"not json at all")
+
+    result = build_python_repl_tool()._run("print(1)")
+
+    assert result.startswith("Error: failed to parse output")
+
+
+def test_a_missing_out_key_reads_as_empty_output(monkeypatch: pytest.MonkeyPatch):
+    _install_payload_popen(monkeypatch, b'{"exc": null}')
+
+    assert build_python_repl_tool()._run("print(1)") == "(no output)"
+
+
 def test_public_run_discards_model_supplied_sandbox_false(monkeypatch: pytest.MonkeyPatch):
     # H2 (2026-11-09 audit): the model cannot reach the internal switch. A
     # forged ``sandbox=false`` is dropped by the query-only args_schema, so the

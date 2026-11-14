@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Python 模块常量。它不存闭包、源码字符串或 `workflow.json` 边车文件。写入器使用 Python 字面量而不是 JSON 文本，因为 `json.dumps` 会输出小写 `true` / `false` / `null`，包含 `additionalProperties: false` 的 schema 因此会让脚本无法加载。
+LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Python 模块常量。它不存闭包、源码字符串或 `workflow.json` 边车文件。写入器使用 Python 字面量而不是 JSON 文本，因为 `json.dumps` 会输出小写 `true` / `false` / `null`，包含 `additionalProperties: false` 的 schema 因此会让脚本无法加载。加载器从不 `exec_module` 该文件：它只对这三个字面量赋值做 AST 解析，遇到其他内容（导入、调用、额外名称）一律拒绝，因此被篡改的脚本不会以编排器权限执行。
 
 ## ⚙️ 运行时与 Journal
 

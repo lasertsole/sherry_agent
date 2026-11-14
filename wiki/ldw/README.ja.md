@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を Python モジュール定数として保存します。クロージャ、ソース文字列、`workflow.json` のサイドカーは保存しません。書き込み側は JSON テキストではなく Python リテラルを使います。`json.dumps` は小文字の `true` / `false` / `null` を出すため、`additionalProperties: false` を含む schema ではスクリプトが読み込めなくなるからです。
+LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を Python モジュール定数として保存します。クロージャ、ソース文字列、`workflow.json` のサイドカーは保存しません。書き込み側は JSON テキストではなく Python リテラルを使います。`json.dumps` は小文字の `true` / `false` / `null` を出すため、`additionalProperties: false` を含む schema ではスクリプトが読み込めなくなるからです。ローダーはファイルを `exec_module` しません：3 つのリテラル代入だけを AST で解析し、それ以外（import、呼び出し、余分な名前）は拒否するため、改ざんされたスクリプトがオーケストレーターの権限で実行されることはありません。
 
 ## ⚙️ ランタイムと Journal
 

@@ -248,20 +248,25 @@ def _run_with_timeout(
 
     try:
         result = json.loads(stdout)
-        logger.debug("python_repl: result JSON decode failed", exc_info=True)
     except json.JSONDecodeError:
+        logger.debug("python_repl: result JSON decode failed", exc_info=True)
         return f"Error: failed to parse output\n{stdout[:500]}", ran_sandboxed
+    if not isinstance(result, dict) or "exc" not in result:
+        # A corrupted-but-valid JSON stdout used to raise KeyError here, which
+        # escaped the tool as an unhandled exception.
+        logger.debug("python_repl: malformed result envelope: {}", stdout[:200])
+        return f"Error: malformed REPL output\n{stdout[:500]}", ran_sandboxed
 
-    if result["exc"]:
+    if result.get("exc"):
         parts = [f"Error: {result['exc']}"]
-        if result["out"]:
+        if result.get("out"):
             parts.append(f"stdout:\n{result['out']}")
-        if result["err"]:
+        if result.get("err"):
             parts.append(f"stderr:\n{result['err']}")
         if result.get("tb"):
             parts.append(f"Traceback:\n{result['tb']}")
         return "\n".join(parts), ran_sandboxed
-    return result["out"] or "(no output)", ran_sandboxed
+    return result.get("out") or "(no output)", ran_sandboxed
 
 
 class PythonReplInput(BaseModel):

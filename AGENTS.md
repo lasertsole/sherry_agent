@@ -272,9 +272,12 @@ User message → Robyn WS → agent.core.built_agent() graph
      `on_turn_finished` does the same for its session before the drain starts
      (HITL-pending sessions skip it). Deleting a main session cascades through
      every descendant run: suppress/kill, then delete each child's registry row,
-     checkpoint thread, session dir, planning rows and attachments. After
-     `init_registry()` a boot sweep deletes every orphan subtree whose root main
-     session or parent run is gone, in one fail-open pass.
+     checkpoint thread, session dir, planning rows and attachments.
+     `purge_session_data` also drops the module-level per-session dictionaries
+     (guardrail / interaction locks and shadow-git's turn counters, dedup pairs
+     and floors) that no register covers. After `init_registry()` a boot sweep
+     deletes every orphan subtree whose root main session or parent run is gone,
+     in one fail-open pass.
 
      A restart is a STATE TRANSITION, not a no-op (`registry/state.py`). No task
      survives it, so a restored RUNNING run is terminalized as a TIMEOUT with
@@ -518,7 +521,7 @@ real user message and never rewriting the checkpoint.
 
 The LDW core is vendored whole under `vendor/ldw/` (no `deepagents` dependency): `vendor/ldw/_bootstrap.py` installs a minimal stub before the package imports, and `agent/tools/subagent/ldw_shim.py` is the stable import seam. The main agent has a main-only `workflow_replay` tool (`action=status|compile|replay`); it is not a subagent tool.
 
-- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored.
+- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored. The loader never `exec_module`s the file: it AST-parses those three literal assignments (nothing else — an import, call or extra name refuses the script), so a tampered skill file cannot run code in the orchestrator.
 - `compile_plan_to_workflow` consumes the current TaskFlow flow DAG and preserves the step contract (`response_schema`, `step_model`, judge/validation criteria, retry policy, skills, timeout); `build_orchestrate` injects `variant_input`, hard constraints and each predecessor's result into the step prompt, so the journal key partitions by variant and upstream output. `agent_type` carries the step suffix because PTC scripts are step-scoped. A schema-bound step calls `ctx.agent(..., schema=...)`.
 - `register_roster` registers one BUILDER per step (so LDW can request a schema-bound runnable). Leaves reuse `_assemble_child_tools`: the role allow-list plus code intelligence, ast-grep and executor-only PTC. `session_id` travels in the runnable config, not a baked graph. An executor leaf may run its PTC script first (hard gate; failure appends `[PTC Pre-run Progress]` and falls back to ReAct; a PTC schema miss is failure). A schema leaf forces thinking off.
 - `SqliteWorkflowStore` at `src/data/workflow_runs.db` backs cross-process resume; repeated replay with the same prompt/agent_type/model/schema is zero-call (`journal_hits` / `leaf_calls` are reported). Per-plan locks serialize concurrent replay; `LDW["real_replay_timeout_s"]` bounds one run.
@@ -1344,7 +1347,11 @@ there is no typing channel. That picker is the one deliberate exception to the
 in-root rule (`GET /system/dirs`, `server/service/system_folders_service.py`):
 it lists the direct **subdirectories** of one absolute path (names only, no
 files, no contents; `FILE_BROWSER` caps the level) and sits behind the same
-gateway auth/CORS/CSRF middleware as every other route. The toolbar's files
+gateway auth/CORS/CSRF middleware as every other route. The path must be inside
+an allowed browse root — the server user's home, the process default project
+directory and `TEMP_DIR`, extended by `SHERRY_DIR_PICKER_ROOTS`
+(os.pathsep-separated) — so the endpoint is not a whole-disk enumeration
+oracle; ``parent`` is omitted when the go-up target would be refused. The toolbar's files
 button (`pages/home/index.vue`) exists only while a session is open AND its
 project directory is bound — the tree it opens is scoped to both, so an unbound
 session shows no control at all (nothing to press, no empty picker) — and the
@@ -3172,7 +3179,7 @@ target `SKILL.md` directly.
 - the background-review jobs are split into `summarization/{memory_review,session_end_salvage,handoff_tree,skill_review_runner,ptc_compile,compression_todo}.py` with shared `background_scaffold.py` / `_common.py` and the `skill_review.py` gate; `background_reviews.py` is a re-export facade whose module proxy forwards attribute writes to those modules, preserving the historical test monkeypatch seams
 - `taskflow_step(action="resume")` and `taskflow_step(action="run_task")` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
-- `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
+- lanes are an explicit FIFO waiter queue with a LIVE limit (no semaphore swap): `set_max` applies immediately even while the lane is saturated — raising admits parked waiters, lowering stops new grants until releases free capacity — and a waiter cancelled after its grant returns that slot. A cross-loop `acquire()` logs a warning and drops the old loop's parked futures.
 - a session's BOUND project directory is snapshotted into the GLOBAL bare
   store `APP_HOME/checkpoints/store` before the first write of each turn
   (`agent/tools/pub_base/shadow_git.py::ensure_checkpoint`): write_file,

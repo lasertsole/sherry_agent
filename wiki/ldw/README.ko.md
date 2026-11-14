@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-LDW 스크립트는 `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, `WORKFLOW_META`를 Python 모듈 상수로 저장합니다. 클로저, 소스 문자열, `workflow.json` 사이드카는 저장하지 않습니다. 작성기는 JSON 텍스트가 아니라 Python 리터럴을 사용합니다. `json.dumps`는 소문자 `true` / `false` / `null`을 출력하므로 `additionalProperties: false`가 있는 schema는 스크립트를 읽을 수 없게 만들기 때문입니다.
+LDW 스크립트는 `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, `WORKFLOW_META`를 Python 모듈 상수로 저장합니다. 클로저, 소스 문자열, `workflow.json` 사이드카는 저장하지 않습니다. 작성기는 JSON 텍스트가 아니라 Python 리터럴을 사용합니다. `json.dumps`는 소문자 `true` / `false` / `null`을 출력하므로 `additionalProperties: false`가 있는 schema는 스크립트를 읽을 수 없게 만들기 때문입니다. 로더는 파일을 `exec_module`하지 않습니다: 세 개의 리터럴 대입만 AST로 파싱하고 그 외(임포트, 호출, 추가 이름)는 거부하므로, 변조된 스크립트가 오케스트레이터 권한으로 실행되지 않습니다.
 
 ## ⚙️ 런타임과 Journal
 

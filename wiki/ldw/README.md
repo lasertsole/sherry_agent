@@ -52,7 +52,7 @@ skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py
 skills/auto/<owning-skill>/scripts/ptc__<plan_key>__<step_id>.py
 ```
 
-The LDW script stores `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, and `WORKFLOW_META` as Python module constants. It does not store closures, source strings, or `workflow.json` sidecars. The writer uses Python literals, not JSON text, because `json.dumps` emits lowercase `true` / `false` / `null` and a schema containing `additionalProperties: false` otherwise makes the script unloadable.
+The LDW script stores `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, and `WORKFLOW_META` as Python module constants. It does not store closures, source strings, or `workflow.json` sidecars. The writer uses Python literals, not JSON text, because `json.dumps` emits lowercase `true` / `false` / `null` and a schema containing `additionalProperties: false` otherwise makes the script unloadable. The loader never `exec_module`s the file: it AST-parses those three literal assignments and refuses anything else (an import, a call, an extra name), so a tampered script cannot run with the orchestrator's permissions.
 
 ## ⚙️ Runtime and Journal
 
