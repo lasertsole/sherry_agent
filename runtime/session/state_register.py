@@ -260,8 +260,23 @@ class StateRegisterDB(SessionRegister):
             _log_state_db_failure("get_all_session_ids", exc)
         return []
 
-    # SessionRegister can't clear StateRegisterDB
     def clear_session(self, session_id: str) -> bool:
+        """Delete every persisted key of one session from the durable mirror.
+
+        Session deletion used to leave these rows behind forever (this method
+        returned False unconditionally). Returns True when at least one row was
+        removed; an absent session is a silent False, a DB fault is logged.
+        """
+        try:
+            with self._conn_lock:
+                conn = self._init_db()
+                affected = conn.execute(
+                    "DELETE FROM states WHERE session_id = ?", (session_id,)
+                ).rowcount
+                conn.commit()
+            return affected > 0
+        except Exception as exc:
+            _log_state_db_failure("clear_session", exc, session_id=session_id)
         return False
 
     def has_session(self, session_id: str) -> bool:

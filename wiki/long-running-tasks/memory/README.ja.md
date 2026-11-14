@@ -17,7 +17,7 @@
 
 エントリは `memory_entries` の**1 行の SQLite レコード**です。`§` 区切りはレガシーインポートと `GET/PUT /memory` 互換パスにのみ残ります。エントリは複数行にわたれ、YAML frontmatter も箇条書きプレフィックスもありません。
 
-層 1 は `MemoryStore`（`agent/tools/memory.py::load_from_store`）が管理します：ターゲットごとの文字数上限は `2200`（memory）、`1375`（user）、`1375`（facts）、プロンプトインジェクションと認証情報漏洩を拒否する注入スキャン（`_MEMORY_THREAT_PATTERNS`）、完全一致の重複排除を備え、同時実行の安全はファイルロックやアトミック書き換えではなく SQLite WAL が担います。行は `origin_session`、`usage_count`、`last_used` を持ち、レンダリングブロックは由来が分かる場合のみ `[origin: …, created: …, used: Nx]` を追加します。`memory(action="read")` は使用回数を増やします。ライブ行は即座に変更される一方、プロンプトは `load_from_store()` で取得された**凍結スナップショット**を使い、セッション中のプレフィックスキャッシュを安定させます。旧 `MEMORY.md`/`USER.md`/`FACTS.md` は起動時に一度インポートされ（`context_engine/store/memory_migration.py`）、`*.md.bak` に改名されます。既存行が 1 つでもあればインポートはスキップされます。
+層 1 は `MemoryStore`（`agent/tools/memory.py::load_from_store`）が管理します：ターゲットごとの文字数上限は `2200`（memory）、`1375`（user）、`1375`（facts）、さらにターゲットごとのアクティブ `200` 件上限（文字予算だけでは小さな行が無限に溜まるため）、プロンプトインジェクションと認証情報漏洩を拒否する注入スキャン（`_MEMORY_THREAT_PATTERNS`）、完全一致の重複排除を備え、同時実行の安全はファイルロックやアトミック書き換えではなく SQLite WAL が担います。行は `origin_session`、`usage_count`、`last_used` を持ち、レンダリングブロックは由来が分かる場合のみ `[origin: …, created: …, used: Nx]` を追加します。`memory(action="read")` は使用回数を増やします。ライブ行は即座に変更される一方、プロンプトは `load_from_store()` で取得された**凍結スナップショット**を使い、セッション中のプレフィックスキャッシュを安定させます。旧 `MEMORY.md`/`USER.md`/`FACTS.md` は起動時に一度インポートされ（`context_engine/store/memory_migration.py`）、`*.md.bak` に改名されます。既存行が 1 つでもあればインポートはスキップされます。
 
 `memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
 

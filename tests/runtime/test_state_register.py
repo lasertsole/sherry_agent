@@ -200,6 +200,30 @@ class TestStateRegisterDBFailures:
         assert not any("database error" in record for record in error_logs)
 
 
+class TestStateRegisterDBClearSession:
+    @pytest.fixture
+    def db_reg(self, tmp_path, monkeypatch):
+        import runtime.session.state_register as state_register_mod
+
+        monkeypatch.setattr(state_register_mod, "SRC_DIR", tmp_path)
+        return state_register_mod.StateRegisterDB()
+
+    def test_clear_session_deletes_only_that_sessions_rows(self, db_reg):
+        db_reg.set_state("s1", "a", 1)
+        db_reg.set_state("s1", "b", 2)
+        db_reg.set_state("s2", "a", 3)
+
+        assert db_reg.clear_session("s1") is True
+
+        assert db_reg.get_all_states("s1") == {}
+        assert db_reg.has_session("s1") is False
+        assert db_reg.get_state("s2", "a") == 3
+        assert db_reg.get_all_session_ids() == ["s2"]
+
+    def test_clearing_an_absent_session_is_false(self, db_reg):
+        assert db_reg.clear_session("missing") is False
+
+
 class TestStateRegisterDBLazyInit:
     def test_construction_has_no_io_and_first_use_initializes(self, tmp_path, monkeypatch):
         import runtime.session.state_register as mod
