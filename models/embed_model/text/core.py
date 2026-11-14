@@ -3,7 +3,7 @@ import math
 from pathlib import Path
 from loguru import logger
 from config import APP_HOME, LOG_DIR
-from config.features import LOCAL_DAEMONS
+from config.features import LLM_CLIENT_DEFAULTS, LOCAL_DAEMONS
 from config.models_settings import get_model_setting
 from models.daemon.base import (
     DaemonError,
@@ -263,6 +263,9 @@ class _RemoteEmbeddingBackend:
                 "input": texts,
                 "encoding_format": "float",
             },
+            # Never let a hung remote endpoint block the worker forever; the
+            # auxiliary timeout is the same ceiling the other remote calls use.
+            timeout=float(LLM_CLIENT_DEFAULTS["aux_timeout"]),
         )
         data = result.get("data", [])
         data.sort(key=lambda x: x["index"])
