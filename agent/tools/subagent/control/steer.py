@@ -27,6 +27,20 @@ _last_steer_at: dict[str, float] = {}  # Rate-limit tracking per caller:child pa
 _ABORT_SETTLE_TIMEOUT = SUBAGENT_INFRA["steer_abort_settle_timeout"]
 
 
+def prune_stale_steer_marks(max_age_s: float = 3600.0) -> int:
+    """Drop steer rate-limit marks older than *max_age_s* (bounded growth).
+
+    The key is ``caller:child``, not a run id, so no run-lifecycle cleanup
+    reaches it; a long-lived process would otherwise keep one entry per pair it
+    ever steered. The sweeper calls this on its periodic pass.
+    """
+    now = time.monotonic()
+    stale = [key for key, stamp in _last_steer_at.items() if now - stamp > max_age_s]
+    for key in stale:
+        _last_steer_at.pop(key, None)
+    return len(stale)
+
+
 async def steer_subagent_run(
     run_id: str,
     new_task: str | None = None,
