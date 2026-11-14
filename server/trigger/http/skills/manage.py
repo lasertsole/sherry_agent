@@ -11,6 +11,7 @@ name validation and snapshot rebuild.
 """
 
 from server.trigger.core import app
+from server.trigger.http.helpers import read_body
 from loguru import logger
 from context_engine.curator.usage import (
     delete_skill,
@@ -33,12 +34,8 @@ async def delete_auto_skill_handler(request):
     confirmation dialog before invoking this endpoint, since deletion is
     irreversible. Pinned or fixed skills are rejected by `delete_skill`.
     """
-    try:
-        body = request.json()
-    except Exception:
-        body = None
-
-    if not isinstance(body, dict):
+    body = read_body(request)
+    if body is None:
         return _json_response(400, {"success": False, "message": "Invalid JSON body"})
 
     name = body.get("name")
@@ -69,12 +66,8 @@ async def pin_auto_skill_handler(request):
     true the skill is pinned (curator will never merge or remove it); when
     false it is unpinned. The skill must already exist under `skills/auto/`.
     """
-    try:
-        body = request.json()
-    except Exception:
-        body = None
-
-    if not isinstance(body, dict):
+    body = read_body(request)
+    if body is None:
         return _json_response(400, {"success": False, "message": "Invalid JSON body"})
 
     name = body.get("name")

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import read_body
 from server.utils.atomic_io import atomic_write_text
 from channels.registry import discover_channel_names, load_channel_class
 from config.path import PLUGINS_PATH
@@ -119,11 +120,8 @@ async def update_channel_handler(request, path_params):
         logger.warning(f"Unknown channel on update: {channel_name}")
         return {"error": f"Unknown channel: {channel_name}"}, {}, 404
 
-    try:
-        body = request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
+    body = read_body(request)
+    if body is None:
         return {"error": "Invalid request body"}, {}, 400
 
     # Only allow the three boolean toggles we expose in the settings UI.
@@ -214,11 +212,8 @@ async def update_channel_config_handler(request, path_params):
         logger.warning(f"Unknown channel on update config: {channel_name}")
         return {"error": f"Unknown channel: {channel_name}"}, {}, 404
 
-    try:
-        body = request.json()
-    except Exception:
-        body = None
-    if not isinstance(body, dict):
+    body = read_body(request)
+    if body is None:
         return {"error": "Invalid request body: expected a JSON object"}, {}, 400
 
     config_path = _channel_config_path(channel_name)

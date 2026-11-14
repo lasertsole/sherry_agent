@@ -1,5 +1,6 @@
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request, read_body
 from server.service import (
     clear_all_model_caps,
     clear_model_cap,
@@ -48,7 +49,9 @@ async def write_sherry_config_handler(request):
     Update values of known sherry.jsonc keys (values are coerced to their
     declared types). Body: {"changes": {"KEY": "new value", ...}}
     """
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
 
     changes: dict[str, str] = request_json.get("changes", {}) or {}
     if not isinstance(changes, dict):
@@ -93,10 +96,12 @@ async def write_sherry_list_handler(request, path_params):
     comments and ordering.
     """
     list_key = path_params["list_key"]
-    request_json = request.json()
+    request_json = read_body(request)
+    if request_json is None:
+        return bad_request("JSON body required")
     values = request_json.get("values", []) if isinstance(request_json, dict) else None
     if values is None:
-        return {"success": False, "message": "'values' is required"}
+        return bad_request("'values' is required")
     logger.info(f"Updating sherry list setting {list_key}: {len(values)} entries")
     try:
         written = write_sherry_list(list_key, values)
