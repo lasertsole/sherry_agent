@@ -62,7 +62,7 @@ pid 파일과 daemon 로그는 `APP_HOME`(패키지 빌드에서는 쓰기 가�
 
 **Embedding** (`models/embed_model/text/core.py`). daemon은 원시 벡터를 반환하고 클라이언트는 L2 정규화와 순서 검사를 유지합니다. 호출부가 이미 만드는 배치(`memory_embeddings`는 배치당 32개, 메시지 인덱서는 64개)를 그대로 보내므로 인덱스 경로에 두 번째 배치 계층이 필요 없습니다. daemon 오류 후 한 번 재시도(유휴 종료나 크래시 흡수)하고, 두 번째 실패는 호출자에게 전달됩니다(의미 검색은 fail-open).
 
-**Reranker** (`models/reranker_model/__init__.py`). `rank`, `filter`, `predict`가 각각 하나의 엔드포인트에 대응합니다. `predict_scores`는 쌍마다 왕복하지 않고 쌍 전체를 한 요청으로 보냅니다. `RERANKER_MODEL_LOCAL=false`이면 클라우드 백엔드는 전혀 바뀌지 않습니다.
+**Reranker** (`models/reranker_model/__init__.py`). `rank`, `filter`, `predict`가 각각 하나의 엔드포인트에 대응합니다. `predict_scores`는 쌍마다 왕복하지 않고 쌍 전체를 한 요청으로 보냅니다. 로컬 GGUF 백엔드는 그 요청 안에서도 배치 처리합니다: 최대 8쌍이 한 번의 `llama_encode`를 공유하고(컨텍스트의 ubatch 토큰 예산으로 제한), 네이티브 배치 호출이 실패하면 쌍별 경로로 폴백합니다. 실측 32쌍 12.0 s → 8.4 s. 배치 커널은 근접 동점 점수를 최대 ~0.04 흔들 수 있지만 0.5 필터 판정은 검증에서 동일했습니다. `RERANKER_MODEL_LOCAL=false`이면 클라우드 백엔드는 전혀 바뀌지 않습니다.
 
 **로컬 Chat과 비전** (`models/LLMs/auxiliary_llm/core.py` / `models/LLMs/base_local_llama.py`). 로컬 GGUF 경로는 네이티브 tool call을 **사용하지 않습니다**: `LocalToolBinder`가 JSON 지시를 주입하고 `LocalStructuredOutput`이 instructor로 `create_chat_completion_openai_v1`을 감쌉니다. 따라서 daemon은 llama-cpp 자체의 `create_chat_completion` 형태를 노출하고, `models/LLMs/local_daemon/client.py`는 그 두 메서드만 구현하는 작은 shim입니다. `create_chat_completion_openai_v1`은 응답을 OpenAI `ChatCompletion`으로 검증하고(instructor가 요구하는 id/object/created/model 보완) instructor의 제어 인자는 네트워크로 보내지 않습니다. daemon을 시작할 수 없거나 예산을 넘겨도 warm이 아니면 `_LocalAuxiliaryChatModel`은 인프로세스 `Llama`로 폴백합니다 — 기능 우선, 격리는 그다음. 멀티모달 베이스는 같은 클라이언트를 포트 9015 daemon에 사용하며, `image_url` 블록은 llama-cpp의 Qwen2.5-VL handler로 그대로 전달됩니다.
 

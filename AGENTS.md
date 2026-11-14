@@ -950,8 +950,13 @@ are propagated so the child resolves the same writable home.
   daemon is a retryable error, never a reason to load a second copy.
 - **Reranker** (`models/reranker_model/daemon.py`, port 9013,
   `.reranker_daemon.pid`): `POST /rerank|/filter|/predict`; one warm
-  `CrossEncoderGGUF`. `_LocalGgufBackend` sends the calls and keeps the
-  in-process loader for `RERANKER_DAEMON_ENABLED=false` / unavailable spawns.
+  `CrossEncoderGGUF`. Its local scoring is BATCHED: up to 8 pairs share one
+  `llama_encode` (bounded by the context's ubatch token budget), with a
+  per-pair fallback when the native batch call fails. Measured 32 pairs
+  12.0 s → 8.4 s; batched kernels can shift near-tie scores by ~0.04 while the
+  0.5 filter decisions stayed identical in probes. `_LocalGgufBackend` sends the
+  calls and keeps the in-process loader for `RERANKER_DAEMON_ENABLED=false` /
+  unavailable spawns.
 - **Local chat** (`models/LLMs/local_daemon/server.py`, port 9014,
   `.llm_daemon.pid`): `POST /v1/chat/completions`, a thin wrapper over
   `Llama.create_chat_completion`. The local path's tool calls and structured

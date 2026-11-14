@@ -62,7 +62,7 @@ pid 文件与 daemon 日志位于 `APP_HOME`（打包态是可写的应用数据
 
 **Embedding**（`models/embed_model/text/core.py`）。daemon 返回原始向量，客户端保留 L2 归一化与顺序校验。它发送调用点原本就已分好的批（`memory_embeddings` 每批 32 条、消息索引器每批 64 条），索引链路不需要第二层分批。daemon 报错后重试一次（覆盖空闲退出或崩溃）；第二次失败交给调用方（语义召回本身 fail-open）。
 
-**Reranker**（`models/reranker_model/__init__.py`）。`rank`、`filter`、`predict` 各对应一个端点；`predict_scores` 一次请求发送整批 pair，而不是每对一次往返。`RERANKER_MODEL_LOCAL=false` 时云端后端完全不变。
+**Reranker**（`models/reranker_model/__init__.py`）。`rank`、`filter`、`predict` 各对应一个端点；`predict_scores` 一次请求发送整批 pair，而不是每对一次往返。本地 GGUF 后端在该请求内还会分批：最多 8 对共用一次 `llama_encode`（受上下文的 ubatch token 预算限制），原生批量调用失败时回退到逐对路径。实测 32 对 12.0 s → 8.4 s；批量内核对接近并列的分数可产生约 0.04 的漂移，而 0.5 过滤判定在探测中保持一致。`RERANKER_MODEL_LOCAL=false` 时云端后端完全不变。
 
 **本地 Chat 与视觉**（`models/LLMs/auxiliary_llm/core.py` / `models/LLMs/base_local_llama.py`）。本地 GGUF 路径**不用**原生 tool call：`LocalToolBinder` 注入 JSON 指令，`LocalStructuredOutput` 用 instructor 包装 `create_chat_completion_openai_v1`。因此 daemon 暴露的是 llama-cpp 自己的 `create_chat_completion` 形状，`models/LLMs/local_daemon/client.py` 只是实现这两个方法的小型 shim。`create_chat_completion_openai_v1` 把响应校验成 OpenAI `ChatCompletion`（补上 instructor 需要的 id/object/created/model 字段），且不会把 instructor 的控制参数发过线。daemon 起不来或超时仍未就绪时，`_LocalAuxiliaryChatModel` 回退到进程内 `Llama`——功能优先，隔离其次。多模态基类复用同一个客户端访问 9015 daemon；`image_url` 内容块原样传给 llama-cpp 的 Qwen2.5-VL handler。
 

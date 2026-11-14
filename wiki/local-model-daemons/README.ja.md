@@ -62,7 +62,7 @@ pid ファイルと daemon ログは `APP_HOME`（パッケージ版では書き
 
 **Embedding**（`models/embed_model/text/core.py`）。daemon は生のベクトルを返し、クライアントが L2 正規化と順序検査を保持します。呼び出し側がすでに作っているバッチ（`memory_embeddings` は 32 件、メッセージ索引は 64 件）をそのまま送るので、索引経路に 2 段目のバッチ処理は不要です。daemon エラーの後に 1 回再試行し（アイドル終了やクラッシュを吸収）、2 回目の失敗は呼び出し側に渡ります（意味検索は fail-open）。
 
-**Reranker**（`models/reranker_model/__init__.py`）。`rank`、`filter`、`predict` はそれぞれ 1 つの端点に対応します。`predict_scores` はペアごとの往復ではなく、ペア列全体を 1 リクエストで送ります。`RERANKER_MODEL_LOCAL=false` のときクラウド側は一切変わりません。
+**Reranker**（`models/reranker_model/__init__.py`）。`rank`、`filter`、`predict` はそれぞれ 1 つの端点に対応します。`predict_scores` はペアごとの往復ではなく、ペア列全体を 1 リクエストで送ります。ローカル GGUF バックエンドはそのリクエスト内でもバッチ処理します：最大 8 ペアが 1 回の `llama_encode` を共有し（コンテキストの ubatch トークン予算で制限）、ネイティブのバッチ呼び出しが失敗するとペア単位の経路へフォールバックします。実測 32 ペアで 12.0 s → 8.4 s。バッチカーネルは僅差のスコアを最大 ~0.04 変動させ得ますが、0.5 のフィルタ判定は検証で同一でした。`RERANKER_MODEL_LOCAL=false` のときクラウド側は一切変わりません。
 
 **ローカル Chat とビジョン**（`models/LLMs/auxiliary_llm/core.py` / `models/LLMs/base_local_llama.py`）。ローカル GGUF 経路はネイティブ tool call を**使いません**：`LocalToolBinder` が JSON 指示を注入し、`LocalStructuredOutput` が instructor で `create_chat_completion_openai_v1` をラップします。したがって daemon が公開するのは llama-cpp 自身の `create_chat_completion` 形状で、`models/LLMs/local_daemon/client.py` はその 2 メソッドだけを実装する小さな shim です。`create_chat_completion_openai_v1` は応答を OpenAI `ChatCompletion` に検証し（instructor が必要とする id/object/created/model を補完）、instructor の制御引数は線の向こうへ送りません。daemon が起動できない、または予算を超えても warm でない場合、`_LocalAuxiliaryChatModel` はプロセス内 `Llama` にフォールバックします——機能優先、隔離は次。マルチモーダル基底クラスは同じクライアントをポート 9015 の daemon に使います。`image_url` ブロックはそのまま llama-cpp の Qwen2.5-VL handler に渡ります。
 
