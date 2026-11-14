@@ -34,9 +34,15 @@ class FolderLevel:
 
 
 def _is_dir(entry: os.DirEntry[str]) -> bool:
-    """A subdirectory, following symlinks; an entry we cannot stat is skipped."""
+    """A REAL subdirectory; a symlink is skipped, like an unstattable entry.
+
+    Following a link here would present an arbitrary target as an ordinary
+    folder of the level, so the picker's next navigation could leave the tree
+    the operator is looking at (or loop). The picked path itself may still be a
+    symlink: an explicitly typed path is resolved once in ``list_subdirectories``.
+    """
     try:
-        return entry.is_dir(follow_symlinks=True)
+        return entry.is_dir(follow_symlinks=False)
     except OSError:
         return False
 

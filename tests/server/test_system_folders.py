@@ -157,7 +157,8 @@ def test_an_unreadable_directory_is_refused_not_empty(tmp_path: Path):
         locked.chmod(0o755)
 
 
-def test_a_symlinked_directory_is_listed(tmp_path: Path):
+def test_a_symlinked_directory_is_not_listed(tmp_path: Path):
+    """L18: a link's target is never presented as an ordinary child folder."""
     real = tmp_path / "real"
     (real / "child").mkdir(parents=True)
     link = tmp_path / "link"
@@ -165,9 +166,9 @@ def test_a_symlinked_directory_is_listed(tmp_path: Path):
 
     level = svc.list_subdirectories(str(tmp_path))
 
-    assert [entry["name"] for entry in level.entries] == ["link", "real"]
+    assert [entry["name"] for entry in level.entries] == ["real"]
+    # An explicitly typed symlink still resolves once and lists its target.
     linked = svc.list_subdirectories(str(link))
-    # resolve() reports the real location, so the UI navigates the target.
     assert linked.path == str(real.resolve())
     assert [entry["name"] for entry in linked.entries] == ["child"]
 
