@@ -70,7 +70,7 @@ PNG 후보가 들어가는 한 JPEG로 바꾸지 않으므로 일반 경로에�
 - `server/service/messages.py::_get_content_list`는 `data:` URL을 만들기 전에 `image_base64_list`와 `image_bytes_list`를 압축합니다.
 - `agent/middlewares/media_pipeline/tool_media.py::_image_block`은 스크린샷을 삽입하기 전에 압축합니다.
 - `server/trigger/http/image.py::upload_image`는 HTTP 업로드를 디스크에 쓰기 전에 압축합니다.
-- `pub/func/media/image.py::download_and_convert_to_base64`는 image-to-text skill이 내려받은 바이트를 압축합니다.
+- `image_to_text` skill은 원격 이미지를 `safe_fetch`로 내려받아 ITTT 모델에 넘기며 압축 캐스케이드를 거치지 않습니다. 이전 `pub/func/media/image.py`의 다운로드/base64 헬퍼는 제거되었습니다——호출자가 없고, 생 `requests` 경로가 SSRF 표면이었습니다.
 
 `image_compress_enabled`(기본 `true`)를 끄면 예전의 바이트 그대로 통과가 가능합니다. 예산에 못 들어가는 이미지는 도구 경로에서 생략되고 HTTP 업로드 경로에서 `413`을 반환합니다. 사용자 업로드 경로는 원본을 유지하고 첨부를 조용히 잃는 대신 provider의 거부에 맡깁니다.
 

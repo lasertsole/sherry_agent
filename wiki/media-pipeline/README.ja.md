@@ -70,7 +70,7 @@ PNG 候補が収まる限り JPEG に変換しないため、通常経路では�
 - `server/service/messages.py::_get_content_list` は `data:` URL を組み立てる前に `image_base64_list` と `image_bytes_list` を圧縮します。
 - `agent/middlewares/media_pipeline/tool_media.py::_image_block` はスクリーンショットを埋め込む前に圧縮します。
 - `server/trigger/http/image.py::upload_image` は HTTP アップロードを書き込む前に圧縮します。
-- `pub/func/media/image.py::download_and_convert_to_base64` は image-to-text skill がダウンロードしたバイトを圧縮します。
+- `image_to_text` skill はリモート画像を `safe_fetch` で取得して ITTT モデルへ渡し、圧縮カスケードは通りません。旧 `pub/func/media/image.py` のダウンロード/base64 ヘルパーは削除されました——呼び出し元がなく、生の `requests` 経路が SSRF 面でした。
 
 `image_compress_enabled`（既定 `true`）を切ると以前のバイトそのままのパススルーが使えます。予算に収まらない画像はツール経路では省略され、HTTP アップロード経路では `413` を返します。ユーザーアップロード経路は元画像を保持し、添付を黙って失う代わりに provider の拒否に委ねます。
 

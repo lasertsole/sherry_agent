@@ -70,7 +70,7 @@
 - `server/service/messages.py::_get_content_list` 在构造 `data:` URL 前压缩 `image_base64_list` 与 `image_bytes_list`。
 - `agent/middlewares/media_pipeline/tool_media.py::_image_block` 在嵌入截图前压缩。
 - `server/trigger/http/image.py::upload_image` 在写盘前压缩 HTTP 上传。
-- `pub/func/media/image.py::download_and_convert_to_base64` 压缩 image-to-text skill 下载到的字节。
+- `image_to_text` skill 通过 `safe_fetch` 下载远程图片并直接交给 ITTT 模型，不走压缩级联；旧的 `pub/func/media/image.py` 下载/base64 辅助函数已删除——无调用者，且其裸 `requests` 路径是 SSRF 面。
 
 `image_compress_enabled`（默认 `true`）保留旧的字节原样直通。无法压进预算的图片在工具路径上会被省略，在 HTTP 上传路径上返回 `413`；用户上传路径保留原图并交给 provider 拒绝，而不是静默丢失附件。
 

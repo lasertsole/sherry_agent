@@ -2384,15 +2384,16 @@ placeholder per image and `ContextLimitGuard` keeps using the provider-reported
 already fits, then a format-preserving re-encode (PNG optimize; JPEG quality
 80 → 60 → 40 → 20), a resize to the max edge, 75/50/25% downscale steps, and a
 hard JPEG-q20 ladder at 1000 → 200 px; when nothing fits it raises
-`ImageTooLargeError` and the caller falls back to its text/skill path. Four
+`ImageTooLargeError` and the caller falls back to its text/skill path. Three
 sites use it: `server/service/messages.py::_get_content_list` (WS/Tauri sends),
 `agent/middlewares/media_pipeline/tool_media.py::_image_block` (tool
-screenshots), `server/trigger/http/image.py::upload_image` (browser-mode HTTP
-upload), and `pub/func/media/image.py::download_and_convert_to_base64` (a
-legacy helper with no live caller; the `image_to_text` skill now downloads
-remote images through `safe_fetch` — SSRF guard, DNS pinning, per-hop redirect
-re-check and a 50 MiB cap — instead of a bare `requests.get`; `is_url` is a
-shape check only and must never gate a fetch). `image_compress_enabled` turns
+screenshots), and `server/trigger/http/image.py::upload_image` (browser-mode HTTP
+upload). The `image_to_text` skill downloads remote images through `safe_fetch`
+(SSRF guard, DNS pinning, per-hop redirect re-check and a 50 MiB cap) and hands
+the file to its own ITTT model; the old `pub/func/media/image.py` download and
+base64 helpers had no live caller and were removed — their bare
+`requests.get`/`requests.head` path was an SSRF surface. `is_url` is a shape
+check only and must never gate a fetch. `image_compress_enabled` turns
 the cascade off for byte-exact passthrough.
 
 `read_file` reads media natively instead of handing the model mojibake or a

@@ -70,7 +70,7 @@ PNG is never converted to JPEG while a PNG candidate fits, so transparency is pr
 - `server/service/messages.py::_get_content_list` compresses `image_base64_list` and `image_bytes_list` before building `data:` URLs.
 - `agent/middlewares/media_pipeline/tool_media.py::_image_block` compresses a screenshot before embedding it.
 - `server/trigger/http/image.py::upload_image` compresses before writing the upload to disk.
-- `pub/func/media/image.py::download_and_convert_to_base64` compresses the image-to-text skill's downloaded bytes.
+- The `image_to_text` skill downloads remote images through `safe_fetch` and hands the file to its ITTT model, not the compression cascade; the old `pub/func/media/image.py` download/base64 helpers were removed — no live caller, and their bare `requests` path was an SSRF surface.
 
 The `image_compress_enabled` switch (default `true`) keeps the old byte-exact passthrough available. An image that cannot fit the budget is omitted on the tool path and reported as `413` on the HTTP upload path; the model-side upload keeps the original and lets the provider reject it rather than losing the attachment silently.
 
