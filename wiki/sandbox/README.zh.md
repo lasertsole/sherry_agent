@@ -30,7 +30,7 @@
 | **Shell 命令参数** | `terminal(commands=…)` / `python_repl(query=…)` 里点名凭据文件 —— 这些不是路径参数，路径门禁看不到 | §7 `PathGuard` 的命令筛查（只挡硬拒绝名单；其余外部路径交给 OS 沙箱） |
 | **进程 / 会话作用域** | 子进程共享命名空间，且可能在父进程结束后存活 | L2 `--unshare-all`、`--die-with-parent` |
 | **主动绕过** | 服务端调用方请求 `sandbox=False` | 人工审批门（HITL）——处于 `full_access` 的会话跳过它；LLM schema 不再暴露该开关 |
-| **类自省逃逸** | `().__class__.__base__.__subclasses__()` 不经 `open`/`__import__` 就触达 `os`/`subprocess` | AST 守卫（`pub_base/safe_exec.py`）在子进程启动前拒绝 dunder 属性访问 |
+| **类自省逃逸** | `().__class__.__base__.__subclasses__()` 不经 `open`/`__import__` 就触达 `os`/`subprocess` | AST 守卫（`pub_base/safe_exec.py`）在子进程启动前拒绝 dunder 属性访问——包括通过**字面量 `str.format`/`format_map` 字段**到达 dunder（`"{0.__class__}".format(x)`）；非字面量模板仍允许，因为格式化只会返回字符串 |
 | **程序化工具调用（PTC）** | 生成的 `execute_code` 子脚本调用真实工具，可能直接触达文件系统 | L1 环境变量清洗 + L2 操作系统沙箱包装（与 `terminal` / `python_repl` 同一后端）+ 受限内建（无 `getattr`/`type`/`dir`/`vars`）+ 导入白名单 + 同一 AST 守卫 |
 
 两层防线、一道门，外加文件工具独立的一套路径防御栈：
@@ -148,7 +148,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 策略解析、严格 `ValueError`、即时读取语义、平台分发 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 构造（含读遮蔽挂载）、探测缓存（子进程全部 mock），以及 1 条可选的真实 bwrap 读遮蔽冒烟测试 |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 工具层守卫（危险命令 / 敏感文件正则）、query-only schema、启动形态、受限内建屏障、启动前拒绝自省 |
-| `tests/agent/tools/pub_base/test_safe_exec.py` | AST 守卫：正常代码通过；dunder 属性 / `__builtins__` / 语法错误带行号拒绝 |
+| `tests/agent/tools/pub_base/test_safe_exec.py` | AST 守卫：正常代码通过；dunder 属性 / 字面量 `str.format` 的 dunder 字段 / `__builtins__` / 语法错误带行号拒绝 |
 | `tests/agent/tools/pub_base/test_path_utils.py` | 外部路径流程、三道结构门、符号链接环处理、虚拟路径回显 |
 | `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | 经 `O_NOFOLLOW` 拒绝符号链接 / TOCTOU、虚拟路径、搜索结果 containment、扫描边界 |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` 筛选：穿越分量、硬拒绝下限、外部路径放行、结构化错误 `ToolMessage` |

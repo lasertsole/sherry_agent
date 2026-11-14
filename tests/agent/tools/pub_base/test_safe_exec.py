@@ -18,6 +18,15 @@ class TestAllowed:
             "if __name__ == '__main__':\n    print('main')",
             "class Point:\n    x = 1\nprint(Point.x)",
             "print({'a': 1}.get('a'))",
+            # Formatting itself is fine; only a dunder accessor inside the
+            # literal template is refused (L11).
+            "print('{}'.format(1))",
+            "print('{0}'.format(1))",
+            "print('{name}'.format(name='x'))",
+            "print('{0!r:>10}'.format(1))",
+            "print('{0.value}'.format(obj))",
+            "template = '{0}'\nprint(template.format(1))",
+            "print(f'{1}')",
         ],
     )
     def test_normal_task_code_passes(self, source):
@@ -34,6 +43,14 @@ class TestRefused:
             "f = print.__globals__",
             "print(__builtins__)",
             "print(obj.__getattribute__('x'))",
+            # A dunder reached through a literal format field: the AST cannot
+            # see inside the string, so the format guard catches it (L11).
+            "print('{0.__class__}'.format(1))",
+            "print('{0[__class__]}'.format({}))",
+            "print(str.format('{0.__init__}', 1))",
+            "print('{0.__class__.__name__}'.format(1))",
+            "print('{.__class__}'.format(1))",
+            "print('{0:{1.__class__}}'.format(1, 2))",
         ],
     )
     def test_introspection_escape_refused(self, source):
@@ -47,3 +64,7 @@ class TestRefused:
     def test_message_names_the_offending_attribute(self):
         with pytest.raises(ValueError, match="__subclasses__"):
             validate_restricted_code("x.__subclasses__()", label="test")
+
+    def test_format_message_names_the_replacement_field(self):
+        with pytest.raises(ValueError, match="0.__class__"):
+            validate_restricted_code("print('{0.__class__}'.format(1))", label="test")

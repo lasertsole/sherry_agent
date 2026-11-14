@@ -3246,7 +3246,8 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   callers keep the scope/policy guard and the HITL card. `python_repl` and PTC
   also refuse class-introspection escapes statically
   (`pub_base/safe_exec.py::validate_restricted_code`: no dunder attributes,
-  no `__builtins__`), and their restricted builtins omit
+  no `__builtins__`, and a literal `str.format`/`format_map` field that reaches a
+  dunder is refused too — a non-literal template can only ever yield a string), and their restricted builtins omit
   `getattr`/`type`/`dir`/`vars` (H4).
   `PathGuard` additionally screens the command-string arguments (`commands` /
   `query`) against the hard-deny floor AND the sherry-self policy — read-looking

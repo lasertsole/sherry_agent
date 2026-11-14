@@ -30,7 +30,7 @@
 | **シェルコマンドの引数** | `terminal(commands=…)` / `python_repl(query=…)` が資格情報ファイルを名指しする — これらはパス引数ではないため、パスゲートには見えない | §7 `PathGuard` のコマンドスクリーン(ハード拒否リストのみ。その他の外部パスは OS サンドボックスの担当) |
 | **プロセス / セッションスコープ** | 子が名前空間を共有し、親より長く生き残り得る | L2 `--unshare-all`、`--die-with-parent` |
 | **意図的なバイパス** | サーバー側の呼び出し元が `sandbox=False` を要求 | 人間の承認ゲート (HITL) —— `full_access` のセッションではスキップ。LLM スキーマはこのフラグを公開しない |
-| **クラス内省による脱出** | `().__class__.__base__.__subclasses__()` が `open`/`__import__` なしで `os`/`subprocess` に到達 | AST ガード(`pub_base/safe_exec.py`)が子プロセス起動前に dunder 属性アクセスを拒否 |
+| **クラス内省による脱出** | `().__class__.__base__.__subclasses__()` が `open`/`__import__` なしで `os`/`subprocess` に到達 | AST ガード(`pub_base/safe_exec.py`)が子プロセス起動前に dunder 属性アクセスを拒否——**リテラルの `str.format`/`format_map` フィールド**経由の dunder(`"{0.__class__}".format(x)`)も含む。非リテラルのテンプレートは文字列しか返さないため許可 |
 | **プログラム的ツール呼び出し (PTC)** | 生成された `execute_code` 子スクリプトが実ツールを呼び、ファイルシステムに直接到達し得る | L1 環境変数洗浄 + L2 OS サンドボックスラップ(`terminal` / `python_repl` と同じバックエンド)+ 制限付き builtins(`getattr`/`type`/`dir`/`vars` なし)+ インポート許可リスト + 同じ AST ガード |
 
 2つの層と1つのゲート — それに加えてファイルツール独自のパス防御スタック:
@@ -147,7 +147,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | ポリシーパース、厳格な `ValueError`、即時読み込みの意味論、プラットフォームディスパッチ |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 構築(リードシールドのマウントを含む)、プローブキャッシュ (subprocess はすべてモック)、任意実行の実 bwrap リードシールドスモークテスト |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | ツール層ガード(危険コマンド / 機密ファイル正規表現)、query-only スキーマ、起動形態、制限ビルトインの障壁、起動前の内省拒否 |
-| `tests/agent/tools/pub_base/test_safe_exec.py` | AST ガード: 通常コードは通過、dunder 属性 / `__builtins__` / 構文エラーは行番号付きで拒否 |
+| `tests/agent/tools/pub_base/test_safe_exec.py` | AST ガード: 通常コードは通過、dunder 属性 / リテラル `str.format` の dunder フィールド / `__builtins__` / 構文エラーは行番号付きで拒否 |
 | `tests/agent/tools/pub_base/test_path_utils.py` | 外部パスフロー、3つの構造ゲート、シンボリックリンクループ処理、仮想パス描画 |
 | `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | `O_NOFOLLOW` によるシンボリックリンク / TOCTOU 拒否、仮想パス、検索結果コンテインメント、スキャン境界 |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` スクリーニング: トラバーサルコンポーネント、ハード拒否フロア、外部パス素通し、構造化エラー `ToolMessage` |

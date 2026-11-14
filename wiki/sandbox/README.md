@@ -30,7 +30,7 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 | **Shell command arguments** | `terminal(commands=…)` / `python_repl(query=…)` name a credential file — those arguments are not paths, so the path gate never sees them | §7 `PathGuard`'s command screen (hard-deny floor only; every other external path is the OS sandbox's business) |
 | **Process / session scope** | Child shares namespaces and survives the parent | L2 `--unshare-all`, `--die-with-parent` |
 | **Deliberate bypass** | A server-side caller requests `sandbox=False` | Human approval gate (HITL) — skipped by a session in `full_access`; the LLM schemas expose no flag |
-| **Class-introspection escape** | `().__class__.__base__.__subclasses__()` reaches `os`/`subprocess` without `open`/`__import__` | AST guard (`pub_base/safe_exec.py`) refuses dunder attribute access before any child spawns |
+| **Class-introspection escape** | `().__class__.__base__.__subclasses__()` reaches `os`/`subprocess` without `open`/`__import__` | AST guard (`pub_base/safe_exec.py`) refuses dunder attribute access — including a dunder reached through a **literal `str.format`/`format_map` field** (`"{0.__class__}".format(x)`) — before any child spawns; a non-literal template stays allowed because formatting only ever yields a string |
 | **Programmatic tool calls (PTC)** | A generated `execute_code` child script calls real tools and could reach the filesystem directly | L1 env scrub + L2 OS sandbox wrap (same backend as `terminal` / `python_repl`) + restricted builtins (no `getattr`/`type`/`dir`/`vars`) + import allowlist + the same AST guard |
 
 Two layers plus one gate — plus a separate path-defense stack for the file tools:
@@ -147,7 +147,7 @@ The terminal approval card also offers **Allow for Session** only when the backe
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | policy parsing, strict `ValueError`, fresh-read semantics, dispatch |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile construction (incl. read-shield mounts), probe caching (all subprocess mocked), plus an optional real-bwrap read-shield smoke test |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | tool-level guards (dangerous / sensitive-file regexes), the query-only schemas, spawn forms, restricted-builtins barrier, refused introspection before spawn |
-| `tests/agent/tools/pub_base/test_safe_exec.py` | the AST guard: benign code passes, dunder attributes / `__builtins__` / syntax errors are refused with the offending line |
+| `tests/agent/tools/pub_base/test_safe_exec.py` | the AST guard: benign code passes; dunder attributes / a literal `str.format` dunder field / `__builtins__` / syntax errors are refused with the offending line |
 | `tests/agent/tools/pub_base/test_path_utils.py` | the external-path flow, the three structural gates, symlink-loop handling, virtual-path rendering |
 | `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | symlink / TOCTOU refusal via `O_NOFOLLOW`, virtual paths, search-result containment, scan bounds |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` screening: traversal components, hard-deny floor, external-path pass-through, structured error `ToolMessage` |

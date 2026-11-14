@@ -30,7 +30,7 @@
 | **셸 명령 인자** | `terminal(commands=…)` / `python_repl(query=…)`가 자격 증명 파일을 지목 — 이들은 경로 인자가 아니라 경로 게이트가 보지 못함 | §7 `PathGuard`의 명령 스크린(하드 거부 목록만; 나머지 외부 경로는 OS 샌드박스 담당) |
 | **프로세스 / 세션 범위** | 자식이 네임스페이스를 공유하고 부모보다 오래 살 수 있음 | L2 `--unshare-all`, `--die-with-parent` |
 | **의도적 우회** | 서버 측 호출자가 `sandbox=False`를 요청 | 사람 승인 게이트 (HITL) —— `full_access` 세션은 건너뜀. LLM 스키마는 이 플래그를 노출하지 않음 |
-| **클래스 내성 탈출** | `().__class__.__base__.__subclasses__()`가 `open`/`__import__` 없이 `os`/`subprocess`에 도달 | AST 가드(`pub_base/safe_exec.py`)가 자식 프로세스 시작 전에 dunder 속성 접근을 거부 |
+| **클래스 내성 탈출** | `().__class__.__base__.__subclasses__()`가 `open`/`__import__` 없이 `os`/`subprocess`에 도달 | AST 가드(`pub_base/safe_exec.py`)가 자식 프로세스 시작 전에 dunder 속성 접근을 거부——**리터럴 `str.format`/`format_map` 필드**를 통한 dunder(`"{0.__class__}".format(x)`)도 포함. 비리터럴 템플릿은 문자열만 반환하므로 허용 |
 | **프로그래매틱 도구 호출 (PTC)** | 생성된 `execute_code` 자식 스크립트가 실제 도구를 호출해 파일시스템에 직접 닿을 수 있음 | L1 환경 변수 세척 + L2 OS 샌드박스 래핑(`terminal` / `python_repl`과 같은 백엔드) + 제한 builtins(`getattr`/`type`/`dir`/`vars` 없음) + 임포트 허용 목록 + 같은 AST 가드 |
 
 두 계층과 하나의 게이트 — 여기에 파일 도구만의 경로 방어 스택이 더해집니다:
@@ -147,7 +147,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/tools/pub_base/test_sandbox_policy.py` | 정책 파싱, 엄격한 `ValueError`, 즉시 읽기 의미론, 플랫폼 디스패치 |
 | `tests/agent/tools/pub_base/test_sandbox_bwrap.py` / `test_sandbox_seatbelt.py` | argv / profile 구성(리드 실드 마운트 포함), 프로브 캐싱 (서브프로세스 전부 mock), 선택 실행되는 실제 bwrap 리드 실드 스모크 테스트 |
 | `tests/agent/tools/pub_base/test_terminal_tool.py` / `test_python_repl_tool.py` | 도구 계층 가드(위험 명령 / 민감 파일 정규식), query-only 스키마, 생성 형태, 제한 빌트인 방벽, 시작 전 내성 거부 |
-| `tests/agent/tools/pub_base/test_safe_exec.py` | AST 가드: 일반 코드 통과, dunder 속성 / `__builtins__` / 구문 오류는 줄 번호와 함께 거부 |
+| `tests/agent/tools/pub_base/test_safe_exec.py` | AST 가드: 일반 코드 통과, dunder 속성 / 리터럴 `str.format`의 dunder 필드 / `__builtins__` / 구문 오류는 줄 번호와 함께 거부 |
 | `tests/agent/tools/pub_base/test_path_utils.py` | 외부 경로 흐름, 세 개의 구조적 게이트, 심볼릭 링크 루프 처리, 가상 경로 렌더링 |
 | `tests/agent/tools/file_tools/test_path_hardening.py` / `test_virtual_paths.py` / `test_search_containment.py` / `test_search_bounds.py` | `O_NOFOLLOW`를 통한 심볼릭 링크 / TOCTOU 거부, 가상 경로, 검색 결과 컨테인먼트, 스캔 경계 |
 | `tests/agent/middlewares/test_path_guard.py` | `PathGuard` 스크리닝: 트래버설 컴포넌트, 하드 거부 바닥, 외부 경로 통과, 구조화된 오류 `ToolMessage` |
