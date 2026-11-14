@@ -94,6 +94,7 @@ When steps failed, `repair_extraction` reads the replay flow's child handoffs, m
 
 - This is a replay accelerator, not a sandbox or a retry engine.
 - LDW leaves inherit the role tool policy; the LDW sandbox/deepagents path is deliberately unused.
+- The journal matches EXACTLY: `prompt` / `agent_type` / `model` / `schema` / `isolation` are hashed, and a changed variant re-executes. Fuzzy matching and whitespace/Unicode normalization of the prompt are deliberately absent — a step prompt can embed code or structured upstream results where whitespace is semantic, so a near-match cached result could seed downstream steps with the wrong output. A miss costs one real execution and writes the success back.
 - A changed plan or variant produces a different journal key and re-executes; a stale script is never trusted over the current prompt.
 - Side effects of a re-run failed step are not rolled back; the journal skips only steps that previously succeeded.
 - Successful steps are never spawned again in a fallback. Failed steps use TaskFlow retry/judge behavior; there is no separate LDW retry loop.

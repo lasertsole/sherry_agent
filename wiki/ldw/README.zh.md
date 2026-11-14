@@ -94,6 +94,7 @@ LDW 运行失败且 `LDW["auto_degrade_enabled"]` 打开时，适配器会从**�
 
 - 这是重放加速器，不是 sandbox，也不是重试引擎。
 - LDW leaf 继承角色工具策略；LDW 的 sandbox/deepagents 路径刻意不用。
+- journal 是**精确匹配**：对 `prompt` / `agent_type` / `model` / `schema` / `isolation` 做哈希，变体变化就重新执行。刻意不做 fuzzy 匹配，也不对 prompt 做空白/Unicode 归一化——step prompt 可能嵌入代码或结构化的上游结果，空白本身有语义，近似命中的缓存会把错误输出传给下游。miss 的代价是一次真实执行，成功后会回写。
 - 计划或变体变化会生成不同的 journal key 并重新执行；旧脚本绝不会压过当前 prompt。
 - 重新执行的失败 step 的副作用不会回滚；journal 只跳过之前成功过的 step。
 - 降级时成功 step 绝不会再次 spawn。失败 step 走 TaskFlow 的 retry/judge 行为；LDW 没有独立的重试循环。

@@ -94,6 +94,7 @@ step 失敗時は `repair_extraction` が replay flow の child handoff を読�
 
 - これはリプレイ加速器であり、sandbox でも再試行エンジンでもありません。
 - LDW leaf はロールのツールポリシーを継承します。LDW の sandbox/deepagents 経路は意図的に使いません。
+- journal は**完全一致**です：`prompt` / `agent_type` / `model` / `schema` / `isolation` をハッシュし、変体が変われば再実行します。fuzzy マッチと prompt の空白/Unicode 正規化は意図的に行いません——step prompt は空白が意味を持つコードや構造化された上流結果を含みうるため、近い一致のキャッシュは誤った出力を下流に渡してしまいます。miss のコストは 1 回の実実行で、成功後に書き戻します。
 - 計画や変体が変われば別の journal key になり再実行されます。古いスクリプトが現在の prompt より優先されることはありません。
 - 再実行した失敗 step の副作用はロールバックされません。journal は以前成功した step だけをスキップします。
 - 降格時に成功 step が再度 spawn されることはありません。失敗 step は TaskFlow の retry/judge に従い、LDW 独自の再試行ループはありません。
