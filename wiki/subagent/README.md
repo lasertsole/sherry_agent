@@ -92,6 +92,8 @@ per-role model profile (own max_output_tokens, default 8192)
 
 **Tool policy.** A role's `tools` list becomes an allow-list, and the default deny-list is cleared because the allow-list already restricts. Per-spawn `extra_tools` join that allow-list; both remain subject to the unconditional `main_only` metadata drop and to any explicit deny-list.
 
+**Skill visibility.** A specialized role's tools are stamped with `metadata["caller_role"]` next to `caller_scope`; the identity GENERAL role stays unstamped, so the default delegation path keeps the pre-role full view. `skill_list` and `skill_view` hide a skill whose frontmatter `roles: [...]` omits the role; a skill without `roles` is visible to every role, and the main agent skips the check entirely. `skill_view` reads the target SKILL.md directly, so the same `roles` gate is applied there; the delegate `load_skills` validation uses the identical filter. Builtin tags: `multimodal_rag` / `llm_wiki` are hidden from the executor (visible to every other role), `bugfix-contract` is executor + reviewer only, and the multimedia chain + `code_wiki` stay all-visible.
+
 ## 🔒 Spawn Privilege Guards
 
 Depth-based spawn privilege is enforced at two independent points, so no single leak can escalate it (functional-role containment is a third, orthogonal gate — see the note below):

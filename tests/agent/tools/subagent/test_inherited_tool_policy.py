@@ -201,3 +201,41 @@ class TestRuntimeToolIdempotencyMetadata:
         tools = self._runtime_tools()
         assert tools["sessions_kill"].metadata["scope"] == "main_only"
         assert tools["sessions_steer"].metadata["scope"] == "main_only"
+
+
+class TestCallerRoleStamp:
+    """A specialized child's tools carry its functional role for skill visibility."""
+
+    def test_role_is_stamped_next_to_the_scope(self):
+        tools = [_tool("read")]
+
+        result = apply_tool_policy(tools, [], [], caller_role="executor")
+
+        assert result[0].metadata["caller_scope"] == "subagent"
+        assert result[0].metadata["caller_role"] == "executor"
+
+    def test_no_role_keeps_the_key_absent(self):
+        tools = [_tool("read")]
+
+        apply_tool_policy(tools, [], [])
+
+        assert "caller_scope" in tools[0].metadata
+        assert "caller_role" not in tools[0].metadata
+
+    def test_existing_metadata_survives(self):
+        tools = [_tool("read", {"idempotent": True})]
+
+        result = apply_tool_policy(tools, [], [], caller_role="researcher")
+
+        assert result[0].metadata["idempotent"] is True
+        assert result[0].metadata["caller_role"] == "researcher"
+
+    def test_a_tool_without_metadata_gets_a_fresh_dict_with_the_role(self):
+        tools = [_tool("read", with_metadata=False)]
+
+        result = apply_tool_policy(tools, [], [], caller_role="librarian")
+
+        assert result[0].metadata == {
+            "caller_scope": "subagent",
+            "caller_role": "librarian",
+        }

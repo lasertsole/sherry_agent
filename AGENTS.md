@@ -3048,6 +3048,38 @@ each suite is the version-controlled reference (threshold + model id).
 - **File naming**: snake_case enforced by pre-commit hook
 - **Line length**: 100 chars (ruff)
 
+## Skill Index & Per-Role Visibility (`skills/loader.py`)
+
+`scan_skills()` is the one skill index (`name` / `description` / `when_to_use` /
+`when_not_to_use` / `location` / `scope` / `roles` / `active`), cached in
+`skills_snapshot.json` (rebuilt at boot by `build_skills_snapshot()` and after
+every `skill_manage` write). `get_skills_text` renders the prompt block,
+`skill_list` reads the index live (`use_cache=False`), and `skill_view` reads the
+target `SKILL.md` directly.
+
+- `scope` (all / main_only / subagent_only) separates the main agent from
+  subagents.
+- `roles` is ORTHOGONAL: a list of functional-role names (general / researcher /
+  executor / reviewer / librarian). Absent = every role (the backward-compatible
+  default); present = only the listed roles may see the skill.
+  `skill_manage._validate_frontmatter` refuses a non-list value or an unknown
+  role name; the loader's all-invalid fallback reads as absent (fail-open
+  visibility — the write path is the strict gate).
+- The role reaches the tools through the spawn tool policy:
+  `apply_tool_policy(..., caller_role=...)` stamps `metadata["caller_role"]`
+  next to `caller_scope`; `_assemble_child_tools` passes the specialized
+  functional role and `None` for the identity GENERAL role (the default
+  delegation path keeps the pre-role full view). `skill_list` / `skill_view`
+  pass the stamp to `skill_visible_to(skill, caller_scope, caller_role)`;
+  `skill_view`'s not-found hints and the delegate `load_skills` validation use
+  the same filter. `agent.tools.pub_base.skill_utils.skill_visible_to` and the
+  loader's duplicated `_skill_visible_to` are kept in lockstep.
+- Builtins tagged today: `multimodal_rag` and `llm_wiki`
+  (`[general, researcher, reviewer, librarian]` — every role except the
+  executor), `bugfix-contract` (`[executor, reviewer]`). The multimedia chain
+  and `code_wiki` stay untagged (all-visible) on purpose. The skill-review
+  prompt tells new skills to declare `roles` when the procedure is role-specific.
+
 ## Known Pitfalls
 
 - `workspace/` in `.gitignore` is anchored (`/workspace/`) — live persona files are NOT tracked

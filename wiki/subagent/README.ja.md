@@ -94,6 +94,8 @@
 
 **ツールポリシー。** ロールの `tools` リストは許可リストになり、許可リスト自体が既に制限しているため既定の拒否リストは空になります。spawn ごとの `extra_tools` はその許可リストに合流し、両者はいずれも無条件の `main_only` メタデータゲートと明示的な拒否リストの対象のままです。
 
+**スキル可視性。** 特化ロールのツールには `caller_scope` の隣に `metadata["caller_role"]` が付きます。識別ロール GENERAL には付かないため、既定の委譲経路はロール導入前の全表示を保ちます。`skill_list` と `skill_view` は frontmatter の `roles: [...]` にそのロールが含まれないスキルを隠します。`roles` のないスキルは全ロールに可視で、メインエージェントはチェックを完全に省略します。`skill_view` は対象の SKILL.md を直接読むため同じ `roles` ゲートを適用し、delegate の `load_skills` 検証も同一フィルタを使います。組み込みのタグ：`multimodal_rag` / `llm_wiki` は executor から隠れ（他の全ロールには可視）、`bugfix-contract` は executor + reviewer のみ、マルチメディア連鎖と `code_wiki` は全可視のままです。
+
 ## 🔒 spawn 権限ガード
 
 深度に基づく spawn 権限は二つの独立した地点で執行されるため、単一のリークで昇格することはありません（機能ロールの封じ込めは 3 つ目の直交ゲートです——下の注記を参照）：

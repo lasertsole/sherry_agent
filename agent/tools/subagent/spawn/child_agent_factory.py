@@ -262,7 +262,15 @@ def _assemble_child_tools(
             if name not in effective_allow:
                 effective_allow.append(name)
 
-    filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
+    # The identity GENERAL role carries NO caller_role: skill ``roles: [...]``
+    # tags restrict SPECIALIZED workers, while the default delegation path keeps
+    # the pre-role full view (backward compatible with every existing spawn).
+    filtered_tools = apply_tool_policy(
+        base_tools,
+        effective_allow,
+        tool_deny,
+        caller_role=None if functional_role == FunctionalRole.GENERAL else str(functional_role),
+    )
 
     # Code intelligence tools are CODE_INTEL_ROLES-only (researcher, librarian
     # and the write roles executor/general): they are injected here, after the

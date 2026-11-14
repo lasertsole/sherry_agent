@@ -94,6 +94,8 @@
 
 **工具策略。** 角色的 `tools` 列表成为白名单，默认拒绝列表随之清空，因为白名单本身已在做限制。每次 spawn 的 `extra_tools` 并入该白名单；两者都仍受无条件的 `main_only` 元数据门与任何显式拒绝列表约束。
 
+**技能可见性。** 专化角色的工具会在 `caller_scope` 旁盖上 `metadata["caller_role"]`；身份角色 GENERAL 不盖戳，因此默认委托路径保持加入角色概念前的完整视野。`skill_list` 与 `skill_view` 会隐藏 frontmatter `roles: [...]` 不含当前角色的技能；未标 `roles` 的技能对所有角色可见，主代理完全跳过该检查。`skill_view` 直接读取目标 SKILL.md，所以同一 `roles` 门也应用在那里；delegate 的 `load_skills` 校验使用同一过滤器。内置标记：`multimodal_rag` / `llm_wiki` 对 executor 隐藏（其他角色可见），`bugfix-contract` 仅 executor + reviewer，多媒体链与 `code_wiki` 保持全可见。
+
 ## 🔒 spawn 权限守卫
 
 基于深度的 spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提权（功能角色遏制是第三道、正交的门——见下方说明）：

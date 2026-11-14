@@ -69,7 +69,10 @@ Map them explicitly:
    `templates/`, or `scripts/`) and add a one-line pointer in its SKILL.md.
 4. Create a new class-level umbrella only when no existing skill covers the class.
 5. The skill name MUST be class-level. Never use plan_key, step_id, a PR number,
-   an error string, a feature codename, or a session artifact.
+   an error string, a feature codename, or a session artifact. When the
+   procedure only applies to particular subagent roles, also declare
+   `roles: [executor]` (a subset of general / researcher / executor / reviewer /
+   librarian); omitting `roles` keeps the skill visible to every role.
 6. `when_to_use` is required on every created or patched skill. It must name the
    concrete situations that should trigger loading the skill.
 7. Do NOT capture environment setup failures, transient errors, negative claims

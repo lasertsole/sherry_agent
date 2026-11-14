@@ -3,6 +3,7 @@ name: bugfix-contract
 description: "Synthesize a bug's behavior contract before patching: a behavior matrix from the issue, every visible assertion on the same behavior, conflicts resolved in the issue's favor, and a minimal patch that satisfies both. Use for bug fixes judged by tests you cannot fully see."
 when_to_use: "Fixing a reported bug whose acceptance is a hidden or partially visible test suite (e.g. SWE-bench-style tasks), or when an existing test asserts the exact behavior the issue calls wrong."
 when_not_to_use: "Green-field features with no prior behavior; pure refactors; tasks where the user supplies the acceptance test explicitly."
+roles: [executor, reviewer]
 ---
 
 # Bugfix Contract
