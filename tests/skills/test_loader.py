@@ -354,6 +354,60 @@ class TestAllowedSkillRoots:
         assert is_allowed_skill_path(skills_dir / "misc/x/SKILL.md", skills_dir) is False
         assert is_allowed_skill_path(tmp_path / "outside/SKILL.md", skills_dir) is False
 
+    def test_is_allowed_skill_path_resolves_symlinks(self, tmp_path):
+        """A lexically under-root path that resolves outside the tree is refused."""
+        skills_dir = tmp_path / "skills"
+        (skills_dir / "builtin").mkdir(parents=True)
+        (skills_dir / "auto" / "real").mkdir(parents=True)
+        real_md = skills_dir / "auto" / "real" / "SKILL.md"
+        real_md.write_text("---\nname: real\n---\n", encoding="utf-8")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        outside_md = outside / "SKILL.md"
+        outside_md.write_text("---\nname: escaped\n---\n", encoding="utf-8")
+
+        # A symlinked SKILL.md inside an allowed category.
+        (skills_dir / "builtin" / "file-link").mkdir()
+        (skills_dir / "builtin" / "file-link" / "SKILL.md").symlink_to(outside_md)
+        assert (
+            is_allowed_skill_path(skills_dir / "builtin" / "file-link" / "SKILL.md", skills_dir)
+            is False
+        )
+
+        # A symlinked skill DIRECTORY (the SKILL.md path is lexically under it).
+        (skills_dir / "builtin" / "dir-link").symlink_to(outside, target_is_directory=True)
+        assert (
+            is_allowed_skill_path(skills_dir / "builtin" / "dir-link" / "SKILL.md", skills_dir)
+            is False
+        )
+
+        # A symlink resolving back INSIDE the tree stays allowed.
+        (skills_dir / "auto" / "alias").symlink_to(real_md.parent, target_is_directory=True)
+        assert is_allowed_skill_path(skills_dir / "auto" / "alias" / "SKILL.md", skills_dir) is True
+
+        # A symlinked ROOT works: both sides are resolved.
+        root_link = tmp_path / "skills-link"
+        root_link.symlink_to(skills_dir, target_is_directory=True)
+        assert is_allowed_skill_path(root_link / "auto" / "real" / "SKILL.md", root_link) is True
+
+    def test_scan_skills_ignores_a_symlinked_skill_outside_the_tree(self, tmp_path, monkeypatch):
+        """Discovery must not follow a planted SKILL.md symlink out of the tree."""
+        root = self._tree(tmp_path, monkeypatch)
+        _write_skill(root, "skills/builtin/core/alpha", "alpha")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "SKILL.md").write_text(
+            "---\nname: escaped\ndescription: outside\n---\nbody", encoding="utf-8"
+        )
+        linked = root / "skills" / "plugins" / "escaped"
+        linked.mkdir(parents=True)
+        (linked / "SKILL.md").symlink_to(outside / "SKILL.md")
+
+        names = {s["name"] for s in loader_mod.scan_skills(use_cache=False)}
+
+        assert "alpha" in names
+        assert "escaped" not in names
+
 
 # ---------------------------------------------------------------------------
 # Feature-gated skills: a playbook is hidden while its tools do not exist

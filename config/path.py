@@ -316,11 +316,19 @@ def is_allowed_skill_path(skill_file: Path, skills_dir: Path | None = None) -> b
 
     ``skills_dir`` defaults to :data:`SKILLS_DIR`; callers that override the
     skills root (e.g. tests) pass it explicitly.
+
+    BOTH sides are resolved before the containment check: a lexically
+    under-root path can still be a symlink to somewhere else, and a skill
+    directory or ``SKILL.md`` plantable by a third-party install must not let
+    discovery read (or a later write follow) content outside the tree. A
+    symlink that resolves back INSIDE the root stays allowed, and a symlinked
+    root itself works because both sides go through ``resolve()``. An
+    unresolvable path (loop / permission) fails closed.
     """
     base = SKILLS_DIR if skills_dir is None else skills_dir
     try:
-        rel = skill_file.relative_to(base)
-    except ValueError:
+        rel = skill_file.resolve().relative_to(base.resolve())
+    except (OSError, RuntimeError, ValueError):
         return False
     return bool(rel.parts) and rel.parts[0] in SKILL_DISCOVERY_ROOTS
 

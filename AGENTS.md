@@ -3121,6 +3121,12 @@ target `SKILL.md` directly.
 
 - `scope` (all / main_only / subagent_only) separates the main agent from
   subagents.
+- Discovery is root-contained AFTER resolution: `is_allowed_skill_path` resolves
+  BOTH the candidate and the skills root before `relative_to`, so a symlinked
+  `SKILL.md` or skill directory that lexically sits under builtin/auto/plugins
+  but resolves outside the tree is ignored (an unresolvable path fails closed),
+  while a symlink resolving back inside — or a symlinked root itself — stays
+  allowed.
 - `roles` is ORTHOGONAL: a list of functional-role names (general / researcher /
   executor / reviewer / librarian). Absent = every role (the backward-compatible
   default); present = only the listed roles may see the skill.
