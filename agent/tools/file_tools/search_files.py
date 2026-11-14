@@ -261,6 +261,14 @@ class SearchFilesTool(BaseTool):
         patterns using constructs ripgrep's engine lacks, and for the hard failures
         where a partial rg result must not be presented as a complete one.
         """
+        if state.expired():
+            # Same rule as the walk's first iteration: an exhausted budget scans
+            # nothing. The rg engines' watchdog only catches a process that
+            # outlives the deadline — a tiny tree can finish before it fires —
+            # so a budget already spent must be refused before spawning.
+            state.note_budget()
+            return state.finish("files" if target == "files" else "matches", [])
+
         binary = resolve_rg()
         if binary is not None and not (target != "files" and pattern_needs_python(query.pattern)):
             result = (
