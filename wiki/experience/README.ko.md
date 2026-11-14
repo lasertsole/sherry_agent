@@ -50,7 +50,7 @@
 1. `_build_plan_context`는 plan 파일, todos, 자식 Agent runs(result_text 24 KB 제한), 그리고 제한된 `feedback`(최근 메시지의 `skill_view` 호출 + `.usage.json` 최근 항목 = `loaded_skills`, 최근 턴의 사용자 수정 = `user_corrections`)을 모읍니다. internal carrier, system reminder, workspace notice는 제외합니다. todo가 없으면 `{}`를 반환해 pass를 건너뜁니다.
 2. LLM 전에 원본 merged handoff tree를 `handoff-tree.json`에 원자적으로 써서 감사용으로 남깁니다. 모델 대상 지식 읽기 경로가 아닙니다.
 3. `_SKILL_REVIEW_PROMPT`를 압축 컨텍스트로 렌더링해 전용 agent(보조 모델, temperature=0, **대화 없음**)에 넘깁니다. 도구 면은 `skill_list` / `skill_view` / `skill_manage`만; `knowledge`와 `memory`는 없어 지식이나 FACTS를 쓸 수 없습니다.
-4. Prompt는 증거를 명시적으로 매핑합니다: `success_steps` → 절차/검증, `failed_branches` → pitfalls / `when_not_to_use`, `hard_constraints` → guardrails, `locked_decisions` → rationale, `user_corrections` → body / `when_to_use`. 이번에 로드한 skill, 기존 class-level umbrella, support file, 마지막으로 새 class-level skill 순서. 구체적 이유가 있는 no-op만 허용합니다.
+4. Prompt는 증거를 명시적으로 매핑합니다: `success_steps` → 절차/검증, `failed_branches` → pitfalls / `when_not_to_use`, `hard_constraints` → guardrails, `locked_decisions` → rationale, `user_corrections` → body / `when_to_use`. 이번에 로드한 skill, 기존 class-level umbrella, support file, 마지막으로 새 class-level skill 순서. 구체적 이유가 있는 no-op만 허용합니다. 가시성은 기본적으로 `scope`를 **생략**하며(메인 에이전트와 서브에이전트 모두 보임), 절차가 메인 전용 능력(`sessions_spawn` / `taskflow_*` / `todowrite` 같은 위임 오케스트레이션, `skill_manage`)에 의존할 때만 `main_only`, 순수 워커 실행 플레이북일 때만 `subagent_only`를 씁니다. 품질 judge는 `scope_valid`를 반환하며, 선언이 본문과 모순되면 실패로 처리하고 피드백과 함께 재시도합니다.
 
 구현: `summarization/background_reviews.py`의 `_run_skill_review`이 `_create_skill_review_agent`를 `skill_review_lock` 아래에서 사용합니다. `state_register_db`가 지문을 저장하고, `outcome`은 subagent runs에서 오며, 실패 플래그는 `False`입니다.
 

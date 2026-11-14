@@ -60,6 +60,11 @@ class SkillJudgement:
     quality: int
     no_op_justified: bool
     feedback: str
+    #: The declared ``scope:`` matches what the skill teaches. The review asks
+    #: for ``main_only`` only when the procedure depends on main-agent-only
+    #: capabilities and for ``subagent_only`` only on pure worker playbooks; an
+    #: omitted scope (visible to both) is always valid.
+    scope_valid: bool = True
 
     @property
     def failed(self) -> bool:
@@ -207,6 +212,7 @@ Return ONLY a JSON object with exactly these keys:
   "trigger_quality": 0-10,
   "quality": 0-10,
   "no_op_justified": true | false,
+  "scope_valid": true | false,
   "feedback": "one or two concrete sentences for the next attempt"
 }}
 
@@ -218,6 +224,15 @@ Criteria:
 - trigger_quality: `when_to_use` is specific enough for the skill index to load
   the skill at the right moment.
 - quality: overall judgment (accuracy, actionability, density, no duplication).
+- scope_valid: judge the declared `scope:` against the skill body. An omitted
+  scope is always valid (the skill is visible to the main agent AND subagents).
+  `main_only` is valid only when the procedure depends on main-agent-only
+  capabilities (delegation orchestration such as `sessions_spawn` / `taskflow_*`
+  / `todowrite`, `skill_manage`, another main-only tool); `subagent_only` is
+  valid only for a worker-execution playbook useless to the orchestrator. A
+  scope that contradicts the body — `main_only` on a skill teaching only
+  subagent-executable worker steps, or `subagent_only` on main-only
+  orchestration — is false and needs a retry with the scope fixed.
 - If no file changed, `no_op_justified` is true only when the evidence contains
   no reusable procedure, pitfall, or hard constraint. A no-op with reusable
   evidence is a retry.
@@ -306,6 +321,8 @@ async def judge_skill_update(
     trigger = _as_score(data.get("trigger_quality"))
     quality = _as_score(data.get("quality"))
     no_op_ok = _as_bool(data.get("no_op_justified"))
+    # An older/other judge payload without the key keeps the historical pass.
+    scope_valid = _as_bool(data.get("scope_valid", True))
     feedback = str(data.get("feedback") or "").strip()
     threshold = int(BACKGROUND_REVIEW_CONFIG["skill_review_quality_threshold"])
 
@@ -316,13 +333,21 @@ async def judge_skill_update(
         and trigger >= 6
         and quality >= threshold
         and (bool(changed) or no_op_ok)
+        and scope_valid
     )
     if not feedback:
-        feedback = (
-            "Improve grounding, reuse scope, or the when_to_use trigger and retry."
-            if not passed
-            else ""
-        )
+        if scope_valid:
+            feedback = (
+                "Improve grounding, reuse scope, or the when_to_use trigger and retry."
+                if not passed
+                else ""
+            )
+        else:
+            feedback = (
+                "The declared scope contradicts the skill body: use main_only only "
+                "for main-agent-only procedures, subagent_only only for pure worker "
+                "playbooks, and omit scope otherwise."
+            )
     return SkillJudgement(
         passed=passed,
         verdict=verdict,
@@ -332,4 +357,5 @@ async def judge_skill_update(
         quality=quality,
         no_op_justified=no_op_ok,
         feedback=feedback,
+        scope_valid=scope_valid,
     )

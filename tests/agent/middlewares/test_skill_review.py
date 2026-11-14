@@ -373,3 +373,12 @@ async def test_the_precheck_sees_only_the_goal_and_step_summaries(monkeypatch):
     assert "Build the project CI pipeline" in captured["content"]
     assert "write the workflow" in captured["content"]
     assert "SHOULD_NOT_APPEAR" not in captured["content"]
+
+
+def test_the_review_prompt_decides_scope_visibility():
+    """The extraction pass must assign scope deliberately, not by accident."""
+    prompt = reviews._SKILL_REVIEW_PROMPT
+
+    assert "scope: main_only" in prompt
+    assert "scope: subagent_only" in prompt
+    assert "OMIT it by default" in prompt

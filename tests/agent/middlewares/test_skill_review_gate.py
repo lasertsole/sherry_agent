@@ -150,3 +150,54 @@ async def test_judge_unavailable_is_a_retry(monkeypatch):
 
     assert result.passed is False
     assert "unavailable" in result.feedback.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_scope_contradiction_is_a_retry(monkeypatch):
+    """The judge rejects a scope that contradicts the skill body."""
+    _install_judge(monkeypatch, _verdict(scope_valid=False))
+    before = _Snapshot({})
+    after = _Snapshot({"demo/SKILL.md": b"new"})
+
+    result = await quality.judge_skill_update(
+        {"success_steps": [{"step": "run tests"}]}, before, after, None
+    )
+
+    assert result.passed is False
+    assert result.scope_valid is False
+    assert "scope contradicts" in result.feedback
+
+
+@pytest.mark.asyncio
+async def test_a_payload_without_scope_valid_keeps_the_historical_pass(monkeypatch):
+    """Older judges / other payloads omit the key: treat it as valid."""
+    _install_judge(monkeypatch, _verdict())
+    before = _Snapshot({})
+    after = _Snapshot({"demo/SKILL.md": b"new"})
+
+    result = await quality.judge_skill_update(
+        {"success_steps": [{"step": "run tests"}]}, before, after, None
+    )
+
+    assert result.passed is True
+    assert result.scope_valid is True
+
+
+@pytest.mark.asyncio
+async def test_an_explicitly_valid_scope_passes(monkeypatch):
+    _install_judge(monkeypatch, _verdict(scope_valid=True))
+    before = _Snapshot({})
+    after = _Snapshot({"demo/SKILL.md": b"new"})
+
+    result = await quality.judge_skill_update(
+        {"success_steps": [{"step": "run tests"}]}, before, after, None
+    )
+
+    assert result.passed is True
+
+
+def test_the_judge_prompt_asks_for_scope_validation():
+    prompt = quality._JUDGE_PROMPT
+
+    assert '"scope_valid"' in prompt
+    assert "main_only" in prompt and "subagent_only" in prompt

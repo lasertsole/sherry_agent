@@ -50,7 +50,7 @@
 1. `_build_plan_context` 读取 plan 文件、todos、子代理 runs（result_text 截断 24 KB），以及有界 `feedback`：最近消息中的 `skill_view` 调用 + `.usage.json` 最近条目（`loaded_skills`），以及最近回合的用户纠正（`user_corrections`）。internal carrier、system reminder、workspace notice 都被排除。没有 todo 返回 `{}`，pass 跳过。
 2. LLM 之前先把原始合并 handoff tree 原子写入 `handoff-tree.json` 审计；它不是面向模型的知识读取入口。
 3. `_SKILL_REVIEW_PROMPT` 用压缩上下文渲染，交给专用 agent（辅助模型，temperature=0，**不带对话**）。工具面显式绑定 `skill_list` / `skill_view` / `skill_manage`；`knowledge` 和 `memory` 不在其中，因此不能写知识或 FACTS。
-4. Prompt 明确映射证据：`success_steps` → 步骤/验证，`failed_branches` → pitfalls / `when_not_to_use`，`hard_constraints` → guardrails，`locked_decisions` → rationale，`user_corrections` → body / `when_to_use`。优先 patch 本次加载的 skill，其次已有类级 umbrella，再次支持文件，最后才新建类级 skill。只有带具体理由才允许 no-op。
+4. Prompt 明确映射证据：`success_steps` → 步骤/验证，`failed_branches` → pitfalls / `when_not_to_use`，`hard_constraints` → guardrails，`locked_decisions` → rationale，`user_corrections` → body / `when_to_use`。优先 patch 本次加载的 skill，其次已有类级 umbrella，再次支持文件，最后才新建类级 skill。只有带具体理由才允许 no-op。可见性上默认**省略** `scope`（主代理与子代理均可见），只有当流程依赖主代理专属能力（`sessions_spawn` / `taskflow_*` / `todowrite` 等委托编排、`skill_manage`）时才写 `main_only`，只有纯子代理执行套路才写 `subagent_only`；质量 judge 返回 `scope_valid`，声明与正文矛盾时判定失败并带反馈重试。
 
 实现细节：`summarization/background_reviews.py` 的 `_run_skill_review` 使用 `_create_skill_review_agent`，在 `skill_review_lock` 下运行；`state_register_db` 保存指纹，`outcome` 来自 subagent runs，失败标志为 `False`。
 

@@ -1077,7 +1077,13 @@ asks the auxiliary model to update a class-level skill. Its tool face is only
 `skill_list` / `skill_view` / `skill_manage`; knowledge and memory are absent.
 It snapshots `skills/auto`, runs the review, and sends the changed files plus the
 evidence to `skill_review.judge_skill_update()` (grounded / reusable / trigger /
-quality). A rejected attempt restores the snapshot and retries with judge feedback;
+quality / scope_valid). On visibility the review prompt OMITS `scope` by default
+(visible to the main agent and subagents), asks for `main_only` only when the
+procedure depends on main-agent-only capabilities (delegation orchestration via
+`sessions_spawn` / `taskflow_*` / `todowrite`, `skill_manage`) and for
+`subagent_only` only on a pure worker playbook; the judge returns
+`scope_valid` and a scope that contradicts the body fails the attempt with
+feedback. A rejected attempt restores the snapshot and retries with judge feedback;
 exhaustion records `skill_review_failed_hash` and leaves the success
 fingerprint untouched. A no-op is allowed only when the judge accepts its reason.
 `handoff-tree.json` remains the raw audit file; `task-*.json` / `wave-*.json` /
@@ -3079,6 +3085,12 @@ target `SKILL.md` directly.
   executor), `bugfix-contract` (`[executor, reviewer]`). The multimedia chain
   and `code_wiki` stay untagged (all-visible) on purpose. The skill-review
   prompt tells new skills to declare `roles` when the procedure is role-specific.
+- `scope` is assigned DELIBERATELY by that same review prompt: omitted by
+  default (visible to main + subagents), `main_only` only for procedures that
+  depend on main-agent-only capabilities, `subagent_only` only for a pure
+  worker playbook. The judge's `scope_valid` field fails a contradictory scope
+  (the prompt and the judge came from the pre-role skill index, where auto
+  skills silently defaulted to all).
 
 ## Known Pitfalls
 

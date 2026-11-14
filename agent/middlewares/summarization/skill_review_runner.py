@@ -78,6 +78,14 @@ Map them explicitly:
 7. Do NOT capture environment setup failures, transient errors, negative claims
    about tools, or one-off task narratives.
 8. Do not execute code. You may write scripts for a skill but cannot run them.
+9. Visibility (`scope`): OMIT it by default — the skill is then visible to the
+   main agent and to subagents (subject to `roles`). Write `scope: main_only`
+   ONLY when the procedure depends on main-agent-only capabilities (delegation
+   orchestration via `sessions_spawn` / `taskflow_*` / `todowrite`,
+   `skill_manage`, or another main-only tool). Write `scope: subagent_only` ONLY
+   when the skill is a worker-execution playbook that is useless to the
+   orchestrator. A scope that contradicts the body is rejected by the quality
+   judge; when unsure, omit it.
 
 ### Module-bound carry-forward
 
@@ -504,7 +512,7 @@ async def _run_skill_review(session_id: str) -> None:
             )
             logger.info(
                 "skill-review attempt {}/{}: pass={} verdict={} grounded={} "
-                "reusable={} trigger={} quality={} changed={} reason={}",
+                "reusable={} trigger={} quality={} scope_valid={} changed={} reason={}",
                 attempt,
                 attempts,
                 judgement.passed,
@@ -513,6 +521,7 @@ async def _run_skill_review(session_id: str) -> None:
                 judgement.reusable,
                 judgement.trigger_quality,
                 judgement.quality,
+                judgement.scope_valid,
                 len(changed_skill_paths(before, after)),
                 judgement.feedback,
             )
