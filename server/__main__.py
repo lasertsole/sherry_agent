@@ -1,6 +1,9 @@
 import asyncio
 import os
+import signal
 import sys
+import threading
+import time
 
 import nest_asyncio
 from logs import init_logger
@@ -38,6 +41,64 @@ else:
         "LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY "
         "in .network to enable)"
     )
+
+
+#: Seconds the signal handler gives the Rust listener to drain in-flight
+#: requests before the process exits. Overridable for slow shutdown targets.
+_SHUTDOWN_GRACE_SECONDS = float(os.getenv("SHERRY_SHUTDOWN_GRACE_SECONDS", "3"))
+
+_shutdown_started = False
+
+
+def _graceful_exit_after_signal(signum: int, _frame: object) -> None:
+    """Let the listener drain, then exit the process.
+
+    Robyn 0.84 with ``processes=1`` runs the server IN this process: its Python
+    signal handlers are registered only after the blocking ``server.start()``
+    call, so they never install, and the Rust core merely stops accepting --
+    ``server.start()`` never returns and the process needs SIGKILL. The handler
+    must therefore be installed BEFORE ``app.start`` (see
+    :func:`_install_shutdown_handlers`). It cannot unwind the Rust call, so it
+    schedules a bounded exit on a daemon thread: the Rust listener stops on the
+    signal, in-flight requests get the grace window, then the browser child is
+    torn down, the exit is marked clean, and the process hard-exits.
+    """
+    global _shutdown_started
+    if _shutdown_started:
+        return
+    _shutdown_started = True
+    logger.info("Shutdown signal {} received; exiting in {}s", signum, _SHUTDOWN_GRACE_SECONDS)
+
+    def _finish() -> None:
+        time.sleep(max(0.0, _SHUTDOWN_GRACE_SECONDS))
+        try:
+            from server.service.browser_manager import shutdown_browser_blocking
+
+            shutdown_browser_blocking()
+        except Exception:  # noqa: BLE001 - teardown must never block the exit
+            logger.debug("shutdown: browser teardown skipped", exc_info=True)
+        try:
+            from runtime.process.crash_loop_breaker import mark_clean_exit
+
+            mark_clean_exit()
+        except Exception:  # noqa: BLE001 - teardown must never block the exit
+            logger.debug("shutdown: clean-exit marker skipped", exc_info=True)
+        try:
+            logger.complete()
+        except Exception:  # noqa: BLE001 - logging is advisory at exit
+            logger.debug("shutdown: log flush skipped", exc_info=True)
+        os._exit(0)
+
+    threading.Thread(target=_finish, name="shutdown-exit", daemon=True).start()
+
+
+def _install_shutdown_handlers() -> None:
+    """Install SIGTERM/SIGINT handlers before Robyn enters its blocking call."""
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _graceful_exit_after_signal)
+        except (OSError, ValueError):  # platform may lack the signal
+            logger.debug("shutdown: could not install handler for {}", sig)
 
 
 def main() -> None:
@@ -361,6 +422,11 @@ def main() -> None:
             logger.exception("effects worker failed to start; continuing without it")
 
     app.startup_handler(_start_effects_worker)
+
+    # BEFORE app.start: Robyn's own handlers are registered after a blocking
+    # in-process server call, so with processes=1 they never run (see the
+    # helper). Installing here keeps SIGTERM/SIGINT able to stop the process.
+    _install_shutdown_handlers()
 
     app.start(host=API_HOST, port=API_PORT)
 
