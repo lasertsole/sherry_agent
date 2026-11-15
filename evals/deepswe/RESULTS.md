@@ -96,6 +96,44 @@ JSON 读取入口；不是 harness 错误也不是 P2P 回归。
 
 ---
 
+## 20261115_233700 — 默认切片（2 条任务，P0 修复后）
+
+- 命令：`uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200`
+- 模型：`deepseek/deepseek-flash`，thinking off
+- GOLD 自检：两任务均 `checked` 并通过。
+- 汇总（原始报告口径）：**0/2 resolved**，843.2s；`httpx` 被标成 `harness`
+  error（分类 bug，见下），`cattrs` 是有效运行。
+
+| 任务 | Resolved | F2P | P2P | 结果 | 耗时 | 调用 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `httpx-streaming-json-iteration` | ✗ | 107/108 | 1404/1404 | provider stall（报告旧口径：`harness`） | 346.3s | 37 |
+| `cattrs-partial-structuring-recovery` | ✗ | 62/69 | 7/7 | 有效，未解决 | 411.8s | 51 |
+
+### 两个缺陷已修
+
+1. **`KeyError: 'tools'`（先修后重跑）**：`bind_external_session` 仍读
+   `payload["tools"]`，但 preset 在 2026-11-05 起只携带 `skills`（工具是构建期
+   契约）。旧代码让 worker 在第一次模型调用前就崩溃，两个任务都变成
+   `harness error` + `tool_calls=0`。已移除该读取并加回归测试。
+2. **provider stall 被误分类**：`httpx` 在 37 次调用 / 346.3s 时连续 5 次流停滞，
+   `LLMRetryMiddleware` 以 `Provider unresponsive — aborting to avoid indefinite
+   stall.` 中止，报告却把 `failure_kind` 记为 `harness`，会污染能力统计。现在
+   `provider unresponsive` 进入 provider 标记，`invalid_run=True`，不计入
+   resolve rate；有单测钉住。
+
+### 结果解读
+
+- `httpx` 在 provider 中止前已经拿到 **107/108 F2P、1404/1404 P2P**，只差
+  UTF-32/JSON-sequence 相关的一个用例；这是 provider 中止造成的 near-miss，
+  不应算作 harness 或能力结论。
+- `cattrs` 是完整有效运行，62/69 F2P、7/7 P2P；剩余 7 个失败仍是
+  `PartialResult.refine` 的合并/必填字段语义，不是回归。
+- P0-3 部分遥测在真实运行中被观察到：`agent-result.json` 在任务进行中已有
+  `partial: true`、`tool_calls=37`、`tokens={input:1047513, output:8320}`；本轮
+  两个任务都在 1200s 前自然结束，没有触发硬超时路径。
+
+---
+
 ## 2026-11-03 — 未运行
 
 - 按“SWE-bench HARD 全通过才跑 DeepSWE”的约定跳过。
