@@ -149,3 +149,18 @@ def test_the_factory_reads_the_provider_from_the_config_when_omitted(monkeypatch
 
     assert isinstance(model, _FakeDeepSeek)
     assert captured["model"] == "deepseek-reasoner"
+
+
+def test_reset_async_client_rebuilds_the_provider_client():
+    """A timed-out keep-alive connection must not be reused by the retry."""
+    import asyncio
+
+    from models.LLMs.reasoning_normalizer import NormalizingChatModel
+
+    model = NormalizingChatModel(
+        inner=ReasoningDeepSeekChat(model="deepseek-chat", api_key="test-key")
+    )
+    old_client = model.inner.root_async_client
+
+    assert asyncio.run(model.reset_async_client()) is True
+    assert model.inner.root_async_client is not old_client
