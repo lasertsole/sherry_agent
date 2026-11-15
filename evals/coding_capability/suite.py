@@ -77,6 +77,7 @@ _PROVIDER_ERROR_MARKERS = (
     "readtimeout",
     "timeout",
     "stream stalled",
+    "provider unresponsive",
     "error code: 4",
     "error code: 5",
 )

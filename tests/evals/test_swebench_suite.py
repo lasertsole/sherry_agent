@@ -315,3 +315,18 @@ async def test_session_evidence_reports_no_cache_when_the_provider_omits_it(monk
     evidence = await suite._session_evidence("eval-session")
 
     assert evidence["cache_read"] == 0
+
+
+def test_a_provider_stall_is_an_invalid_run_not_a_harness_error():
+    kind = suite.harness._failure_kind(
+        False,
+        {
+            "timeout": False,
+            "error": (
+                "RuntimeError: Provider unresponsive — aborting to avoid indefinite "
+                "stall. | diag: chunks=7080 bytes=774"
+            ),
+        },
+    )
+
+    assert kind == "provider"
