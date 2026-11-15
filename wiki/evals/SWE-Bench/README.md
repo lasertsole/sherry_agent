@@ -40,7 +40,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 
 ## The failure history (2026-11-01)
 
-> **2026-11-09:** the table below is full history. The current-code tally (test patch pre-applied + temperature 0 + default 180 + current prompt) lives in `evals/swebench/RESULTS.md`: 17051 4/4, 16820 3/4, HARD 7/8 on two instances — not a leaderboard position. Runs of removed arms are archived there.
+> **2026-11-15:** the table below is full history. The current-code tally (test patch pre-applied + temperature 0 + default 180 + current prompt) lives in `evals/swebench/RESULTS.md`: 17051 5/5, 16820 4/5, HARD 9/10 on two instances — not a leaderboard position. Runs of removed arms are archived there.
 
 | Run | Arm | Result | What happened |
 | :--- | :--- | :--- | :--- |
@@ -64,6 +64,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-08 184144 | same instance, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | Resolved in 24 calls / 96.5 s; the larger cap removed the truncation ceiling but did not cause the fix (same temperature, very different trajectory) |
 | 2026-11-08 222819 | final code: exact command + default 180 budget (16820) | 0/1 | F2P 5/5, five real P2P assertion failures; the agent stopped after a guardrail blocked more test-file reads |
 | 2026-11-09 204854 | final code with the verify-todo template (16820) | 1/1 | 31 calls / 117.3 s; the agent used no todo plan, so the verify branch was covered by the deterministic tests |
+| 2026-11-15 211844 | P0 fixes + cache-telemetry fix; both HARD instances | 2/2 clean | 100.1 s / 25 calls (17051), 195.2 s / 55 calls (16820); F2P+P2P clean, no dirty test edits, quiesce clean. The report's `cache_read` bug was found and fixed (real hit rates 95.0% / 98.3%) |
 
 ## Problems exposed
 
@@ -99,14 +100,23 @@ HARD instances?” — not “what is the leaderboard position?”.
    `live_sessions_unchanged=false` exposed it; the report’s isolation block is
    the gate that keeps such a run out of the capability count.
 
+9. **The SWE report under-counted prompt-cache usage.** `_session_evidence`
+   passed normalized `usage_metadata` to a parser that only reads provider
+   `response_metadata`, so DeepSeek's `prompt_cache_hit_tokens` was never seen
+   and every run reported `cache_read=0`.
+
 ### Current resolutions
 
 1. **Fixed.** `IterationBudget` now charges one unit per model call; tool results are free.
 2. **Fixed.** `ToolGuardrails` now carries a status-blind signature streak (tool + args hash; 3 identical calls, terminal 5 in its own metadata) that warns up to 3 times per turn and then blocks that exact signature, plus a result-repetition detector for non-idempotent tools (3 warnings, 6 consecutive identical results block the tool). A successful `patch_file` (metadata `clears_guardrail_blocks`) clears the blocks, streaks and failure counters so verification can resume. No read-only command classifier is needed.
 3. **Mitigated by the tool guards, not a hard finish gate.** Blocked signatures force a different approach, the 20261103_210023 Sympy run converged in 28 model calls and ran the neighboring test file, and the prompt now requires it. A separate "tests must pass before finish" gate does not exist.
-4. **Still open.** The harness records `changed_paths` but does not invalidate a `tests/` edit. The soft gate reduces the chance but is not the official guard.
+4. **Fixed.** `dirty_test_edits` forces `resolved=False` for a test file changed outside the harness's own patch, whatever the tests say.
 5. **Partially mitigated.** The escalated reminder pushes the main agent to stop its post-spawn patch loop and delegate; there is no hard "tests must pass before finish" gate yet.
-6. **Partially fixed.** The per-turn token budget now attributes the main agent + all descendant levels to the root turn; eval reports still count only the main session, and child checkpoint/result readback remains open.
+6. **Partially fixed.** The per-turn token budget attributes the main agent + all descendant levels to the root turn. Child result readback now has a durable `transcript_tail` snapshot behind `sessions_messages`; eval reports still count only the main session's tokens.
+
+9. **Fixed.** The report reads `input_token_details.cache_read` first and falls
+   back to `_cache_read_tokens_from_usage(response_metadata)`; on the 2026-11-15
+   run it recovers 95.0% / 98.3% cached input (3 unit tests).
 
 ## The no-edit gate and why it failed
 

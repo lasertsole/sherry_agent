@@ -34,7 +34,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 
 ## 실패 이력(2026-11-01)
 
-> **2026-11-09:** 아래 표는 전체 이력입니다. 현재 코드 tally(test patch 사전 적용 + temperature 0 + 기본 180 + 현재 prompt)는 `evals/swebench/RESULTS.md`에 있습니다: 17051 4/4, 16820 3/4, HARD 7/8(2개 인스턴스) — 리더보드 위치가 아닙니다. 제거된 arm의 실행도 같은 파일에 아카이브했습니다.
+> **2026-11-15:** 아래 표는 전체 이력입니다. 현재 코드 tally(test patch 사전 적용 + temperature 0 + 기본 180 + 현재 prompt)는 `evals/swebench/RESULTS.md`에 있습니다: 17051 5/5, 16820 4/5, HARD 9/10(2개 인스턴스) — 리더보드 위치가 아닙니다. 제거된 arm의 실행도 같은 파일에 아카이브했습니다.
 
 | 실행 | Arm | 결과 | 무슨 일이 있었나 |
 | :--- | :--- | :--- | :--- |
@@ -58,6 +58,7 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 | 2026-11-08 184144 | 동일 인스턴스, `SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24회 호출 / 96.5초로 통과. 상한 확대는 잘림 위험을 없앴지만 수정의 원인은 아님(같은 온도에서도 궤적이 크게 다름) |
 | 2026-11-08 222819 | 최종 코드: 정확한 명령 + 기본 180 예산(16820) | 0/1 | F2P 5/5, 실제 P2P 단언 실패 5건. guardrail이 테스트 파일 추가 읽기를 막은 뒤 에이전트가 중단 |
 | 2026-11-09 204854 | verify-todo 템플릿의 최종 코드(16820) | 1/1 | 31회 호출 / 117.3초. 에이전트가 todo 계획을 쓰지 않아 verify 분기는 결정론적 테스트로 커버 |
+| 2026-11-15 211844 | P0 수정 + 캐시 계측 수정; 두 HARD 인스턴스 | 2/2 깨끗 | 17051은 100.1초 / 25회 호출, 16820은 195.2초 / 55회 호출. F2P/P2P 모두 통과, dirty test edits 없음, quiesce 깨끗. 리포트의 `cache_read`가 항상 0이던 계측 버그를 발견·수정(실제 적중률 95.0% / 98.3%) |
 
 ## 드러난 문제
 
@@ -90,14 +91,23 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
    `live_sessions_unchanged=false`가 이를 드러냈다. 리포트의 isolation 블록이
    그런 실행을 능력 집계에서 제외하는 게이트다.
 
+9. **SWE 리포트가 prompt cache 사용량을 과소 집계했다.** `_session_evidence`가
+   정규화된 `usage_metadata`를 provider의 `response_metadata`만 읽는 파서에 넘겨,
+   DeepSeek의 `prompt_cache_hit_tokens`를 읽지 못했고 모든 실행이
+   `cache_read=0`을 보고했다.
+
 ### 현재 해결
 
 1. **수정됨.** `IterationBudget`은 모델 호출당 1단위; 도구 결과는 무료.
 2. **수정됨.** `ToolGuardrails`에 상태 무관 시그니처 연속(도구 + 인자 해시, 3회 동일 호출, terminal은 자체 metadata의 5회)을 추가해 턴당 최대 3회 경고한 뒤 그 정확한 시그니처를 차단합니다. 비멱등 도구의 결과 반복(3회 경고, 6회 연속 동일 결과 시 도구 차단)도 있습니다. `patch_file` 성공 시(metadata `clears_guardrail_blocks`) 차단·연속·실패 카운터를 지워 검증을 재개할 수 있습니다. 읽기 전용 명령 분류기는 필요 없습니다.
 3. **도구 가드에 의한 완화이며 하드 종료 게이트는 아님.** 차단된 시그니처는 다른 접근을 강제하고, 20261103_210023 Sympy 실행은 28회 모델 호출로 수렴해 인접 테스트 파일을 실행했으며 prompt도 이를 요구합니다. 독립적인 '종료 전 테스트 통과 필수' 게이트는 없습니다.
-4. **미해결.** harness는 `changed_paths`를 기록하지만 `tests/` 편집을 invalid로 만들지 않음. 소프트 게이트는 확률을 낮출 뿐 공식 가드가 아님.
+4. **수정됨.** `dirty_test_edits`가 harness patch 밖의 테스트 파일 변경을 `resolved=False`로 만들어 테스트 결과와 무관하게 오염된 성공을 거부한다.
 5. **부분 완화.** escalated 리마인더는 spawn 후 메인의 patch 루프를 멈추고 구현을 위임하도록 권하지만 "종료 전 테스트 통과 필수" 하드 게이트는 없음.
-6. **부분 수정.** 턴당 token 예산은 메인 + 모든 깊이의 자손을 루트 턴에 귀속. eval 리포트는 여전히 메인 session만 세고, 자식 checkpoint/결과 읽기는 미해결.
+6. **부분 수정.** 턴당 token 예산은 메인 + 모든 깊이의 자손을 루트 턴에 귀속한다. 자식 결과 읽기에는 `transcript_tail` 영속 스냅샷이 있고 `sessions_messages`가 폴백한다. eval 리포트는 여전히 메인 session의 token만 센다.
+
+9. **수정됨.** 리포트는 `input_token_details.cache_read`를 먼저 읽고, 없으면
+   `_cache_read_tokens_from_usage(response_metadata)`로 폴백한다. 2026-11-15
+   실행에서 95.0% / 98.3%의 캐시 입력을 복구했다(단위 테스트 3개).
 
 ## no-edit 게이트와 실패 이유
 

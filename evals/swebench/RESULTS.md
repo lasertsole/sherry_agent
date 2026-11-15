@@ -13,20 +13,43 @@
 > `sandbox/src/checkpoints` 和 `shadow/` 是派生会话状态（单次可达数百 MB），
 > 会拖慢仓库级搜索测试的预算，跑完即删。
 
-## 当前代码 tally（2026-11-09）
+## 当前代码 tally（2026-11-15）
 
 只统计“当前意图内”的运行：test patch 预应用 + temperature=0 + 默认 180 预算 +
 当前 prompt/guardrail。历史 arm（no-edit / 软门 10/20·8/16·7/14 / delegate-only /
 sympy guardrail 调参链 / 目标测试仅写 prompt）已移到文末归档，不作为能力证据。
 
-- `django__django-17051`：**4/4**（133743 / 134640 / 135057 / 135604；
+- `django__django-17051`：**5/5**（133743 / 134640 / 135057 / 135604 / 211844；
   105816 的 0/1 是 90 次调用截断，单列为“截断型”证据）
-- `django__django-16820`：**3/4**（184144 1/1；204854 1/1，验收闭环模板；
-  222819 0/1，补丁语义不全 + guardrail 切断测试读取；214040 1/1，修复后回归）
-- HARD 切片：**7/8 ≈ 88%**（2 个实例的小样本，不是 leaderboard 位置）
+- `django__django-16820`：**4/5**（184144 1/1；204854 1/1，验收闭环模板；
+  222819 0/1，补丁语义不全 + guardrail 切断测试读取；214040 1/1，修复后回归；
+  211844 1/1）
+- HARD 切片：**9/10 ≈ 90%**（2 个实例的小样本，不是 leaderboard 位置）
 
 > 2026-11-09 起，主表只保留当前意图内的运行；全量历史（含故意失败的实验 arm、
 > sympy 和隔离失效轮）见文末“历史 / 实验归档”。
+
+---
+
+## 20261115_211844 — HARD 2/2（当前代码回归）
+
+- 目的：P0 修复（transcript 回退、DeepSeek reasoning 家族、DeepSWE 部分遥测）
+  与测试隔离修复后，重跑 HARD 切片。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**2/2 resolved**；总时长 361.9s，估算 $1.695（未配置 cache 价格时的输入价上限）。
+  - `django__django-17051`：1/1；100.1s；25 tool calls；F2P 5/5、P2P 37/37。
+  - `django__django-16820`：1/1；195.2s；55 tool calls；F2P 5/5、P2P 91/91。
+- 干净度：`dirty_test_edits=[]`、`quiesce.ok=true`（无活跃子代理/后台命令/shadow writer）、
+  `live_sessions_unchanged=true`、`eval_workspace_has_sessions=true`；persona 为 coding
+  预设，`markers_expected=true`，标记命中是预期而非泄漏。
+- 发现并修复的遥测 bug：报告 `cache_read=0`，但消息库实际为
+  17051 686,464 / 722,508（95.0% 命中）、16820 2,585,344 / 2,629,864（98.3%）。
+  `_session_evidence` 把 normalized `usage_metadata` 传给了只认 provider 原始
+  `response_metadata` 的解析器；现在两条路径都读（`input_token_details.cache_read`，
+  再回退 `_cache_read_tokens_from_usage(response_metadata)`），并有 3 个单测钉住。
+- 未计入的噪音：部分 PASS_TO_PASS/FAIL_TO_PASS 行在数据集里是测试 docstring
+  （如 “Test creation of new model with indexes already defined.”），harness 无法
+  调度，记录在 `unrunnable_test_ids`；可运行的 5 F2P + 91 P2P 全部通过。
 
 ---
 
