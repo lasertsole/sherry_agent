@@ -2972,12 +2972,20 @@ turns the evidence rows off with `AUTO_DIAGNOSTICS_ENABLED=0` (the passive
 reminder keeps working). Wiki: `wiki/debug-loop/`.
 
 `skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index(repo_name,
-db_path)` turns a code_intel SQLite DB into a deterministic, zero-LLM wiki
-(README/architecture/modules/class-diagram + state); `sequences.md` stays
-LLM-owned (runtime flow is not in an AST). It is an independent entry point —
-`init_repo_wiki` and the other path helpers are unchanged (C6) — and returns
-`{"fallback": True, "reason": ...}` for a missing/empty index or unsupported
-languages. Caps live in `SKILLS_TOOLING` (`code_wiki_export_*`).
+db_path, index_truncated=...)` turns a code_intel SQLite DB into a
+deterministic, zero-LLM wiki (README/architecture/modules/class-diagram +
+state); `sequences.md` stays LLM-owned (runtime flow is not in an AST). It is an
+independent entry point — `init_repo_wiki` and the other path helpers are
+unchanged (C6) — and returns `{"fallback": True, "reason": ...}` for a
+missing/empty index or unsupported languages. Caps live in `SKILLS_TOOLING`
+(`code_wiki_export_*`). Three scope rules keep the output honest on a large
+repo: a capped index samples EVERY top-level directory instead of the first N
+ids; tests/, vendor/ and test files are excluded from the wiki (README/state
+report the excluded count); and `index_truncated=index.truncated` is threaded
+from the indexer so a time/file-cap partial build is labelled TRUNCATED instead
+of looking like full coverage. Community names use the deepest shared
+directory (`agent-tools-subagent`, `client-app-composables`), with
+`<top>-misc` for cross-directory communities.
 
 ## LLM Wiki Graph Layer
 

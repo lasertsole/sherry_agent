@@ -61,17 +61,24 @@ from skills.builtin.code_wiki.scripts.core import export_wiki_from_index
 
 root = Path("<repo path>").resolve()
 db_path = root / ".codeintel" / "index.db"  # honored only when SHERRY_CODE_INTEL_DB is unset
-CodeIndexer(str(db_path), CODE_INTEL).index_directory(root)  # incremental
-result = export_wiki_from_index("<repo_name>", str(db_path))
+index = CodeIndexer(str(db_path), CODE_INTEL).index_directory(root)  # incremental
+result = export_wiki_from_index("<repo_name>", str(db_path), index_truncated=index.truncated)
 if result.get("fallback"):
     print(result["reason"])  # index_not_found / empty_index / unsupported_language
     # → continue with the LLM-driven procedure below
+if index.truncated:
+    print("WARNING: the indexer stopped at its time/file budget; the wiki is partial")
 ```
 
 `export_wiki_from_index` never overwrites the existing path-management helpers
 (`init_repo_wiki` / `get_repo_wiki_path` / ...); it is an independent entry point.
 `diagrams/sequences.md` is intentionally a note: runtime call flow is not
 representable from a static AST, so sequence diagrams stay LLM-generated.
+An indexer timeout is NOT detectable from the DB alone, which is why
+`index_truncated=index.truncated` matters: the README and
+`.codewiki-state.json` then say the wiki is partial instead of implying full
+coverage. For a large monorepo, rebuild with a larger
+`code_intel_index_timeout_s` or index the subsystem you actually need.
 Communities come from networkx Louvain when available; without networkx the
 exporter falls back to connected components and records `community_engine`.
 
