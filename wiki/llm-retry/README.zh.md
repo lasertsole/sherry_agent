@@ -48,6 +48,8 @@ fallback 候选会发起新的模型请求，所以它的重试预算从零开�
 
 `llm_stale_streak` 统计连续 timeout 失败。`stale_giveup_scope = "turn"`（默认）时，`before_agent` 在每个主 agent 回合开始时清零；熔断仍会在 `stale_giveup_threshold = 5` 时中止当前回合。`"session"` 恢复旧的跨回合行为。ZCode 没有等价的跨回合熔断；这是 Sherry 有意的保护，不是 parity 声明。
 
+超时后还会在重试前重建 provider 的 HTTP 客户端（`NormalizingChatModel.reset_async_client`）。长时间空闲（例如执行了 60 秒的 terminal 命令）可能留下一个已被 provider/代理关闭的 keep-alive 连接；在这个连接池上重试会等满整个读超时，而不是新建连接。重建发生在第一次超时，因此熔断仍用于判断 provider 是否真的无响应，而不是把一条坏连接算成五次 provider 故障。
+
 ## 事件、UI 与账本
 
 每次 scheduled / succeeded / exhausted 都会记录一条 `model_retry` 事件，并推送到会话的 socket：
