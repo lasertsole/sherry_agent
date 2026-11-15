@@ -9,6 +9,7 @@ connection is readable through another after the child released its own.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -27,10 +28,12 @@ class _StubRun:
         spawned_by: str | None,
         requester: str = "agent:main:session:owner",
         max_output_tokens: int | None = None,
+        transcript_tail: list[dict] | None = None,
     ):
         self.spawned_by = spawned_by
         self.requester_session_key = requester
         self.max_output_tokens = max_output_tokens
+        self.completion = SimpleNamespace(transcript_tail=transcript_tail or [])
 
 
 @pytest.fixture()
@@ -289,3 +292,64 @@ def test_the_module_never_raises_on_a_broken_read(monkeypatch, stub_run):
 
     assert out.startswith("Cannot read session:")
     assert "checkpoint read failed" in out
+
+
+class TestCapturedTailFallback:
+    """A pruned/deleted/foreign checkpoint must not lose the child's tail."""
+
+    def test_the_tail_reconstructs_tool_calls_and_roles(self):
+        messages = sm.messages_from_transcript_tail(
+            [
+                {"type": "human", "content": "fix it"},
+                {
+                    "type": "ai",
+                    "content": "running the tests",
+                    "tool_calls": [
+                        {"name": "terminal", "args": {"command": "pytest -q"}, "id": "c1"}
+                    ],
+                },
+                {"type": "tool", "content": "3 passed", "tool_call_id": "c1"},
+            ]
+        )
+
+        assert [m.type for m in messages] == ["human", "ai", "tool"]
+        text = sm.message_text(messages[1])
+        assert "running the tests" in text
+        assert "terminal(command=pytest -q)" in text
+
+    @pytest.mark.asyncio
+    async def test_an_empty_checkpoint_falls_back_to_the_captured_tail(self, stub_run, monkeypatch):
+        stub_run["run"] = _StubRun(
+            spawned_by=_CALLER,
+            transcript_tail=[
+                {"type": "human", "content": "fix it"},
+                {"type": "ai", "content": "pytest passed"},
+            ],
+        )
+
+        async def _empty(session_id, graph=None):
+            return []
+
+        monkeypatch.setattr("agent.state_port.read_messages", _empty)
+
+        out = await sm.read_session_transcript("owner", _CHILD)
+
+        assert "Checkpoint unavailable" in out
+        assert "fix it" in out and "pytest passed" in out
+
+    @pytest.mark.asyncio
+    async def test_the_captured_tail_honors_the_limit(self, stub_run, monkeypatch):
+        stub_run["run"] = _StubRun(
+            spawned_by=_CALLER,
+            transcript_tail=[{"type": "human", "content": f"m{i}"} for i in range(10)],
+        )
+
+        async def _empty(session_id, graph=None):
+            return []
+
+        monkeypatch.setattr("agent.state_port.read_messages", _empty)
+
+        out = await sm.read_session_transcript("owner", _CHILD, limit=2)
+
+        assert "m8" in out and "m9" in out
+        assert "m7" not in out

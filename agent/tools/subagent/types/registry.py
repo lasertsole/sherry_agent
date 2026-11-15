@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -73,6 +73,13 @@ class CompletionState(BaseModel):
     #: None when the child did not emit the block (the plan extractor then
     #: falls back to the free-text ``result_text``).
     handoff: dict | None = None
+    #: Bounded tail of the child's own transcript, captured on the way out
+    #: (``_capture_child_transcript``). It is the durable fallback behind
+    #: ``sessions_messages`` when the child checkpoint was pruned/cleaned or
+    #: lived in a different checkpointer database. Never the full transcript:
+    #: at most ``TRANSCRIPT_TAIL_MAX_MESSAGES`` messages with per-message text
+    #: capped, so the registry row stays small.
+    transcript_tail: list[dict[str, Any]] = Field(default_factory=list)
     captured_at: float | None = None
 
 

@@ -13,6 +13,7 @@ module's own functions.
 """
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -24,7 +25,7 @@ from loguru import logger
 from config.features import LANE_SYSTEM
 from ..hooks.progress import fire_ended_hook, fire_progress_hook
 from ..output_caps import resolve_subagent_output_caps
-from ..registry import get_run, mark_run_running, remove_task
+from ..registry import get_run, mark_run_running, remove_task, set_run_durable, update_run
 from ..session.cleanup import delete_subagent_session_for_cleanup
 from ..types.registry import (
     ExecutionStatus,
@@ -249,6 +250,13 @@ async def _execute_subagent_with_lane(
         remove_task(run.run_id)
 
 
+#: Bound on the durable ``sessions_messages`` fallback: enough to show a child's
+#: last verification steps without bloating every registry row.
+_TRANSCRIPT_TAIL_MAX_MESSAGES = 30
+_TRANSCRIPT_MESSAGE_MAX_CHARS = 8_000
+_TRANSCRIPT_TAIL_MAX_CHARS = 120_000
+
+
 class _RunWallClock:
     """One wall-clock budget shared by every turn a run makes.
 
@@ -323,6 +331,96 @@ def release_child_session_state(run: SubagentRunRecord) -> None:
         )
 
 
+async def _capture_child_transcript(run: SubagentRunRecord, child_agent: Any) -> None:
+    """Persist a bounded transcript tail BEFORE the checkpoint is closed/pruned.
+
+    ``sessions_messages`` was designed to read the child's checkpoint, but the
+    checkpoint can be pruned, deleted by cleanup, or live in a different
+    checkpointer database (the eval sandbox is one such case). Capture the last
+    messages into the run record so the fallback survives either outcome. Fail
+    open: a read failure must never change the run's outcome.
+    """
+    if child_agent is None:
+        return
+    try:
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+        from pub.func import build_agent_config
+
+        snapshot = await asyncio.wait_for(
+            child_agent.aget_state(config=build_agent_config(run.child_session_key)),
+            timeout=5.0,
+        )
+        messages = list((snapshot.values or {}).get("messages", []))
+    except Exception:  # noqa: BLE001 - diagnostics only
+        logger.debug("child transcript capture skipped for {}", run.run_id, exc_info=True)
+        return
+
+    tail: list[dict[str, Any]] = []
+    total = 0
+    for message in reversed(messages[-_TRANSCRIPT_TAIL_MAX_MESSAGES:]):
+        try:
+            raw = str(getattr(message, "content", "") or "")
+        except Exception:  # noqa: BLE001 - a malformed message is skipped
+            continue
+        text = raw[:_TRANSCRIPT_MESSAGE_MAX_CHARS]
+        if total + len(text) > _TRANSCRIPT_TAIL_MAX_CHARS:
+            break
+        item: dict[str, Any] = {
+            "type": str(getattr(message, "type", "") or ""),
+            "content": text,
+        }
+        name = getattr(message, "name", None)
+        if isinstance(name, str) and name:
+            item["name"] = name
+        if isinstance(message, AIMessage):
+            calls = []
+            for call in getattr(message, "tool_calls", None) or []:
+                if not isinstance(call, dict):
+                    continue
+                args = call.get("args")
+                if isinstance(args, (str, int, float, bool)) or args is None:
+                    stored_args: Any = args
+                else:
+                    try:
+                        encoded = json.dumps(args, ensure_ascii=False, default=str)
+                    except (TypeError, ValueError):
+                        encoded = ""
+                    stored_args = args if encoded and len(encoded) <= 1000 else encoded[:1000]
+                calls.append(
+                    {
+                        "name": str(call.get("name") or ""),
+                        "args": stored_args,
+                        "id": str(call.get("id") or ""),
+                    }
+                )
+            if calls:
+                item["tool_calls"] = calls
+        elif isinstance(message, ToolMessage):
+            item["tool_call_id"] = str(getattr(message, "tool_call_id", "") or "")
+        elif isinstance(message, HumanMessage):
+            item["role"] = "user"
+        tail.append(item)
+        total += len(text)
+    tail.reverse()
+    if not tail:
+        return
+    try:
+        # Merge into the CURRENT record: completion.result_text/handoff are
+        # written later by the finalizer, and this run object may predate a
+        # steer or a concurrent registry write.
+        current = get_run(run.run_id) or run
+        updated = update_run(
+            run.run_id,
+            completion=current.completion.model_copy(update={"transcript_tail": tail}),
+        )
+        if updated is not None:
+            # Durable immediately: the caller may be a hard-killed eval worker,
+            # and the tool must still see this tail after the process is gone.
+            set_run_durable(updated)
+    except Exception:  # noqa: BLE001 - diagnostics only
+        logger.debug("child transcript persist skipped for {}", run.run_id, exc_info=True)
+
+
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
     """Close the child's checkpointer and drop its per-session state.
 
@@ -331,6 +429,9 @@ async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> 
     bucket, and nothing else would release them.
     """
     child_checkpointer = getattr(child_agent, "checkpointer", None)
+    # Capture BEFORE closing/pruning: this is the only point where the child's
+    # in-memory state and checkpointer are both still useful.
+    await _capture_child_transcript(run, child_agent)
     if child_checkpointer is not None:
         # Keep this child thread to one readable top-level checkpoint (plus its
         # writes). The child is no longer running here; tools/model namespaces

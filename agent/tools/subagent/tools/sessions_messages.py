@@ -157,6 +157,53 @@ def render_messages(
     return truncate_by_tokens("\n".join(lines), max_tokens=total)
 
 
+def messages_from_transcript_tail(tail: Any) -> list[BaseMessage]:
+    """Reconstruct messages from the run's bounded transcript snapshot.
+
+    The snapshot is written by ``_capture_child_transcript`` before the child's
+    checkpoint is closed/pruned. Only the fields ``message_text`` needs travel;
+    malformed entries are skipped rather than failing the whole fallback.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    if not isinstance(tail, list):
+        return []
+    messages: list[BaseMessage] = []
+    for item in tail:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "")
+        content = str(item.get("content") or "")
+        name = item.get("name") if isinstance(item.get("name"), str) else None
+        if kind == "ai":
+            calls = item.get("tool_calls")
+            tool_calls = []
+            if isinstance(calls, list):
+                for call in calls:
+                    if isinstance(call, dict) and call.get("name"):
+                        tool_calls.append(
+                            {
+                                "name": str(call.get("name")),
+                                "args": call.get("args"),
+                                "id": str(call.get("id") or ""),
+                            }
+                        )
+            messages.append(AIMessage(content=content, name=name, tool_calls=tool_calls))
+        elif kind == "tool":
+            messages.append(
+                ToolMessage(
+                    content=content,
+                    name=name,
+                    tool_call_id=str(item.get("tool_call_id") or ""),
+                )
+            )
+        elif kind == "human":
+            messages.append(HumanMessage(content=content, name=name))
+        else:
+            messages.append(HumanMessage(content=content, name=name))
+    return messages
+
+
 async def read_session_transcript(
     caller_session_id: str,
     target_session_key: str,
@@ -171,6 +218,7 @@ async def read_session_transcript(
     target = str(target_session_key).strip()
     bounded = clamp_limit(limit)
     caps: SubagentOutputCaps | None = None
+    run = None
     try:
         from ..registry import get_run_by_child_session_key
 
@@ -185,6 +233,12 @@ async def read_session_transcript(
         logger.exception("sessions_messages: checkpoint read failed for {}", target)
         return f"Cannot read session: checkpoint read failed for {target}"
 
+    captured_tail = False
+    if not messages and run is not None:
+        messages = messages_from_transcript_tail(getattr(run.completion, "transcript_tail", None))[
+            -bounded:
+        ]
+        captured_tail = bool(messages)
     if not messages:
         return (
             f"No messages found for session {target} "
@@ -197,7 +251,13 @@ async def read_session_transcript(
         if not messages:
             return f"No message in session {target} matches {query!r}."
 
-    return render_messages(messages, target, caps)
+    rendered = render_messages(messages, target, caps)
+    if captured_tail:
+        rendered = (
+            f"(Checkpoint unavailable; showing the last {len(messages)} captured "
+            "message(s) from the run record.)\n" + rendered
+        )
+    return rendered
 
 
 __all__ = [
@@ -207,6 +267,7 @@ __all__ = [
     "check_read_permission",
     "clamp_limit",
     "message_text",
+    "messages_from_transcript_tail",
     "read_child_messages",
     "read_session_transcript",
     "render_messages",
