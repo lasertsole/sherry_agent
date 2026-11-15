@@ -107,7 +107,7 @@ def build_family_llm(
     if is_local or not remote_configured:
         return _build_fallback(fallback, temperature)
 
-    from langchain.chat_models import init_chat_model
+    from models.LLMs.reasoning_openai import build_reasoning_aware_chat_model
 
     raw_max = os.getenv(f"{prefix}_MAX_TOKEN", "").strip()
     max_tokens = int(raw_max) if raw_max else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
@@ -140,9 +140,10 @@ def build_family_llm(
         )
         from models.LLMs.anthropic_cache import maybe_wrap_anthropic_cache
 
-        inner = maybe_wrap_anthropic_cache(
-            init_chat_model(**model_config), os.getenv(f"{prefix}_PROVIDER")
+        inner = build_reasoning_aware_chat_model(
+            model_config, provider=os.getenv(f"{prefix}_PROVIDER")
         )
+        inner = maybe_wrap_anthropic_cache(inner, os.getenv(f"{prefix}_PROVIDER"))
         return NormalizingChatModel(inner=inner)
     except Exception as exc:  # noqa: BLE001 - build-time fail-open (plan §3.5)
         logger.warning(
