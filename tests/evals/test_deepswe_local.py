@@ -213,3 +213,150 @@ def test_agent_patch_excludes_harness_only_files(tmp_path: Path):
     assert "src/pkg.py" in patch
     assert ".sherry/" not in patch
     assert ".venv/" not in patch
+
+
+def test_a_partial_result_file_is_readable(tmp_path: Path):
+    result_file = tmp_path / "agent-result.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "drive": {
+                    "tool_calls": 7,
+                    "text": "halfway",
+                    "resumes": 0,
+                    "interrupted": 0,
+                    "timeout": False,
+                    "error": "",
+                },
+                "tokens": {"input": 11, "output": 5},
+                "agent_config": {},
+                "partial": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    read = local._read_worker_result(result_file)
+
+    assert read is not None
+    drive, payload, tokens = read
+    assert drive["tool_calls"] == 7
+    assert payload == {}
+    assert tokens == {"input": 11, "output": 5}
+
+
+def test_a_malformed_result_file_reads_as_absent(tmp_path: Path):
+    result_file = tmp_path / "agent-result.json"
+    result_file.write_text("{not json", encoding="utf-8")
+
+    assert local._read_worker_result(result_file) is None
+    assert local._read_worker_result(tmp_path / "missing.json") is None
+
+
+def test_a_hard_timeout_keeps_the_partial_telemetry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    result_file = tmp_path / "agent-result.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "drive": {
+                    "tool_calls": 4,
+                    "text": "still working",
+                    "resumes": 1,
+                    "interrupted": 0,
+                    "timeout": False,
+                    "error": "",
+                },
+                "tokens": {"input": 900, "output": 40},
+                "agent_config": {},
+                "partial": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeProc:
+        pid = 424242
+        returncode = -9
+
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.waits += 1
+            if self.waits == 1:
+                raise subprocess.TimeoutExpired(cmd="worker", timeout=timeout or 1.0)
+            return -9
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(local.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(local.os, "killpg", lambda *a, **k: None)
+
+    drive, payload, tokens = local._run_agent_worker(
+        session_id="evals-test",
+        repo=tmp_path,
+        results_dir=tmp_path,
+        prompt_file=tmp_path / "prompt.txt",
+        result_file=result_file,
+        worker_log=tmp_path / "worker.log",
+        timeout=1.0,
+    )
+
+    assert drive["tool_calls"] == 4
+    assert drive["text"] == "still working"
+    assert drive["resumes"] == 1
+    assert drive["timeout"] is True
+    assert "exceeded the 1s wall clock" in drive["error"]
+    assert payload == {}
+    assert tokens == {"input": 900, "output": 40}
+
+
+def test_a_hard_timeout_without_a_partial_file_returns_zeros(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class _FakeProc:
+        pid = 424242
+        returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired(cmd="worker", timeout=timeout or 1.0)
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(local.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(local.os, "killpg", lambda *a, **k: None)
+
+    drive, payload, tokens = local._run_agent_worker(
+        session_id="evals-test",
+        repo=tmp_path,
+        results_dir=tmp_path,
+        prompt_file=tmp_path / "prompt.txt",
+        result_file=tmp_path / "agent-result.json",
+        worker_log=tmp_path / "worker.log",
+        timeout=1.0,
+    )
+
+    assert drive["tool_calls"] == 0
+    assert drive["timeout"] is True
+    assert payload == {} and tokens == {}
+
+
+def test_the_partial_writer_is_atomic_and_carries_the_counters(tmp_path: Path):
+    from evals.deepswe import agent_worker
+
+    target = tmp_path / "agent-result.json"
+    agent_worker._write_partial(
+        target,
+        {"tool_calls": 3, "text": "abc", "resumes": 0, "interrupted": 0},
+        {"input": 7},
+    )
+
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["partial"] is True
+    assert data["drive"]["tool_calls"] == 3
+    assert data["tokens"] == {"input": 7}
+    assert not (tmp_path / "agent-result.json.part").exists()
