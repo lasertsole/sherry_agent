@@ -14,7 +14,10 @@ from config.features import LDW
 from config.path import PLAN_KNOWLEDGE_DIR, ROOT_DIR
 from agent.tools.subagent.ldw_shim import InMemoryJournalStore, SqliteWorkflowStore, run_workflow
 from agent.tools.subagent.registry.session_keys import normalize_session_key
-from agent.tools.todolist.knowledge.identity import resolve_session_plan_identity
+from agent.tools.todolist.knowledge.identity import (
+    replay_plan_key,
+    resolve_session_plan_identity,
+)
 
 from .compiler import build_orchestrate, compile_plan_to_workflow, render_step_result
 from .leaf import register_roster
@@ -97,6 +100,7 @@ def plan_knowledge_from_flow(session_id: str, *, flow_id: str = "") -> dict[str,
     raw_steps = state.get("steps") or []
     if not isinstance(raw_steps, list) or not raw_steps:
         return None
+    goal_text = str(state.get("description") or "").strip() or None
     identity = resolve_session_plan_identity(session_id)
     contract_keys = (
         "extra_tools",
@@ -128,7 +132,10 @@ def plan_knowledge_from_flow(session_id: str, *, flow_id: str = "") -> dict[str,
                 item[key] = step[key]
         steps.append(item)
     return {
-        "plan_key": identity.key if identity else "",
+        # Goal-aware: two tasks sharing one plan file get separate replay
+        # counters, journals and compiled scripts. Knowledge storage keeps the
+        # plain identity.key (see identity.replay_plan_key).
+        "plan_key": replay_plan_key(identity, session_id, goal_text),
         "plan_name": identity.plan_name if identity else "",
         "flow_id": flow_id,
         "steps": steps,
@@ -264,6 +271,9 @@ async def replay_plan(
         return {"status": "disabled", "plan_key": plan_key}
     sid = normalize_session_key(session_id)
     identity = resolve_session_plan_identity(sid)
+    if not plan_key:
+        knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
+        plan_key = str((knowledge or {}).get("plan_key") or "")
     if not plan_key:
         plan_key = identity.key if identity else ""
     if not plan_key:
