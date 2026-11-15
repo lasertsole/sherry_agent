@@ -1,10 +1,85 @@
 # DeepSWE 本地测试失败原因分析
 
-- 建档日期：2026-11-02
-- 状态：**方案 C 已落地（2026-11-02）；压力门现为 advisory（7/12 次读提示，不阻断）；子代理 400 待做**
-- 运行：`20261101_233217`，DeepSWE 默认切片，`--local --timeout 1200`
+- 建档日期：2026-11-02（2026-11-15 更新）
+- 状态：**2026-11-16 httpx 已 resolved（1/1，108/108）；cattrs 仍 0/1（refine 语义缺口）；交接链、DeepSeek reasoning、硬超时遥测、provider 分类/客户端重建均已落地**
+- 最新运行：`20261115_233700`，DeepSWE 默认切片，`--local --timeout 1200`
+- 历史运行：`20261101_233217`（0/2 硬超时）、`20261102_083002`（cattrs 0/1）
 - 原始记录：[evals/deepswe/RESULTS.md](../evals/deepswe/RESULTS.md)
-- 原始报告（gitignored）：`evals/results/deepswe-local/20261101_233217/`
+- 最新报告（gitignored）：`evals/results/deepswe-local/20261115_233700/`
+
+
+## 2026-11-16 httpx 复跑（最新）
+
+- 命令：`uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200 httpx-streaming-json-iteration`
+- 结果：**1/1 resolved**；108/108 F2P、1404/1404 P2P；70 次工具调用 / 808.6s；
+  tokens 2,919,410 / 18,972。
+- 卡住根因：上一轮在第 37 次调用后连续 5 次流停滞。用该会话最后的 73 条消息 +
+  **新建客户端**复现，2.5s 就完成，说明不是对话/payload；是 agent 中间执行了
+  `sleep 60` 的 terminal 命令，长时间空闲后复用了 provider/代理已关闭的
+  keep-alive 连接。5 次重试都在同一个坏连接池上等满 60s 读超时，才看起来像
+  “provider 连续挂 5 次”。
+- 修复：`NormalizingChatModel.reset_async_client()` 在超时后关闭并重建 inner 的
+  HTTP 客户端（fresh connection pool）；`LLMRetryMiddleware` 在下一次重试前调用它。
+  stale-streak 熔断保留，用于真正无响应的 provider。
+- 验证：新增客户端重建单测 + retry 路径单测；httpx 复跑 70 次调用、808.6s，
+  未再触发熔断，最终 108/108。
+
+## 2026-11-15 复跑（上一轮）
+
+首次复跑在 worker 启动前就失败：`bind_external_session` 仍读
+`payload["tools"]`，但 preset 自 2026-11-05 起只携带 `skills`（工具是构建期
+契约）。两个任务都得到 `KeyError: 'tools'`、`tool_calls=0`，被误记为 harness
+error。该读取已移除并加回归测试，随后重跑。
+
+`20261115_233700` 结果：
+
+| 任务 | Resolved | F2P | P2P | 调用 | 耗时 | 判定 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `httpx-streaming-json-iteration` | ✗ | **107/108** | 1404/1404 | 37 | 346.3s | provider stall；按修复后的分类是 invalid |
+| `cattrs-partial-structuring-recovery` | ✗ | **62/69** | 7/7 | 51 | 411.8s | 有效运行，未解决 |
+
+关键结论：
+
+1. **交接链问题已不再是本轮失败原因**：两个任务都在 1200s 前自然结束，没有
+   出现“反复 spawn/yield 直到硬超时”；completion 注入/回退链路由既有回归测试
+   覆盖，本轮未再触发空读。
+2. **P0-3 遥测已在真实运行中生效**：任务进行中的 `agent-result.json` 为
+   `partial: true`、`tool_calls: 37`、`tokens={input:1047513, output:8320}`；
+   即使硬超时被杀，父进程也不会再报 0。
+3. **httpx 只差 1 个 F2P**：
+   `test_iter_json_document_streaming_chunk_boundaries[chunks2-expected2]`。
+   它在 37 次调用后连续 5 次流停滞，`LLMRetryMiddleware` 以
+   `Provider unresponsive` 中止；补丁当时已 107/108 F2P、1404/1404 P2P。
+   该消息原先不在 provider 标记里，被误分类为 `harness`；已加入
+   `provider unresponsive` 并测试，之后这类运行记为 `provider` / invalid，
+   不计入 resolve rate。
+4. **cattrs 是真实能力缺口**：7 个 F2P 失败集中在
+   `PartialResult.refine`——没有把 refine 后的新值合并回原始输入并重新结构化，
+   必填字段失败时返回部分 dict 而不是 `value=None`；P2P 7/7 无回归。
+5. **剩余工作**：修 cattrs 的 refine/必填字段语义；httpx 的 BOM-after-leading-
+   space 用例（需 provider 稳定后重跑确认）；`models/runtime` 等 wiki 覆盖问题
+   不属于 DeepSWE。
+
+## DeepSWE 错误原因与修复方法（汇总）
+
+| 问题 | 现象 | 根因 | 修复方法 | 状态 |
+| :--- | :--- | :--- | :--- | :--- |
+| `KeyError: 'tools'` | worker 启动即失败，`tool_calls=0`，两任务都成 harness error | preset 自 2026-11-05 起只携带 `skills`，工具是构建期契约；`bind_external_session` 仍读 `payload["tools"]` | 删除该读取，写入 skills-only payload；加 `test_bind_external_session_accepts_the_skills_only_payload` | 已修（2026-11-15） |
+| 硬超时遥测丢失 | 1200s 被杀后 `tool_calls=0`、`tokens={}` | worker 在 SIGKILL 前没有写出最终 `agent-result.json` | `_drive` 逐帧回调；worker 每秒原子写 partial、token 每 10s 刷新；父进程超时后读 partial | 已修；实测 `partial: true`、`tool_calls=37`、tokens 非空 |
+| 子代理完成消息不可见 | 日志显示 delivered，主 transcript 没有结果；只能反复 spawn | EventBus 只投递到 channel/WebSocket，本地 eval 没有 WS | 方案 C：busy 主 session 写入 `SteeringQueue`，`SubagentCompletionDrainMiddleware` 下一模型调用前注入 | 已修（2026-11-02）+ 回归测试 |
+| `sessions_messages` 返回空 | 子代理结束后读不到 transcript，主 agent 没有兜底 | checkpoint 可能被 prune/cleanup，或子代理与读取方不是同一个 saver/DB | `_capture_child_transcript` 在释放前抓最后 30 条消息到 `completion.transcript_tail` 并立即持久化；`sessions_messages` 空 checkpoint 时回退 | 已修（2026-11-15）+ 7 个测试 |
+| 子代理 DeepSeek thinking 400 | `reasoning_content must be passed back`，子代理空转 | 辅助/per-role 家族用普通 `ChatDeepSeek`，工具调用重放时不带 `reasoning_content` | 统一走 `build_reasoning_aware_chat_model`：DeepSeek→`ReasoningDeepSeekChat`，GLM→`ReasoningChatOpenAI` | 已修（2026-11-15）；真实 thinking + tool-call replay 冒烟通过 |
+| provider stall 误分类 | `Provider unresponsive` 被记为 `harness`，污染能力分母 | provider 错误标记缺少这条文本 | 加入 `provider unresponsive` → `failure_kind=provider`、`invalid_run=True`，不计入 resolve rate；另加超时后客户端重建 | 已修 + 单测；2026-11-16 复跑未再触发 |
+| 压力门放大故障 | 16 次读后读写被禁用，主 agent 只能继续 spawn | 旧 gate 是硬阻断，且完成消息不可见 | gate 改为 advisory（7/12 次读只发 reminder，不阻断工具） | 已修（历史） |
+| `cattrs` 未解决 | 62/69 F2P，7/7 P2P | `PartialResult.refine` 没有把新值合并回输入并重新结构化；必填字段失败应返回 `value=None` | 需改任务实现（`partial.py` / `converters.py` / 顶层导出） | **未解决**（真实能力缺口） |
+| `httpx`（已解决） | **108/108 F2P**，1404/1404 P2P | 上一轮卡在坏 keep-alive 连接；唯一剩余 BOM 用例在客户端重建后补上 | 超时后重建 provider HTTP 客户端；2026-11-16 单任务复跑 1/1 | **已解决**（2026-11-16） |
+
+### 修复后的验收口径
+
+- provider abort / stall 记为 `invalid_run`，不进入 resolve rate；
+- 硬超时不再丢 `tool_calls`/tokens；
+- 任务“没跑起来”（`KeyError`、worker 启动失败）与“模型没修好”（F2P 未过）分开记录；
+- 最新复跑：`httpx` 107/108 F2P（provider invalid），`cattrs` 62/69 F2P（有效未解决）。
 
 ## 进度（2026-11-02）
 
@@ -20,7 +95,7 @@ DeepSeek `reasoning_content` 400 失败；之后主 agent 被当时的压力门�
 下一步优先处理 P1 的压力门恢复窗口和 P1 的子代理 thinking 400。
 
 
-## 0. 结论
+## 0. 结论（2026-11-01 历史；最新状态见上节）
 
 这次 **0/2 不是模型完全没有做出来，也不是 GOLD/verifier 坏了**：
 
@@ -148,7 +223,7 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
 - `tool_calls=0`、`tokens={}` 是硬超时杀掉 worker 后没有写出 result JSON 的
   **采集缺口**，不是主 agent 没有调用工具。
 
-### 1.8 任务本身的剩余实现缺口
+### 1.8 任务本身的剩余实现缺口（2026-11-01 历史；最新数量见上节）
 
 这些是超时前仍存在的真实代码问题，修完交接链后预计仍需处理：
 
@@ -171,19 +246,21 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
 - [x] 添加回归测试：`test_no_ws_busy_routes_to_steering` +
   `test_busy_parent_without_websocket_reaches_steering`；现有 WS busy / idle /
   consumed / error 路径仍通过。
-- [ ] 验证生产路径没有被测试 harness 的改动绕过：third path 的 WS 检查、auto-turn
+- [x] 验证生产路径没有被测试 harness 的改动绕过：third path 的 WS 检查、auto-turn
   deferral、steering queue 仍按原语义工作（C 改动已保留 idle+WS→auto-turn）。
+  2026-11-15 复跑未再出现 completion 丢失或 spawn 循环。
 
 ### P0 — 修复 `sessions_messages` 的兜底读取
 
-- [ ] 复现 `sessions_messages` 在子代理结束后返回空的问题；比较
-  `spawn` 返回的 `session_key`、`session_thread_id()` 映射、实际 checkpoint
-  `thread_id`。
-- [ ] 若 checkpoint 被 `_release_child_resources` 清理，保留 latest checkpoint
-  的 messages 读取路径；若读的是不同 saver，统一到 `agent.state_port` 的同一个
-  checkpointer。
-- [ ] 测试：正常完成、超时、400 error、pending 后 killed 四种 run 都能读到最后一条
-  assistant/tool 结果，或明确返回“已被清理”，而不是误导性的空。
+- [x] **已修复（2026-11-15）**：`_capture_child_transcript` 在 checkpoint
+  关闭/裁剪前把最后 30 条消息写入 run 的 `completion.transcript_tail`，
+  `sessions_messages` 在 checkpoint 为空时回退到该快照；不再依赖 thread-id
+  映射或 checkpoint 是否还在。
+- [x] 回退快照在 `_release_child_resources` 之前抓取并立即持久化，覆盖
+  cleanup/prune/跨 DB 三种情况。
+- [x] 测试：`tests/agent/tools/subagent/spawn/test_transcript_capture.py` +
+  `tests/agent/tools/subagent/test_sessions_messages.py` 覆盖角色/工具调用、
+  截断、读失败 fail-open、空 checkpoint 回退。
 
 ### P1 — 压力门与交接语义
 
@@ -196,10 +273,12 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
 
 ### P1 — DeepSeek thinking 重放
 
-- [ ] 子代理显式继承/关闭 `LLM_THINKING_ENABLED`（至少 eval 子代理默认 false），
-  或在 replay 时携带 thinking 的 `reasoning_content`。
-- [ ] 对 400 的 run 标记为 provider invalid，不要让主 agent 误以为子代理完成了任务；
-  当前两次 400 都消耗了完整 runtime。
+- [x] **已修复（2026-11-15）**：辅助模型和 per-role/taskflow/compression 家族
+  统一走 `build_reasoning_aware_chat_model`；DeepSeek 使用
+  `ReasoningDeepSeekChat` 回传 `reasoning_content`，GLM 使用
+  `ReasoningChatOpenAI`。真实 thinking + tool-call replay 冒烟通过。
+- [x] provider stall/400 的分类：`provider unresponsive` 现归入 provider 标记，
+  `invalid_run=True`，不计入 resolve rate。
 - [ ] 加 DeepSeek thinking + tool-call replay 的回归用例（见记忆中的
   `deepseek-thinking-replay`）。
 
@@ -210,21 +289,31 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
   一个子代理任务。
 - [ ] 区分“任务预算”和“spawn 轮次预算”：在 1200 秒内不应该允许 4–6 次串行
   spawn。
-- [ ] 硬超时保留；超时后至少从 worker 日志/checkpoint 收集 `tool_calls`、tokens
-  和最后工具序列，避免 `tool_calls=0` 的采集缺口。
+- [x] **已修复（2026-11-15）**：worker 每秒原子写 partial result，token 每 10s
+  刷新；父进程在硬超时 SIGKILL 后读取 partial，`tool_calls`/tokens 不再归零。
+  真实运行中已观察到 `partial: true`、`tool_calls=37`、tokens 非空。
+- [x] **已修复（2026-11-16）**：超时后重建 provider HTTP 客户端，避免长空闲后的
+  坏 keep-alive 连接被后续重试复用；httpx 复跑 1/1 resolved。
 
 ### P2 — 产物与任务实现
 
 - [ ] 收尾清理 scratch 文件；在 eval registry/report 中记录 out-of-scope 文件。
-- [ ] 修 `httpx` 的 UTF-32/UTF-32-LE + BOM 位置检测，覆盖 4 个失败 F2P。
+- [ ] 修 `httpx` 的 BOM-after-leading-space 用例（最新 run 只剩 1 个 F2P；
+  旧 run 为 4 个）。
 - [ ] 修 `cattrs` 的顶层导出、`refine` 合并/必填字段语义，覆盖 7 个失败 F2P。
 - [ ] 修完后用同一命令复跑，确认是 resolved 而不是“又接近了”。
 
-## 3. 验收标准
+## 3. 验收标准（2026-11-15 状态）
 
-1. 默认两条 DeepSWE 任务在无 WebSocket 的本地 eval harness 中，主 agent 的 transcript
-   能看到每个子代理的 completion 文本；
-2. `sessions_messages` 对已完成子代理返回非空 transcript，或明确说明 checkpoint 已清理；
-3. 子代理不再因 DeepSeek `reasoning_content` 400 空转；
-4. 同一 slice 在 1200 秒内不再出现“反复 spawn/yield 直到硬超时”；
-5. 最后以 `resolve_rate` 和 F2P/P2P 数字验收，而不是只看补丁是否存在。
+1. [x] 默认两条 DeepSWE 任务在无 WebSocket 的本地 eval harness 中，主 agent 的
+   transcript 能看到每个子代理的 completion 文本（方案 C + 回归测试；最新复跑
+   未再出现超时循环）。
+2. [x] `sessions_messages` 对已完成子代理返回非空 transcript，或明确说明 checkpoint
+   已清理（`transcript_tail` 回退，2026-11-15）。
+3. [x] 子代理不再因 DeepSeek `reasoning_content` 400 空转（所有模型家族统一走
+   reasoning-aware 客户端；真实回放冒烟通过）。
+4. [x] 同一 slice 在 1200 秒内不再出现“反复 spawn/yield 直到硬超时”（最新复跑
+   346.3s / 411.8s 自然结束）。
+5. [ ] 以 `resolve_rate` 和 F2P/P2P 数字验收：DeepSWE **1/2**；`httpx` 已
+   **1/1 resolved**（108/108 F2P、1404/1404 P2P）；`cattrs` 仍 0/1（62/69 F2P、
+   7/7 P2P），剩余是任务实现缺口，不是交接链或 provider。

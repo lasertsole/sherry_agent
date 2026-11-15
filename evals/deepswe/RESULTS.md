@@ -96,6 +96,23 @@ JSON 读取入口；不是 harness 错误也不是 P2P 回归。
 
 ---
 
+## 20261116_005543 — httpx 单任务复跑（1/1 resolved）
+
+- 命令：`uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200 httpx-streaming-json-iteration`
+- 结果：**resolved=True**；108/108 F2P、1404/1404 P2P；70 次工具调用 / 808.6s；
+  tokens 2,919,410 / 18,972；`invalid_runs=[]`。
+- 根因：上一轮在 37 次调用 / 346.3s 后连续 5 次流停滞，`LLMRetryMiddleware` 触发
+  stale-streak 熔断。用该会话最后的 73 条消息 + 一个新建客户端复现，**2.5s 就完成**，
+  说明不是对话内容或 payload；而是 agent 中间执行了 `sleep 60` 的 terminal 命令，
+  长时间空闲后复用了 provider/代理已经关闭的 keep-alive 连接。5 次重试都在同一个
+  坏连接池上等满 60s 读超时，才看起来像“provider 连续挂 5 次”。
+- 修复：超时后 `NormalizingChatModel.reset_async_client()` 关闭并重建 inner 的
+  HTTP 客户端，下一次重试使用新连接；stale-streak 熔断仍保留，用于真正无响应的
+  provider。单测覆盖客户端重建和 retry 路径。
+- 备注：本轮 agent 用了 70 次调用、808.6s，未再触发熔断，最终 108/108。
+
+---
+
 ## 20261115_233700 — 默认切片（2 条任务，P0 修复后）
 
 - 命令：`uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200`
