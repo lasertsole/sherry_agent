@@ -733,10 +733,17 @@ def _publish(report: dict[str, Any], results_dir: Path, *, update_baseline: bool
             print(f"[evals] baseline: {_delta(baseline, aggregate)}", flush=True)
 
     print(f"\n[evals] coding_capability aggregate: {aggregate}", flush=True)
-    print(
-        f"[evals] persona check: {report['persona']['forbidden_markers_found'] or 'clean'}",
-        flush=True,
-    )
+    persona = report["persona"]
+    markers = persona.get("forbidden_markers_found") or []
+    if persona.get("markers_expected"):
+        print(
+            f"[evals] persona check: expected persona markers present ({markers or 'none'})",
+            flush=True,
+        )
+    elif markers:
+        print(f"[evals] persona check: LEAKED live-persona markers {markers}", flush=True)
+    else:
+        print("[evals] persona check: clean", flush=True)
     print(f"[evals] isolation: {report['isolation']}", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
 

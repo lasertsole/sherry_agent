@@ -684,7 +684,19 @@ async def _session_evidence(session_id: str) -> dict[str, Any]:
             continue
         result["input"] += int(usage.get("input_tokens") or 0)
         result["output"] += int(usage.get("output_tokens") or 0)
-        cache = _cache_read_tokens_from_usage(usage)
+        # langchain normalizes the OpenAI cache shape under
+        # input_token_details.cache_read; DeepSeek/Anthropic only report it in
+        # the raw response metadata. The message store already reads both, so
+        # this report must too — passing usage_metadata to the raw-payload
+        # parser reported cache_read=0 even when ~98% of the input was cached.
+        details = usage.get("input_token_details")
+        cache: int | None = None
+        if isinstance(details, dict) and details.get("cache_read") is not None:
+            cache = int(details["cache_read"])
+        if cache is None:
+            response_metadata = getattr(message, "response_metadata", None)
+            if isinstance(response_metadata, dict):
+                cache = _cache_read_tokens_from_usage(response_metadata)
         if cache is not None:
             result["cache_read"] += int(cache)
         model = str(usage.get("model_name") or model)
@@ -1026,10 +1038,17 @@ def _publish(report: dict[str, Any], results_dir: Path, *, update_baseline: bool
         ),
         flush=True,
     )
-    print(
-        f"[evals] persona check: {report['persona']['forbidden_markers_found'] or 'clean'}",
-        flush=True,
-    )
+    persona = report["persona"]
+    markers = persona.get("forbidden_markers_found") or []
+    if persona.get("markers_expected"):
+        print(
+            f"[evals] persona check: expected persona markers present ({markers or 'none'})",
+            flush=True,
+        )
+    elif markers:
+        print(f"[evals] persona check: LEAKED live-persona markers {markers}", flush=True)
+    else:
+        print("[evals] persona check: clean", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
 
     if update_baseline or baseline is None:

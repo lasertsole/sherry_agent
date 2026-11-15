@@ -251,3 +251,67 @@ def test_eval_budget_override_is_opt_in(monkeypatch):
     monkeypatch.setattr(coding_suite, "EVAL_MAX_ITERATIONS", 180)
     coding_suite.pin_eval_budget()
     assert coding_suite.eval_main_max_iterations() == 180
+
+
+@pytest.mark.asyncio
+async def test_session_evidence_reads_the_normalized_cache_shape(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    async def _read(_session_id):
+        return [
+            AIMessage(
+                content="done",
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 10,
+                    "total_tokens": 110,
+                    "input_token_details": {"cache_read": 80},
+                },
+            )
+        ]
+
+    monkeypatch.setattr("agent.state_port.read_messages", _read)
+
+    evidence = await suite._session_evidence("eval-session")
+
+    assert evidence["input"] == 100
+    assert evidence["cache_read"] == 80
+
+
+@pytest.mark.asyncio
+async def test_session_evidence_reads_the_raw_deepseek_cache_field(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    async def _read(_session_id):
+        return [
+            AIMessage(
+                content="done",
+                usage_metadata={"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+                response_metadata={"token_usage": {"prompt_cache_hit_tokens": 70}},
+            )
+        ]
+
+    monkeypatch.setattr("agent.state_port.read_messages", _read)
+
+    evidence = await suite._session_evidence("eval-session")
+
+    assert evidence["cache_read"] == 70
+
+
+@pytest.mark.asyncio
+async def test_session_evidence_reports_no_cache_when_the_provider_omits_it(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    async def _read(_session_id):
+        return [
+            AIMessage(
+                content="done",
+                usage_metadata={"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+            )
+        ]
+
+    monkeypatch.setattr("agent.state_port.read_messages", _read)
+
+    evidence = await suite._session_evidence("eval-session")
+
+    assert evidence["cache_read"] == 0
