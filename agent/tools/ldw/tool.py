@@ -79,22 +79,32 @@ class WorkflowReplayTool(BaseTool):
         if not sid:
             return json.dumps({"ok": False, "error": "no session id"}, ensure_ascii=False)
         identity = resolve_session_plan_identity(sid)
-        plan_key = plan_key or (identity.key if identity else "")
-        if not plan_key:
-            return json.dumps({"ok": False, "error": "no plan identity"}, ensure_ascii=False)
+        requested_key = plan_key
+
+        def _effective_key(knowledge: dict | None) -> str:
+            # A goal-aware key from the current flow wins over the path-based
+            # identity; an explicit caller key wins over both.
+            return (
+                requested_key
+                or str((knowledge or {}).get("plan_key") or "")
+                or (identity.key if identity else "")
+            )
 
         if action == "status":
             from runtime.session.extraction import flow_extraction_enabled
 
-            script = find_ldw_script(plan_key)
             knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
+            effective_key = _effective_key(knowledge)
+            if not effective_key:
+                return json.dumps({"ok": False, "error": "no plan identity"}, ensure_ascii=False)
+            script = find_ldw_script(effective_key)
             return json.dumps(
                 {
                     "ok": True,
                     "enabled": bool(LDW["enabled"]),
                     "flow_extraction_enabled": flow_extraction_enabled(sid),
-                    "plan_key": plan_key,
-                    "replay_count": replay_count(plan_key),
+                    "plan_key": effective_key,
+                    "replay_count": replay_count(effective_key),
                     "min_replays": int(LDW["min_replays"]),
                     "script": str(script) if script else None,
                     "has_flow": knowledge is not None,
@@ -123,19 +133,26 @@ class WorkflowReplayTool(BaseTool):
                 return json.dumps(
                     {"ok": False, "error": "no TaskFlow DAG for this plan"}, ensure_ascii=False
                 )
+            effective_key = _effective_key(knowledge)
+            if not effective_key:
+                return json.dumps({"ok": False, "error": "no plan identity"}, ensure_ascii=False)
             meta = compile_plan_to_workflow(knowledge)
-            path = write_ldw_script(plan_key, meta)
+            path = write_ldw_script(effective_key, meta)
             return json.dumps(
                 {
                     "ok": path is not None,
-                    "plan_key": plan_key,
+                    "plan_key": effective_key,
                     "script": str(path) if path else None,
                 },
                 ensure_ascii=False,
             )
+        knowledge = plan_knowledge_from_flow(sid, flow_id=flow_id)
+        effective_key = _effective_key(knowledge)
+        if not effective_key:
+            return json.dumps({"ok": False, "error": "no plan identity"}, ensure_ascii=False)
         outcome = await replay_plan(
             sid,
-            plan_key=plan_key,
+            plan_key=effective_key,
             variant_input=variant_input,
             flow_id=flow_id,
             force=force,

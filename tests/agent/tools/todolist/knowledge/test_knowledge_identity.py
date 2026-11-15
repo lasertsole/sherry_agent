@@ -24,8 +24,10 @@ from agent.tools.todolist.knowledge import knowledge_store as store_mod
 from agent.tools.todolist.knowledge.identity import (
     PlanIdentity,
     associated_plan_identities,
+    fallback_plan_key,
     fallback_plan_name,
     plan_key,
+    replay_plan_key,
     resolve_plan_identity,
     resolve_session_plan_identity,
 )
@@ -142,6 +144,46 @@ class TestResolution:
         assert plan_key(meandering) == key
         assert len(key) == 12 and all(char in "0123456789abcdef" for char in key)
         assert plan_key(env.repo / "workspace" / "sessions" / "b" / "plans" / "x.md") != key
+
+    def test_plan_key_goal_separates_tasks_and_normalizes(self, env: _Env):
+        plan = env.repo / "workspace" / "sessions" / "a" / "plans" / "x.md"
+        base = plan_key(plan)
+        login = plan_key(plan, "Fix login bug")
+        logout = plan_key(plan, "Fix logout bug")
+
+        assert login != base
+        assert logout != base
+        assert login != logout
+        # Trim + lowercase normalize the same goal spelling.
+        assert login == plan_key(plan, "  fix LOGIN bug  ")
+        # The cap makes an over-long goal equal to its first 500 chars.
+        assert plan_key(plan, "A" * 600) == plan_key(plan, "a" * 500)
+
+    def test_fallback_plan_key_goal_separates_tasks(self):
+        base = fallback_plan_key("sess")
+        login = fallback_plan_key("sess", "Fix login bug")
+        logout = fallback_plan_key("sess", "Fix logout bug")
+
+        assert login != base
+        assert logout != base
+        assert login != logout
+        assert login == fallback_plan_key("sess", "  fix LOGIN bug  ")
+
+    def test_replay_plan_key_is_goal_aware_but_identity_key_is_not(self, env: _Env):
+        plan = env.repo / "workspace" / "sessions" / "a" / "plans" / "x.md"
+        identity = PlanIdentity(key=plan_key(plan), plan_name="x", plan_ref=plan)
+
+        assert replay_plan_key(identity, "sess-a", None) == identity.key
+        assert replay_plan_key(identity, "sess-a", "Fix login") == plan_key(plan, "Fix login")
+
+        fallback = PlanIdentity(
+            key=fallback_plan_key("sess-a"),
+            plan_name=fallback_plan_name("sess-a"),
+            plan_ref=None,
+        )
+        assert replay_plan_key(fallback, "sess-a", "Fix login") == fallback_plan_key(
+            "sess-a", "Fix login"
+        )
 
     def test_unknown_name_without_any_source_resolves_to_none(self, env: _Env):
         env.associate_state("sess-a", "alpha")

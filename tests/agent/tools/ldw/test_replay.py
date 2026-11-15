@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
@@ -181,6 +183,74 @@ def test_plan_knowledge_from_flow_reads_taskflow_steps(monkeypatch) -> None:
     assert step["retry_policy"] == {"max_retries": 2}
     assert step["step_timeout_seconds"] == 30
     assert step["judge_criteria"] == "must pass"
+
+
+def test_plan_knowledge_from_flow_keys_by_goal(monkeypatch) -> None:
+    """Two tasks sharing one plan file must not share the LDW replay key."""
+    flows = {
+        "flow-a": {
+            "state": {
+                "description": "Fix login",
+                "steps": [{"step_id": "a", "task": "do a"}],
+            }
+        },
+        "flow-b": {
+            "state": {
+                "description": "Fix logout",
+                "steps": [{"step_id": "a", "task": "do a"}],
+            }
+        },
+        "flow-c": {
+            "state": {
+                "description": "  fix LOGIN  ",
+                "steps": [{"step_id": "a", "task": "do a"}],
+            }
+        },
+        "flow-none": {"state": {"steps": [{"step_id": "a", "task": "do a"}]}},
+    }
+    monkeypatch.setattr(
+        "agent.tools.taskflow.registry.store_sqlite.get_flow_sync",
+        lambda flow_id, _sid: flows[flow_id],
+    )
+    monkeypatch.setattr(
+        replay_mod,
+        "resolve_session_plan_identity",
+        lambda _sid: SimpleNamespace(key="k1", plan_name="p"),
+    )
+
+    login = replay_mod.plan_knowledge_from_flow("sess", flow_id="flow-a")
+    logout = replay_mod.plan_knowledge_from_flow("sess", flow_id="flow-b")
+    same_login = replay_mod.plan_knowledge_from_flow("sess", flow_id="flow-c")
+    no_goal = replay_mod.plan_knowledge_from_flow("sess", flow_id="flow-none")
+
+    assert login is not None and logout is not None
+    assert login["plan_key"] != logout["plan_key"]
+    assert login["plan_key"] == same_login["plan_key"]
+    assert login["plan_key"] != "k1"
+    # An empty description keeps the historical path-based key.
+    assert no_goal["plan_key"] == "k1"
+
+
+@pytest.mark.asyncio
+async def test_goal_keys_use_separate_replay_counters(tmp_path, monkeypatch) -> None:
+    """Separate keys mean separate counter files; one task cannot advance another."""
+    monkeypatch.setattr(replay_mod, "PLAN_KNOWLEDGE_DIR", tmp_path)
+    monkeypatch.setitem(replay_mod.LDW, "min_replays", 99)
+    monkeypatch.setitem(replay_mod.LDW, "journal_path", "")
+    monkeypatch.setitem(replay_mod.LDW, "enabled", True)
+    monkeypatch.setattr(
+        replay_mod,
+        "resolve_session_plan_identity",
+        lambda _sid: SimpleNamespace(key="k1", plan_name="p"),
+    )
+
+    first_a = await replay_mod.replay_plan("sess", plan_key="key-a", variant_input="v")
+    first_b = await replay_mod.replay_plan("sess", plan_key="key-b", variant_input="v")
+    second_a = await replay_mod.replay_plan("sess", plan_key="key-a", variant_input="v")
+
+    assert first_a["replay_count"] == 1
+    assert first_b["replay_count"] == 1
+    assert second_a["replay_count"] == 2
 
 
 @pytest.mark.asyncio
