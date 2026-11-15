@@ -691,19 +691,22 @@ async def bind_external_session(
     *,
     append_note: str = "",
 ) -> dict[str, Any]:
-    """Bind the session, grant approvals, and install the filtered tool set."""
+    """Bind the session, grant approvals, and install the coding skill set.
+
+    The session payload carries ONLY ``skills``: the preset tool/middleware
+    config was removed (every main tool always runs), so there is no ``tools``
+    key to filter. Reading it here raised ``KeyError: 'tools'`` before any model
+    call, which made every DeepSWE task a harness error.
+    """
     from evals.coding_capability import suite as harness
 
     await harness._bind_session(session_id, repo)
 
-    import agent.core as agent_core
     from runtime.session.state_keys import StateKey
     from server.service.agent_config_service import invalidate_session_prompt
     from server.service.session_settings_service import _delete_value, _write_value
 
     payload = harness._coding_preset_payload()
-    actual = {getattr(tool, "name", "") for tool in agent_core.get_agent_tools()}
-    payload["tools"] = sorted(set(payload["tools"]) & actual)
     _write_value(session_id, StateKey.AGENT_CONFIG, payload)
     _delete_value(session_id, StateKey.AGENT_CONFIG_PENDING)
     invalidate_session_prompt(session_id)
