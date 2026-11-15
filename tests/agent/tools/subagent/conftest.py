@@ -190,6 +190,13 @@ def _setup_subagent_alias():
     sys.modules["agent"].tools = sys.modules["agent.tools"]
     sys.modules["agent.tools"].build_main_tools = lambda: []
 
+    # ``pub.func.build_agent_config`` is BOTH the function re-exported by
+    # ``pub.func.__init__`` and a submodule. This stub package never runs that
+    # __init__, so a later ``from pub.func.build_agent_config import ...`` (e.g.
+    # test_queue_e2e) would make the import machinery set the package attribute
+    # to the MODULE and shadow the lambda below. Import the submodule FIRST so
+    # later imports are no-ops and the function stand-in keeps the name.
+    importlib.import_module("pub.func.build_agent_config")
     # NOTE: signature must accept positional args — server/service/messages.py
     # get_pending_interrupt() calls build_agent_config(session_id).
     sys.modules["pub.func"].build_agent_config = lambda *a, **kw: {}
@@ -267,6 +274,10 @@ def _setup_subagent_alias():
         _real_loader = importlib.util.module_from_spec(_loader_spec)
         _loader_spec.loader.exec_module(_real_loader)
         _skills_loader.parse_frontmatter = _real_loader.parse_frontmatter
+        # workspace/prompt_builder.py imports `REQUIRED_SKILLS` from the same
+        # module. It is a static frozenset, so bind the real value: a later
+        # suite in the same process must not see a partial stub.
+        _skills_loader.REQUIRED_SKILLS = _real_loader.REQUIRED_SKILLS
 
         sys.modules["skills.loader"] = _skills_loader
 

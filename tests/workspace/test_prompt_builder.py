@@ -84,7 +84,9 @@ def workspace(tmp_path, monkeypatch):
     return fakes
 
 
-def _set_memory_store(monkeypatch, *, memory="MEMORY-V1", user="USER-V1", facts=None, semantic=False):
+def _set_memory_store(
+    monkeypatch, *, memory="MEMORY-V1", user="USER-V1", facts=None, semantic=False
+):
     """Patch prompt_builder's lazy memory_store import target."""
     fake_mem = FakeMemoryStore(
         memory=memory, user=user, facts=facts, semantic_recall_enabled=semantic

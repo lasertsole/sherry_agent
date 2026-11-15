@@ -154,9 +154,7 @@ async def test_non_executor_never_prefills(monkeypatch) -> None:
 
     monkeypatch.setattr("agent.tools.ptc.runner.run_ptc", _boom)
 
-    result, progress = await core._try_ptc_prefill(
-        _run(FunctionalRole.RESEARCHER), [], [], None
-    )
+    result, progress = await core._try_ptc_prefill(_run(FunctionalRole.RESEARCHER), [], [], None)
 
     assert result is None
     assert progress is None
