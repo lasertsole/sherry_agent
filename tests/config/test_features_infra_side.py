@@ -568,6 +568,11 @@ class TestLocalDaemonsBuilder:
         assert built["vision_daemon_enabled"] is True
         assert built["max_batch_inputs"] == 256
 
+    def test_the_daemon_host_is_env_overridable(self) -> None:
+        """A multi-tenant host binds one shared daemon outside loopback."""
+        assert fs.build_local_daemons({"LOCAL_DAEMON_HOST": "0.0.0.0"})["host"] == "0.0.0.0"
+        assert fs.build_local_daemons({"LOCAL_DAEMON_HOST": "  "})["host"] == "127.0.0.1"
+
     def test_env_overrides(self) -> None:
         built = fs.build_local_daemons(
             {

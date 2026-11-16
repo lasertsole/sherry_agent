@@ -34,6 +34,8 @@ export const useAuthStore = defineStore('auth', () => {
   const authEnabled = ref(false);
   /** An account exists on the backend. */
   const hasAccount = ref(false);
+  /** Accounts are identified by username too (multi-tenant Ingress). */
+  const usernameRequired = ref(false);
   /** A status probe has completed at least once. */
   const checked = ref(false);
   /** A login/account request is in flight (forms disable their buttons). */
@@ -52,10 +54,16 @@ export const useAuthStore = defineStore('auth', () => {
     _setError(null, null);
   }
 
-  function _applyStatus(status: { authRequired: boolean; authEnabled: boolean; hasAccount: boolean }): void {
+  function _applyStatus(status: {
+    authRequired: boolean;
+    authEnabled: boolean;
+    hasAccount: boolean;
+    usernameRequired?: boolean;
+  }): void {
     authRequired.value = status.authRequired;
     authEnabled.value = status.authEnabled;
     hasAccount.value = status.hasAccount;
+    usernameRequired.value = status.usernameRequired === true;
     checked.value = true;
   }
 
@@ -90,12 +98,13 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Sign in with the password and start the refresh timer.
    * @param password
+   * @param username Account name when the backend requires one (Ingress).
    */
-  async function login(password: string): Promise<boolean> {
+  async function login(password: string, username?: string): Promise<boolean> {
     busy.value = true;
     clearError();
     try {
-      const result = await loginRequest(password);
+      const result = username === undefined ? await loginRequest(password) : await loginRequest(password, username);
       user.value = result.user;
       authRequired.value = false;
       authEnabled.value = true;
@@ -224,6 +233,7 @@ export const useAuthStore = defineStore('auth', () => {
     authRequired,
     authEnabled,
     hasAccount,
+    usernameRequired,
     checked,
     busy,
     errorCode,

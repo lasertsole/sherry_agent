@@ -49,7 +49,24 @@ describe('useAuthStore', () => {
     await store.checkAuthStatus();
 
     expect(store.authRequired).toBe(false);
+    expect(store.usernameRequired).toBe(false);
     expect(store.checked).toBe(true);
+  });
+
+  it('passes the username through when the backend requires one', async () => {
+    bridge.fetchAuthStatus.mockResolvedValue({
+      authRequired: true,
+      authEnabled: true,
+      hasAccount: true,
+      usernameRequired: true
+    });
+    bridge.loginRequest.mockResolvedValue({ user: { id: 1 }, expiresIn: 60 });
+    const store = useAuthStore();
+    await store.checkAuthStatus();
+
+    expect(store.usernameRequired).toBe(true);
+    expect(await store.login('hunter2-long', 'alice')).toBe(true);
+    expect(bridge.loginRequest).toHaveBeenCalledWith('hunter2-long', 'alice');
   });
 
   it('caches the probe unless forced', async () => {

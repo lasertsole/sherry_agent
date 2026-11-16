@@ -22,8 +22,7 @@ pytestmark = [pytest.mark.unit]
 def icon_env(tmp_path, monkeypatch):
     """Point the resolver at a temp plugins tree so real files are never touched."""
     monkeypatch.setattr(ch, "PLUGINS_PATH", tmp_path)
-    monkeypatch.setattr(ch, "API_HOST", HOST)
-    monkeypatch.setattr(ch, "API_PORT", PORT)
+    monkeypatch.setattr(ch, "PUBLIC_BASE_URL", f"http://{HOST}:{PORT}")
     configs = {}
 
     def fake_config(name):

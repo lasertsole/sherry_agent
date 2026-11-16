@@ -1,0 +1,84 @@
+# Multi-tenant deployment: per-tenant project directories
+
+`SHERRY_HOME` isolates every writable store under `APP_HOME/src` (sessions,
+memory, skills, `.env`, `sherry.jsonc`, the SQLite databases). Two paths do NOT
+follow it by design, so a multi-tenant deployment MUST set the project
+directory per tenant:
+
+1. **`<project>/.sherry/coordination.db`** is per-PROJECT coordination state
+   (`coordination_db_path(project_root)`), not per-user state. Two tenants that
+   bind different project directories are isolated automatically.
+2. **The unconfigured project-directory fallback is `ROOT_DIR`** (the code
+   checkout), preserving the pre-project-binding behaviour. If no project
+   directory is configured, every tenant falls back to the same code directory
+   and therefore shares `ROOT_DIR/.sherry/coordination.db`.
+
+Setting `SHERRY_PROJECT_DIR` (or `project_dir` in `sherry.jsonc`) is therefore a
+deployment requirement, not an optional convenience. No code change is needed
+for this plan; the data model is already correct.
+
+## Fleet cell layout
+
+```text
+<host>/fleet/cells/<tenant>/
+├── sherry.jsonc              # optional; may instead use SHERRY_PROJECT_DIR
+└── workspace/                # per-tenant project root
+```
+
+Container environment (mount `<host>/fleet/cells/<tenant>/` at `/app/data`):
+
+```bash
+SHERRY_HOME=/app/data
+SHERRY_PROJECT_DIR=/app/workspace
+SHERRY_GATEWAY_TOKEN=<per-cell-token>
+```
+
+Or write `<host>/fleet/cells/<tenant>/sherry.jsonc`:
+
+```jsonc
+{
+  "project_dir": "/app/workspace"
+}
+```
+
+The container is created with:
+
+1. the cell data directory and its `workspace/` subdirectory;
+2. a per-cell `sherry.jsonc` (when env is not used);
+3. the data mount `/app/data` and the env above.
+
+## Bare-metal process layout
+
+```bash
+SHERRY_HOME=/data/cells/<user_id>
+SHERRY_PROJECT_DIR=/data/cells/<user_id>/workspace
+SHERRY_GATEWAY_TOKEN=<per-user-token>
+```
+
+The same `sherry.jsonc` alternative applies at
+`/data/cells/<user_id>/sherry.jsonc`.
+
+## Verification
+
+After a tenant starts:
+
+```bash
+# The effective project root must be the tenant workspace, not the checkout.
+curl -H "token: <token>" \
+  "http://127.0.0.1:<port>/sessions/project?session_id=<sid>"
+
+# The coordination store must live under the tenant workspace.
+ls "<tenant-workspace>/.sherry/coordination.db"
+
+# The shared checkout must not accumulate tenant coordination state.
+test ! -e "<sherry-checkout>/.sherry/coordination.db"
+```
+
+## Deliberately unchanged
+
+- `coordination_db_path()` keeps its per-project semantics.
+- `resolve_default_project_dir()` keeps the `ROOT_DIR` fallback; the plan
+  surfaces the deployment requirement instead of changing the historical
+  behaviour.
+- `.sherry/` is created lazily on the first message of a session-bound project
+  directory, never merely because the process started.

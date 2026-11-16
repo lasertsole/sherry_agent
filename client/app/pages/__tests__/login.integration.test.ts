@@ -109,4 +109,22 @@ describe('login page', () => {
 
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  it('requires a username when the Ingress identifies accounts by name', async () => {
+    const auth = useAuthStore();
+    auth.usernameRequired = true;
+    bridge.loginRequest.mockResolvedValue({ user: { id: 1 }, expiresIn: 43200 });
+    const wrapper = await mountLogin();
+
+    await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
+    await flushPromises();
+    expect(wrapper.get('[data-test="login-submit"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.get('[data-test="login-username"]').setValue('alice');
+    await flushPromises();
+    expect(wrapper.get('[data-test="login-submit"]').attributes('disabled')).toBeUndefined();
+
+    await wrapper.get('form').trigger('submit');
+    await vi.waitFor(() => expect(bridge.loginRequest).toHaveBeenCalledWith('hunter2-long', 'alice'));
+  });
 });

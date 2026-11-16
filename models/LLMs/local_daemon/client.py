@@ -21,7 +21,7 @@ from typing import Any
 
 from loguru import logger
 
-from config import APP_HOME, LOG_DIR
+from config import DAEMON_HOME, LOG_DIR
 from config.features import LOCAL_DAEMONS
 from models.daemon.base import (
     DaemonError,
@@ -35,7 +35,7 @@ _DAEMON = DaemonSpec(
     name="local chat",
     host=LOCAL_DAEMONS["host"],
     port=LOCAL_DAEMONS["auxiliary_port"],
-    pid_path=APP_HOME / ".llm_daemon.pid",
+    pid_path=DAEMON_HOME / ".llm_daemon.pid",
     import_fn="models.LLMs.local_daemon.server",
     ready_wait_s=LOCAL_DAEMONS["auxiliary_ready_wait_s"],
     liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],
@@ -45,7 +45,7 @@ _VISION_DAEMON = DaemonSpec(
     name="local vision",
     host=LOCAL_DAEMONS["host"],
     port=LOCAL_DAEMONS["vision_port"],
-    pid_path=APP_HOME / ".vision_daemon.pid",
+    pid_path=DAEMON_HOME / ".vision_daemon.pid",
     import_fn="models.LLMs.local_daemon.server",
     ready_wait_s=LOCAL_DAEMONS["vision_ready_wait_s"],
     liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],

@@ -53,6 +53,7 @@ logs/*.log
 *.db
 *.db-shm
 *.db-wal
+*.db.bak
 # Live workspace state (root only) — tracked product code (workspace/*.py,
 # persona files, template/) is deliberately NOT ignored here so ruff and the
 # import-linter see it; a previous whole-directory `/workspace/` rule silently

@@ -2,7 +2,7 @@ import uuid
 from loguru import logger
 from robyn import Response
 from server.trigger.core import app
-from config import SRC_DIR, API_HOST, API_PORT
+from config import SRC_DIR, PUBLIC_BASE_URL
 from config.features import HTTP_UPLOAD, MEDIA_PIPELINE, SERVER_HTTP
 from pub.func.media.image_compress import ImageTooLargeError, prepare_for_model
 
@@ -85,7 +85,7 @@ async def upload_image(request):
     file_path = images_dir / filename
     file_path.write_bytes(data)
 
-    url = f"http://{API_HOST}:{API_PORT}/images/{filename}"
+    url = f"{PUBLIC_BASE_URL}/images/{filename}"
     logger.info(f"Image uploaded: filename={filename}, size={len(data)}, url={url}")
 
     return Response(

@@ -43,6 +43,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
 | `config/features/`                   | Per-object feature config (91 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `fleet/`                             | Bare-metal multi-tenant Ingress + Fleet process manager: central users/JWT cookies (SPA auth surface), cell registry, loopback HTTP/WS proxy + SPA fallback, per-cell supervisor (restart/port lock/log rotation/ulimit), backup/restore, shared daemon owner (`python -m fleet`) | `fleet/ingress.py` / `fleet/manager.py`              |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -93,7 +94,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     JSON parsing arrives as `AIMessage.invalid_tool_calls` with `tool_calls`
   │     empty, and the loop — which routes on `tool_calls` only — used to treat
   │     the message as a call-less final answer and END the turn silently
-  │     (SWE-bench 20261017_003529: the django instance ended after 14.7 s with
+  │     (an eval run, 20261017_003529: the django instance ended after 14.7 s with
   │     zero edits). The layer repairs the syntax (quote-only, byte-identical
   │     tail value; refuses ambiguous shapes; truncation-shaped misses are left
   │     to MaxTokensBoost) and re-attaches the call with its original id so the
@@ -524,7 +525,7 @@ The LDW core is vendored whole under `vendor/ldw/` (no `deepagents` dependency):
 - Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. The LDW replay/compile `plan_key` is GOAL-AWARE: `plan_knowledge_from_flow` mixes the flow's `state.description` into the plan identity via `identity.replay_plan_key`, so two tasks sharing one plan file get separate counters, journals and scripts (an empty description keeps the path-based key; the knowledge store stays path-only; old path-key artifacts are ignored and safe to delete). Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored. The loader never `exec_module`s the file: it AST-parses those three literal assignments (nothing else — an import, call or extra name refuses the script), so a tampered skill file cannot run code in the orchestrator.
 - `compile_plan_to_workflow` consumes the current TaskFlow flow DAG and preserves the step contract (`response_schema`, `step_model`, judge/validation criteria, retry policy, skills, timeout); `build_orchestrate` injects `variant_input`, hard constraints and each predecessor's result into the step prompt, so the journal key partitions by variant and upstream output. `agent_type` carries the step suffix because PTC scripts are step-scoped. A schema-bound step calls `ctx.agent(..., schema=...)`.
 - `register_roster` registers one BUILDER per step (so LDW can request a schema-bound runnable). Leaves reuse `_assemble_child_tools`: the role allow-list plus code intelligence, ast-grep and executor-only PTC. `session_id` travels in the runnable config, not a baked graph. An executor leaf may run its PTC script first (hard gate; failure appends `[PTC Pre-run Progress]` and falls back to ReAct; a PTC schema miss is failure). A schema leaf forces thinking off.
-- `SqliteWorkflowStore` at `src/data/workflow_runs.db` backs cross-process resume; repeated replay with the same prompt/agent_type/model/schema is zero-call (`journal_hits` / `leaf_calls` are reported). Per-plan locks serialize concurrent replay; `LDW["real_replay_timeout_s"]` bounds one run.
+- `SqliteWorkflowStore` at `SRC_DIR/data/workflow_runs.db` backs cross-process resume; repeated replay with the same prompt/agent_type/model/schema is zero-call (`journal_hits` / `leaf_calls` are reported). Per-plan locks serialize concurrent replay; `LDW["real_replay_timeout_s"]` bounds one run.
 - LDW has no step retry/judge. A failed node is `None` and skips dependents. `taskflow_adapter.run_taskflow_fallback` is the automatic L2: it creates a NEW `ldw-<first 8 chars of plan_key>-<8-char uuid>` flow from the same verified DAG (never resets the old flow), seeds every succeeded LDW result as DONE with a synthetic `ldw-journal:<flow>:<step>` child key (so those steps spawn nothing), dispatches only failed/unfinished steps through normal TaskFlow (retry/schema/StepJudge/child semantics intact), polls `taskflow_wait_all`, injects each settled child through `taskflow_resume`, and terminalizes a rejected/unfinished flow instead of leaving an active orphan. It writes successful TaskFlow results back to the LDW journal, so the next same-variant replay is zero-call; `auto_degrade_enabled` / `repair_enabled` / `max_failed_steps` gate the path.
 - Repair: when steps failed, `repair_extraction` reads the replay flow's child handoffs, merges the actual success path and failure branches into plan knowledge, persists `success-steps.json` via `KnowledgeStore`, and recompiles the LDW script. Persistence/recompile errors are returned, never raised. PTC scripts remain owned by the skill-review compiler; LDW repair only recompiles its own artifact.
 - Tests: `tests/agent/tools/subagent/test_ldw_shim.py`, `tests/agent/tools/ldw/test_compiler.py`, `test_scripts.py`, `test_replay.py`, `test_leaf.py`, `test_taskflow_adapter.py`, `test_repair.py`, `test_tool.py`, `tests/full/test_ldw_replay_e2e.py`, and the real TaskFlow/model e2e `tests/full/test_ldw_real_plan_e2e.py`; four-language docs in `wiki/ldw/`.
@@ -1002,6 +1003,49 @@ are propagated so the child resolves the same writable home.
   5.9 s (`torch`) and ~41 MB / 9.9 s (`transformers`), so they are already
   where the optimization wants them. `tests/perf/test_boot_import_set.py`
   guards the absent set. Wiki: `wiki/local-model-daemons/`.
+
+## Bare-Metal Fleet (`fleet/`)
+
+One Sherry process per tenant. `python -m fleet serve` is the Ingress
+(`SHERRY_INGRESS_PORT`, default 8081); it owns the browser session, the central
+`fleet.db` (`users`/`refresh_tokens`/`cells`/`cell_processes`) and every cell
+process. Cells bind 127.0.0.1 only and receive a per-cell
+`SHERRY_GATEWAY_TOKEN`; the Ingress strips the browser's cookie/origin and adds
+that token on every proxied request (and a loopback `/auth/ws-ticket` for
+sockets), so a cell's `/auth/token` never reaches the browser. The SPA's
+`/auth/*` contract is served by the Ingress: `status` carries the four
+cell-shaped flags plus `username_required`, login takes `{username,password}`
+and returns `expires_in`, `/auth/me` heals an expired access cookie from the
+refresh cookie, and `/auth/account` changes a password while enable/disable
+stays administrator-only.
+
+Cells: `create` builds `<fleet_root>/<tenant>/{workspace,logs,sherry.jsonc}` and
+allocates 20100-20299 under an in-process lock plus a fleet-root `flock` (the
+pick→register window is a race otherwise); `start` spawns detached with
+`SHERRY_HOME`/`SHERRY_PROJECT_DIR`/`API_PORT`/`PUBLIC_BASE_URL`, waits for
+`/health`, and applies `SHERRY_FLEET_CELL_MEMORY_MB`/`_NOFILE` through an
+`exec` ulimit wrapper (CPU quota stays a cgroup/systemd concern). `stop` only
+signals a PID whose environ still names the cell's `SHERRY_HOME` and reaps it;
+the Ingress's supervision loop restarts a running cell whose process vanished
+or whose `/health` failed three consecutive probes.
+Logs copy-truncate at `SHERRY_FLEET_LOG_MAX_BYTES` (safe for the running
+O_APPEND fd) on start and on every supervisor tick. `backup` uses
+`sqlite3.Connection.backup()` per DB and skips `logs/`+WAL; `restore` stages
+the tree and keeps the previous one as `.pre-restore`; `backup-db` covers
+`fleet.db`. The SPA fallback serves `200.html`/`index.html` for every
+HTML navigation (`/login` included — the shell is public and holds no data)
+while API requests stay gated; a browser-supplied `token`/`ticket` header or WS
+query is stripped before the Ingress injects its own.
+
+Shared daemons: `python -m fleet daemons-start` owns the host's single
+embed/reranker/local-chat/vision processes under `<fleet_root>/daemons`; cells
+run with `SHERRY_DAEMON_CLIENT_ONLY=1` and `SHERRY_DAEMON_HOME` so they connect
+but never spawn or atexit-kill one. Local-chat/vision need explicit
+`SHERRY_FLEET_AUXILIARY_MODEL_PATH` / `SHERRY_FLEET_VISION_MODEL_PATH` (+
+`_MMPROJ_PATH`) and get `SHERRY_LOCAL_LLM_DAEMON_PORT` from their spec.
+
+Tests: `tests/fleet/` (store, ingress, manager, daemons, TLS, a real
+spawned-cell end-to-end). Plan: `TODO/计划_P2_bare_metal多进程多租户_20261116.md`.
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 
@@ -3046,19 +3090,12 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 `tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Because process startup/teardown dominates the wall clock, run `tests/full/` **one file per process under an external watchdog** (e.g. `timeout 1500 uv run --no-sync pytest -m llm_e2e tests/full/<file>`); measured: 47 cases ≈ 10.8 min of net test time but ≈ 73.7 min wall clock when batched. Hermetic tests belong in the standard tree, not `tests/full/`.
 
 `evals/` sits beside the pytest tree: a homegrown, sandboxed framework with
-eleven registered suites (`uv run python evals/evals.py [suite]`; the `graph_rag`
+ten registered suites (`uv run python evals/evals.py [suite]`; the `graph_rag`
 suite
 needs the eval-only dependency group — `uv run --group evals python
 evals/evals.py graph_rag` — because `ragas` (and the `langchain-community` it
 hard-imports) is the harness's only consumer and stays out of the shipped
-runtime closure). The external benchmarks are `swebench` (SWE-bench_Lite
-instances: pinned base commit, per-instance `uv venv --python 3.11`, the
-instance's own FAIL_TO_PASS/PASS_TO_PASS verdict; the test patch is exposed in the prompt and pre-applied to the checkout for
-the run, then reset and applied by the JUDGE for grading; a gold-patch miss aborts before any model call; the host harness
-quiesces the session before it reads the tree — turn cancel, descendant/background
-kill, shadow-git `wait_for_idle` + `freeze` — keeps the shadow store outside the checkout,
-quarantines `.sherry` atomically on revert, includes untracked files in the saved diff,
-and writes a per-instance result immediately), `deepswe`
+runtime closure). The external benchmarks are `deepswe`
 (DeepSWE tasks: the host checkout is bind-mounted into the task's own Docker
 image, only the `terminal` tool is replaced by a `docker exec` bridge, and the
 task's separate verifier image grades the agent's `git diff`),
@@ -3087,7 +3124,7 @@ judges every task with that repository's own `python -m pytest`, fails a task
 whose diff touched the tests, pins the thinking switch, and reports provider
 failures as invalid runs (excluded from the pass rate) instead of capability.
 The suites that repoint `config.path.WORKSPACE_DIR` through
-`SHERRY_WORKSPACE_DIR` (coding_capability, swebench, deepswe, terminal_bench,
+`SHERRY_WORKSPACE_DIR` (coding_capability, deepswe, terminal_bench,
 agentbench, toolbench) re-exec in their own process; `baseline.json` next to
 each suite is the version-controlled reference (threshold + model id).
 

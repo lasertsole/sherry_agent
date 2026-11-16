@@ -30,6 +30,13 @@ _ENV_TEMPLATE_ROOT = resolve_code_root(ROOT_DIR)
 #: ``sherry.jsonc`` / ``.models`` / ``.network`` (config/_home.py).
 APP_HOME = resolve_app_home(ROOT_DIR)
 
+#: Where the local model daemons keep their pid files. The default follows the
+#: cell's ``APP_HOME``; a multi-tenant host points every cell at one shared
+#: directory owned by Fleet so no cell registers an atexit kill for the shared
+#: daemon it happened to spawn.
+_DAEMON_HOME_RAW = os.environ.get("SHERRY_DAEMON_HOME", "").strip()
+DAEMON_HOME = Path(_DAEMON_HOME_RAW).expanduser().resolve() if _DAEMON_HOME_RAW else APP_HOME
+
 #: Whether this process serves the packaged desktop app (the shell passes the
 #: bare ``--sherry-desktop`` flag; the environment variable is the transitional
 #: fallback, read the same way as the home above). The boot gate reads this

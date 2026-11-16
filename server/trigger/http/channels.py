@@ -6,7 +6,7 @@ from server.trigger.http.helpers import read_body
 from server.utils.atomic_io import atomic_write_text
 from channels.registry import discover_channel_names, load_channel_class
 from config.path import PLUGINS_PATH
-from config import API_HOST, API_PORT
+from config import PUBLIC_BASE_URL
 
 
 def _load_channel_config() -> dict:
@@ -59,7 +59,7 @@ def _channel_icon_url(name: str) -> str:
         if isinstance(explicit, str) and explicit:
             candidate = icon_dir / Path(explicit).name
             if candidate.is_file():
-                return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{candidate.name}"
+                return f"{PUBLIC_BASE_URL}/channels/{name}/icon/{candidate.name}"
     except Exception as e:
         logger.debug(f"Icon config lookup failed for channel '{name}': {e}")
 
@@ -67,13 +67,13 @@ def _channel_icon_url(name: str) -> str:
     for ext in ("png", "jpg", "jpeg", "webp", "svg", "gif"):
         candidate = icon_dir / f"{name}_icon_128.{ext}"
         if candidate.is_file():
-            return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{candidate.name}"
+            return f"{PUBLIC_BASE_URL}/channels/{name}/icon/{candidate.name}"
 
     # 3) Deterministic fallback: first file by lexicographic order.
     try:
         for entry in sorted(icon_dir.iterdir()):
             if entry.is_file():
-                return f"http://{API_HOST}:{API_PORT}/channels/{name}/icon/{entry.name}"
+                return f"{PUBLIC_BASE_URL}/channels/{name}/icon/{entry.name}"
     except Exception as e:
         logger.debug(f"Icon dir scan failed for channel '{name}': {e}")
     return ""

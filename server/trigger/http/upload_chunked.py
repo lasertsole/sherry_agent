@@ -26,7 +26,7 @@ from typing import Any
 from loguru import logger
 from robyn import Response
 
-from config import API_HOST, API_PORT, SRC_DIR, TEMP_DIR
+from config import PUBLIC_BASE_URL, SRC_DIR, TEMP_DIR
 from config.features import HTTP_UPLOAD, SERVER_HTTP
 from config.path import is_safe_session_segment
 from server.trigger.core import app
@@ -125,7 +125,7 @@ def _store_final(kind: str, data: bytes, content_type: str) -> tuple[str, str, s
     target = directory / filename
     if not target.exists():
         target.write_bytes(data)
-    url = f"http://{API_HOST}:{API_PORT}/{_KIND_DIR[kind]}/{filename}"
+    url = f"{PUBLIC_BASE_URL}/{_KIND_DIR[kind]}/{filename}"
     return url, filename, digest
 
 

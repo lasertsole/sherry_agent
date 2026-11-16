@@ -227,6 +227,16 @@ def wait_until_ready(spec: DaemonSpec, timeout_s: float | None = None) -> bool:
         time.sleep(0.25)
 
 
+def _client_only() -> bool:
+    """True when this process must not spawn or own a daemon (Fleet owns it)."""
+    return os.environ.get("SHERRY_DAEMON_CLIENT_ONLY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def ensure_ready(
     spec: DaemonSpec,
     *,
@@ -243,6 +253,14 @@ def ensure_ready(
     """
     if is_ready(spec):
         return ReadyState.READY
+    if _client_only():
+        pid = recorded_pid(spec)
+        if pid is None or not pid_alive(pid):
+            logger.warning("{} daemon is not running (client-only mode; Fleet owns it).", spec.name)
+            return ReadyState.UNAVAILABLE
+        if wait_until_ready(spec, ready_wait_s):
+            return ReadyState.READY
+        return ReadyState.WARMING
     started = spawn(spec, extra_env=extra_env, log_path=log_path)
     if started:
         register_atexit_kill(spec)

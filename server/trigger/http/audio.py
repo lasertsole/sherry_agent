@@ -3,7 +3,7 @@ import uuid
 from loguru import logger
 from robyn import Response
 from server.trigger.core import app
-from config import SRC_DIR, API_HOST, API_PORT
+from config import SRC_DIR, PUBLIC_BASE_URL
 from config.features import HTTP_UPLOAD, SERVER_HTTP
 from server.service.audio_transcribe_service import (
     TranscribeError,
@@ -74,7 +74,7 @@ async def upload_audio(request):
     file_path = audio_dir / filename
     file_path.write_bytes(data)
 
-    url = f"http://{API_HOST}:{API_PORT}/audio/{filename}"
+    url = f"{PUBLIC_BASE_URL}/audio/{filename}"
     logger.info(f"Audio uploaded: filename={filename}, size={len(data)}, url={url}")
 
     return Response(

@@ -34,6 +34,8 @@ export interface AuthStatus {
   authEnabled: boolean;
   /** An account exists. */
   hasAccount: boolean;
+  /** The backend identifies accounts by username too (multi-tenant Ingress). */
+  usernameRequired: boolean;
 }
 
 /** A refusal from an auth endpoint, carrying the backend's code. */
@@ -91,17 +93,28 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
   return {
     authRequired: payload.auth_required === true,
     authEnabled: payload.auth_enabled === true,
-    hasAccount: payload.has_account === true
+    hasAccount: payload.has_account === true,
+    usernameRequired: payload.username_required === true
   };
 }
 
 /**
  * Sign in with the password; the cookies ride the response, so only the user
  * comes back.
+ *
+ * A multi-tenant Ingress (`username_required`) additionally identifies the
+ * account by username; the single-account cell omits it.
  * @param password
+ * @param username Optional account name for a multi-tenant Ingress.
  */
-export async function loginRequest(password: string): Promise<{ user: AuthUser; expiresIn: number }> {
-  const payload = await authRequest('/auth/login', 'post', { password });
+export async function loginRequest(
+  password: string,
+  username?: string
+): Promise<{ user: AuthUser; expiresIn: number }> {
+  const payload = await authRequest('/auth/login', 'post', {
+    password,
+    ...(username ? { username } : {})
+  });
   return { user: payload.user as AuthUser, expiresIn: Number(payload.expires_in ?? 0) };
 }
 
