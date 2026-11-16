@@ -243,3 +243,30 @@ async def test_bridge_aexec_uses_the_async_process_path(
 
     assert "fake-stdout" in output and "fake-stderr" in output
     assert "echo hi" in args_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_bind_external_session_accepts_the_skills_only_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The preset payload no longer has a ``tools`` key (build-time contract)."""
+    from evals.coding_capability import suite as harness
+    from server.service import agent_config_service, session_settings_service
+
+    written: dict = {}
+
+    async def _bind(_session_id: str, _repo: Path) -> None:
+        return None
+
+    monkeypatch.setattr(harness, "_bind_session", _bind)
+    monkeypatch.setattr(harness, "_coding_preset_payload", lambda: {"skills": ["code-wiki"]})
+    monkeypatch.setattr(agent_config_service, "invalidate_session_prompt", lambda _sid: None)
+    monkeypatch.setattr(
+        session_settings_service, "_write_value", lambda _sid, key, value: written.update(value)
+    )
+    monkeypatch.setattr(session_settings_service, "_delete_value", lambda _sid, _key: None)
+
+    payload = await external_bench.bind_external_session("eval-session", tmp_path)
+
+    assert payload == {"skills": ["code-wiki"]}
+    assert written == {"skills": ["code-wiki"]}

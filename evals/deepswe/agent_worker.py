@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,23 @@ if str(REPO_ROOT) not in sys.path:
 
 def _write(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_partial(path: Path, drive: dict[str, Any], tokens: dict[str, int]) -> None:
+    """Atomically persist the live counters so a SIGKILL still leaves telemetry."""
+    payload = {
+        "drive": dict(drive),
+        "tokens": dict(tokens),
+        "agent_config": {},
+        "partial": True,
+    }
+    tmp = path.with_name(path.name + ".part")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        # A partial write is advisory; the final result write is authoritative.
+        pass
 
 
 def _error_payload(error: str) -> dict[str, Any]:
@@ -86,8 +104,44 @@ def main() -> int:
 
         async def run_turn() -> dict[str, Any]:
             payload = await external_bench.bind_external_session(args.session_id, repo)
-            drive = await harness._drive(args.session_id, prompt)
-            tokens = await harness._session_tokens(args.session_id)
+            latest: dict[str, Any] = {
+                "tool_calls": 0,
+                "text": "",
+                "resumes": 0,
+                "interrupted": 0,
+                "timeout": False,
+                "error": "",
+            }
+            tokens: dict[str, int] = {}
+            last_write = [0.0]
+
+            def progress(state: dict[str, Any]) -> None:
+                latest.update(state)
+                now = time.monotonic()
+                if now - last_write[0] >= 1.0:
+                    last_write[0] = now
+                    _write_partial(output, latest, tokens)
+
+            async def token_loop() -> None:
+                """Keep partial tokens fresh; a kill then loses at most one tick."""
+                while True:
+                    await asyncio.sleep(10.0)
+                    try:
+                        tokens.update(await harness._session_tokens(args.session_id))
+                    except Exception:  # noqa: BLE001 - telemetry only
+                        continue
+                    _write_partial(output, latest, tokens)
+
+            token_task = asyncio.create_task(token_loop())
+            try:
+                drive = await harness._drive(args.session_id, prompt, progress=progress)
+                tokens.update(await harness._session_tokens(args.session_id))
+            finally:
+                token_task.cancel()
+                try:
+                    await token_task
+                except asyncio.CancelledError:
+                    pass
             return {"drive": drive, "tokens": tokens, "agent_config": payload}
 
         _write(output, asyncio.run(run_turn()))

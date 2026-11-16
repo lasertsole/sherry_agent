@@ -379,6 +379,7 @@ class LLMRetryMiddleware(AgentMiddleware):
                     raise
                 if classified.reason == FailoverReason.timeout:
                     self._bump_stale_streak(session_id)
+                    await self._refresh_provider_client(request)
                 delay = self._backoff(retry_count, classified.retry_after_s)
                 self._emit_retry(
                     session_id,
@@ -496,6 +497,27 @@ class LLMRetryMiddleware(AgentMiddleware):
                 _STALE_GIVEUP_MESSAGE,
             )
             raise RuntimeError(_STALE_GIVEUP_MESSAGE)
+
+    async def _refresh_provider_client(self, request: ModelRequest) -> None:
+        """Drop the timed-out client so the retry opens a fresh connection.
+
+        The five-stall breaker exists because retries on a half-dead keep-alive
+        pool each wait for the full read timeout. Rebuilding the client once
+        turns a stale-connection stall into a normal retry; the breaker still
+        stops a genuinely unresponsive provider afterwards.
+        """
+        reset = getattr(getattr(request, "model", None), "reset_async_client", None)
+        if not callable(reset):
+            return
+        try:
+            refreshed = await reset()
+        except Exception:  # noqa: BLE001 - a failed rebuild keeps the existing client
+            logger.debug("LLM timeout: provider client rebuild skipped", exc_info=True)
+            return
+        if refreshed:
+            logger.warning(
+                "LLM timeout: rebuilt the provider HTTP client; retrying on a fresh connection"
+            )
 
     def _bump_stale_streak(self, session_id: str) -> None:
         streak = state_register_mem.get_state(session_id, _STALE_STREAK_KEY, 0) or 0

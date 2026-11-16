@@ -33,6 +33,8 @@ main agent에는 main-only `workflow_replay` 도구가 있습니다:
 
 리플레이 임계값은 의도적으로 지연됩니다. 빈도가 낮은 계획은 LDW 준비 비용을 지불하지 않습니다. 계획은 임계값(기본 3)에 도달할 때 현재 TaskFlow flow에서 컴파일되며, skill review가 미리 컴파일하지 않습니다.
 
+`plan_key`는 LDW에서 **작업 목표를 반영**합니다. 리플레이/컴파일 key는 TaskFlow flow의 `state.description`을 계획 identity에 섞습니다. 하나의 plan 파일을 공유하는 두 작업은 각각 별도의 리플레이 횟수, journal, 컴파일된 스크립트를 갖습니다. description이 비어 있으면 기존 경로 기반 key를 유지합니다. 지식 저장소(handoff tree, skill review)는 경로 기반 identity만 사용합니다——목표 분리는 LDW에만 적용됩니다. 이전 경로 key의 스크립트와 카운터는 그대로 남아 무시되며, 삭제해도 안전합니다.
+
 `variant_input`은 현재 작업의 구체 입력입니다. 각 step prompt에 들어가므로 journal key에도 들어가고, 같은 계획이라도 변형이 다르면 예전 캐시에 맞지 않습니다. step 접미사도 `agent_type`의 일부입니다. PTC 스크립트가 step 단위이기 때문입니다.
 
 ## 🧱 컴파일과 산출물

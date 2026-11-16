@@ -68,6 +68,11 @@ CODE_INTEL: CodeIntelConfig = {
         "venv",
         "dist",
         "build",
+        # Rust build output and the packaged desktop backend (a PyInstaller
+        # copy of this very repo). Indexing either one double-counts symbols
+        # and makes a code-wiki export look like it documents generated code.
+        "target",
+        "sherry-backend",
         ".sherry",
         ".codegraph",
         ".mypy_cache",

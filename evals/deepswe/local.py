@@ -263,6 +263,27 @@ def _preflight(
 # ── One task ────────────────────────────────────────────────────────────────
 
 
+def _read_worker_result(
+    result_file: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, int]] | None:
+    """Read a final OR partial worker result; ``None`` for an absent/bad file."""
+    if not result_file.is_file():
+        return None
+    try:
+        data = json.loads(result_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("drive"), dict):
+        return None
+    payload = data.get("agent_config")
+    tokens = data.get("tokens")
+    return (
+        dict(data["drive"]),
+        payload if isinstance(payload, dict) else {},
+        tokens if isinstance(tokens, dict) else {},
+    )
+
+
 def _run_agent_worker(
     *,
     session_id: str,
@@ -329,23 +350,25 @@ def _run_agent_worker(
             except subprocess.TimeoutExpired:
                 proc.kill()
     if timed_out:
+        # The worker persists a partial result on every tool/text frame and a
+        # token tick, so a SIGKILL still yields the counters instead of zeros.
+        partial = _read_worker_result(result_file)
+        if partial is not None:
+            drive, payload, tokens = partial
+            drive = {
+                **empty,
+                **drive,
+                "timeout": True,
+                "error": f"agent worker exceeded the {int(timeout)}s wall clock",
+            }
+            return drive, payload, tokens
         empty["timeout"] = True
         empty["error"] = f"agent worker exceeded the {int(timeout)}s wall clock"
         return empty, {}, {}
-    if result_file.is_file():
-        try:
-            data = json.loads(result_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
-        if isinstance(data, dict) and isinstance(data.get("drive"), dict):
-            drive = {**empty, **data["drive"]}
-            payload = data.get("agent_config")
-            tokens = data.get("tokens")
-            return (
-                drive,
-                payload if isinstance(payload, dict) else {},
-                tokens if isinstance(tokens, dict) else {},
-            )
+    final = _read_worker_result(result_file)
+    if final is not None:
+        drive, payload, tokens = final
+        return {**empty, **drive}, payload, tokens
     empty["error"] = f"agent worker produced no result (exit {proc.returncode}); see {worker_log}"
     return empty, {}, {}
 

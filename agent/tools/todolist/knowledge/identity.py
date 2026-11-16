@@ -20,6 +20,12 @@ sharing an 8-char prefix can no longer collide.
 restarts and machines, and the repository can be moved without invalidating
 keys. A path outside the repository (rare) falls back to its absolute
 lexical path.
+
+The knowledge key stays path-based on purpose. LDW replay/compile uses a
+SEPARATE goal-aware key (``replay_plan_key``) so two different tasks that share
+one plan file do not share a replay counter, a journal namespace or a compiled
+workflow. Mixing the goal into ``PlanIdentity.key`` itself would fragment the
+knowledge store (handoff trees, skill review) for the same plan file.
 """
 
 import hashlib
@@ -35,6 +41,12 @@ from . import ownership
 
 _FALLBACK_PREFIX = "session-"
 _KEY_LENGTH = 12
+_GOAL_TEXT_MAX = 500
+
+
+def _goal_part(goal_text: str) -> str:
+    """Normalize a task goal for hashing: trimmed, lowercased, length-capped."""
+    return goal_text.strip().lower()[:_GOAL_TEXT_MAX]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,13 +77,22 @@ def _lexical_absolute(path: Path) -> Path:
     return normalized
 
 
-def plan_key(plan_ref: Path) -> str:
-    """Stable storage key for a canonical plan path: ``sha1(rel path)[:12]``."""
+def plan_key(plan_ref: Path, goal_text: str | None = None) -> str:
+    """Stable storage key for a canonical plan path.
+
+    With ``goal_text`` the key is scoped to that task goal as well. The
+    knowledge store never passes it (its key stays path-based); LDW replay and
+    compilation do, so two tasks sharing one plan file cannot share a replay
+    counter or compiled workflow.
+    """
     normalized = _lexical_absolute(plan_ref)
     try:
         seed = normalized.relative_to(config_path.ROOT_DIR).as_posix()
     except ValueError:
         seed = normalized.as_posix()
+    goal = _goal_part(goal_text) if goal_text else ""
+    if goal:
+        seed = f"{seed}:{goal}"
     return hashlib.sha1(seed.encode("utf-8"), usedforsecurity=False).hexdigest()[:_KEY_LENGTH]
 
 
@@ -81,9 +102,35 @@ def fallback_plan_name(session_id: str) -> str:
     return f"{_FALLBACK_PREFIX}{digest[:8]}"
 
 
-def fallback_plan_key(session_id: str) -> str:
+def fallback_plan_key(session_id: str, goal_text: str | None = None) -> str:
     """Storage key for a session's fallback identity (no plan file resolves)."""
-    return hashlib.sha1(f"session:{session_id}".encode(), usedforsecurity=False).hexdigest()[
+    raw = f"session:{session_id}"
+    goal = _goal_part(goal_text) if goal_text else ""
+    if goal:
+        raw = f"{raw}:{goal}"
+    return hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:_KEY_LENGTH]
+
+
+def replay_plan_key(identity: "PlanIdentity | None", session_id: str, goal_text: str | None) -> str:
+    """The LDW replay/compile key: plan identity + task goal.
+
+    ``goal_text`` empty/None keeps the historical path-based key. A goal-bearing
+    key is deliberately separate from ``PlanIdentity.key`` so knowledge storage
+    (handoff trees, skill review) stays stable for one plan file.
+    """
+    if identity is None:
+        return ""
+    goal = _goal_part(goal_text) if goal_text else ""
+    if not goal:
+        return identity.key
+    if getattr(identity, "is_session_fallback", False):
+        return fallback_plan_key(session_id, goal)
+    plan_ref = getattr(identity, "plan_ref", None)
+    if plan_ref is not None:
+        return plan_key(plan_ref, goal)
+    # Duck-typed identities (tests / callers with a precomputed key): mix the
+    # existing key rather than re-deriving a path we may not have.
+    return hashlib.sha1(f"{identity.key}:{goal}".encode(), usedforsecurity=False).hexdigest()[
         :_KEY_LENGTH
     ]
 
@@ -278,6 +325,7 @@ __all__ = [
     "fallback_plan_name",
     "plan_key",
     "private_plan_identities",
+    "replay_plan_key",
     "resolve_plan_identity",
     "resolve_session_plan_identity",
 ]

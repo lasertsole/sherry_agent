@@ -521,7 +521,7 @@ real user message and never rewriting the checkpoint.
 
 The LDW core is vendored whole under `vendor/ldw/` (no `deepagents` dependency): `vendor/ldw/_bootstrap.py` installs a minimal stub before the package imports, and `agent/tools/subagent/ldw_shim.py` is the stable import seam. The main agent has a main-only `workflow_replay` tool (`action=status|compile|replay`); it is not a subagent tool.
 
-- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored. The loader never `exec_module`s the file: it AST-parses those three literal assignments (nothing else — an import, call or extra name refuses the script), so a tampered skill file cannot run code in the orchestrator.
+- Replay is gated by `LDW["enabled"]` (default True, False keeps every replay on TaskFlow) and lazy: `LDW["min_replays"]` (default 3) decides when a plan stops using TaskFlow and compiles `skills/auto/<owning-skill>/scripts/ldw__<plan_key>.py`. The LDW replay/compile `plan_key` is GOAL-AWARE: `plan_knowledge_from_flow` mixes the flow's `state.description` into the plan identity via `identity.replay_plan_key`, so two tasks sharing one plan file get separate counters, journals and scripts (an empty description keeps the path-based key; the knowledge store stays path-only; old path-key artifacts are ignored and safe to delete). Compilation is additionally gated by the user-facing `flow_extraction_enabled` switch (see Extraction Settings): `workflow_replay(action="compile")`, the compile-on-miss in `replay_plan` and the TaskFlow repair recompile all refuse while it is off, while an EXISTING script still replays. The metadata (`PLAN_KEY` / `REQUIRED_AGENT_TYPES` / `WORKFLOW_META`) is stored as Python module constants because `json.dumps` emits lowercase `true`/`false`/`null` (a schema carrying `additionalProperties: false` made every JSON-text script unloadable); no closures, source strings or `workflow.json` are stored. The loader never `exec_module`s the file: it AST-parses those three literal assignments (nothing else — an import, call or extra name refuses the script), so a tampered skill file cannot run code in the orchestrator.
 - `compile_plan_to_workflow` consumes the current TaskFlow flow DAG and preserves the step contract (`response_schema`, `step_model`, judge/validation criteria, retry policy, skills, timeout); `build_orchestrate` injects `variant_input`, hard constraints and each predecessor's result into the step prompt, so the journal key partitions by variant and upstream output. `agent_type` carries the step suffix because PTC scripts are step-scoped. A schema-bound step calls `ctx.agent(..., schema=...)`.
 - `register_roster` registers one BUILDER per step (so LDW can request a schema-bound runnable). Leaves reuse `_assemble_child_tools`: the role allow-list plus code intelligence, ast-grep and executor-only PTC. `session_id` travels in the runnable config, not a baked graph. An executor leaf may run its PTC script first (hard gate; failure appends `[PTC Pre-run Progress]` and falls back to ReAct; a PTC schema miss is failure). A schema leaf forces thinking off.
 - `SqliteWorkflowStore` at `src/data/workflow_runs.db` backs cross-process resume; repeated replay with the same prompt/agent_type/model/schema is zero-call (`journal_hits` / `leaf_calls` are reported). Per-plan locks serialize concurrent replay; `LDW["real_replay_timeout_s"]` bounds one run.
@@ -2972,12 +2972,20 @@ turns the evidence rows off with `AUTO_DIAGNOSTICS_ENABLED=0` (the passive
 reminder keeps working). Wiki: `wiki/debug-loop/`.
 
 `skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index(repo_name,
-db_path)` turns a code_intel SQLite DB into a deterministic, zero-LLM wiki
-(README/architecture/modules/class-diagram + state); `sequences.md` stays
-LLM-owned (runtime flow is not in an AST). It is an independent entry point —
-`init_repo_wiki` and the other path helpers are unchanged (C6) — and returns
-`{"fallback": True, "reason": ...}` for a missing/empty index or unsupported
-languages. Caps live in `SKILLS_TOOLING` (`code_wiki_export_*`).
+db_path, index_truncated=...)` turns a code_intel SQLite DB into a
+deterministic, zero-LLM wiki (README/architecture/modules/class-diagram +
+state); `sequences.md` stays LLM-owned (runtime flow is not in an AST). It is an
+independent entry point — `init_repo_wiki` and the other path helpers are
+unchanged (C6) — and returns `{"fallback": True, "reason": ...}` for a
+missing/empty index or unsupported languages. Caps live in `SKILLS_TOOLING`
+(`code_wiki_export_*`). Three scope rules keep the output honest on a large
+repo: a capped index samples EVERY top-level directory instead of the first N
+ids; tests/, vendor/ and test files are excluded from the wiki (README/state
+report the excluded count); and `index_truncated=index.truncated` is threaded
+from the indexer so a time/file-cap partial build is labelled TRUNCATED instead
+of looking like full coverage. Community names use the deepest shared
+directory (`agent-tools-subagent`, `client-app-composables`), with
+`<top>-misc` for cross-directory communities.
 
 ## LLM Wiki Graph Layer
 

@@ -136,3 +136,125 @@ def test_existing_path_management_is_unchanged(tmp_path: Path, monkeypatch: pyte
     assert path.read_text(encoding="utf-8") == "# Core\n"
     assert core.read_doc("demo", "modules/core.md") == "# Core\n"
     assert core.list_modules("demo")[0]["name"] == "core"
+
+
+def test_module_names_use_the_deepest_half_covering_directory():
+    by_id = {
+        1: {"name": "a", "file_path": "agent/tools/subagent/x.py"},
+        2: {"name": "b", "file_path": "agent/tools/subagent/y.py"},
+        3: {"name": "c", "file_path": "agent/tools/subagent/z.py"},
+        4: {"name": "d", "file_path": "agent/other.py"},
+    }
+
+    name = core._module_name([1, 2, 3], by_id, set())
+
+    assert name == "agent-tools-subagent"
+
+
+def _capped_index_db(tmp_path: Path) -> Path:
+    db = tmp_path / "capped.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+            file_path TEXT NOT NULL, line_start INTEGER NOT NULL, language TEXT NOT NULL
+        );
+        """
+    )
+    rows = []
+    for top in ("alpha", "beta", "gamma"):
+        for index in range(3):
+            rows.append((f"{top}{index}", "function", f"{top}/mod{index}.py", 1, "python"))
+    conn.executemany(
+        "INSERT INTO symbols(name, kind, file_path, line_start, language) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_a_capped_index_samples_every_top_level_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    db = _capped_index_db(tmp_path)
+    monkeypatch.setitem(core.SKILLS_TOOLING, "code_wiki_export_max_symbols", 3)
+
+    index = core._load_index(db)
+
+    assert index is not None
+    assert index["total_symbols"] == 9
+    assert index["symbols_capped"] is True
+    assert len(index["symbols"]) == 3
+    assert {symbol["file_path"].split("/", 1)[0] for symbol in index["symbols"]} == {
+        "alpha",
+        "beta",
+        "gamma",
+    }
+
+    monkeypatch.setattr(core, "get_wiki_path", lambda: tmp_path / "wiki")
+    result = core.export_wiki_from_index("demo", str(db))
+
+    assert result["symbols"] == 3
+    assert result["total_symbols"] == 9
+    assert result["symbols_capped"] is True
+    readme = (tmp_path / "wiki" / "demo" / "README.md").read_text(encoding="utf-8")
+    assert "3 of 9" in readme
+    assert "sampled across top-level directories" in readme
+
+
+def test_a_truncated_index_build_is_labelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db = _capped_index_db(tmp_path)
+    monkeypatch.setattr(core, "get_wiki_path", lambda: tmp_path / "wiki")
+
+    result = core.export_wiki_from_index("demo", str(db), index_truncated=True)
+
+    assert result["index_truncated"] is True
+    readme = (tmp_path / "wiki" / "demo" / "README.md").read_text(encoding="utf-8")
+    assert "TRUNCATED by the indexer" in readme
+    state = json.loads(
+        (tmp_path / "wiki" / "demo" / ".codewiki-state.json").read_text(encoding="utf-8")
+    )
+    assert state["index_truncated"] is True
+    assert state["total_symbols"] == 9
+
+
+def test_the_wiki_scope_excludes_tests_and_vendored_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    db = tmp_path / "scope.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+            file_path TEXT NOT NULL, line_start INTEGER NOT NULL, language TEXT NOT NULL
+        );
+        INSERT INTO symbols(name, kind, file_path, line_start, language) VALUES
+            ('main', 'function', 'app/main.py', 1, 'python'),
+            ('helper', 'function', 'pkg/helper.py', 1, 'python'),
+            ('test_main', 'function', 'tests/test_main.py', 1, 'python'),
+            ('test_helper', 'function', 'pkg/helper_test.py', 1, 'python'),
+            ('lib', 'function', 'vendor/lib.py', 1, 'python');
+        """
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(core, "get_wiki_path", lambda: tmp_path / "wiki")
+
+    result = core.export_wiki_from_index("demo", str(db))
+
+    assert result["total_symbols"] == 2
+    assert result["excluded_symbols"] == 3
+    assert result["symbols"] == 2
+    readme = (tmp_path / "wiki" / "demo" / "README.md").read_text(encoding="utf-8")
+    assert "Scope: tests, vendor and test files excluded (3 symbols)" in readme
+    module_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (tmp_path / "wiki" / "demo" / "modules").glob("*.md")
+    )
+    assert "tests/test_main.py" not in module_text
+    assert "vendor/lib.py" not in module_text
+    assert "pkg/helper_test.py" not in module_text
+    assert "app/main.py" in module_text

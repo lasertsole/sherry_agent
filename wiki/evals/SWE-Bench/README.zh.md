@@ -30,7 +30,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 
 ## 失败历史（2026-11-01）
 
-> **2026-11-09：** 下表是完整历史。当前代码 tally（test patch 预应用 + temperature 0 + 默认 180 + 当前 prompt）在 `evals/swebench/RESULTS.md`：17051 4/4、16820 3/4、HARD 7/8（2 个实例），不是排行榜位置。已废弃 arm 的运行归档在同一文件。
+> **2026-11-15：** 下表是完整历史。当前代码 tally（test patch 预应用 + temperature 0 + 默认 180 + 当前 prompt）在 `evals/swebench/RESULTS.md`：17051 5/5、16820 4/5、HARD 9/10（2 个实例），不是排行榜位置。已废弃 arm 的运行归档在同一文件。
 
 | 运行 | Arm | 结果 | 发生了什么 |
 | :--- | :--- | :--- | :--- |
@@ -54,6 +54,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 | 2026-11-08 184144 | 同实例，`SHERRY_EVAL_MAX_ITERATIONS=180` | 1/1 | 24 次调用 / 96.5 秒通过；更大的上限消除了截断风险，但不是修复成功的原因（同温度下轨迹差异很大） |
 | 2026-11-08 222819 | 最终代码：精确命令 + 默认 180 预算（16820） | 0/1 | F2P 5/5，5 个真实 P2P 断言失败；agent 在被护栏阻止继续读测试文件后停止 |
 | 2026-11-09 204854 | verify-todo 模板下的最终代码（16820） | 1/1 | 31 次调用 / 117.3 秒；agent 没有使用 todo 计划，verify 分支由确定性测试覆盖 |
+| 2026-11-15 211844 | P0 修复 + 缓存遥测修复；两个 HARD 实例 | 2/2 干净 | 17051 100.1 秒 / 25 次调用，16820 195.2 秒 / 55 次调用；F2P/P2P 全通过、无 dirty test edits、quiesce 干净。发现并修复报告 `cache_read` 恒为 0 的遥测 bug（真实命中率 95.0% / 98.3%） |
 
 ## 暴露的问题
 
@@ -81,14 +82,23 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
    但 `eval_workspace_has_sessions=false`、`live_sessions_unchanged=false` 暴露了
    问题；报告的 isolation 块就是阻止这种运行进入能力统计的门。
 
+9. **SWE 报告低估了 prompt cache 使用量。** `_session_evidence` 把 normalized
+   `usage_metadata` 传给了只读 provider `response_metadata` 的解析器，因此
+   DeepSeek 的 `prompt_cache_hit_tokens` 从未被读到，所有运行都报告
+   `cache_read=0`。
+
 ### 当前解决
 
 1. **已修复。** `IterationBudget` 只按模型调用计 1；工具结果免费。
 2. **已修复。** `ToolGuardrails` 增加了不看状态签名的连击检测（工具 + 参数哈希；3 次相同调用，terminal 用自身 metadata 声明的 5 次），每回合最多警告 3 次，之后封锁该精确签名；另有非幂等工具的结果重复检测（3 次警告、6 次连续相同结果封锁工具）。`patch_file` 成功（metadata `clears_guardrail_blocks`）会清空 block、连击和失败计数，让验证可以继续。不再需要只读命令分类器。
 3. **由工具护栏缓解，不是硬性收尾门。** 被封锁的签名会迫使 agent 换方法；20261103_210023 的 Sympy 运行在 28 次模型调用内收敛，并运行了邻近测试文件，prompt 现在也要求这样做。独立的“收尾前测试必须通过”门仍不存在。
-4. **仍未解决。** harness 记录 `changed_paths`，但不会把 `tests/` 改动判 invalid；软门降低概率，但不是官方守卫。
+4. **已修复。** `dirty_test_edits` 会把 harness 补丁之外的测试文件改动判为 `resolved=False`，与测试结果无关。
 5. **部分缓解。** escalated 提醒推动主代理停止 spawn 后的 patch 循环并转交实现；还没有“收尾前测试必须通过”的硬门。
-6. **部分修复。** 每回合 token 预算现在把主代理 + 所有层级子代理归到根回合；eval 报告仍只统计主 session，子代理 checkpoint/结果回读仍未解决。
+6. **部分修复。** 每回合 token 预算现在把主代理 + 所有层级子代理归到根回合；子代理结果回读已有 `transcript_tail` 持久化快照，经 `sessions_messages` 回退；eval 报告仍只统计主 session 的 token。
+
+9. **已修复。** 报告先读 `input_token_details.cache_read`，缺失时回退
+   `_cache_read_tokens_from_usage(response_metadata)`；2026-11-15 运行恢复了
+   95.0% / 98.3% 的缓存输入（3 个单测钉住）。
 
 ## no-edit 门及其失败原因
 

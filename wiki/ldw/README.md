@@ -33,6 +33,8 @@ The main agent has a `workflow_replay` tool (main-only):
 
 The replay threshold is deliberately lazy: low-frequency plans never pay the LDW setup cost. A plan is compiled at the threshold (default 3) from its current TaskFlow flow, not eagerly by skill review.
 
+`plan_key` is **goal-aware** for LDW: the replay/compile key mixes the TaskFlow flow's `state.description` with the plan identity. Two tasks that share one plan file therefore get separate replay counters, journals and compiled scripts; an empty description keeps the historical path-based key. The knowledge store (handoff trees, skill review) still uses the path-only identity — goal scoping applies only to LDW. Old path-key scripts and counters are left in place and ignored; they are safe to delete.
+
 `variant_input` is the current task's concrete input. It is injected into every step prompt and therefore enters the journal key; the same plan with a different variant does not hit the old cache. The step suffix is also part of `agent_type`, because PTC scripts are step-scoped.
 
 ## 🧱 Compilation and Artifacts

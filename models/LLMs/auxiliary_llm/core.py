@@ -188,8 +188,6 @@ def build_auxiliary_llm(
 
     if not _is_local and (_provider or _api_base):
         # ---------- Remote (online) branch ----------
-        from langchain.chat_models import init_chat_model
-
         _raw_max = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
         _max_tokens = int(_raw_max) if _raw_max else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
 
@@ -237,11 +235,16 @@ def build_auxiliary_llm(
             _model_config["model"] = model_name.strip()
 
         from models.LLMs.anthropic_cache import maybe_wrap_anthropic_cache
+        from models.LLMs.reasoning_openai import build_reasoning_aware_chat_model
 
         # Same provider gate as the main client: the auxiliary family serves the
         # completion judge / background reviews / scanner calls, whose prompts repeat, so it
-        # benefits from the same breakpoints when it runs on Anthropic.
-        inner = maybe_wrap_anthropic_cache(init_chat_model(**_model_config), _provider)
+        # benefits from the same breakpoints when it runs on Anthropic. DeepSeek
+        # also gets the reasoning_content replay contract here — a child agent
+        # often runs on AUXILIARY_LLM_*, and ChatDeepSeek drops it (400 on a
+        # thinking-mode tool-call replay).
+        inner = build_reasoning_aware_chat_model(_model_config, provider=_provider)
+        inner = maybe_wrap_anthropic_cache(inner, _provider)
         model = NormalizingChatModel(inner=inner)
 
     else:

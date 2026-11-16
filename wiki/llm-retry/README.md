@@ -48,6 +48,8 @@ The budgets above are per MODEL CALL, and several layers re-enter this middlewar
 
 `llm_stale_streak` counts consecutive timeout-classified failures. With `stale_giveup_scope = "turn"` (default), `before_agent` clears it at every main-agent turn; the breaker still aborts the current turn at `stale_giveup_threshold = 5`. `"session"` restores the old cross-turn behavior. ZCode has no equivalent cross-turn breaker; this is deliberate Sherry protection, not a parity claim.
 
+A timeout also rebuilds the provider's HTTP client before the retry (`NormalizingChatModel.reset_async_client`). A long idle window (for example a 60 s terminal command) can leave a pooled keep-alive connection that the provider or proxy has already closed; retrying on that pool waits out the full read timeout instead of opening a new connection. The rebuild happens on the first timeout, so the breaker still measures whether the provider is genuinely unresponsive instead of counting one dead connection as five provider failures.
+
 ## Events, UI and the Ledger
 
 Every scheduled / succeeded / exhausted transition records one `model_retry` event and pushes it to the session's sockets:

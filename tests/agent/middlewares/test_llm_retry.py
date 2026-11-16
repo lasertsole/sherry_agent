@@ -1142,3 +1142,31 @@ def test_empty_completion_without_retry_budget_is_untouched(monkeypatch):
     assert mw.wrap_model_call(_request(), handler).content == ""
     assert calls["n"] == 1
     assert events == []
+
+
+def test_async_timeout_rebuilds_the_provider_client(monkeypatch):
+    """The retry after a timeout must open a fresh connection."""
+    _zero_backoff(monkeypatch)
+
+    class _ResettableModel(_SentinelModel):
+        def __init__(self, name: str) -> None:
+            super().__init__(name)
+            self.resets = 0
+
+        async def reset_async_client(self) -> bool:
+            self.resets += 1
+            return True
+
+    model = _ResettableModel("main")
+    mw = _sync_middleware(max_retries=3)
+    calls = {"n": 0}
+
+    async def handler(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("timed out")
+        return _ok_result(req)
+
+    assert asyncio.run(mw.awrap_model_call(_request(model), handler)) == "ok:main"
+    assert calls["n"] == 2
+    assert model.resets == 1

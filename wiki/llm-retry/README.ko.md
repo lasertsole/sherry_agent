@@ -48,6 +48,8 @@ fallback 후보는 새 모델 요청을 시작하므로 재시도 예산이 0에
 
 `llm_stale_streak`는 연속 timeout 실패를 셉니다. `stale_giveup_scope = "turn"`(기본)에서 `before_agent`가 메인 agent 턴 시작마다 초기화합니다. 차단은 `stale_giveup_threshold = 5`에서 현재 턴을 중단하지만 다음 턴으로 이어지지 않습니다. `"session"`은 이전의 턴 간 동작을 복원합니다. ZCode에는 동등한 턴 간 차단이 없으며, 이는 Sherry의 의도적인 보호이지 parity 주장이 아닙니다.
 
+타임아웃 시에는 재시도 전에 provider의 HTTP 클라이언트도 다시 만듭니다(`NormalizingChatModel.reset_async_client`). 긴 유휴(예: 60초짜리 terminal 명령) 뒤에는 provider/프록시가 이미 닫은 keep-alive 연결이 풀에 남을 수 있고, 그 풀에서 재시도하면 새 연결을 열지 않고 읽기 타임아웃을 끝까지 기다립니다. 재구성은 첫 타임아웃에 일어나므로, 차단은 '끊긴 연결 하나'가 아니라 provider가 실제로 무응답인지를 판단합니다.
+
 ## 이벤트, UI, 원장
 
 scheduled / succeeded / exhausted마다 `model_retry` 이벤트를 하나 기록하고 세션 socket으로 보냅니다:

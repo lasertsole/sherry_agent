@@ -206,6 +206,64 @@ def _mermaid_id(value: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", value) or "node"
 
 
+_SYMBOL_COLUMNS = "id, name, kind, file_path, line_start, language"
+_TOP_DIR_SQL = "substr(file_path, 1, instr(file_path || '/', '/') - 1)"
+#: The deterministic wiki documents first-party source, not the test suite or
+#: vendored copies: on this repo tests are ~59% of indexed symbols and would
+#: dominate every module. The filter is skipped when it would leave nothing.
+_WIKI_SCOPE_SQL = (
+    "file_path NOT LIKE 'tests/%' AND file_path NOT LIKE '%/tests/%' "
+    "AND file_path NOT LIKE 'vendor/%' AND file_path NOT LIKE '%/vendor/%' "
+    "AND file_path NOT LIKE '%/__tests__/%' AND file_path NOT LIKE '%/test_%.py' "
+    "AND file_path NOT LIKE '%_test.py' AND file_path NOT LIKE '%.test.%' "
+    "AND file_path NOT LIKE '%.spec.%'"
+)
+
+
+def _sample_symbols(conn: sqlite3.Connection, max_symbols: int, where: str) -> list[dict]:
+    """Sample every top-level directory instead of taking the first N ids.
+
+    ``ORDER BY id LIMIT N`` is biased toward whatever the indexer walked first
+    (alphabetical: agent/, client/), which silently drops whole subsystems from
+    a large repository. Give each top-level directory a base quota, then fill
+    the remaining slots from the largest directories.
+    """
+    counts = {
+        str(row["top_dir"]): int(row["n"])
+        for row in conn.execute(
+            f"SELECT {_TOP_DIR_SQL} AS top_dir, COUNT(*) AS n FROM symbols{where} GROUP BY top_dir"
+        )
+    }
+    if not counts:
+        return []
+    base = max(1, max_symbols // len(counts))
+    quota = {name: min(count, base) for name, count in counts.items()}
+    remaining = max_symbols - sum(quota.values())
+    order = sorted(counts, key=lambda name: (-counts[name], name))
+    while remaining > 0:
+        progressed = False
+        for name in order:
+            if remaining <= 0:
+                break
+            if quota[name] < counts[name]:
+                quota[name] += 1
+                remaining -= 1
+                progressed = True
+        if not progressed:
+            break
+    scoped = where.replace(" WHERE ", " AND ", 1) if where else ""
+    selected: list[dict] = []
+    for name in sorted(quota):
+        rows = conn.execute(
+            f"SELECT {_SYMBOL_COLUMNS} FROM symbols WHERE {_TOP_DIR_SQL} = ?{scoped} "
+            "ORDER BY id LIMIT ?",
+            (name, quota[name]),
+        )
+        selected.extend(dict(row) for row in rows)
+    selected.sort(key=lambda symbol: int(symbol["id"]))
+    return selected[:max_symbols]
+
+
 def _load_index(db_path: Path) -> dict | None:
     """Read symbols + resolved edges from a code_intel SQLite DB."""
     conn = sqlite3.connect(str(db_path))
@@ -216,14 +274,31 @@ def _load_index(db_path: Path) -> dict | None:
         }
         if "symbols" not in tables:
             return None
-        symbols = [
-            dict(row)
-            for row in conn.execute(
-                "SELECT id, name, kind, file_path, line_start, language FROM symbols "
-                "ORDER BY id LIMIT ?",
-                (SKILLS_TOOLING["code_wiki_export_max_symbols"],),
-            )
-        ]
+        all_symbols, all_files = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT file_path) FROM symbols"
+        ).fetchone()
+        scoped_symbols, scoped_files = conn.execute(
+            f"SELECT COUNT(*), COUNT(DISTINCT file_path) FROM symbols WHERE {_WIKI_SCOPE_SQL}"
+        ).fetchone()
+        if int(scoped_symbols):
+            where = f" WHERE {_WIKI_SCOPE_SQL}"
+            total_symbols, total_files = int(scoped_symbols), int(scoped_files)
+        else:
+            where = ""
+            total_symbols, total_files = int(all_symbols), int(all_files)
+        excluded_symbols = int(all_symbols) - total_symbols
+        max_symbols = int(SKILLS_TOOLING["code_wiki_export_max_symbols"])
+        symbols_capped = total_symbols > max_symbols
+        if symbols_capped:
+            symbols = _sample_symbols(conn, max_symbols, where)
+        else:
+            symbols = [
+                dict(row)
+                for row in conn.execute(
+                    f"SELECT {_SYMBOL_COLUMNS} FROM symbols{where} ORDER BY id LIMIT ?",
+                    (max_symbols,),
+                )
+            ]
         if not symbols:
             return None
         edges: list[tuple[int, int, str]] = []
@@ -254,7 +329,16 @@ def _load_index(db_path: Path) -> dict | None:
                     "JOIN symbols m ON m.id = e.mixin_id ORDER BY e.id"
                 )
             ]
-        return {"symbols": symbols, "edges": edges, "inherits": inherits, "mixins": mixins}
+        return {
+            "symbols": symbols,
+            "edges": edges,
+            "inherits": inherits,
+            "mixins": mixins,
+            "total_symbols": total_symbols,
+            "total_files": total_files,
+            "symbols_capped": symbols_capped,
+            "excluded_symbols": excluded_symbols,
+        }
     finally:
         conn.close()
 
@@ -309,14 +393,38 @@ def _partition_symbols(
 
 
 def _module_name(members: list[int], by_id: dict[int, dict], used: set[str]) -> str:
+    """Name a community from the directory its members share most specifically.
+
+    The old rule used only the first path component, so every community in
+    ``agent/`` became ``agent`` (then ``agent-2``, ``agent-3``, ...). Name from
+    the DEEPEST directory prefix that still covers at least half the members:
+    a subagent community becomes ``agent-tools-subagent``, a composables
+    community ``client-app-composables``.
+    """
     files = [by_id[node]["file_path"] for node in members]
-    top_levels = Counter(path.split("/", 1)[0] for path in files)
-    if top_levels:
-        top_dir, count = top_levels.most_common(1)[0]
-        label = top_dir if count >= max(1, len(files) // 2) else by_id[members[0]]["name"]
+    threshold = 1 if len(files) == 1 else max(2, len(files) // 2)
+    prefixes: Counter[str] = Counter()
+    for path in files:
+        dirs = path.split("/")[:-1]
+        for depth in range(1, min(len(dirs), 4) + 1):
+            prefixes["/".join(dirs[:depth])] += 1
+    eligible = [
+        (prefix.count("/") + 1, count, prefix)
+        for prefix, count in prefixes.items()
+        if count >= threshold
+    ]
+    if eligible:
+        _depth, _count, label = max(eligible, key=lambda item: (item[0], item[1], item[2]))
     else:
-        label = by_id[members[0]]["name"]
-    base = _slug(label, "module")
+        top_levels = Counter(path.split("/", 1)[0] for path in files)
+        if top_levels:
+            # No directory covers half the community: label it as the dominant
+            # top-level area's cross-cutting remainder instead of a random
+            # function name (``agent-misc``, not ``getattr``).
+            label = f"{top_levels.most_common(1)[0][0]}-misc"
+        else:
+            label = by_id[members[0]]["name"]
+    base = _slug(label.replace("/", "-"), "module")
     slug = base
     suffix = 2
     while slug in used:
@@ -326,7 +434,7 @@ def _module_name(members: list[int], by_id: dict[int, dict], used: set[str]) -> 
     return slug
 
 
-def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
+def export_wiki_from_index(repo_name: str, db_path: str, *, index_truncated: bool = False) -> dict:
     """Export a deterministic markdown wiki from a code_intel SQLite index.
 
     This is the zero-LLM path: README / architecture / per-module docs / class
@@ -335,6 +443,11 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
     index is missing, empty, or only holds unsupported languages, the caller
     receives ``{"fallback": True, "reason": ...}`` and should use the existing
     LLM-driven procedure.
+
+    ``index_truncated`` carries ``CodeIndexer.index_directory(...).truncated``:
+    the indexer stops at its time/file budget, and this file cannot detect that
+    on its own. The wiki labels the run partial so a timeout is never mistaken
+    for full repo coverage.
     """
     path = Path(db_path)
     if not path.is_file():
@@ -374,6 +487,14 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
     god = sorted((node for node in by_id), key=lambda node: (-degree[node], by_id[node]["name"]))[
         :10
     ]
+    shown_files = len({symbol["file_path"] for symbol in symbols})
+    if index["symbols_capped"]:
+        symbol_line = (
+            f"- Symbols: {len(symbols)} of {index['total_symbols']} "
+            "(sampled across top-level directories)"
+        )
+    else:
+        symbol_line = f"- Symbols: {len(symbols)}"
     readme = [
         f"# {repo_name}",
         "",
@@ -381,8 +502,8 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
         "",
         "## Index summary",
         "",
-        f"- Files: {len({symbol['file_path'] for symbol in symbols})}",
-        f"- Symbols: {len(symbols)}",
+        f"- Files: {shown_files}",
+        symbol_line,
         f"- Edges: {len(index['edges'])} "
         f"(calls {sum(1 for _, _, label in index['edges'] if label == 'calls')} / "
         f"imports {sum(1 for _, _, label in index['edges'] if label == 'imports')} / "
@@ -390,6 +511,22 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
         f"mixins {sum(1 for _, _, label in index['edges'] if label == 'mixes_in')})",
         f"- Languages: {', '.join(sorted(languages))}",
         f"- Community engine: {engine}",
+    ]
+    if index["excluded_symbols"]:
+        readme.append(
+            f"- Scope: tests, vendor and test files excluded ({index['excluded_symbols']} symbols)"
+        )
+    if index["symbols_capped"]:
+        readme.append(
+            f"- Coverage: partial by design; the in-scope index holds {index['total_files']} files / "
+            f"{index['total_symbols']} symbols and this wiki samples {len(symbols)}"
+        )
+    if index_truncated:
+        readme.append(
+            "- **Index build: TRUNCATED by the indexer (timeout/file cap); "
+            "modules may be missing — rebuild with a larger budget before trusting coverage.**"
+        )
+    readme += [
         "",
         "## Hub symbols (by resolved degree)",
         "",
@@ -448,9 +585,15 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
             label = f"{symbol['name']} ({symbol['kind']})".replace('"', "'")
             arch.append(f'    s{node}["{label}"]')
         arch.append("  end")
+    arch_edges: set[tuple[int, int, str]] = set()
     for src, dst, label in index["edges"]:
-        if src in included and dst in included and module_of.get(src) != module_of.get(dst):
-            arch.append(f"  s{src} -->|{label}| s{dst}")
+        if src not in included or dst not in included or module_of.get(src) == module_of.get(dst):
+            continue
+        key = (src, dst, label)
+        if key in arch_edges:
+            continue
+        arch_edges.add(key)
+        arch.append(f"  s{src} -->|{label}| s{dst}")
     arch += ["```", ""]
     files.append(str(write_doc(repo_name, "architecture.md", "\n".join(arch))))
 
@@ -470,14 +613,21 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
                 f"| `{symbol['name']}` | {symbol['kind']} | `{symbol['file_path']}` | "
                 f"{symbol['line_start']} | {degree[node]} |"
             )
-        cross = [
-            (src, dst, label)
-            for src, dst, label in index["edges"]
-            if src in members and dst in by_id and module_of.get(dst) not in (None, name)
-        ]
+        cross: list[tuple[int, int, str]] = []
+        seen_cross: set[tuple[int, int, str]] = set()
+        for src, dst, label in index["edges"]:
+            if src not in members or dst not in by_id or module_of.get(dst) in (None, name):
+                continue
+            key = (src, dst, label)
+            if key in seen_cross:
+                continue
+            seen_cross.add(key)
+            cross.append((src, dst, label))
+            if len(cross) >= 50:
+                break
         if cross:
             lines += ["", "## Cross-module edges", ""]
-            for src, dst, label in cross[:50]:
+            for src, dst, label in cross:
                 lines.append(f"- `{by_id[src]['name']}` → `{by_id[dst]['name']}` ({label})")
         files.append(str(write_doc(repo_name, f"modules/{name}.md", "\n".join(lines) + "\n")))
 
@@ -527,6 +677,11 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
         "generator": "code_intel_export",
         "source_db": str(path),
         "symbols": len(symbols),
+        "total_symbols": index["total_symbols"],
+        "total_files": index["total_files"],
+        "symbols_capped": index["symbols_capped"],
+        "excluded_symbols": index["excluded_symbols"],
+        "index_truncated": bool(index_truncated),
         "edges": len(index["edges"]),
         "community_engine": engine,
         "modules_documented": [name for name, _members in modules],
@@ -548,6 +703,11 @@ def export_wiki_from_index(repo_name: str, db_path: str) -> dict:
         "repo_name": repo_name,
         "db_path": str(path),
         "symbols": len(symbols),
+        "total_symbols": index["total_symbols"],
+        "total_files": index["total_files"],
+        "symbols_capped": index["symbols_capped"],
+        "excluded_symbols": index["excluded_symbols"],
+        "index_truncated": bool(index_truncated),
         "edges": len(index["edges"]),
         "modules": [name for name, _members in modules],
         "community_engine": engine,

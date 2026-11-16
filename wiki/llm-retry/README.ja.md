@@ -48,6 +48,8 @@ fallback 候補は新しいモデルリクエストを開始するため、リ�
 
 `llm_stale_streak` は連続する timeout 失敗を数えます。`stale_giveup_scope = "turn"`（既定）では `before_agent` がメイン agent のターン開始時にクリアします。遮断は `stale_giveup_threshold = 5` で現在のターンを中止しますが、次のターンには持ち越しません。`"session"` は以前のターン横断動作に戻します。ZCode に同等のターン横断遮断はなく、これは Sherry 独自の保護であり parity の主張ではありません。
 
+タイムアウト時は再試行の前に provider の HTTP クライアントも再構築します（`NormalizingChatModel.reset_async_client`）。長いアイドル（例：60 秒の terminal コマンド）の後、provider/プロキシが既に閉じた keep-alive 接続がプールに残ることがあり、そのプールでの再試行は新しい接続を開かず読み取りタイムアウトを待ち切ります。再構築は最初のタイムアウトで行われるため、遮断は「1 本の壊れた接続」ではなく provider が本当に無応答かを測ります。
+
 ## イベント、UI、台帳
 
 scheduled / succeeded / exhausted のたびに `model_retry` イベントを 1 件記録し、セッションの socket に送ります：

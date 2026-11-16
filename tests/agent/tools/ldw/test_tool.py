@@ -51,6 +51,29 @@ async def test_status_reports_count_and_script(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_prefers_the_goal_aware_key_from_the_flow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tool_mod,
+        "resolve_session_plan_identity",
+        lambda _sid: type("I", (), {"key": "k1"})(),
+    )
+    seen: list[str] = []
+    monkeypatch.setattr(tool_mod, "replay_count", lambda key: seen.append(key) or 0)
+    monkeypatch.setattr(tool_mod, "find_ldw_script", lambda _key: None)
+    monkeypatch.setattr(
+        tool_mod,
+        "plan_knowledge_from_flow",
+        lambda _sid, **_kwargs: {"plan_key": "k-goal", "flow_id": "flow-1"},
+    )
+
+    tool = WorkflowReplayTool()
+    payload = json.loads(await tool._arun(action="status", session_id="sess"))
+
+    assert payload["plan_key"] == "k-goal"
+    assert seen == ["k-goal"]
+
+
+@pytest.mark.asyncio
 async def test_missing_session_fails_closed() -> None:
     tool = WorkflowReplayTool()
     payload = json.loads(await tool._arun(action="status", session_id=""))

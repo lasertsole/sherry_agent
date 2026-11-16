@@ -137,10 +137,11 @@ async def test_real_plan_replay_and_zero_call_second_run(flow_env: Path, ldw_env
     fid = f"flow-ldw-{uuid.uuid4().hex[:8]}"
     variant = f"TOKEN-{uuid.uuid4().hex[:6]}"
     await _seed_verified_flow(sid, fid, variant)
-    key = resolve_session_plan_identity(sid).key
 
     knowledge = replay_mod.plan_knowledge_from_flow(sid, flow_id=fid)
     assert knowledge is not None
+    key = str(knowledge["plan_key"])
+    assert key != resolve_session_plan_identity(sid).key
     meta = compile_plan_to_workflow(knowledge)
     assert scripts_mod.write_ldw_script(key, meta) is not None
 
@@ -288,9 +289,9 @@ async def test_live_main_agent_calls_workflow_replay(flow_env: Path, ldw_env: Pa
     fid = f"flow-agent-{uuid.uuid4().hex[:8]}"
     variant = f"AGENT-{uuid.uuid4().hex[:6]}"
     await _seed_verified_flow(sid, fid, variant)
-    key = resolve_session_plan_identity(sid).key
     knowledge = replay_mod.plan_knowledge_from_flow(sid, flow_id=fid)
     assert knowledge is not None
+    key = str(knowledge["plan_key"])
     meta = compile_plan_to_workflow(knowledge)
     assert scripts_mod.write_ldw_script(key, meta) is not None
 

@@ -33,6 +33,8 @@ LDW 核心整体 vendored 在 `vendor/ldw/`，导入时安装最小的 `deepagen
 
 重放阈值刻意保持惰性：低频计划永远不用承担 LDW 的装配成本。计划在达到阈值（默认 3）时才从当前 TaskFlow flow 编译，而不是由 skill review 提前编译。
 
+`plan_key` 对 LDW 是**任务目标感知**的：重放/编译 key 会把 TaskFlow flow 的 `state.description` 混入计划 identity。两个任务共用一个 plan 文件时，各自拥有独立的重放计数、journal 和编译脚本；description 为空时保持原有的路径 key。知识存储（handoff tree、skill review）仍然只用路径 identity——目标隔离只作用于 LDW。旧的路径 key 脚本和计数会留在原处并被忽略，可以安全删除。
+
 `variant_input` 是当前任务的具体输入。它会进入每个 step 的 prompt，因此也进入 journal key；同一计划换变体不会命中旧缓存。step 后缀也属于 `agent_type`，因为 PTC 脚本是按 step 隔离的。
 
 ## 🧱 编译与产物

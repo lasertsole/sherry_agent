@@ -125,20 +125,25 @@ editdistance = { path = "models/STT_model/editdistance-0.8.1-py3-none-any.whl" }
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-# Leading slashes matter: an unanchored pattern matches a same-named directory
-# at ANY depth (the old bare "docs" silently skipped tests/docs/). Anchor
-# everything to the repo root.
+# ``./name`` anchors a pattern to the repo root; a bare pattern matches a
+# same-named directory at ANY depth (bare "docs" silently skipped tests/docs/),
+# and a LEADING SLASH is treated as a filesystem-absolute path, so it excludes
+# nothing (ruff 0.16). Keep the ``./`` prefix.
 extend-exclude = [
-    "/client",           # Nuxt/Tauri frontend
-    "/src",              # runtime data (checkpoints, media, rag index)
-    "/temp",
-    "/.omo",
-    "/.playwright-mcp",
-    "/docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
-    "/TODO",             # hand-written plan notes (same rationale as docs)
-    "/wiki",             # generated Obsidian code-map vault
-    "/graphify-out",     # generated code-graph output
-    "/vendor",           # vendored third-party LDW core
+    "./client",           # Nuxt/Tauri frontend
+    "./src",              # runtime data (checkpoints, media, rag index)
+    "./temp",
+    "./.omo",
+    "./.playwright-mcp",
+    "./docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
+    "./TODO",             # hand-written plan notes (same rationale as docs)
+    "./wiki",             # generated Obsidian code-map vault
+    "./graphify-out",     # generated code-graph output
+    "./vendor",           # vendored third-party LDW core
+    # ruff 0.16 also lints/formats Markdown code fences; this repo keeps its
+    # docs hand-formatted (the pre-commit hook restricts itself the same way via
+    # ``types_or: [python, pyi, jupyter]``).
+    "**/*.md",
 ]
 
 [tool.ruff.lint]

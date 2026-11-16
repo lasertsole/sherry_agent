@@ -46,7 +46,10 @@ call it replaced.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+from loguru import logger
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 
 from langchain_core.callbacks import (
@@ -106,6 +109,57 @@ class NormalizingChatModel(BaseChatModel):
     def with_request_options(self, options: dict[str, Any]) -> NormalizingChatModel:
         """A copy carrying ``options`` on every inner call (chainable)."""
         return self.model_copy(update={"request_options": {**self.request_options, **options}})
+
+    async def reset_async_client(self) -> bool:
+        """Rebuild the inner provider HTTP client after a stalled request.
+
+        A retry on a pooled keep-alive connection that the provider or proxy
+        already closed waits for the next read timeout instead of opening a new
+        connection. ``LLMRetryMiddleware`` calls this after a timeout so the
+        retry starts on a fresh pool. Returns False (leaving the old client
+        intact) for an inner model that has no provider client to rebuild.
+        """
+        inner = self.inner
+        attrs = (
+            "client",
+            "async_client",
+            "root_client",
+            "root_async_client",
+            "http_client",
+            "http_async_client",
+        )
+        saved = {attr: getattr(inner, attr, None) for attr in attrs if hasattr(inner, attr)}
+        for attr in saved:
+            try:
+                setattr(inner, attr, None)
+            except Exception:  # noqa: BLE001 - an immutable client is not rebuildable
+                for key, value in saved.items():
+                    setattr(inner, key, value)
+                return False
+        validate = getattr(inner, "validate_environment", None)
+        if not callable(validate):
+            for key, value in saved.items():
+                setattr(inner, key, value)
+            return False
+        try:
+            validate()
+        except Exception:  # noqa: BLE001 - keep the old client on a failed rebuild
+            for key, value in saved.items():
+                setattr(inner, key, value)
+            return False
+        old_async = saved.get("root_async_client")
+        old_sync = saved.get("root_client")
+        if old_async is not None:
+            try:
+                await asyncio.wait_for(old_async.close(), timeout=5)
+            except Exception:  # noqa: BLE001 - teardown is best effort
+                logger.debug("provider client close skipped", exc_info=True)
+        if old_sync is not None:
+            try:
+                old_sync.close()
+            except Exception:  # noqa: BLE001 - teardown is best effort
+                logger.debug("provider client close skipped", exc_info=True)
+        return True
 
     def _request_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         if not self.request_options:

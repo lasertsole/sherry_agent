@@ -117,6 +117,4 @@ def test_run_ptc_exposes_calls_log_in_the_envelope() -> None:
     )
 
     assert result["status"] == "ok"
-    assert result["calls_log"] == [
-        {"tool": "echo", "args": {}, "result": "ok", "ok": True}
-    ]
+    assert result["calls_log"] == [{"tool": "echo", "args": {}, "result": "ok", "ok": True}]

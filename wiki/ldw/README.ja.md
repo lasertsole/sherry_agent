@@ -33,6 +33,8 @@ main agent には main-only の `workflow_replay` ツールがあります:
 
 リプレイしきい値は意図的に遅延させています。低頻度の計画が LDW の組み立てコストを払うことはありません。計画はしきい値（既定 3）に達した時点で現在の TaskFlow flow からコンパイルされ、skill review が事前にコンパイルするわけではありません。
 
+`plan_key` は LDW では**タスク目標を考慮**します。リプレイ/コンパイル key は TaskFlow flow の `state.description` を計画 identity に混ぜます。同じ plan ファイルを共有する 2 つのタスクは、それぞれ別のリプレイ回数・journal・コンパイル済みスクリプトを持ちます。description が空なら従来のパス key のままです。知識ストア（handoff tree、skill review）はパスだけの identity を使い続けます——目標による分離は LDW のみです。古いパス key のスクリプトとカウンタはそのまま残り、無視されます。削除して構いません。
+
 `variant_input` は現在のタスクの具体入力です。各 step の prompt に入るため journal key にも入り、同じ計画でも変体が違えば古いキャッシュに当たりません。step 接尾辞も `agent_type` の一部です。PTC スクリプトが step 単位だからです。
 
 ## 🧱 コンパイルと成果物

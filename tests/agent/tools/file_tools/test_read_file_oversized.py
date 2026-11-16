@@ -65,9 +65,7 @@ def _read(path, **kwargs) -> dict:
 
 def _lines_file(root, count: int, width: int = 4):
     path = root / "big.log"
-    path.write_text(
-        "".join(f"line{i:0{width}d}\n" for i in range(count)), encoding="utf-8"
-    )
+    path.write_text("".join(f"line{i:0{width}d}\n" for i in range(count)), encoding="utf-8")
     return path
 
 
@@ -253,7 +251,9 @@ def test_a_single_huge_line_is_clipped_and_bounded(project, small_thresholds):
     assert result["total_lines"] == 1
 
 
-def test_the_token_cap_flag_is_set_when_the_budget_ends_the_page(project, small_thresholds, monkeypatch):
+def test_the_token_cap_flag_is_set_when_the_budget_ends_the_page(
+    project, small_thresholds, monkeypatch
+):
     monkeypatch.setattr(read_file_module, "_TOKEN_BUDGET", 50)
     path = project / "wide.log"
     path.write_text("\n".join("y" * 100 for _ in range(10)) + "\n", encoding="utf-8")

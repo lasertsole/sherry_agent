@@ -46,6 +46,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,7 @@ _PROVIDER_ERROR_MARKERS = (
     "readtimeout",
     "timeout",
     "stream stalled",
+    "provider unresponsive",
     "error code: 4",
     "error code: 5",
 )
@@ -537,8 +539,15 @@ def _coding_preset_payload() -> dict[str, Any]:
     return {"skills": sorted(wanted & available)}
 
 
-async def _drive(session_id: str, prompt: str) -> dict[str, Any]:
-    """One turn, resuming past any HITL question with a canned directive."""
+async def _drive(
+    session_id: str, prompt: str, progress: Callable[[dict[str, Any]], None] | None = None
+) -> dict[str, Any]:
+    """One turn, resuming past any HITL question with a canned directive.
+
+    ``progress`` receives a COPY of the live counter state after each frame.
+    The DeepSWE worker uses it to persist a partial result, so a hard timeout
+    still reports tool_calls/text instead of zeros.
+    """
     from agent.state_port import read_interrupt
     from pub.types.message import MultiModalMessage
     from server.service.messages import async_generate, resume_agent
@@ -552,6 +561,13 @@ async def _drive(session_id: str, prompt: str) -> dict[str, Any]:
         "error": "",
     }
 
+    def _emit() -> None:
+        if progress is not None:
+            try:
+                progress(dict(state))
+            except Exception:  # noqa: BLE001 - a progress sink must not break the turn
+                return
+
     async def consume(stream: Any) -> None:
         async for frame in stream:
             data = json.loads(frame) if isinstance(frame, str) else frame
@@ -562,6 +578,7 @@ async def _drive(session_id: str, prompt: str) -> dict[str, Any]:
                 state["tool_calls"] += 1
             elif kind == "text":
                 state["text"] += str(data.get("content") or "")
+            _emit()
 
     try:
         await consume(async_generate(session_id, MultiModalMessage(text=prompt), is_stream=True))
@@ -717,10 +734,17 @@ def _publish(report: dict[str, Any], results_dir: Path, *, update_baseline: bool
             print(f"[evals] baseline: {_delta(baseline, aggregate)}", flush=True)
 
     print(f"\n[evals] coding_capability aggregate: {aggregate}", flush=True)
-    print(
-        f"[evals] persona check: {report['persona']['forbidden_markers_found'] or 'clean'}",
-        flush=True,
-    )
+    persona = report["persona"]
+    markers = persona.get("forbidden_markers_found") or []
+    if persona.get("markers_expected"):
+        print(
+            f"[evals] persona check: expected persona markers present ({markers or 'none'})",
+            flush=True,
+        )
+    elif markers:
+        print(f"[evals] persona check: LEAKED live-persona markers {markers}", flush=True)
+    else:
+        print("[evals] persona check: clean", flush=True)
     print(f"[evals] isolation: {report['isolation']}", flush=True)
     print(f"[evals] report: {results_dir}", flush=True)
 

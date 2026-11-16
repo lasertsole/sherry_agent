@@ -23,6 +23,8 @@ Why it exists
 
 from __future__ import annotations
 
+from typing import Any
+
 import openai
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
@@ -129,4 +131,41 @@ class ReasoningDeepSeekChat(ChatDeepSeek):
         return _inject_reasoning_content(self, input_, payload)
 
 
-__all__ = ["ReasoningChatOpenAI", "ReasoningDeepSeekChat"]
+def build_reasoning_aware_chat_model(config: dict[str, Any], *, provider: str | None) -> Any:
+    """Build an OpenAI-compatible client with the provider's replay contract.
+
+    This is the auxiliary/per-role twin of the main model's factory: a child
+    agent often runs on ``AUXILIARY_LLM_*`` or a per-role family, and both
+    clients lose the provider's reasoning contract when built generically.
+
+    * DeepSeek MUST use :class:`ReasoningDeepSeekChat` on every family:
+      ``ChatDeepSeek`` extracts ``reasoning_content`` but omits it from the
+      next request, so a thinking-mode tool-call replay ends in
+      ``400 ... must be passed back``.
+    * GLM (Zhipu) behind the ``openai`` provider MUST use
+      :class:`ReasoningChatOpenAI`: vanilla ``ChatOpenAI`` drops
+      ``delta.reasoning_content`` while streaming.
+
+    Every other family keeps ``init_chat_model``, so provider dispatch is
+    unchanged.
+    """
+    effective_provider = str(provider or config.get("model_provider") or "").strip()
+    kwargs = {key: value for key, value in config.items() if key != "model_provider"}
+    if effective_provider == "deepseek":
+        return ReasoningDeepSeekChat(**kwargs)
+    if effective_provider == "openai":
+        from models.LLMs.reasoning_payload import is_zhipu_reasoning_model
+
+        model_name = str(config.get("model") or "")
+        if model_name and is_zhipu_reasoning_model(model_name):
+            return ReasoningChatOpenAI(**kwargs)
+    from langchain.chat_models import init_chat_model
+
+    return init_chat_model(**config)
+
+
+__all__ = [
+    "ReasoningChatOpenAI",
+    "ReasoningDeepSeekChat",
+    "build_reasoning_aware_chat_model",
+]

@@ -17,6 +17,7 @@ from models.LLMs.reasoning_openai import (
     ReasoningChatOpenAI,
     ReasoningDeepSeekChat,
     _inject_reasoning_content,
+    build_reasoning_aware_chat_model,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -82,3 +83,84 @@ def test_a_system_message_does_not_shift_the_mapping():
 
     assert payload["messages"][0]["role"] == "system"
     assert payload["messages"][1]["reasoning_content"] == "why"
+
+
+def test_the_factory_routes_deepseek_through_the_replay_client(monkeypatch):
+    """Auxiliary/family builders share this helper; DeepSeek must never get
+    the plain ChatDeepSeek client (it drops reasoning_content on replay)."""
+    from models.LLMs import reasoning_openai
+
+    captured: dict = {}
+
+    class _FakeDeepSeek:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(reasoning_openai, "ReasoningDeepSeekChat", _FakeDeepSeek)
+
+    model = build_reasoning_aware_chat_model(
+        {"model_provider": "deepseek", "model": "deepseek-chat", "api_key": "k"},
+        provider="deepseek",
+    )
+
+    assert isinstance(model, _FakeDeepSeek)
+    assert captured["model"] == "deepseek-chat"
+    assert "model_provider" not in captured
+
+
+def test_the_factory_routes_glm_through_the_streaming_reasoning_client(monkeypatch):
+    """Auxiliary/family families can run GLM too; vanilla ChatOpenAI drops the
+    streamed ``reasoning_content`` delta."""
+    from models.LLMs import reasoning_openai
+
+    captured: dict = {}
+
+    class _FakeGlm:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(reasoning_openai, "ReasoningChatOpenAI", _FakeGlm)
+
+    model = build_reasoning_aware_chat_model(
+        {"model_provider": "openai", "model": "glm-4.6", "api_key": "k"},
+        provider="openai",
+    )
+
+    assert isinstance(model, _FakeGlm)
+    assert captured["model"] == "glm-4.6"
+    assert "model_provider" not in captured
+
+
+def test_the_factory_reads_the_provider_from_the_config_when_omitted(monkeypatch):
+    from models.LLMs import reasoning_openai
+
+    captured: dict = {}
+
+    class _FakeDeepSeek:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(reasoning_openai, "ReasoningDeepSeekChat", _FakeDeepSeek)
+
+    model = build_reasoning_aware_chat_model(
+        {"model_provider": "deepseek", "model": "deepseek-reasoner"},
+        provider=None,
+    )
+
+    assert isinstance(model, _FakeDeepSeek)
+    assert captured["model"] == "deepseek-reasoner"
+
+
+def test_reset_async_client_rebuilds_the_provider_client():
+    """A timed-out keep-alive connection must not be reused by the retry."""
+    import asyncio
+
+    from models.LLMs.reasoning_normalizer import NormalizingChatModel
+
+    model = NormalizingChatModel(
+        inner=ReasoningDeepSeekChat(model="deepseek-chat", api_key="test-key")
+    )
+    old_client = model.inner.root_async_client
+
+    assert asyncio.run(model.reset_async_client()) is True
+    assert model.inner.root_async_client is not old_client
