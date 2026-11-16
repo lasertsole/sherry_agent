@@ -28,7 +28,6 @@ SUITES: dict[str, str] = {
     # External benchmarks: each runs in its own process (they repoint
     # SHERRY_WORKSPACE_DIR); the container suites need Docker, the tool/agent
     # benchmarks need their own official keys — without them they skip loudly.
-    "swebench": "evals.swebench.suite",
     "deepswe": "evals.deepswe.suite",
     "terminal_bench": "evals.terminal_bench.suite",
     "agentbench": "evals.agentbench.suite",

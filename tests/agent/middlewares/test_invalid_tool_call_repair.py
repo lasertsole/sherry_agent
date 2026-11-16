@@ -2,8 +2,7 @@
 
 Covers:
   * ``repair_tool_args`` — the conservative syntax-only repair: both real
-    samples from the SWE-bench HARD run (``evals/swebench/RESULTS.md``,
-    run 20261017_003529), trailing commas, and every refusal rule
+    samples from an eval run (20261017_003529), trailing commas, and every refusal rule
     (ambiguous middle value, key-like tokens inside the value, JSON-token
     starts, non-mappings, non-strings).
   * ``InvalidToolCallRepairMiddleware`` — passthrough on clean messages,

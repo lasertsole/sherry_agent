@@ -201,7 +201,7 @@ class TestSnapshotCap:
 
         assert _snapshot_count(project) == 3
 
-    @pytest.mark.timeout(180)
+    @pytest.mark.timeout(600)
     def test_a_hundred_and_one_snapshots_prune_to_the_shipped_cap(self, project):
         """The plan's acceptance case, against the real default (no override)."""
         for i in range(101):

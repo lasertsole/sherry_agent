@@ -659,7 +659,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 抢救**参数无法解析为 JSON 的工具调用**。`langchain_core` 的 `default_tool_parser`
 把这类调用放进 `AIMessage.invalid_tool_calls`（`args` 为原始字符串、`error=None`），
 `tool_calls` 保持为空——而 agent 循环只按 `tool_calls` 路由，于是「唯一调用是无效调用」
-的消息看起来就像无调用的终答，**回合静默结束**（SWE-bench 运行 `20261017_003529`：
+的消息看起来就像无调用的终答，**回合静默结束**（一次评测运行（20261017_003529）：
 模型的 `terminal` 调用把 shell 命令漏了引号，回合在 14.7 秒后结束、零改动，而模型自己
 的正文还写着「接下来我要继续查」）。
 

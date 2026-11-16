@@ -386,7 +386,7 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
     # inherit the half-edited tree or the poisoned transcript of the try before.
     repo = results_dir / "repos" / task.id
     base_sha = tasks.build_repo(task, repo)
-    from evals.swebench.instances import ensure_repo_excludes
+    from evals.repo_utils import ensure_repo_excludes
 
     ensure_repo_excludes(repo, ".sherry/")
     session_id = f"evals-coding-{task.id}-{uuid.uuid4().hex[:8]}"
@@ -394,7 +394,7 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
 
     from agent.tools.pub_base import shadow_git
     from config.features import SHADOW_GIT
-    from evals.swebench import teardown
+    from evals import teardown
 
     previous_store = SHADOW_GIT["store_dir"]
     SHADOW_GIT["store_dir"] = str(results_dir / "shadow")

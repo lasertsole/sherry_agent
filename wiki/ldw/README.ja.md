@@ -62,7 +62,7 @@ LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を
 - leaf は実際の child 契約を再利用します。`_assemble_child_tools` がロール allow-list を適用し、code intelligence、ast-grep、executor 専用 PTC を注入します。session id は runnable config を通り、共有グラフへ焼き込まれません。
 - leaf のモデルはロール tier と `step_model` 上書きに従います。schema 付き leaf は thinking を強制 off にし、child agent の構造化出力の最終段と揃えます。
 - journal miss のとき executor leaf はまず `run_ptc` でその step の PTC スクリプトを実行できます。PTC 失敗は `[PTC Pre-run Progress]` を追加して ReAct へ続行します。PTC の schema miss は失敗であり、成功にはなりません。
-- `src/data/workflow_runs.db` の `SqliteWorkflowStore` がプロセス間再開を支えます。同じ prompt / agent_type / model / schema の再リプレイは journal 結果を返し、leaf 呼び出しはゼロです。各結果は `journal_hits` と `leaf_calls` を報告します。
+- `SRC_DIR/data/workflow_runs.db` の `SqliteWorkflowStore` がプロセス間再開を支えます。同じ prompt / agent_type / model / schema の再リプレイは journal 結果を返し、leaf 呼び出しはゼロです。各結果は `journal_hits` と `leaf_calls` を報告します。
 - 計画ごとのロックが同時リプレイを直列化します。`LDW["real_replay_timeout_s"]` は 1 回の LDW 実行を制限し、タイムアウトはハングではなく失敗・降格候補になります。
 
 ## 🪜 自動 TaskFlow 降格
@@ -86,7 +86,7 @@ step 失敗時は `repair_extraction` が replay flow の child handoff を読�
 | `LDW["min_replays"]` | `3` | 計画が TaskFlow を離れて LDW スクリプトをコンパイルするまでのリプレイ回数 |
 | `extraction.flow_extraction_enabled`（プリセットキャラクター → 詳細） | `True` | ユーザー向けコンパイルスイッチ（グローバル専用）。オフの間は `action=compile`、未作成スクリプトのコンパイル、修復時の再コンパイルを拒否。既存スクリプトの再生は可能 |
 | `LDW["script_max_bytes"]` | `65536` | 1 つの `ldw__<plan_key>.py` の上限 |
-| `LDW["journal_path"]` | `src/data/workflow_runs.db` | プロセス間 journal の位置 |
+| `LDW["journal_path"]` | `data/workflow_runs.db` | プロセス間 journal の位置 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 失敗後に TaskFlow replay flow を作成・駆動する |
 | `LDW["repair_enabled"]` | `True` | 降格失敗後に repair 抽出 / 再コンパイルを行う |
 | `LDW["real_replay_timeout_s"]` | `900.0` | 1 回の LDW 実行の実時間上限 |

@@ -9,7 +9,7 @@ a score is not a capability percentage.
 
 | Suite | What it measures | Entry point |
 | :--- | :--- | :--- |
-| [SWE-Bench](SWE-Bench/README.md) | Real repository issues judged by their own FAIL_TO_PASS / PASS_TO_PASS sets | `evals/swebench/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | External coding tasks with hidden test patches and the benchmark's own grader; `--local` is the Docker-free host mode | `evals/deepswe/suite.py` |
 | Coding capability | Self-designed coding tasks and the shipped prompt arms | `evals/coding_capability/` |
 | External benches | Bridged coding benchmarks and harness adapters | `evals/` |
 
@@ -29,18 +29,16 @@ a score is not a capability percentage.
 ## Running
 
 ```bash
-# SWE-Bench HARD slice, with the current eval arm selected by environment:
-SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
+# DeepSWE default slice in the Docker-free host mode:
+uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
-Each run writes `evals/results/swebench/<run_id>/` with `eval_report.json`, the
-per-instance diffs and a `sandbox/` tree. The directory is gitignored; this wiki
-records the stable conclusions.
+Each run writes `evals/results/deepswe-local/<run_id>/` with `eval_report.json`
+and the per-task diffs. The directory is gitignored; this wiki records the
+stable conclusions. Docker-backed runs use the benchmark's images and are a
+different path from local mode.
 
 ## Results
 
-- [SWE-Bench](SWE-Bench/README.md) — failure history, the no-edit gate
-  post-mortem, why the read-before-write license did not stop the first soft-gate
-  patch loop, and the 8/16 `DelegationPressureGate` result.
+- [DeepSWE](../../evals/deepswe/README.md) — local-mode results and failure
+  analysis in `evals/deepswe/RESULTS.md`.

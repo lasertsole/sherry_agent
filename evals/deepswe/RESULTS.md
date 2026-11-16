@@ -151,10 +151,3 @@ JSON 读取入口；不是 harness 错误也不是 P2P 回归。
 
 ---
 
-## 2026-11-03 — 未运行
-
-- 按“SWE-bench HARD 全通过才跑 DeepSWE”的约定跳过。
-- 2026-11-03 的 SWE-bench HARD 重跑结果为 **0/2**（见
-  `evals/swebench/RESULTS.md` 的 `20261103_010944`）：Django 只放宽了
-  `on_conflict` 条件，未真正生成 `DO UPDATE` 路径；Sympy 在 90 次模型调用预算内
-  没有产出 diff。

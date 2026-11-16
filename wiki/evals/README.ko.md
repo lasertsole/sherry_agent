@@ -8,7 +8,7 @@
 
 | 스위트 | 측정 대상 | 진입점 |
 | :--- | :--- | :--- |
-| [SWE-Bench](SWE-Bench/README.md) | 실제 저장소 issue를 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS로 판정 | `evals/swebench/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | 숨겨진 테스트 패치와 benchmark 자체 grader를 쓰는 외부 코딩 과제. `--local`은 Docker 없는 호스트 모드 | `evals/deepswe/suite.py` |
 | 코딩 능력 | 자체 설계한 코딩 과제와 내장 프롬프트 arm | `evals/coding_capability/` |
 | 외부 벤치 | 브리지된 코딩 벤치마크와 harness 어댑터 | `evals/` |
 
@@ -27,17 +27,15 @@
 ## 실행
 
 ```bash
-# SWE-Bench HARD 슬라이스, 환경 변수로 현재 eval arm 선택:
-SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
+# DeepSWE 기본 슬라이스를 Docker 없는 호스트 모드로 실행:
+uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
-각 실행은 `evals/results/swebench/<run_id>/`에 `eval_report.json`, 인스턴스별 diff,
-`sandbox/`를 씁니다. 디렉터리는 gitignore되며, 이 wiki에는 안정된 결론만 남깁니다.
+각 실행은 `evals/results/deepswe-local/<run_id>/`에 `eval_report.json`과
+작업별 diff를 씁니다. 디렉터리는 gitignore되며, 이 wiki에는 안정된 결론만 남깁니다.
+Docker 모드는 benchmark 이미지를 사용하므로 로컬 모드와 다른 경로입니다.
 
 ## 결과
 
-- [SWE-Bench](SWE-Bench/README.md) — 실패 이력, no-edit 게이트 사후 분석,
-  read-before-write 라이선스가 첫 소프트 게이트의 patch 루프를 막지 못한 이유,
-  8/16 `DelegationPressureGate` 결과.
+- [DeepSWE](../../evals/deepswe/README.md) — 로컬 모드 결과와 실패 분석은
+  `evals/deepswe/RESULTS.md`.

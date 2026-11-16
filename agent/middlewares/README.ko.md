@@ -668,7 +668,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 `default_tool_parser`는 그런 호출을 `AIMessage.invalid_tool_calls`에 넣고(`args`는 원본
 문자열, `error=None`) `tool_calls`는 비워 둡니다——에이전트 루프는 `tool_calls`만 보고
 라우팅하므로, "유일한 호출이 무효"인 메시지는 호출 없는 최종 답변으로 보여 **턴이 조용히
-끝납니다**(SWE-bench 실행 `20261017_003529`: 모델의 `terminal` 호출은 셸 명령에 따옴표가
+끝납니다**(평가 실행 `20261017_003529`: 모델의 `terminal` 호출은 셸 명령에 따옴표가
 빠져 있었고, 턴은 14.7초 만에 종료되고 편집은 0건이었습니다. 그런데도 모델 자신의 본문은
 "계속 확인하겠다"고 말하고 있었습니다).
 

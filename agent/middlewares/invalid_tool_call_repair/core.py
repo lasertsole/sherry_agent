@@ -1,6 +1,6 @@
 """InvalidToolCallRepairMiddleware — salvage tool calls whose JSON args don't parse.
 
-Why this exists (SWE-bench run ``20261017_003529``): the model emitted a
+Why this exists (an eval run, ``20261017_003529``): the model emitted a
 ``terminal`` call whose ``arguments`` string was not valid JSON
 (``{"commands": cd $(pwd) && git log --oneline -3}`` — the shell command was
 never quoted). ``langchain_core``'s ``default_tool_parser`` filed the call into

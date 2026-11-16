@@ -4,7 +4,7 @@ Redirects every persistence backend of the agent runtime into a per-run
 directory, so eval runs never touch the real repo DBs or the real workspace.
 
 Spawned children keep the FULL tool surface by default: agentic coding evals
-must be able to delegate implementation to a child, and the official SWE-bench
+must be able to delegate implementation to a child, and the official external
 harness imposes no tool interface at all. ``restrict_child_tools=True`` is the
 opt-in isolation mode for suites that must not let a child mutate anything.
 

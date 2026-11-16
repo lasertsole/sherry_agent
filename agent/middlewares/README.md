@@ -659,7 +659,7 @@ Salvages **tool calls whose arguments failed to parse as JSON**. `langchain_core
 `default_tool_parser` files such a call into `AIMessage.invalid_tool_calls` (the raw
 string as `args`, `error=None`) and leaves `tool_calls` empty — and the agent loop
 routes on `tool_calls` only, so a message whose ONLY call is invalid looks like a
-call-less final answer and **the turn ends silently** (SWE-bench run `20261017_003529`:
+call-less final answer and **the turn ends silently** (an eval run (20261017_003529):
 the model's `terminal` call had an unquoted shell command, the turn ended after 14.7 s
 with zero edits, and the model's own text said it would continue).
 

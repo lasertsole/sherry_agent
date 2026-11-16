@@ -7,7 +7,7 @@
 
 | 套件 | 测量内容 | 入口 |
 | :--- | :--- | :--- |
-| [SWE-Bench](SWE-Bench/README.md) | 真实仓库 issue，由实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定 | `evals/swebench/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | 外部编码任务，隐藏测试补丁 + benchmark 自带 grader；`--local` 是无 Docker 的宿主机模式 | `evals/deepswe/suite.py` |
 | 编码能力 | 自建编码任务与内置提示词 arm | `evals/coding_capability/` |
 | 外部基准 | 桥接的编码基准与 harness 适配器 | `evals/` |
 
@@ -22,17 +22,15 @@
 ## 运行
 
 ```bash
-# SWE-Bench HARD 切片，通过环境变量选择当前评测 arm：
-SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
+# DeepSWE 默认切片，无 Docker 宿主机模式：
+uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
-每次运行写入 `evals/results/swebench/<run_id>/`，包含 `eval_report.json`、各实例
-diff 和 `sandbox/`。该目录被 gitignore；本 wiki 记录稳定的结论。
+每次运行写入 `evals/results/deepswe-local/<run_id>/`，包含 `eval_report.json`
+和各任务 diff。该目录被 gitignore；本 wiki 记录稳定的结论。Docker 模式使用
+benchmark 镜像，与本地模式不是同一条路径。
 
 ## 结果
 
-- [SWE-Bench](SWE-Bench/README.md) —— 失败历史、no-edit 门复盘、为什么
-  read-before-write 许可证没拦住首轮软门 patch 循环，以及 8/16
-  `DelegationPressureGate` 的结果。
+- [DeepSWE](../../evals/deepswe/README.md) —— 本地模式结果与失败分析在
+  `evals/deepswe/RESULTS.md`。

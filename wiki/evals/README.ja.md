@@ -9,7 +9,7 @@
 
 | スイート | 測るもの | エントリ |
 | :--- | :--- | :--- |
-| [SWE-Bench](SWE-Bench/README.md) | 実際のリポジトリ issue を、そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS で判定 | `evals/swebench/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | 隠しテストパッチと benchmark 自身の grader を使う外部コーディング課題。`--local` は Docker 不要のホストモード | `evals/deepswe/suite.py` |
 | コーディング能力 | 自作のコーディング課題と同梱プロンプト arm | `evals/coding_capability/` |
 | 外部ベンチ | ブリッジされたコーディングベンチと harness アダプタ | `evals/` |
 
@@ -29,18 +29,16 @@
 ## 実行
 
 ```bash
-# SWE-Bench HARD スライス、環境変数で現在の eval arm を選択：
-SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
+# DeepSWE の既定スライスを Docker なしのホストモードで実行：
+uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
-各実行は `evals/results/swebench/<run_id>/` に `eval_report.json`、インスタンスごとの
-diff、`sandbox/` を書き出します。ディレクトリは gitignore され、この wiki には
-安定した結論だけを残します。
+各実行は `evals/results/deepswe-local/<run_id>/` に `eval_report.json` と
+タスクごとの diff を書き出します。ディレクトリは gitignore され、この wiki には
+安定した結論だけを残します。Docker モードは benchmark のイメージを使うため、
+ローカルモードとは別の経路です。
 
 ## 結果
 
-- [SWE-Bench](SWE-Bench/README.md) —— 失敗履歴、no-edit ゲートの事後分析、
-  read-before-write ライセンスが最初のソフトゲートの patch ループを止めなかった理由、
-  8/16 `DelegationPressureGate` の結果。
+- [DeepSWE](../../evals/deepswe/README.md) —— ローカルモードの結果と失敗分析は
+  `evals/deepswe/RESULTS.md`。

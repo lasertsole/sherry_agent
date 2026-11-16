@@ -1,4 +1,4 @@
-"""SWE-bench teardown: quiesce the writers before the harness touches the tree."""
+"""Eval teardown: quiesce the writers before the harness touches the tree."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from evals.swebench import teardown
+from evals import teardown
 
 pytestmark = [pytest.mark.unit]
 

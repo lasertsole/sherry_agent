@@ -45,7 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: The benchmark clones live OUTSIDE the repository: a 500 MB task tree inside
 #: ``evals/results`` would slow every repo-wide ripgrep/gate run (the same reason
-#: the SWE-bench suite deletes its per-instance venvs).
+#: an external suite deletes its per-instance venvs).
 CACHE_ROOT = Path(os.environ.get("SHERRY_EVAL_CACHE", str(Path.home() / ".cache" / "sherry_evals")))
 
 #: Tools removed from the main agent for a container-backed arm. ``python_repl``

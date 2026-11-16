@@ -295,7 +295,7 @@ SPOT_DEFAULTS = [
     (PTC, "ptc_compile_max_attempts", 2),
     (LDW, "min_replays", 3),
     (LDW, "script_max_bytes", 65_536),
-    (LDW, "journal_path", "src/data/workflow_runs.db"),
+    (LDW, "journal_path", "data/workflow_runs.db"),
     (IMAGE_GEN, "max_n", 10),
     (IMAGE_GEN, "default_size", "1024x1024"),
     (IMAGE_GEN, "default_quality", ""),
