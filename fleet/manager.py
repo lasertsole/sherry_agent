@@ -2,7 +2,8 @@
 
 Each cell is a normal ``python -m server`` process with its own
 ``SHERRY_HOME``/``SHERRY_PROJECT_DIR`` and a loopback port. The manager owns
-only the lifecycle (start/health/stop/remove); the Ingress owns auth/routing.
+the lifecycle (create/start/health/stop/remove), supervision, log rotation and
+backup/restore; the Ingress owns auth and routing.
 """
 
 from __future__ import annotations

@@ -14,8 +14,8 @@ directory per tenant:
    and therefore shares `ROOT_DIR/.sherry/coordination.db`.
 
 Setting `SHERRY_PROJECT_DIR` (or `project_dir` in `sherry.jsonc`) is therefore a
-deployment requirement, not an optional convenience. No code change is needed
-for this plan; the data model is already correct.
+deployment requirement, not an optional convenience. No code change is needed:
+the data model is already correct.
 
 ## Fleet cell layout
 
@@ -50,13 +50,17 @@ The container is created with:
 ## Bare-metal process layout
 
 ```bash
-SHERRY_HOME=/data/cells/<user_id>
-SHERRY_PROJECT_DIR=/data/cells/<user_id>/workspace
-SHERRY_GATEWAY_TOKEN=<per-user-token>
+SHERRY_HOME=<fleet_root>/<tenant>
+SHERRY_PROJECT_DIR=<fleet_root>/<tenant>/workspace
+SHERRY_GATEWAY_TOKEN=<per-cell-token>
+SHERRY_DAEMON_HOME=<fleet_root>/daemons
+SHERRY_DAEMON_CLIENT_ONLY=1
 ```
 
 The same `sherry.jsonc` alternative applies at
-`/data/cells/<user_id>/sherry.jsonc`.
+`<fleet_root>/<tenant>/sherry.jsonc`. `python -m fleet create` writes that
+layout for you; `SHERRY_DAEMON_HOME` and `SHERRY_DAEMON_CLIENT_ONLY` make the
+cell join the host's shared model daemons instead of spawning its own.
 
 ## Verification
 
@@ -77,8 +81,7 @@ test ! -e "<sherry-checkout>/.sherry/coordination.db"
 ## Deliberately unchanged
 
 - `coordination_db_path()` keeps its per-project semantics.
-- `resolve_default_project_dir()` keeps the `ROOT_DIR` fallback; the plan
-  surfaces the deployment requirement instead of changing the historical
-  behaviour.
+- `resolve_default_project_dir()` keeps the `ROOT_DIR` fallback; the deployment
+  requirement is surfaced instead of changing the historical behaviour.
 - `.sherry/` is created lazily on the first message of a session-bound project
   directory, never merely because the process started.

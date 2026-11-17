@@ -161,7 +161,7 @@ def _static_path(config: IngressConfig, path: str) -> bool:
 
 @web.middleware
 async def auth_middleware(request: web.Request, handler: Any) -> web.StreamResponse:
-    """Require an Ingress session for every non-public route."""
+    """Require a session for API routes; the SPA shell and static assets stay public."""
     path = request.path
     if path == "/auth/token":
         return _json(404, {"success": False, "error": "not_found"})

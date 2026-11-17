@@ -13,7 +13,7 @@ from config import ROOT_DIR, SRC_DIR
 
 @dataclass(frozen=True)
 class IngressConfig:
-    """Runtime settings; every value has an environment override."""
+    """Runtime settings; every deployment-critical value has an environment override."""
 
     host: str
     port: int

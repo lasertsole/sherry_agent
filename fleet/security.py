@@ -147,7 +147,6 @@ def origin_allowed(request: web.Request, config: IngressConfig) -> bool:
 
 
 def csrf_ok(request: web.Request, config: IngressConfig) -> bool:
-    """Check Origin/Sec-Fetch-Site for an unsafe request."""
     """Browser CSRF gate for unsafe methods; script clients (no Origin) pass."""
     if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
         return True

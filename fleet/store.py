@@ -1,7 +1,8 @@
 """Central account and cell registry for the Ingress.
 
-The Ingress is the only process that knows usernames and tenants; each cell has
-its own ``SHERRY_HOME`` and keeps its single-user auth disabled behind loopback.
+The Ingress is the only process that knows usernames and tenants. Each cell has
+its own ``SHERRY_HOME`` and is reached over loopback, so the cell's single-user
+auth is not in the browser request path.
 """
 
 from __future__ import annotations

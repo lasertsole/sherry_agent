@@ -1017,7 +1017,9 @@ sockets), so a cell's `/auth/token` never reaches the browser. The SPA's
 cell-shaped flags plus `username_required`, login takes `{username,password}`
 and returns `expires_in`, `/auth/me` heals an expired access cookie from the
 refresh cookie, and `/auth/account` changes a password while enable/disable
-stays administrator-only.
+stays administrator-only. Failed logins are limited per `(client, username)`;
+`SHERRY_INGRESS_TLS_CERT`/`_KEY` make the Ingress terminate TLS and mark the
+cookies `Secure`.
 
 Cells: `create` builds `<fleet_root>/<tenant>/{workspace,logs,sherry.jsonc}` and
 allocates 20100-20299 under an in-process lock plus a fleet-root `flock` (the
@@ -1044,8 +1046,8 @@ but never spawn or atexit-kill one. Local-chat/vision need explicit
 `SHERRY_FLEET_AUXILIARY_MODEL_PATH` / `SHERRY_FLEET_VISION_MODEL_PATH` (+
 `_MMPROJ_PATH`) and get `SHERRY_LOCAL_LLM_DAEMON_PORT` from their spec.
 
-Tests: `tests/fleet/` (store, ingress, manager, daemons, TLS, a real
-spawned-cell end-to-end). Plan: `TODO/计划_P2_bare_metal多进程多租户_20261116.md`.
+Docs: `wiki/fleet/` (four languages). Tests: `tests/fleet/` (store, ingress,
+manager, daemons, TLS, a real spawned-cell end-to-end).
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 
