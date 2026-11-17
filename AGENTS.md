@@ -43,7 +43,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
 | `config/features/`                   | Per-object feature config (91 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
-| `fleet/`                             | Bare-metal multi-tenant Ingress + Fleet process manager: central users/JWT cookies (SPA auth surface), cell registry, loopback HTTP/WS proxy + SPA fallback, per-cell supervisor (restart/port lock/log rotation/ulimit), backup/restore, shared daemon owner (`python -m fleet`) | `fleet/ingress.py` / `fleet/manager.py`              |
+| `fleet/`                             | Multi-tenant Ingress + Fleet cell managers (bare-metal process and Docker/Podman container backends): central users/JWT cookies (SPA auth surface), cell registry, loopback HTTP/WS proxy + SPA fallback, per-cell supervisor (restart/port lock/log rotation/ulimit or cgroup limits), backup/restore, shared daemon owner (`python -m fleet`) | `fleet/ingress.py` / `fleet/manager.py` / `fleet/container_manager.py` |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -1004,7 +1004,7 @@ are propagated so the child resolves the same writable home.
   where the optimization wants them. `tests/perf/test_boot_import_set.py`
   guards the absent set. Wiki: `wiki/local-model-daemons/`.
 
-## Bare-Metal Fleet (`fleet/`)
+## Fleet (`fleet/`) — process and container backends
 
 One Sherry process per tenant; several accounts may share it. `python -m fleet serve` is the Ingress
 (`SHERRY_INGRESS_PORT`, default 8081); it owns the browser session, the central
@@ -1062,8 +1062,39 @@ but never spawn or atexit-kill one. Local-chat/vision need explicit
 `SHERRY_FLEET_AUXILIARY_MODEL_PATH` / `SHERRY_FLEET_VISION_MODEL_PATH` (+
 `_MMPROJ_PATH`) and get `SHERRY_LOCAL_LLM_DAEMON_PORT` from their spec.
 
+**Container backend** (`fleet/container.py` + `fleet/container_manager.py`;
+`create --backend container --image <tag>`): the same tenant tree and Ingress
+route, wrapped in one Docker/Podman container per tenant — `--init`,
+`--cap-drop=ALL`, `--security-opt no-new-privileges`, `--memory`/`--cpus`/
+`--pids-limit` from `SHERRY_FLEET_CONTAINER_MEMORY`/`_CPUS`/`_PIDS`,
+`--volume <cell>:/app/data`, `--add-host host.docker.internal:host-gateway`, and
+`sherry.fleet.{managed,tenant,attempt,image}` labels. The inputs ride a 0600 env
+file (`SHERRY_HOME=/app/data`, `API_PORT`, the gateway token,
+`SHERRY_AUTH_ENABLED=false`, `PUBLIC_BASE_URL`, `LOCAL_DAEMON_HOST`) that is
+deleted as soon as `create` consumes it. `cells.runtime/image/container_name`
+(added by an in-place `ALTER TABLE` migration) decide which manager a later
+command uses, and every lifecycle command resolves the backend from that column
+instead of asking again. Readiness is `/health` PLUS the attempt label, so a
+container the engine restarted under an old attempt cannot answer for the new
+one. `SHERRY_FLEET_CONTAINER_NETWORK=publish` (the Linux/macOS default) gives
+each tenant its own bridge and a `127.0.0.1:<port>` binding; `host` shares the
+runtime's namespace and is what `auto` picks on a Windows host, because the
+WSL2 kernel ships without nftables and netavark cannot apply the publish rules.
+A cell that restores an ENABLED login would answer 401 to every Ingress request
+(the peer is the bridge gateway, not loopback), so `start` checks
+`/auth/status` and flips `auth_settings.enabled` at rest in the cell's
+`src/data/auth.db` (the 2 s state cache is given time to expire), failing loudly
+when the login survives. `upgrade` recreates against the same data tree and
+rolls back to the previous image when the new one fails its probe; `doctor`
+audits existence/state, the capability drop (podman reports the expanded set,
+docker reports `ALL` — the check is the engine-invariant core subset),
+`no-new-privileges`, the three limits, the labels, the publish binding or host
+mode, a single-container network, the 0700 data directory and `/health`.
+
 Docs: `wiki/fleet/` (four languages). Tests: `tests/fleet/` (store, ingress,
-manager, daemons, TLS, a real spawned-cell end-to-end).
+manager, daemons, TLS, a real spawned-cell end-to-end, a recording fake runtime
+for the container backend, and an opt-in real-engine `create` smoke test gated
+by `SHERRY_FLEET_CONTAINER_E2E=1`).
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 

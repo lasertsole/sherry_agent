@@ -46,10 +46,35 @@ class IngressConfig:
     cell_nofile: int = 0
     #: Trust ``X-Forwarded-For`` for the login limiter key (only behind a proxy).
     trust_forwarded: bool = False
+    #: ``--backend container`` settings. ``container_runtime`` is ``auto``
+    #: (docker, then podman), or one binary name. ``container_network`` is
+    #: ``auto`` (publish on a POSIX host, host networking on a Windows host,
+    #: whose runtime lives in a VM and cannot apply netavark's port rules),
+    #: ``publish`` (isolated bridge + ``127.0.0.1:<port>`` publish) or ``host``
+    #: (share the runtime's network namespace; the WSL2/nftables fallback).
+    container_runtime: str = "auto"
+    container_image: str = "sherry-agent:latest"
+    container_network: str = "auto"
+    container_memory: str = "4g"
+    container_cpus: str = "2"
+    container_pids_limit: int = 1024
+    #: Image pull policy before a create/upgrade: ``missing`` / ``always`` / ``never``.
+    container_pull: str = "missing"
 
 
 def _flag(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _choice(
+    source: Mapping[str, str],
+    name: str,
+    default: str,
+    allowed: set[str],
+) -> str:
+    """Read one enumerated setting, ignoring an unknown value (never traps boot)."""
+    value = str(source.get(name, default)).strip().lower() or default
+    return value if value in allowed else default
 
 
 def load_config(env: Mapping[str, str] | None = None) -> IngressConfig:
@@ -112,4 +137,20 @@ def load_config(env: Mapping[str, str] | None = None) -> IngressConfig:
         cell_memory_mb=int(str(source.get("SHERRY_FLEET_CELL_MEMORY_MB", "0")).strip() or "0"),
         cell_nofile=int(str(source.get("SHERRY_FLEET_CELL_NOFILE", "0")).strip() or "0"),
         trust_forwarded=_flag(source.get("SHERRY_INGRESS_TRUST_FORWARDED")),
+        container_runtime=_choice(
+            source, "SHERRY_FLEET_CONTAINER_RUNTIME", "auto", {"auto", "docker", "podman"}
+        ),
+        container_image=str(source.get("SHERRY_FLEET_IMAGE", "sherry-agent:latest")).strip()
+        or "sherry-agent:latest",
+        container_network=_choice(
+            source, "SHERRY_FLEET_CONTAINER_NETWORK", "auto", {"auto", "publish", "host"}
+        ),
+        container_memory=str(source.get("SHERRY_FLEET_CONTAINER_MEMORY", "4g")).strip() or "4g",
+        container_cpus=str(source.get("SHERRY_FLEET_CONTAINER_CPUS", "2")).strip() or "2",
+        container_pids_limit=int(
+            str(source.get("SHERRY_FLEET_CONTAINER_PIDS", "1024")).strip() or "1024"
+        ),
+        container_pull=_choice(
+            source, "SHERRY_FLEET_CONTAINER_PULL", "missing", {"missing", "always", "never"}
+        ),
     )

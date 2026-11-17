@@ -12,9 +12,10 @@ from pathlib import Path
 from loguru import logger
 
 from .config import IngressConfig, load_config
+from .container_manager import FleetContainerManager
 from .daemons import FleetDaemons
 from .ingress import create_app
-from .manager import FleetManager
+from .manager import FleetError, FleetManager
 from .store import FleetStore
 
 
@@ -31,40 +32,85 @@ def _store() -> FleetStore:
     return FleetStore(load_config().db_path)
 
 
-def _manager() -> FleetManager:
+def _manager(
+    backend: str = "process",
+    *,
+    image: str | None = None,
+    network: str | None = None,
+) -> FleetManager:
     config = load_config()
-    return FleetManager(FleetStore(config.db_path), config)
+    store = FleetStore(config.db_path)
+    if backend == "container":
+        return FleetContainerManager(store, config, image=image, network=network)
+    return FleetManager(store, config)
+
+
+async def _manager_for(tenant: str, backend: str | None = None) -> FleetManager:
+    """Pick the manager from the tenant's registered backend (or an override)."""
+    config = load_config()
+    store = FleetStore(config.db_path)
+    await store.init()
+    cell = await store.get_cell(tenant)
+    if cell is None:
+        raise FleetError(f"unknown tenant {tenant!r}")
+    kind = backend or str(cell.get("runtime") or "process")
+    if kind == "container":
+        return FleetContainerManager(store, config)
+    return FleetManager(store, config)
 
 
 async def _create(args: argparse.Namespace) -> None:
-    manager = _manager()
+    manager = _manager(args.backend, image=args.image, network=args.network)
     await manager.store.init()
-    result = await manager.create(
-        args.tenant,
-        port=args.port,
-        start=not args.no_start,
-        seed_config=args.seed_config,
-    )
+    options = {
+        "port": args.port,
+        "start": not args.no_start,
+        "seed_config": args.seed_config,
+    }
+    if args.backend == "container" and args.image:
+        options["image"] = args.image
+    result = await manager.create(args.tenant, **options)
     print(json.dumps(result, ensure_ascii=False))  # noqa: T201
 
 
 async def _start(args: argparse.Namespace) -> None:
-    manager = _manager()
-    await manager.store.init()
+    manager = await _manager_for(args.tenant, args.backend)
     print(json.dumps(await manager.start(args.tenant), ensure_ascii=False))  # noqa: T201
 
 
 async def _stop(args: argparse.Namespace) -> None:
-    manager = _manager()
-    await manager.store.init()
+    manager = await _manager_for(args.tenant, args.backend)
     print(json.dumps(await manager.stop(args.tenant), ensure_ascii=False))  # noqa: T201
 
 
 async def _remove(args: argparse.Namespace) -> None:
-    manager = _manager()
-    await manager.store.init()
+    manager = await _manager_for(args.tenant, args.backend)
     await manager.remove(args.tenant)
     print(f"removed tenant {args.tenant}")  # noqa: T201
+
+
+async def _upgrade(args: argparse.Namespace) -> None:
+    manager = await _manager_for(args.tenant, "container" if args.image else args.backend)
+    if not isinstance(manager, FleetContainerManager):
+        raise FleetError("upgrade is only available for container cells")
+    print(  # noqa: T201
+        json.dumps(await manager.upgrade(args.tenant, args.image), ensure_ascii=False)
+    )
+
+
+async def _doctor(args: argparse.Namespace) -> None:
+    config = load_config()
+    store = FleetStore(config.db_path)
+    await store.init()
+    manager = FleetContainerManager(store, config)
+    reports = await manager.doctor(args.tenant)
+    for report in reports:
+        print(json.dumps(report, ensure_ascii=False))  # noqa: T201
+    if not reports:
+        print("no container cells", file=sys.stderr)  # noqa: T201
+        return
+    if any(not report["ok"] for report in reports):
+        raise SystemExit(1)
 
 
 def _daemons_start(args: argparse.Namespace) -> None:
@@ -84,14 +130,12 @@ def _daemons_status(_args: argparse.Namespace) -> None:
 
 
 async def _backup(args: argparse.Namespace) -> None:
-    manager = _manager()
-    await manager.store.init()
+    manager = await _manager_for(args.tenant, args.backend)
     print(json.dumps(manager.backup(args.tenant, Path(args.out)), ensure_ascii=False))  # noqa: T201
 
 
 async def _restore(args: argparse.Namespace) -> None:
-    manager = _manager()
-    await manager.store.init()
+    manager = await _manager_for(args.tenant, args.backend)
     result = await manager.restore(args.tenant, Path(args.source))
     print(json.dumps(result, ensure_ascii=False))  # noqa: T201
 
@@ -103,8 +147,10 @@ def _backup_db(args: argparse.Namespace) -> None:
 
 
 async def _manager_list(_args: argparse.Namespace) -> None:
-    manager = _manager()
-    await manager.store.init()
+    config = load_config()
+    store = FleetStore(config.db_path)
+    await store.init()
+    manager = FleetContainerManager(store, config)
     for cell in await manager.list():
         print(json.dumps(cell, ensure_ascii=False))  # noqa: T201
 
@@ -220,9 +266,16 @@ def main() -> None:
     listing = sub.add_parser("cells", help="list tenant cells")
     listing.set_defaults(func=_cell_list)
 
+    backend_choices = ("process", "container")
+
     create = sub.add_parser("create", help="create a tenant and (optionally) start it")
     create.add_argument("--tenant", required=True)
     create.add_argument("--port", type=int)
+    create.add_argument("--backend", choices=backend_choices, default="process")
+    create.add_argument("--image", help="container image (container backend)")
+    create.add_argument(
+        "--network", choices=("auto", "publish", "host"), help="container network mode"
+    )
     create.add_argument("--no-start", action="store_true")
     create.add_argument("--seed-config", action="store_true")
     create.set_defaults(func=_create)
@@ -231,15 +284,28 @@ def main() -> None:
         ("start", _start, "start a tenant cell"),
         ("stop", _stop, "stop a tenant cell"),
         ("rm", _remove, "stop and delete a tenant cell"),
-        ("list", _manager_list, "list tenants with process state"),
+        ("list", _manager_list, "list tenants with their backend and state"),
     ):
         command = sub.add_parser(name, help=help_text)
         command.add_argument("--tenant", required=(name != "list"))
+        if name != "list":
+            command.add_argument("--backend", choices=backend_choices)
         command.set_defaults(func=func)
+
+    upgrade = sub.add_parser("upgrade", help="recreate a container cell on a new image")
+    upgrade.add_argument("--tenant", required=True)
+    upgrade.add_argument("--image", required=True)
+    upgrade.add_argument("--backend", choices=backend_choices, default="container")
+    upgrade.set_defaults(func=_upgrade)
+
+    doctor = sub.add_parser("doctor", help="audit container cells (hardening, isolation, health)")
+    doctor.add_argument("--tenant")
+    doctor.set_defaults(func=_doctor)
 
     backup = sub.add_parser("backup", help="back up one tenant")
     backup.add_argument("--tenant", required=True)
     backup.add_argument("--out", required=True)
+    backup.add_argument("--backend", choices=backend_choices)
     backup.set_defaults(func=_backup)
 
     backup_db = sub.add_parser("backup-db", help="back up the central fleet database")
@@ -249,6 +315,7 @@ def main() -> None:
     restore = sub.add_parser("restore", help="restore one tenant from a backup")
     restore.add_argument("--tenant", required=True)
     restore.add_argument("--from", dest="source", required=True)
+    restore.add_argument("--backend", choices=backend_choices)
     restore.set_defaults(func=_restore)
 
     for name, func, help_text in (
@@ -286,7 +353,11 @@ def main() -> None:
     if args.command.startswith("daemons-") or args.command == "backup-db":
         args.func(args)
         return
-    asyncio.run(args.func(args))
+    try:
+        asyncio.run(args.func(args))
+    except FleetError as exc:
+        print(str(exc), file=sys.stderr)  # noqa: T201
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

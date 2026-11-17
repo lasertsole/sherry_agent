@@ -34,7 +34,16 @@ async def test_account_and_cell_round_trip(tmp_path: Path):
     assert cell is not None
     assert cell["port"] == 20100
     assert cell["gateway_token"] == "gw-1"
-    assert await store.list_cells() == [{"tenant_id": "alice", "host": "127.0.0.1", "port": 20100}]
+    assert await store.list_cells() == [
+        {
+            "tenant_id": "alice",
+            "host": "127.0.0.1",
+            "port": 20100,
+            "runtime": "process",
+            "image": None,
+            "container_name": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -163,3 +172,25 @@ async def test_backup_database_uses_the_online_backup_api(tmp_path: Path):
     assert result["bytes"] > 0
     with sqlite3.connect(tmp_path / "backup" / "fleet.db") as db:
         assert db.execute("SELECT username FROM users").fetchone() == ("alice",)
+
+
+@pytest.mark.asyncio
+async def test_a_pre_container_database_gains_the_container_columns(tmp_path: Path):
+    path = tmp_path / "fleet.db"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE cells ("
+            "tenant_id TEXT PRIMARY KEY, host TEXT NOT NULL, port INTEGER NOT NULL, "
+            "gateway_token TEXT NOT NULL, updated_at INTEGER NOT NULL)"
+        )
+        db.execute("INSERT INTO cells VALUES ('alice', '127.0.0.1', 20100, 'gw-1', 0)")
+
+    store = FleetStore(path)
+    await store.init()
+
+    cell = await store.get_cell("alice")
+    assert cell is not None
+    assert cell["runtime"] == "process"
+    assert cell["image"] is None
+    assert cell["container_name"] is None
+    assert cell["gateway_token"] == "gw-1"

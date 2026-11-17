@@ -1,7 +1,7 @@
 # 计划 P3：Fleet cell 容器化多租户——OS 级隔离
 
 - 日期：2026-11-16
-- 状态：**待评审**
+- 状态：**已实现**（2026-11-17；实现偏差见文末「实施记录」）
 - 定位：**第二级多租户**。每租户一个 Docker/Podman 容器，OS 级隔离（独立文件系统/网络/进程命名空间）。在 P2 基础上升级，Ingress 和 Fleet 管理器复用。
 - 风险等级：**中** — 新增 Fleet container manager (~1,400 行) + Dockerfile 调整 + 本地模型 daemon 共享配置
 - 依赖：P1（daemon host env override + LDW journal）+ P2（Ingress Gateway + Fleet manager 基础）
@@ -277,3 +277,30 @@ sherry-fleet doctor
 - 若 Docker Desktop on Windows 不可用且 bare-metal (P2) 满足需求 → 不做 P3，P2 即终态
 - 若 per-cell 内存开销在目标 host 上不可接受（<4 cell）→ 评估应用级多租户（r1 计划）作为轻量替代
 - 若本地模型 daemon 跨容器连接不稳定 → 禁用本地模型（方案 C），仅支持云模型
+
+---
+
+## 12. 实施记录（2026-11-17）
+
+代码落点：`fleet/container.py`（docker/podman CLI 适配）、`fleet/container_manager.py`
+（`FleetContainerManager`，复用 process 后端的 `prepare_tree`/端口分配/backup/restore）、
+`fleet/store.py`（`cells` 加 `runtime`/`image`/`container_name` + 就地迁移）、
+`fleet/__main__.py`（`--backend`/`--image`/`--network`/`upgrade`/`doctor`）、
+`Dockerfile`（`SHERRY_AUTH_ENABLED=false`）、`wiki/fleet/`（四语言）、`AGENTS.md`。
+
+与计划的偏差：
+
+| 计划 | 实现 | 原因 |
+|------|------|------|
+| 创建后调 `PUT /auth/enabled` 关闭 cell 登录 | 通过 `/auth/status` 检测后，直接在 cell 的 `src/data/auth.db` 关闭 `auth_settings.enabled`，等待 2s 状态缓存过期；仍生效则 `create`/`start` 报错 | 代码库没有该路由，禁用登录需要当前密码，没有免密 API |
+| 仅 `-p 127.0.0.1:<port>:8080` + 每 cell bridge | 两种模式：`publish`（默认，Linux/macOS）与 `host`（Windows 宿主机/WSL2，`auto` 自动选择） | WSL2 内核无 nftables，netavark 无法应用端口发布规则（实测 `nftables error`） |
+| `--backend docker` | `--backend container` + `SHERRY_FLEET_CONTAINER_RUNTIME=docker\|podman\|auto` | 同一套 CLI 参数，两个引擎都支持 |
+| 可选 `Dockerfile.local-models` | 未新增 | 计划标注可选；共享 daemon 方案（§6）已由 `LOCAL_DAEMON_HOST=host.docker.internal` 支持，本地模型镜像留待需要时再加 |
+| `doctor` 检查 cap-drop=ALL | 校验引擎默认能力集的**不变子集**（podman 把 `ALL` 展开成 11 项，docker 报告 `ALL`） | 真实引擎 e2e 暴露的差异，硬编码 `ALL` 会误报 |
+
+验证：`tests/fleet/test_container_manager.py`（假运行时，10 例）+ `tests/fleet/test_container_runtime_e2e.py`
+（`SHERRY_FLEET_CONTAINER_E2E=1`，真实引擎 `create`）+ 本机 Podman 6.1.4 全流程实测
+（create/start/list/doctor/stop/upgrade/rm，host 网络模式）。
+
+未做：Windows 上的 `publish` 模式验证（内核限制）、`Dockerfile.local-models`、
+`process`→`container` 的在线迁移命令（两者共用同一数据树，重建容器即可）。

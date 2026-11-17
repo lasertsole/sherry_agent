@@ -20,6 +20,15 @@
 #   podman build --network host -t sherry-agent:dev .
 #   podman run -d --network host --env-file .env <image>
 #
+# Fleet container cells (`python -m fleet create --backend container`) run this
+# image unchanged: the manager bind-mounts the tenant's data directory at
+# /app/data and injects SHERRY_HOME / API_PORT / the gateway token through a
+# 0600 env file, so no fleet-specific build target is needed. SHERRY_AUTH_ENABLED
+# is false because the cell sits behind the Ingress, whose peer address is the
+# container gateway rather than loopback (a fresh cell therefore never gates);
+# the fleet also switches an ENABLED login off at rest when a restored cell
+# carries one.
+#
 # Run:  docker run -p 8080:8080 --env-file .env <image>
 # The API binds API_HOST=0.0.0.0 inside the container (env-overridable, see
 # config/__init__.py); port via API_PORT (default 8080).
@@ -82,6 +91,7 @@ FROM python:3.13-slim
 
 ENV PATH="/app/.venv/bin:$PATH" \
     API_HOST=0.0.0.0 \
+    SHERRY_AUTH_ENABLED=false \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app

@@ -68,6 +68,9 @@ _TABLES = (
         host TEXT NOT NULL,
         port INTEGER NOT NULL,
         gateway_token TEXT NOT NULL,
+        runtime TEXT NOT NULL DEFAULT 'process',
+        image TEXT,
+        container_name TEXT,
         updated_at INTEGER NOT NULL
     )
     """,
@@ -81,6 +84,16 @@ _TABLES = (
         updated_at INTEGER NOT NULL
     )
     """,
+)
+
+
+#: Columns the container backend added to an existing ``cells`` table. A
+#: pre-container database answers ``CREATE TABLE IF NOT EXISTS`` unchanged, so
+#: the missing ones are added in place (SQLite has no ADD COLUMN IF NOT EXISTS).
+_CELL_MIGRATIONS = (
+    ("runtime", "TEXT NOT NULL DEFAULT 'process'"),
+    ("image", "TEXT"),
+    ("container_name", "TEXT"),
 )
 
 
@@ -122,6 +135,14 @@ async def _rebuild_users_without_tenant_unique(db: aiosqlite.Connection) -> None
     await db.execute("ALTER TABLE users_rebuild RENAME TO users")
 
 
+async def _migrate_cells(db: aiosqlite.Connection) -> None:
+    """Add the container-backend columns to a pre-container ``cells`` table."""
+    existing = {str(row["name"]) for row in await db.execute_fetchall("PRAGMA table_info('cells')")}
+    for column, ddl in _CELL_MIGRATIONS:
+        if column not in existing:
+            await db.execute(f"ALTER TABLE cells ADD COLUMN {column} {ddl}")
+
+
 class FleetStore:
     """Small SQLite store; one short connection per operation."""
 
@@ -151,6 +172,7 @@ class FleetStore:
             await db.execute(_USER_TENANTS_DDL)
             for ddl in _TABLES:
                 await db.execute(ddl)
+            await _migrate_cells(db)
             await db.execute(_USER_TENANTS_INDEX)
             if migrated:
                 # Only the one-time legacy migration seeds memberships; running
@@ -463,17 +485,31 @@ class FleetStore:
         host: str,
         port: int,
         gateway_token: str,
+        runtime: str = "process",
+        image: str | None = None,
+        container_name: str | None = None,
     ) -> None:
-        """Register or update a tenant cell endpoint."""
+        """Register or update a tenant cell endpoint (process or container)."""
         db = await self._connect()
         try:
             await db.execute(
-                "INSERT INTO cells(tenant_id, host, port, gateway_token, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO cells(tenant_id, host, port, gateway_token, runtime, image, "
+                "container_name, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(tenant_id) DO UPDATE SET host = excluded.host, "
                 "port = excluded.port, gateway_token = excluded.gateway_token, "
+                "runtime = excluded.runtime, image = excluded.image, "
+                "container_name = excluded.container_name, "
                 "updated_at = excluded.updated_at",
-                (tenant_id.strip(), host, int(port), gateway_token, int(time.time())),
+                (
+                    tenant_id.strip(),
+                    host,
+                    int(port),
+                    gateway_token,
+                    runtime,
+                    image,
+                    container_name,
+                    int(time.time()),
+                ),
             )
             await db.commit()
         finally:
@@ -494,7 +530,11 @@ class FleetStore:
         """List tenant endpoints without their gateway tokens."""
         db = await self._connect()
         try:
-            rows = await (await db.execute("SELECT tenant_id, host, port FROM cells")).fetchall()
+            rows = await (
+                await db.execute(
+                    "SELECT tenant_id, host, port, runtime, image, container_name FROM cells"
+                )
+            ).fetchall()
         finally:
             await db.close()
         return [dict(row) for row in rows]

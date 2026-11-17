@@ -76,18 +76,8 @@ class FleetManager:
         """The tenant's SHERRY_HOME."""
         return self.config.fleet_root / _tenant_id(tenant)
 
-    async def create(
-        self,
-        tenant: str,
-        *,
-        port: int | None = None,
-        start: bool = True,
-        seed_config: bool = False,
-    ) -> dict[str, Any]:
-        """Create the tenant tree, registry row and optional process."""
-        tenant = _tenant_id(tenant)
-        if await self.store.get_cell(tenant) is not None:
-            raise FleetError(f"tenant {tenant!r} already exists")
+    def prepare_tree(self, tenant: str, *, seed_config: bool = False) -> Path:
+        """Create the tenant's SHERRY_HOME tree (idempotent; shared by both backends)."""
         data_dir = self.data_dir(tenant)
         workspace = data_dir / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
@@ -100,6 +90,21 @@ class FleetManager:
             )
         if seed_config:
             self._seed_config(data_dir)
+        return data_dir
+
+    async def create(
+        self,
+        tenant: str,
+        *,
+        port: int | None = None,
+        start: bool = True,
+        seed_config: bool = False,
+    ) -> dict[str, Any]:
+        """Create the tenant tree, registry row and optional process."""
+        tenant = _tenant_id(tenant)
+        if await self.store.get_cell(tenant) is not None:
+            raise FleetError(f"tenant {tenant!r} already exists")
+        data_dir = self.prepare_tree(tenant, seed_config=seed_config)
         async with self._port_guard():
             if await self.store.get_cell(tenant) is not None:
                 raise FleetError(f"tenant {tenant!r} already exists")
