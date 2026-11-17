@@ -21,6 +21,8 @@ const bridge = vi.hoisted(() => ({
   updateAccountRequest: vi.fn(),
   disableAuthRequest: vi.fn(),
   enableAuthRequest: vi.fn(),
+  fetchTenants: vi.fn(),
+  switchTenantRequest: vi.fn(),
   fetchWsTicket: vi.fn()
 }));
 vi.mock('~/composables/bridge/auth', () => bridge);
@@ -95,6 +97,15 @@ describe('login page', () => {
     await wrapper.get('form').trigger('submit');
     // Debounced submit; wait for the failure line.
     await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('try again in 5s'));
+  });
+
+  it('explains an account that has no cell assigned', async () => {
+    bridge.loginRequest.mockRejectedValue(Object.assign(new Error('no cell'), { code: 'no_tenant' }));
+    const wrapper = await mountLogin();
+
+    await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
+    await wrapper.get('form').trigger('submit');
+    await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('尚未分配'));
   });
 
   it('renders a uniform failure and stays put', async () => {

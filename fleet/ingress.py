@@ -23,12 +23,15 @@ from server.utils.password import hash_password, password_policy_error
 from .config import IngressConfig, load_config
 from .manager import FleetManager
 from .security import (
+    ACTIVE_TENANT_COOKIE,
     access_claims,
+    claims_tenants,
     clear_auth_cookies,
     csrf_ok,
     issue_tokens,
     origin_allowed,
     refresh_claims,
+    set_active_tenant_cookie,
     set_auth_cookies,
 )
 from .store import FleetStore
@@ -97,6 +100,8 @@ _PUBLIC_PATHS = frozenset(
         "/auth/logout",
         "/auth/me",
         "/auth/account",
+        "/auth/tenant",
+        "/auth/tenants",
         "/health",
     }
 )
@@ -135,13 +140,41 @@ def _json(status: int, payload: dict[str, Any]) -> web.Response:
     return web.json_response(payload, status=status)
 
 
-def _public_user(user: dict[str, Any]) -> dict[str, Any]:
+def _public_user(user: dict[str, Any], tenant_id: str | None = None) -> dict[str, Any]:
     return {
         "id": int(user["id"]),
         "username": str(user["username"]),
         "role": str(user["role"]),
-        "tenant_id": str(user["tenant_id"]),
+        "tenant_id": str(tenant_id if tenant_id is not None else user["tenant_id"]),
     }
+
+
+def _tenant_ids(rows: list[dict[str, Any]]) -> list[str]:
+    return [str(row["tenant_id"]) for row in rows]
+
+
+async def _memberships(store: FleetStore, user_id: int) -> list[dict[str, Any]]:
+    """The account's current tenant memberships, default first."""
+    return await store.list_user_tenants(user_id)
+
+
+async def _active_tenant(request: web.Request, claims: dict[str, Any]) -> str | None:
+    """Resolve the cell this request targets, re-checking the live membership.
+
+    The cookie is a preference, not an authorization: a stale selection (admin
+    revoked the cell, or another account used this browser) falls back to the
+    account's current default. A user with no membership resolves to None.
+    """
+    try:
+        user_id = int(claims["sub"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    rows = await _memberships(request.app[STORE_KEY], user_id)
+    tenant_ids = _tenant_ids(rows)
+    if not tenant_ids:
+        return None
+    selected = str(request.cookies.get(ACTIVE_TENANT_COOKIE, "") or "")
+    return selected if selected in tenant_ids else tenant_ids[0]
 
 
 _STATIC_FILES = frozenset(
@@ -216,7 +249,19 @@ async def login(request: web.Request) -> web.Response:
         limiter.fail(key)
         return _json(401, {"success": False, "error": "invalid_credentials"})
     limiter.reset(key)
-    access, refresh, _access_claims, refresh_claims = issue_tokens(user, config)
+    rows = await _memberships(store, int(user["id"]))
+    if not rows:
+        return _json(
+            403,
+            {
+                "success": False,
+                "error": "no_tenant",
+                "message": "no cell is assigned to this account",
+            },
+        )
+    tenants = _tenant_ids(rows)
+    default = tenants[0]
+    access, refresh, _access_claims, refresh_claims = issue_tokens(user, config, tenants)
     await store.save_refresh(
         str(refresh_claims["jti"]), int(user["id"]), int(refresh_claims["exp"])
     )
@@ -224,11 +269,12 @@ async def login(request: web.Request) -> web.Response:
         200,
         {
             "success": True,
-            "user": _public_user(user),
+            "user": _public_user(user, default),
             "expires_in": config.access_ttl_s,
         },
     )
     set_auth_cookies(response, access=access, refresh=refresh, config=config)
+    set_active_tenant_cookie(response, default, config)
     return response
 
 
@@ -250,18 +296,33 @@ async def refresh(request: web.Request) -> web.Response:
     user = await store.get_user_by_id(user_id)
     if user is None:
         return _json(401, {"success": False, "error": "not_authenticated"})
-    access, new_refresh, _access_claims, new_claims = issue_tokens(user, config)
+    rows = await _memberships(store, user_id)
+    if not rows:
+        return _json(
+            403,
+            {
+                "success": False,
+                "error": "no_tenant",
+                "message": "no cell is assigned to this account",
+            },
+        )
+    tenants = _tenant_ids(rows)
+    default = tenants[0]
+    access, new_refresh, _access_claims, new_claims = issue_tokens(user, config, tenants)
     await store.revoke_refresh(str(claims["jti"]))
     await store.save_refresh(str(new_claims["jti"]), user_id, int(new_claims["exp"]))
     response = _json(
         200,
         {
             "success": True,
-            "user": _public_user(user),
+            "user": _public_user(user, default),
             "expires_in": config.access_ttl_s,
         },
     )
     set_auth_cookies(response, access=access, refresh=new_refresh, config=config)
+    selected = str(request.cookies.get(ACTIVE_TENANT_COOKIE, "") or "")
+    if selected not in tenants:
+        set_active_tenant_cookie(response, default, config)
     return response
 
 
@@ -297,11 +358,15 @@ async def status(request: web.Request) -> web.Response:
     claims = access_claims(request, config)
     if claims is not None:
         payload["authenticated"] = True
+        tenant = str(claims.get("tenant_id") or "")
+        if not tenant:
+            available = claims_tenants(claims)
+            tenant = available[0] if available else ""
         payload["user"] = {
             "id": int(claims["sub"]),
             "username": claims.get("username", ""),
             "role": claims.get("role", "user"),
-            "tenant_id": claims.get("tenant_id", ""),
+            "tenant_id": tenant,
         }
     return _json(200, payload)
 
@@ -317,7 +382,23 @@ async def me(request: web.Request) -> web.Response:
         except (TypeError, ValueError):
             user = None
         if user is not None:
-            return _json(200, {"success": True, "user": _public_user(user)})
+            rows = await _memberships(store, int(user["id"]))
+            if not rows:
+                return _json(
+                    403,
+                    {
+                        "success": False,
+                        "error": "no_tenant",
+                        "message": "no cell is assigned to this account",
+                    },
+                )
+            return _json(
+                200,
+                {
+                    "success": True,
+                    "user": _public_user(user, _tenant_ids(rows)[0]),
+                },
+            )
     rotated = refresh_claims(request, config)
     if rotated is not None:
         try:
@@ -327,18 +408,33 @@ async def me(request: web.Request) -> web.Response:
         if user_id and await store.refresh_active(str(rotated["jti"]), user_id):
             user = await store.get_user_by_id(user_id)
             if user is not None:
-                access, refresh, _access, new_refresh = issue_tokens(user, config)
+                rows = await _memberships(store, user_id)
+                if not rows:
+                    return _json(
+                        403,
+                        {
+                            "success": False,
+                            "error": "no_tenant",
+                            "message": "no cell is assigned to this account",
+                        },
+                    )
+                tenants = _tenant_ids(rows)
+                default = tenants[0]
+                access, refresh, _access, new_refresh = issue_tokens(user, config, tenants)
                 await store.revoke_refresh(str(rotated["jti"]))
                 await store.save_refresh(str(new_refresh["jti"]), user_id, int(new_refresh["exp"]))
                 response = _json(
                     200,
                     {
                         "success": True,
-                        "user": _public_user(user),
+                        "user": _public_user(user, default),
                         "expires_in": config.access_ttl_s,
                     },
                 )
                 set_auth_cookies(response, access=access, refresh=refresh, config=config)
+                selected = str(request.cookies.get(ACTIVE_TENANT_COOKIE, "") or "")
+                if selected not in tenants:
+                    set_active_tenant_cookie(response, default, config)
                 return response
     return _json(401, {"success": False, "error": "not_authenticated"})
 
@@ -379,6 +475,18 @@ async def account(request: web.Request) -> web.Response:
         )
     if not store.verify_password(str(body.get("password", "")), str(user["password_hash"])):
         return _json(401, {"success": False, "error": "invalid_credentials"})
+    rows = await _memberships(store, int(user["id"]))
+    if not rows:
+        return _json(
+            403,
+            {
+                "success": False,
+                "error": "no_tenant",
+                "message": "no cell is assigned to this account",
+            },
+        )
+    tenants = _tenant_ids(rows)
+    default = tenants[0]
     new_password = str(body.get("new_password", ""))
     problem = password_policy_error(new_password)
     if problem:
@@ -388,13 +496,20 @@ async def account(request: web.Request) -> web.Response:
         )
     await store.set_password_hash(int(user["id"]), hash_password(new_password))
     await store.revoke_user_refresh_tokens(int(user["id"]))
-    access, refresh, _access, refresh_token = issue_tokens(user, config)
+    access, refresh, _access, refresh_token = issue_tokens(user, config, tenants)
     await store.save_refresh(str(refresh_token["jti"]), int(user["id"]), int(refresh_token["exp"]))
     response = _json(
         200,
-        {"success": True, "user": _public_user(user), "expires_in": config.access_ttl_s},
+        {
+            "success": True,
+            "user": _public_user(user, default),
+            "expires_in": config.access_ttl_s,
+        },
     )
     set_auth_cookies(response, access=access, refresh=refresh, config=config)
+    selected = str(request.cookies.get(ACTIVE_TENANT_COOKIE, "") or "")
+    if selected not in tenants:
+        set_active_tenant_cookie(response, default, config)
     return response
 
 
@@ -408,6 +523,72 @@ async def account_delete(_request: web.Request) -> web.Response:
             "message": "accounts are managed by the Ingress administrator",
         },
     )
+
+
+async def list_tenants(request: web.Request) -> web.Response:
+    """The signed-in account's member cells, with the currently selected one."""
+    config = request.app[CONFIG_KEY]
+    store = request.app[STORE_KEY]
+    claims = access_claims(request, config)
+    if claims is None:
+        return _json(401, {"success": False, "error": "not_authenticated"})
+    try:
+        user_id = int(claims["sub"])
+    except (TypeError, ValueError):
+        return _json(401, {"success": False, "error": "not_authenticated"})
+    rows = await _memberships(store, user_id)
+    if not rows:
+        return _json(
+            403,
+            {
+                "success": False,
+                "error": "no_tenant",
+                "message": "no cell is assigned to this account",
+            },
+        )
+    tenant_ids = _tenant_ids(rows)
+    selected = str(request.cookies.get(ACTIVE_TENANT_COOKIE, "") or "")
+    active = selected if selected in tenant_ids else tenant_ids[0]
+    tenants: list[dict[str, Any]] = []
+    for row in rows:
+        tenant_id = str(row["tenant_id"])
+        process = await store.get_process(tenant_id)
+        tenants.append(
+            {
+                "tenant_id": tenant_id,
+                "role": str(row["role"]),
+                "is_default": bool(row["is_default"]),
+                "cell_status": str((process or {}).get("status") or "stopped"),
+            }
+        )
+    return _json(200, {"success": True, "active": active, "tenants": tenants})
+
+
+async def select_tenant(request: web.Request) -> web.Response:
+    """Switch the browser's active cell with a cookie (no token re-issue)."""
+    config = request.app[CONFIG_KEY]
+    store = request.app[STORE_KEY]
+    if not csrf_ok(request, config):
+        return _json(403, {"success": False, "error": "csrf_rejected"})
+    claims = access_claims(request, config)
+    if claims is None:
+        return _json(401, {"success": False, "error": "not_authenticated"})
+    try:
+        user_id = int(claims["sub"])
+    except (TypeError, ValueError):
+        return _json(401, {"success": False, "error": "not_authenticated"})
+    try:
+        body = await request.json()
+    except Exception:
+        return _json(400, {"success": False, "error": "invalid_json"})
+    if not isinstance(body, dict):
+        return _json(400, {"success": False, "error": "invalid_json"})
+    tenant_id = str(body.get("tenant_id", "") or "").strip()
+    if not tenant_id or not await store.user_has_tenant(user_id, tenant_id):
+        return _json(403, {"success": False, "error": "tenant_not_authorized"})
+    response = _json(200, {"success": True, "tenant_id": tenant_id})
+    set_active_tenant_cookie(response, tenant_id, config)
+    return response
 
 
 async def health(request: web.Request) -> web.Response:
@@ -556,8 +737,10 @@ async def proxy(request: web.Request) -> web.StreamResponse:
         return web.FileResponse(page)
     if not claims:
         return _json(401, {"success": False, "error": "not_authenticated"})
-    tenant = str(claims.get("tenant_id") or "")
-    cell = await request.app[STORE_KEY].get_cell(tenant) if tenant else None
+    tenant = await _active_tenant(request, claims)
+    if not tenant:
+        return _json(403, {"success": False, "error": "tenant_not_authorized"})
+    cell = await request.app[STORE_KEY].get_cell(tenant)
     if cell is None:
         return _json(503, {"success": False, "error": "cell_unavailable"})
     if str(request.headers.get("Upgrade", "")).lower() == "websocket":
@@ -634,6 +817,8 @@ async def create_app(
     app.router.add_post("/auth/logout", logout)
     app.router.add_get("/auth/status", status)
     app.router.add_get("/auth/me", me)
+    app.router.add_get("/auth/tenants", list_tenants)
+    app.router.add_post("/auth/tenant", select_tenant)
     app.router.add_put("/auth/account", account)
     app.router.add_delete("/auth/account", account_delete)
     app.router.add_get("/health", health)

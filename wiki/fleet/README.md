@@ -24,11 +24,19 @@ The Ingress and the cells run as the same OS user. This is the trusted-tenant ti
 
 ## 🚪 Ingress: authentication and the browser contract
 
-The Ingress owns every `/auth/*` route and never proxies `/auth/token`, so a cell's per-boot gateway token cannot leak to a browser. Login sets two HttpOnly cookies (`sherry_ingress_access`, `sherry_ingress_refresh`). The access token is a short-lived HS256 JWT carrying `tenant_id` and `role`; the refresh token rotates on every use and is revocable server-side.
+The Ingress owns every `/auth/*` route and never proxies `/auth/token`, so a cell's per-boot gateway token cannot leak to a browser. Login sets two HttpOnly cookies (`sherry_ingress_access`, `sherry_ingress_refresh`). The access token is a short-lived HS256 JWT carrying `tenants` (default first), `tenant_id` and `role`; the refresh token rotates on every use and is revocable server-side.
 
 The shared SPA sees the same contract as a standalone cell. `/auth/status` also reports `username_required`; `/auth/login` accepts `{username, password}` and returns `expires_in`; `/auth/me` heals an expired access cookie from a valid refresh cookie; `/auth/account` changes a password while enable/disable stays administrator-only. Unsafe requests pass an Origin and `Sec-Fetch-Site` CSRF check. Five failed logins per `(client, username)` in 300 s answer `429`.
 
 Setting `SHERRY_INGRESS_TLS_CERT` and `SHERRY_INGRESS_TLS_KEY` makes the Ingress terminate TLS and marks both cookies `Secure`; `SHERRY_INGRESS_ALLOWED_ORIGINS` adds reverse-proxy origins. Static assets are public, and every `Accept: text/html` GET receives `200.html` or `index.html`, so `/login` and deep routes load before a session exists. API calls stay gated.
+
+## 👥 Users, trust domains and cell switching
+
+A cell is a trust domain, not a user account: any number of accounts may point at the same `tenant_id` and therefore share that cell's sessions, memory, skills and project directory. Credentials stay per account in the Ingress database; changing one password does not touch another. One account may also belong to several cells, held in the many-to-many `user_tenants` table (the legacy `users.tenant_id` remains the default). `init()` rebuilds a legacy `users` table whose `tenant_id` was `UNIQUE` once, then backfills the memberships.
+
+Login selects the account's default membership and sets an HttpOnly `sherry_tenant` cookie next to the auth cookies. `GET /auth/tenants` lists every membership with `role`, `is_default` and `cell_status`; `POST /auth/tenant` validates the requested `tenant_id` against the live table and rewrites the cookie. The proxy and WebSocket router read that cookie on every request and re-check the membership, so an administrator revoking a cell takes effect immediately; a stale cookie falls back to the account's default. The SPA's `TenantSwitcher` appears only when the account has more than one cell and reloads the page after a switch, because cached sessions, memory and sockets all belong to the previous cell.
+
+A user with no membership cannot sign in (`no_tenant`). Use `user-tenant-add`, `user-tenants` and `user-tenant-remove` to manage access; the first membership is the owner and default. `rm` deletes a cell but leaves its memberships, so revoke or reassign them first.
 
 ## 🧩 Cell lifecycle
 
@@ -65,6 +73,9 @@ Local chat and vision also need `SHERRY_FLEET_AUXILIARY_MODEL_PATH`, `SHERRY_FLE
 ```bash
 python -m fleet serve
 python -m fleet user-add --username alice --password '...' --tenant alice
+python -m fleet user-tenant-add --username alice --tenant team-b --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username alice --tenant team-b
 python -m fleet create --tenant alice
 python -m fleet start --tenant alice
 python -m fleet stop --tenant alice
@@ -86,6 +97,8 @@ python -m fleet daemons-status
 | Cell network | Cells bind `127.0.0.1` only; the Ingress reaches them over loopback |
 | Tenant files | `SHERRY_HOME` separates data trees, but every cell shares one OS user; a hostile tenant needs the P3 container tier |
 
+- Accounts on the same tenant share that cell's sessions and memory; per-user isolation requires separate tenants.
+
 ## 🧪 Tests
 
 `tests/fleet/` covers the store, Ingress auth, proxy, WebSocket and TLS, manager lifecycle, shared daemons and backup/restore. `test_cell_e2e.py` starts a real `python -m server` cell through the manager and verifies `/health`, PID identity, login, HTTP proxying and a clean SIGTERM.
@@ -100,3 +113,4 @@ python -m fleet daemons-status
 - Terminate TLS at the Ingress or a trusted proxy, and list extra origins in `SHERRY_INGRESS_ALLOWED_ORIGINS`.
 - Add cgroup or systemd CPU quotas and external backup or logrotate timers for limits the manager does not enforce.
 - Bind a project directory per tenant; an unset project directory makes two tenants share `ROOT_DIR/.sherry/coordination.db`.
+- Give every account at least one membership; a login without one answers `no_tenant`.

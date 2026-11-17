@@ -17,6 +17,24 @@ Setting `SHERRY_PROJECT_DIR` (or `project_dir` in `sherry.jsonc`) is therefore a
 deployment requirement, not an optional convenience. No code change is needed:
 the data model is already correct.
 
+## Users and cells
+
+A cell is a trust domain, not a user account. Several Ingress accounts may
+share one `tenant_id` and therefore the same workspace, sessions, memory and
+project directory; their credentials remain independent. An account may also
+belong to several cells. Per-user isolation requires separate tenants (separate
+cells and workspaces).
+
+Manage memberships with:
+
+```bash
+python -m fleet user-tenant-add --username alice --tenant team-b --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username alice --tenant team-b
+```
+
+The first membership is the owner and the account's default.
+
 ## Fleet cell layout
 
 ```text

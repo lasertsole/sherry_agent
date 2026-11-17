@@ -24,11 +24,19 @@ Ingress와 모든 cell은 같은 OS 사용자로 실행됩니다. 이것은 신�
 
 ## 🚪 Ingress: 인증과 브라우저 계약
 
-Ingress는 모든 `/auth/*` 경로를 소유하며 `/auth/token`을 절대 프록시하지 않습니다. 따라서 cell이 부팅할 때마다 생성하는 gateway token이 브라우저로 유출되지 않습니다. 로그인은 두 개의 HttpOnly cookie(`sherry_ingress_access`, `sherry_ingress_refresh`)를 설정합니다. access token은 `tenant_id`와 `role`을 담은 단명 HS256 JWT이고, refresh token은 사용할 때마다 회전하며 서버 측에서 폐기할 수 있습니다.
+Ingress는 모든 `/auth/*` 경로를 소유하며 `/auth/token`을 절대 프록시하지 않습니다. 따라서 cell이 부팅할 때마다 생성하는 gateway token이 브라우저로 유출되지 않습니다. 로그인은 두 개의 HttpOnly cookie(`sherry_ingress_access`, `sherry_ingress_refresh`)를 설정합니다. access token은 `tenants`(기본값이 먼저), `tenant_id`, `role`을 담은 단명 HS256 JWT이고, refresh token은 사용할 때마다 회전하며 서버 측에서 폐기할 수 있습니다.
 
 공유 SPA가 보는 계약은 단일 테넌트 cell과 같습니다. `/auth/status`는 추가로 `username_required`를 반환하고, `/auth/login`은 `{username, password}`를 받아 `expires_in`을 반환합니다. `/auth/me`는 유효한 refresh cookie로 만료된 access cookie를 치유하고, `/auth/account`는 비밀번호를 변경합니다(로그인 활성화/비활성화는 관리자만 가능). 안전하지 않은 메서드 요청은 Origin과 `Sec-Fetch-Site` CSRF 검사를 통과해야 합니다. 동일한 `(client, username)`이 300초 안에 5회 실패하면 `429`를 반환합니다.
 
 `SHERRY_INGRESS_TLS_CERT`와 `SHERRY_INGRESS_TLS_KEY`를 설정하면 Ingress가 TLS를 종료하고 두 cookie에 `Secure`를 표시합니다. `SHERRY_INGRESS_ALLOWED_ORIGINS`는 역프록시 origin을 추가합니다. 정적 자산은 공개되며, `Accept: text/html`이 있는 모든 GET은 `200.html` 또는 `index.html`을 받습니다. 따라서 `/login`과 깊은 경로는 세션이 없어도 로드됩니다. API 호출은 계속 인증이 필요합니다.
+
+## 👥 사용자, 신뢰 도메인, 셀 전환
+
+셀은 사용자 계정이 아니라 신뢰 도메인입니다. 여러 계정이 같은 `tenant_id`를 가리켜 해당 셀의 세션, 메모리, 스킬, 프로젝트 디렉터리를 공유할 수 있습니다. 자격 증명은 계정별로 Ingress 데이터베이스에 남으며, 한 계정의 비밀번호를 바꿔도 다른 계정은 영향을 받지 않습니다. 한 계정이 여러 셀에 속할 수도 있으며, 이 관계는 다대다 `user_tenants` 테이블에 저장됩니다(기존 `users.tenant_id`는 기본값으로 유지). `init()`은 `tenant_id`가 `UNIQUE`였던 이전 `users` 테이블을 한 번 재구축하고 멤버십을 채웁니다.
+
+로그인은 계정의 기본 멤버십을 선택하고 인증 cookie 옆에 HttpOnly `sherry_tenant` cookie를 설정합니다. `GET /auth/tenants`는 각 멤버십의 `role`, `is_default`, `cell_status`를 반환하고, `POST /auth/tenant`는 요청한 `tenant_id`를 실시간 테이블로 검증한 뒤 cookie를 다시 씁니다. 프록시와 WebSocket 라우터는 요청마다 이 cookie를 읽고 멤버십을 재확인하므로 관리자가 셀 접근을 취소하면 즉시 반영됩니다. 오래된 cookie는 계정의 기본값으로 대체됩니다. SPA의 `TenantSwitcher`는 계정에 둘 이상의 셀이 있을 때만 표시되며, 전환 후 페이지를 새로 고칩니다. 세션 캐시, 메모리, 소켓이 모두 이전 셀에 속하기 때문입니다.
+
+멤버십이 없는 계정은 로그인할 수 없습니다(`no_tenant`). 접근 관리에는 `user-tenant-add`, `user-tenants`, `user-tenant-remove`를 사용하며, 첫 멤버십이 owner이자 기본값입니다. `rm`은 셀을 삭제하지만 멤버십은 남기므로 먼저 취소하거나 재할당하십시오.
 
 ## 🧩 Cell 라이프사이클
 
@@ -65,6 +73,9 @@ Local chat과 vision에는 `SHERRY_FLEET_AUXILIARY_MODEL_PATH`, `SHERRY_FLEET_VI
 ```bash
 python -m fleet serve
 python -m fleet user-add --username alice --password '...' --tenant alice
+python -m fleet user-tenant-add --username alice --tenant team-b --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username alice --tenant team-b
 python -m fleet create --tenant alice
 python -m fleet start --tenant alice
 python -m fleet stop --tenant alice
@@ -86,6 +97,8 @@ python -m fleet daemons-status
 | Cell 네트워크 | cell은 `127.0.0.1`에만 바인딩하고 Ingress는 loopback으로 접근 |
 | 테넌트 파일 | `SHERRY_HOME`이 데이터 트리를 분리하지만 모든 cell이 하나의 OS 사용자를 공유. 적대적 테넌트에는 P3 컨테이너 계층이 필요 |
 
+- 같은 tenant의 계정은 해당 셀의 세션과 메모리를 공유합니다. 사용자별 격리에는 별도 테넌트가 필요합니다.
+
 ## 🧪 테스트
 
 `tests/fleet/`는 저장소, Ingress 인증, 프록시, WebSocket, TLS, manager 라이프사이클, 공유 데몬, 백업/복구를 다룹니다. `test_cell_e2e.py`는 manager를 통해 실제 `python -m server` cell을 시작하고 `/health`, PID 동일성, 로그인, HTTP 프록시, 정상 SIGTERM 종료를 검증합니다.
@@ -100,3 +113,4 @@ python -m fleet daemons-status
 - TLS는 Ingress 또는 신뢰할 수 있는 역프록시에서 종료하고, 추가 origin을 `SHERRY_INGRESS_ALLOWED_ORIGINS`에 나열하십시오.
 - manager가 담당하지 않는 제한에는 cgroup 또는 systemd CPU 할당량과 외부 백업/logrotate 타이머를 추가하십시오.
 - 테넌트마다 프로젝트 디렉터리를 바인딩하십시오. 설정하지 않으면 두 테넌트가 `ROOT_DIR/.sherry/coordination.db`를 공유합니다.
+- 모든 계정에 최소 하나의 멤버십을 부여하십시오. 멤버십이 없으면 로그인은 `no_tenant`를 반환합니다.

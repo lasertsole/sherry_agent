@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import ssl
+import sys
 from pathlib import Path
 
 from loguru import logger
@@ -117,6 +118,48 @@ async def _user_add(args: argparse.Namespace) -> None:
     print(f"created user {user['username']} (tenant={user['tenant_id']}, role={user['role']})")  # noqa: T201
 
 
+async def _user_tenant_add(args: argparse.Namespace) -> None:
+    store = _store()
+    await store.init()
+    user = await store.get_user_by_username(args.username)
+    if user is None:
+        print(f"unknown user {args.username}", file=sys.stderr)  # noqa: T201
+        raise SystemExit(1)
+    try:
+        await store.add_user_tenant(
+            int(user["id"]), args.tenant, role=args.role, is_default=args.default
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)  # noqa: T201
+        raise SystemExit(1) from exc
+    print(f"user {user['username']} -> tenant {args.tenant}")  # noqa: T201
+
+
+async def _user_tenants(args: argparse.Namespace) -> None:
+    store = _store()
+    await store.init()
+    user = await store.get_user_by_username(args.username)
+    if user is None:
+        print(f"unknown user {args.username}", file=sys.stderr)  # noqa: T201
+        raise SystemExit(1)
+    rows = await store.list_user_tenants(int(user["id"]))
+    print(json.dumps(rows, ensure_ascii=False))  # noqa: T201
+
+
+async def _user_tenant_remove(args: argparse.Namespace) -> None:
+    store = _store()
+    await store.init()
+    user = await store.get_user_by_username(args.username)
+    if user is None:
+        print(f"unknown user {args.username}", file=sys.stderr)  # noqa: T201
+        raise SystemExit(1)
+    removed = await store.remove_user_tenant(int(user["id"]), args.tenant)
+    if not removed:
+        print(f"user {user['username']} is not a member of {args.tenant}", file=sys.stderr)  # noqa: T201
+        raise SystemExit(1)
+    print(f"user {user['username']} -/-> tenant {args.tenant}")  # noqa: T201
+
+
 async def _cell_set(args: argparse.Namespace) -> None:
     store = _store()
     await store.init()
@@ -150,6 +193,22 @@ def main() -> None:
     user.add_argument("--tenant", required=True)
     user.add_argument("--role", default="user")
     user.set_defaults(func=_user_add)
+
+    add_tenant = sub.add_parser("user-tenant-add", help="authorize a user for another cell")
+    add_tenant.add_argument("--username", required=True)
+    add_tenant.add_argument("--tenant", required=True)
+    add_tenant.add_argument("--role", choices=("owner", "member"), default="member")
+    add_tenant.add_argument("--default", action="store_true")
+    add_tenant.set_defaults(func=_user_tenant_add)
+
+    user_tenants = sub.add_parser("user-tenants", help="list a user's cells")
+    user_tenants.add_argument("--username", required=True)
+    user_tenants.set_defaults(func=_user_tenants)
+
+    remove_tenant = sub.add_parser("user-tenant-remove", help="revoke a user's access to a cell")
+    remove_tenant.add_argument("--username", required=True)
+    remove_tenant.add_argument("--tenant", required=True)
+    remove_tenant.set_defaults(func=_user_tenant_remove)
 
     cell = sub.add_parser("cell-set", help="register/update a tenant cell")
     cell.add_argument("--tenant", required=True)

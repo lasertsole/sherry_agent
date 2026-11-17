@@ -21,6 +21,8 @@ const bridge = vi.hoisted(() => ({
   updateAccountRequest: vi.fn(),
   disableAuthRequest: vi.fn(),
   enableAuthRequest: vi.fn(),
+  fetchTenants: vi.fn(),
+  switchTenantRequest: vi.fn(),
   fetchWsTicket: vi.fn()
 }));
 
@@ -200,6 +202,40 @@ describe('useAuthStore', () => {
     bridge.fetchMe.mockResolvedValueOnce(null);
     expect(await store.fetchUser()).toBeNull();
     expect(store.user).toBeNull();
+  });
+
+  it('loads member cells and switches the active one without a reload in tests', async () => {
+    bridge.fetchTenants.mockResolvedValue({
+      active: 'team-a',
+      tenants: [
+        { tenant_id: 'team-a', role: 'owner', cell_status: 'running', is_default: true },
+        { tenant_id: 'team-b', role: 'member', cell_status: 'stopped', is_default: false }
+      ]
+    });
+    bridge.switchTenantRequest.mockResolvedValue(undefined);
+    const store = useAuthStore();
+
+    await store.loadTenants();
+
+    expect(store.tenants).toHaveLength(2);
+    expect(store.activeTenant).toBe('team-a');
+    expect(await store.switchTenant('team-b', false)).toBe(true);
+    expect(bridge.switchTenantRequest).toHaveBeenCalledWith('team-b');
+    expect(store.activeTenant).toBe('team-b');
+  });
+
+  it('hides the tenant list on a standalone cell and after logout', async () => {
+    bridge.fetchTenants.mockRejectedValue(new Error('not found'));
+    const store = useAuthStore();
+    await store.loadTenants();
+    expect(store.tenants).toEqual([]);
+
+    store.tenants = [{ tenant_id: 'team-a', role: 'owner', cell_status: 'running', is_default: true }];
+    store.activeTenant = 'team-a';
+    bridge.logoutRequest.mockResolvedValue(undefined);
+    await store.logout();
+    expect(store.tenants).toEqual([]);
+    expect(store.activeTenant).toBe('');
   });
 
   it('clearError empties the rendered failure', async () => {

@@ -217,6 +217,7 @@
                   '@max-[300px]:hidden!'
                 ]"
                 @click="toggleSidebarBodyWithHint" />
+              <TenantSwitcher />
             </div>
             <!-- Right: the function button area. The theme switch and the language
              picker are NOT here any more — both moved into the left sidebar's
@@ -437,6 +438,7 @@ import {
 } from '@/common/floating-window';
 import { headerTools, toolboxTools } from './config';
 import ModeSwitch from './components/ModeSwitch.vue';
+import TenantSwitcher from '~/components/TenantSwitcher.vue';
 import { buildHomeToolbarCommands, type HomeToolbarContext } from './dialogs';
 import { buildNotificationCommandEntries, buildSessionCommandEntries, buildToolbarCommandEntries } from './commands';
 import { middleMinWidthCss } from '@/common/layout';

@@ -12,7 +12,11 @@ import { createTestingPinia } from '@pinia/testing';
 import { appendWsTicket, clearWsTicket, prepareWsTicket } from '@/composables/ws-ticket';
 import { useAuthStore } from '@/stores/auth';
 
-const bridge = vi.hoisted(() => ({ fetchWsTicket: vi.fn() }));
+const bridge = vi.hoisted(() => ({
+  fetchWsTicket: vi.fn(),
+  fetchTenants: vi.fn(),
+  switchTenantRequest: vi.fn()
+}));
 vi.mock('~/composables/bridge/auth', () => bridge);
 
 // `refreshGatewayToken` reaches the ticket module as a bare auto-import, and

@@ -1006,7 +1006,7 @@ are propagated so the child resolves the same writable home.
 
 ## Bare-Metal Fleet (`fleet/`)
 
-One Sherry process per tenant. `python -m fleet serve` is the Ingress
+One Sherry process per tenant; several accounts may share it. `python -m fleet serve` is the Ingress
 (`SHERRY_INGRESS_PORT`, default 8081); it owns the browser session, the central
 `fleet.db` (`users`/`refresh_tokens`/`cells`/`cell_processes`) and every cell
 process. Cells bind 127.0.0.1 only and receive a per-cell
@@ -1020,6 +1020,22 @@ refresh cookie, and `/auth/account` changes a password while enable/disable
 stays administrator-only. Failed logins are limited per `(client, username)`;
 `SHERRY_INGRESS_TLS_CERT`/`_KEY` make the Ingress terminate TLS and mark the
 cookies `Secure`.
+
+Users are many-to-many with tenants through `user_tenants(user_id, tenant_id,
+role, is_default)`; `users.tenant_id` stays as the legacy/default column. Two
+accounts on one tenant share that cell's sessions, memory, skills and project
+directory (the openclaw trust-domain model) while their credentials remain
+independent; one account may belong to several cells. `init()` rebuilds a
+legacy `users` table whose `tenant_id` was `UNIQUE` once, then backfills the
+memberships. Login selects the default membership and sets the HttpOnly
+`sherry_tenant` cookie beside the auth cookies; `GET /auth/tenants` lists every
+membership with `role`/`is_default`/`cell_status`, `POST /auth/tenant` validates
+the requested id against the live table and rewrites the cookie, and the proxy
+plus WebSocket router re-check the membership on every request (a revoked cell
+stops working immediately; a stale cookie falls back to the default). A user
+with no membership gets `no_tenant`. Admin CLI: `user-tenant-add`,
+`user-tenants`, `user-tenant-remove`; the web shell's `TenantSwitcher` appears
+only above one membership and reloads the SPA after a switch.
 
 Cells: `create` builds `<fleet_root>/<tenant>/{workspace,logs,sherry.jsonc}` and
 allocates 20100-20299 under an in-process lock plus a fleet-root `flock` (the

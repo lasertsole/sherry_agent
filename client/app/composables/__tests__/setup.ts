@@ -89,6 +89,9 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   authRequired: false,
   authEnabled: false,
   hasAccount: false,
+  usernameRequired: false,
+  tenants: [],
+  activeTenant: '',
   checked: false,
   busy: false,
   errorCode: null,
@@ -98,9 +101,11 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   disableAuth: vi.fn(async () => true),
   enableAuth: vi.fn(async () => true),
   fetchUser: vi.fn(async () => null),
+  loadTenants: vi.fn(async () => {}),
   login: vi.fn(async () => true),
   logout: vi.fn(async () => {}),
   setupAccount: vi.fn(async () => true),
+  switchTenant: vi.fn(async () => true),
   updateAccount: vi.fn(async () => true)
 }));
 

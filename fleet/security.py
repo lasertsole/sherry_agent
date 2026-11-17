@@ -14,6 +14,9 @@ from .config import IngressConfig
 ACCESS_TYPE = "access"
 REFRESH_TYPE = "refresh"
 _ALGORITHM = "HS256"
+#: Which member cell the browser is currently using. Kept out of the JWT so a
+#: switch does not re-sign tokens or tear down every WebSocket.
+ACTIVE_TENANT_COOKIE = "sherry_tenant"
 
 
 def access_cookie(config: IngressConfig) -> str:
@@ -26,12 +29,23 @@ def refresh_cookie(config: IngressConfig) -> str:
     return f"{config.cookie_name}_refresh"
 
 
-def _claims(user: dict[str, Any], *, kind: str, ttl: int, issuer: str) -> dict[str, Any]:
+def _claims(
+    user: dict[str, Any],
+    tenants: list[str],
+    *,
+    kind: str,
+    ttl: int,
+    issuer: str,
+) -> dict[str, Any]:
     now = int(time.time())
+    default = tenants[0] if tenants else ""
     return {
         "sub": str(user["id"]),
         "username": user["username"],
-        "tenant_id": user["tenant_id"],
+        # Legacy scalar (the default cell) + the authoritative membership list.
+        "tenant_id": default,
+        "tenants": list(tenants),
+        "default_tenant": default,
         "role": user.get("role", "user"),
         "typ": kind,
         "iat": now,
@@ -41,13 +55,37 @@ def _claims(user: dict[str, Any], *, kind: str, ttl: int, issuer: str) -> dict[s
     }
 
 
+def claims_tenants(claims: dict[str, Any]) -> list[str]:
+    """The tenants a token may use, accepting both claim shapes."""
+    raw = claims.get("tenants")
+    if isinstance(raw, list):
+        return [str(item) for item in raw if str(item)]
+    single = str(claims.get("tenant_id") or "")
+    return [single] if single else []
+
+
 def issue_tokens(
-    user: dict[str, Any], config: IngressConfig
+    user: dict[str, Any],
+    config: IngressConfig,
+    tenants: list[str] | None = None,
 ) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
-    """Return ``(access, refresh, access_claims, refresh_claims)``."""
-    access_claims = _claims(user, kind=ACCESS_TYPE, ttl=config.access_ttl_s, issuer=config.issuer)
+    """Return ``(access, refresh, access_claims, refresh_claims)``.
+
+    ``tenants`` is ordered default-first. Callers that predate membership lists
+    keep working through the legacy scalar fallback.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in tenants if tenants is not None else [str(user.get("tenant_id") or "")]:
+        tenant = str(item).strip()
+        if tenant and tenant not in seen:
+            seen.add(tenant)
+            ordered.append(tenant)
+    access_claims = _claims(
+        user, ordered, kind=ACCESS_TYPE, ttl=config.access_ttl_s, issuer=config.issuer
+    )
     refresh_claims = _claims(
-        user, kind=REFRESH_TYPE, ttl=config.refresh_ttl_s, issuer=config.issuer
+        user, ordered, kind=REFRESH_TYPE, ttl=config.refresh_ttl_s, issuer=config.issuer
     )
     access = jwt.encode(access_claims, config.jwt_secret, algorithm=_ALGORITHM)
     refresh = jwt.encode(refresh_claims, config.jwt_secret, algorithm=_ALGORITHM)
@@ -124,9 +162,27 @@ def set_auth_cookies(
 
 
 def clear_auth_cookies(response: web.StreamResponse, config: IngressConfig) -> None:
-    """Delete both auth cookies."""
+    """Delete both auth cookies and the active-tenant selection."""
     response.del_cookie(access_cookie(config), path="/")
     response.del_cookie(refresh_cookie(config), path="/")
+    response.del_cookie(ACTIVE_TENANT_COOKIE, path="/")
+
+
+def set_active_tenant_cookie(
+    response: web.StreamResponse,
+    tenant_id: str,
+    config: IngressConfig,
+) -> None:
+    """Remember which member cell this browser is using (30 days)."""
+    response.set_cookie(
+        ACTIVE_TENANT_COOKIE,
+        tenant_id,
+        max_age=30 * 24 * 3600,
+        httponly=True,
+        secure=config.secure_cookie,
+        samesite="Lax",
+        path="/",
+    )
 
 
 def _same_origin(request: web.Request) -> str:

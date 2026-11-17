@@ -22,6 +22,8 @@ const bridge = vi.hoisted(() => ({
   updateAccountRequest: vi.fn(),
   disableAuthRequest: vi.fn(),
   enableAuthRequest: vi.fn(),
+  fetchTenants: vi.fn(),
+  switchTenantRequest: vi.fn(),
   fetchWsTicket: vi.fn()
 }));
 vi.mock('~/composables/bridge/auth', () => bridge);

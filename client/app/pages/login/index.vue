@@ -86,11 +86,11 @@ const canSubmit = computed(() => !!password.value && (!auth.usernameRequired || 
  * otherwise the uniform "wrong password" text — a wrong password and a
  * throttled client must not be told apart by anything else.
  */
-const errorText = computed(() =>
-  auth.errorCode === 'too_many_attempts' && auth.errorMessage
-    ? auth.errorMessage
-    : t(auth.usernameRequired ? 'auth.login.failedMulti' : 'auth.login.failed')
-);
+const errorText = computed(() => {
+  if (auth.errorCode === 'too_many_attempts' && auth.errorMessage) return auth.errorMessage;
+  if (auth.errorCode === 'no_tenant') return t('auth.login.noTenant');
+  return t(auth.usernameRequired ? 'auth.login.failedMulti' : 'auth.login.failed');
+});
 
 /** Sign in; on success the guard's /home target is where the user was headed. */
 async function submit(): Promise<void> {
@@ -111,6 +111,7 @@ async function submit(): Promise<void> {
         "failedMulti": "密码或用户名错误（多次失败会临时锁定）",
         "password": "密码",
         "username": "用户名",
+        "noTenant": "该账号尚未分配 Cell，请联系管理员",
         "submit": "登 录",
         "subtitle": "请输入密码以继续"
       }
@@ -123,6 +124,7 @@ async function submit(): Promise<void> {
         "failedMulti": "Wrong password or username — repeated failures lock this client out for a while",
         "password": "Password",
         "username": "Username",
+        "noTenant": "This account has no cell assigned; contact the administrator",
         "submit": "Sign in",
         "subtitle": "Enter the password to continue"
       }
@@ -135,6 +137,7 @@ async function submit(): Promise<void> {
         "failedMulti": "パスワードまたはユーザー名が違います（失敗が続くと一時的にロックされます）",
         "password": "パスワード",
         "username": "ユーザー名",
+        "noTenant": "このアカウントにはセルが割り当てられていません。管理者に連絡してください",
         "submit": "ログイン",
         "subtitle": "続けるにはパスワードを入力してください"
       }
@@ -147,6 +150,7 @@ async function submit(): Promise<void> {
         "failedMulti": "비밀번호 또는 사용자 이름이 올바르지 않습니다 (반복 실패 시 일시적으로 잠깁니다)",
         "password": "비밀번호",
         "username": "사용자 이름",
+        "noTenant": "이 계정에 할당된 셀이 없습니다. 관리자에게 문의하십시오",
         "submit": "로그인",
         "subtitle": "계속하려면 비밀번호를 입력하세요"
       }

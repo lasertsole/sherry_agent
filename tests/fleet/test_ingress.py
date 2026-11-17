@@ -17,7 +17,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
 
 class _FakeCell:
-    def __init__(self) -> None:
+    def __init__(self, tenant_id: str = "alice") -> None:
+        self.tenant_id = tenant_id
         self.seen: dict[str, Any] = {}
         self.app = web.Application()
         self.app.router.add_get("/sessions", self.sessions)
@@ -31,7 +32,7 @@ class _FakeCell:
             "origin": request.headers.get("Origin"),
             "cookie": request.headers.get("Cookie"),
         }
-        return web.json_response({"ok": True, "tenant": "alice"})
+        return web.json_response({"ok": True, "tenant": self.tenant_id})
 
     async def auth_token(self, _request: web.Request) -> web.Response:
         return web.json_response({"token": "CELL-GATEWAY-SECRET"})
@@ -312,3 +313,298 @@ def test_login_limiter_uses_the_forwarded_address_only_when_trusted(tmp_path: Pa
         },
     )
     assert _login_key(plain, "alice") == "10.0.0.5:alice"
+
+
+@pytest.mark.asyncio
+async def test_two_users_share_one_cell_with_independent_credentials(tmp_path: Path):
+    cell = _FakeCell("team-a")
+    cell_server = TestServer(cell.app)
+    await cell_server.start_server()
+    store = FleetStore(tmp_path / "fleet.db")
+    await store.init()
+    await store.create_user("alice", "password123", tenant_id="team-a")
+    await store.create_user("bob", "password456", tenant_id="team-a")
+    await store.upsert_cell(
+        "team-a", host="127.0.0.1", port=cell_server.port, gateway_token="cell-token"
+    )
+    config = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="test-secret-0123456789-0123456789-abc",
+        static_dir=None,
+    )
+    client = TestClient(TestServer(await create_app(config, store)))
+    await client.start_server()
+    try:
+        alice = await client.post(
+            "/auth/login", json={"username": "alice", "password": "password123"}
+        )
+        assert alice.status == 200
+        assert (await alice.json())["user"]["tenant_id"] == "team-a"
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-a"
+
+        await client.post("/auth/logout")
+        wrong = await client.post(
+            "/auth/login", json={"username": "alice", "password": "password456"}
+        )
+        assert wrong.status == 401
+        bob = await client.post("/auth/login", json={"username": "bob", "password": "password456"})
+        assert bob.status == 200
+        assert (await bob.json())["user"]["tenant_id"] == "team-a"
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-a"
+    finally:
+        await client.close()
+        await cell_server.close()
+
+
+@pytest.mark.asyncio
+async def test_a_user_switches_between_authorized_cells(tmp_path: Path):
+    cell_a = _FakeCell("team-a")
+    cell_b = _FakeCell("team-b")
+    server_a = TestServer(cell_a.app)
+    server_b = TestServer(cell_b.app)
+    await server_a.start_server()
+    await server_b.start_server()
+    store = FleetStore(tmp_path / "fleet.db")
+    await store.init()
+    alice = await store.create_user("alice", "password123", tenant_id="team-a")
+    await store.add_user_tenant(alice["id"], "team-b", role="member")
+    await store.upsert_cell("team-a", host="127.0.0.1", port=server_a.port, gateway_token="token-a")
+    await store.upsert_cell("team-b", host="127.0.0.1", port=server_b.port, gateway_token="token-b")
+    await store.set_process("team-a", pid=1, status="running", data_dir="a")
+    await store.set_process("team-b", pid=2, status="running", data_dir="b")
+    config = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="test-secret-0123456789-0123456789-abc",
+        static_dir=None,
+        supervise=False,
+    )
+    client = TestClient(TestServer(await create_app(config, store)))
+    await client.start_server()
+    try:
+        await client.post("/auth/login", json={"username": "alice", "password": "password123"})
+        listed = await (await client.get("/auth/tenants")).json()
+        assert listed["active"] == "team-a"
+        assert [
+            (row["tenant_id"], row["role"], row["is_default"]) for row in listed["tenants"]
+        ] == [
+            ("team-a", "owner", True),
+            ("team-b", "member", False),
+        ]
+        assert all(row["cell_status"] == "running" for row in listed["tenants"])
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-a"
+
+        switched = await client.post("/auth/tenant", json={"tenant_id": "team-b"})
+        assert switched.status == 200
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-b"
+        listed = await (await client.get("/auth/tenants")).json()
+        assert listed["active"] == "team-b"
+
+        unknown = await client.post("/auth/tenant", json={"tenant_id": "team-c"})
+        assert unknown.status == 403
+        rejected = await client.post(
+            "/auth/tenant",
+            json={"tenant_id": "team-b"},
+            headers={"Origin": "https://evil.test"},
+        )
+        assert rejected.status == 403
+        assert (await rejected.json())["error"] == "csrf_rejected"
+
+        await store.remove_user_tenant(alice["id"], "team-b")
+        revoked = await client.post("/auth/tenant", json={"tenant_id": "team-b"})
+        assert revoked.status == 403
+        fallback = await client.get("/sessions")
+        assert fallback.status == 200
+        assert (await fallback.json())["tenant"] == "team-a"
+
+        await store.add_user_tenant(alice["id"], "team-c", role="member")
+        await client.post("/auth/tenant", json={"tenant_id": "team-c"})
+        assert (await client.get("/sessions")).status == 503
+        listed = await (await client.get("/auth/tenants")).json()
+        team_c = next(row for row in listed["tenants"] if row["tenant_id"] == "team-c")
+        assert team_c["cell_status"] == "stopped"
+
+        await client.post("/auth/logout")
+        await client.post("/auth/login", json={"username": "alice", "password": "password123"})
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-a"
+    finally:
+        await client.close()
+        await server_a.close()
+        await server_b.close()
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_scalar_tenant_token_still_routes(tmp_path: Path):
+    import time
+    import uuid
+
+    import jwt
+
+    from fleet.security import access_cookie
+
+    cell = _FakeCell("team-a")
+    cell_server = TestServer(cell.app)
+    await cell_server.start_server()
+    store = FleetStore(tmp_path / "fleet.db")
+    await store.init()
+    await store.create_user("alice", "password123", tenant_id="team-a")
+    await store.upsert_cell(
+        "team-a", host="127.0.0.1", port=cell_server.port, gateway_token="cell-token"
+    )
+    config = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="test-secret-0123456789-0123456789-abc",
+        static_dir=None,
+    )
+    client = TestClient(TestServer(await create_app(config, store)))
+    await client.start_server()
+    try:
+        now = int(time.time())
+        legacy = jwt.encode(
+            {
+                "sub": "1",
+                "username": "alice",
+                "tenant_id": "team-a",
+                "role": "user",
+                "typ": "access",
+                "iat": now,
+                "exp": now + 900,
+                "jti": uuid.uuid4().hex,
+                "iss": config.issuer,
+            },
+            config.jwt_secret,
+            algorithm="HS256",
+        )
+        client.session.cookie_jar.update_cookies({access_cookie(config): legacy})
+        proxied = await client.get("/sessions")
+        assert proxied.status == 200
+        assert (await proxied.json())["tenant"] == "team-a"
+    finally:
+        await client.close()
+        await cell_server.close()
+
+
+@pytest.mark.asyncio
+async def test_login_without_a_membership_is_refused(tmp_path: Path):
+    store = FleetStore(tmp_path / "fleet.db")
+    await store.init()
+    alice = await store.create_user("alice", "password123", tenant_id="team-a")
+    assert await store.remove_user_tenant(alice["id"], "team-a") is True
+    config = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="test-secret-0123456789-0123456789-abc",
+        static_dir=None,
+    )
+    client = TestClient(TestServer(await create_app(config, store)))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/auth/login", json={"username": "alice", "password": "password123"}
+        )
+        assert response.status == 403
+        assert (await response.json())["error"] == "no_tenant"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_an_old_refresh_token_upgrades_to_the_membership_claims(tmp_path: Path):
+    import time
+    import uuid
+
+    import jwt
+
+    from fleet.security import refresh_cookie
+
+    cell = _FakeCell("team-a")
+    cell_server = TestServer(cell.app)
+    await cell_server.start_server()
+    store = FleetStore(tmp_path / "fleet.db")
+    await store.init()
+    alice = await store.create_user("alice", "password123", tenant_id="team-a")
+    await store.upsert_cell(
+        "team-a", host="127.0.0.1", port=cell_server.port, gateway_token="cell-token"
+    )
+    config = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="test-secret-0123456789-0123456789-abc",
+        static_dir=None,
+    )
+    now = int(time.time())
+    jti = uuid.uuid4().hex
+    await store.save_refresh(jti, alice["id"], now + 3600)
+    old_refresh = jwt.encode(
+        {
+            "sub": str(alice["id"]),
+            "username": "alice",
+            "tenant_id": "team-a",
+            "role": "user",
+            "typ": "refresh",
+            "iat": now,
+            "exp": now + 3600,
+            "jti": jti,
+            "iss": config.issuer,
+        },
+        config.jwt_secret,
+        algorithm="HS256",
+    )
+    client = TestClient(TestServer(await create_app(config, store)))
+    await client.start_server()
+    try:
+        client.session.cookie_jar.update_cookies({refresh_cookie(config): old_refresh})
+        refreshed = await client.post("/auth/refresh")
+        assert refreshed.status == 200
+        assert (await refreshed.json())["user"]["tenant_id"] == "team-a"
+        listed = await (await client.get("/auth/tenants")).json()
+        assert listed["active"] == "team-a"
+        assert [row["tenant_id"] for row in listed["tenants"]] == ["team-a"]
+        assert (await client.get("/sessions")).status == 200
+    finally:
+        await client.close()
+        await cell_server.close()
+
+
+@pytest.mark.asyncio
+async def test_accounts_on_different_cells_are_routed_apart(tmp_path: Path):
+    cell_a = _FakeCell("team-a")
+    cell_b = _FakeCell("team-b")
+    server_a = TestServer(cell_a.app)
+    server_b = TestServer(cell_b.app)
+    await server_a.start_server()
+    await server_b.start_server()
+    store = FleetStore(tmp_path / "fleet.db")
+    await store.init()
+    await store.create_user("alice", "password123", tenant_id="team-a")
+    await store.create_user("carol", "password789", tenant_id="team-b")
+    await store.upsert_cell("team-a", host="127.0.0.1", port=server_a.port, gateway_token="token-a")
+    await store.upsert_cell("team-b", host="127.0.0.1", port=server_b.port, gateway_token="token-b")
+    config = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="test-secret-0123456789-0123456789-abc",
+        static_dir=None,
+        supervise=False,
+    )
+    client = TestClient(TestServer(await create_app(config, store)))
+    await client.start_server()
+    try:
+        await client.post("/auth/login", json={"username": "alice", "password": "password123"})
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-a"
+
+        await client.post("/auth/logout")
+        await client.post("/auth/login", json={"username": "carol", "password": "password789"})
+        assert (await (await client.get("/sessions")).json())["tenant"] == "team-b"
+    finally:
+        await client.close()
+        await server_a.close()
+        await server_b.close()
