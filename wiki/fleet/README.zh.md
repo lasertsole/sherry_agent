@@ -26,17 +26,38 @@ Ingress 与所有 cell 使用同一个 OS 用户。process 层是可信租户层
 
 Ingress 拥有所有 `/auth/*` 路由，并且从不代理 `/auth/token`，因此 cell 每次启动生成的 gateway token 不会泄漏给浏览器。登录会设置两个 HttpOnly cookie（`sherry_ingress_access`、`sherry_ingress_refresh`）。access token 是短期 HS256 JWT，携带 `tenants`（默认值在前）、`tenant_id` 和 `role`；refresh token 每次使用都会轮换，并可在服务端撤销。
 
-共享 SPA 看到的契约与单租户 cell 一致。`/auth/status` 额外返回 `username_required`；`/auth/login` 接受 `{username, password}` 并返回 `expires_in`；`/auth/me` 可用有效的 refresh cookie 治愈过期的 access cookie；`/auth/account` 用于修改密码，启用/禁用登录仍只允许管理员操作。非安全方法请求会经过 Origin 与 `Sec-Fetch-Site` 的 CSRF 检查。同一 `(client, username)` 在 300 秒内失败 5 次会返回 `429`。
+共享 SPA 看到的契约与单租户 cell 一致，只有一处不同：Ingress 登录是「用户名 + 密码」（见下方多用户章节），因此 `/auth/status` 还会返回 `username_required: true`。`/auth/me` 可用有效的 refresh cookie 治愈过期的 access cookie；非安全方法请求会经过 Origin 与 `Sec-Fetch-Site` 的 CSRF 检查。
 
 设置 `SHERRY_INGRESS_TLS_CERT` 与 `SHERRY_INGRESS_TLS_KEY` 后由 Ingress 终止 TLS，并把两个 cookie 标记为 `Secure`；`SHERRY_INGRESS_ALLOWED_ORIGINS` 追加反向代理来源。静态资源公开，任何 `Accept: text/html` 的 GET 都会拿到 `200.html` 或 `index.html`，所以 `/login` 与深层路由在会话建立前就能加载；API 调用仍然受限。
 
-## 👥 用户、信任域与 cell 切换
+## 👥 多用户能力：账号、cell 与切换
 
-cell 是信任域，不是用户账号：任意多个账号都可以指向同一个 `tenant_id`，从而共享该 cell 的会话、记忆、技能与项目目录。凭据按账号保存在 Ingress 数据库中，修改其中一个密码不影响另一个。一个账号也可以属于多个 cell，记录在多对多的 `user_tenants` 表中（旧的 `users.tenant_id` 保留为默认值）。`init()` 会重建 `tenant_id` 曾是 `UNIQUE` 的旧 `users` 表一次，然后回填成员关系。
+Ingress 是唯一知道「人」的组件，cell 永远看不到用户名。账号由**管理员预置**（没有自助注册），存放在 Ingress 数据库（`users` 与多对多的 `user_tenants`）。SPA 在 Ingress 上永远显示登录页（`/auth/status` 返回 `auth_required: true`、`username_required: true`、`has_account: true`），`POST /auth/login` 接受 `{username, password}` 并返回 `expires_in`；失败尝试按 `(客户端地址, 用户名)` 限流：300 秒内 5 次返回 `429`，而未知用户名同样会做一次假哈希校验，避免用时间差探测账号是否存在。没有成员关系的账号会被拒绝为 `403 no_tenant`。
 
-登录会选择账号的默认成员关系，并在认证 cookie 之外设置 HttpOnly 的 `sherry_tenant` cookie。`GET /auth/tenants` 列出全部成员关系，包含 `role`、`is_default` 和 `cell_status`；`POST /auth/tenant` 用实时表校验请求的 `tenant_id` 并重写 cookie。代理与 WebSocket 路由在每次请求时读取该 cookie 并重新校验成员关系，因此管理员撤销某个 cell 会立即生效；过期 cookie 回退到账号默认值。SPA 的 `TenantSwitcher` 仅在账号拥有多个 cell 时出现，切换后整页重载，因为缓存的会话、记忆与 socket 都属于前一个 cell。
+| 概念 | 存放位置 | 含义 |
+| :--- | :--- | :--- |
+| 账号 | Ingress `users` | 用户名 + scrypt 哈希——人唯一持有的凭据。修改密码是自助操作（`PUT /auth/account`）；启用/禁用登录与删除账号属于管理员操作，返回 `managed_by_admin`。 |
+| `role` | `users.role` / `user_tenants.role` | 会被记录并返回（`GET /auth/tenants`、`/auth/me`），但**不做权限判定**：授权基于成员关系，所以 `owner` 与 `member` 目前对同一个 cell 的访问完全相同。把该字段当作元数据。 |
+| cell（信任域） | 一个 `tenant_id` | 一个 workspace、一份记忆、一组会话与模型设置。域内的一切由所有成员共享。 |
+| 成员关系 | `user_tenants(user_id, tenant_id, role, is_default)` | 授权某个账号访问某个 cell。多对多：一个账号可属于多个 cell，一个 cell 也可服务多个账号。 |
 
-没有成员关系的账号无法登录（`no_tenant`）。用 `user-tenant-add`、`user-tenants`、`user-tenant-remove` 管理访问权限；第一个成员关系是 owner 与默认值。`rm` 只删除 cell，不删除成员关系，所以请先撤销或改派。
+**什么是共享的、什么是按账号的。** 同一个 cell 的成员共享会话、聊天记录、记忆（FACTS / MEMORY / USER）、技能、项目目录与模型设置——这正是信任域的意义。凭据、refresh token 轮换与当前 cell 的选择则按账号/按浏览器：两个账号永远看不到对方的密码，但能看到对方的对话，因为对话属于 cell。
+
+**切换与撤销。** 登录会选择账号的默认成员关系，并在认证 cookie 之外设置 HttpOnly 的 `sherry_tenant` cookie。`GET /auth/tenants` 列出全部成员关系，包含 `role`、`is_default` 和实时 `cell_status`；`POST /auth/tenant` 用实时表校验请求的 `tenant_id` 并重写 cookie。代理与 WebSocket 路由在每次请求时重新校验成员关系，因此 `user-tenant-remove` 立即生效——过期 cookie 回退到账号的默认 cell。SPA 的 `TenantSwitcher` 仅在账号拥有多个 cell 时出现，切换后整页重载，因为缓存的会话、记忆与 socket 都属于前一个 cell。
+
+**开通速查。**
+
+```bash
+python -m fleet create --tenant team-a                     # 需要 OS 隔离时加 --backend container
+python -m fleet user-add --username alice --password '...' --tenant team-a
+python -m fleet user-tenant-add --username bob --tenant team-a --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username bob --tenant team-a
+```
+
+第一个成员关系是 owner 与默认值。`rm` 只删除 cell、不删除成员关系，所以请先撤销或改派。
+
+**用户之间的隔离。** cell **内部**没有隔离——cell 就是隔离单元。两个人不应看到对方会话时，给他们各自的 cell；这些 cell 属于不可信租户时使用 container 层（它提供文件系统、网络与 cgroup 边界）。容器 cell 的自身登录按构造关闭（`SHERRY_AUTH_ENABLED=false` 加一次强制关闭，见 container 章节），因为 Ingress 流量从 bridge 网关而非 loopback 到达——真正起作用的登录是 Ingress 的登录。
 
 ## 🧩 Cell 生命周期
 

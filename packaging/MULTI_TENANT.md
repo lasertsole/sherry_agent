@@ -23,7 +23,14 @@ A cell is a trust domain, not a user account. Several Ingress accounts may
 share one `tenant_id` and therefore the same workspace, sessions, memory and
 project directory; their credentials remain independent. An account may also
 belong to several cells. Per-user isolation requires separate tenants (separate
-cells and workspaces).
+cells and workspaces), and untrusted tenants should run on the container backend
+(`python -m fleet create --backend container`), which adds the filesystem,
+network and cgroup boundary the process backend does not have.
+
+Accounts are administrator-provisioned in the Ingress database; the cell never
+sees a username. `role` (`owner` / `member`) is recorded and reported by
+`GET /auth/tenants`, but authorization is membership-based — the label does not
+change what a member can reach today.
 
 Manage memberships with:
 
@@ -47,17 +54,26 @@ Container environment (mount `<host>/fleet/cells/<tenant>/` at `/app/data`):
 
 ```bash
 SHERRY_HOME=/app/data
-SHERRY_PROJECT_DIR=/app/workspace
+SHERRY_PROJECT_DIR=/app/data/workspace
 SHERRY_GATEWAY_TOKEN=<per-cell-token>
+SHERRY_AUTH_ENABLED=false
 ```
 
 Or write `<host>/fleet/cells/<tenant>/sherry.jsonc`:
 
 ```jsonc
 {
-  "project_dir": "/app/workspace"
+  "project_dir": "/app/data/workspace"
 }
 ```
+
+`SHERRY_AUTH_ENABLED=false` matters here: Ingress traffic reaches a container
+from the bridge gateway rather than loopback, so a cell that enforced its own
+login would answer `401` to every proxied request. A fresh cell seeds the switch
+off; a cell restored from a backup that carried an enabled login is switched off
+at rest by the manager (`fleet/container_manager.py`), which fails loudly if the
+login survives. The login that matters for a multi-user deployment is the
+Ingress one.
 
 The container is created with:
 

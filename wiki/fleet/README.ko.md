@@ -26,17 +26,38 @@ Ingress와 모든 cell은 같은 OS 사용자로 실행됩니다. process 계층
 
 Ingress는 모든 `/auth/*` 라우트를 소유하며 `/auth/token`은 역프록시하지 않습니다. 따라서 cell이 부팅마다 생성하는 gateway token이 브라우저로 새지 않습니다. 로그인은 HttpOnly cookie 두 개(`sherry_ingress_access`, `sherry_ingress_refresh`)를 설정합니다. access token은 수명이 짧은 HS256 JWT로 `tenants`(기본값이 먼저), `tenant_id`, `role`을 담습니다. refresh token은 사용할 때마다 회전하며 서버 측에서 폐기할 수 있습니다.
 
-공유 SPA는 단일 테넌트 cell과 같은 계약을 봅니다. `/auth/status`는 `username_required`도 반환하고, `/auth/login`은 `{username, password}`를 받아 `expires_in`을 돌려주며, `/auth/me`는 유효한 refresh cookie로 만료된 access cookie를 복구하고, `/auth/account`는 비밀번호를 변경합니다(활성화/비활성화는 관리자 전용). 안전하지 않은 메서드는 Origin과 `Sec-Fetch-Site` CSRF 검사를 통과해야 합니다. 300초 안에 같은 `(client, username)`으로 5회 실패하면 `429`를 반환합니다.
+공유 SPA는 단일 테넌트 cell과 같은 계약을 보지만 한 가지가 다릅니다. Ingress 로그인은 "사용자 이름 + 비밀번호"이므로(아래 다중 사용자 절 참고) `/auth/status`가 `username_required: true`도 반환합니다. `/auth/me`는 유효한 refresh cookie로 만료된 access cookie를 복구하고, 안전하지 않은 메서드는 Origin과 `Sec-Fetch-Site` CSRF 검사를 통과해야 합니다.
 
 `SHERRY_INGRESS_TLS_CERT`와 `SHERRY_INGRESS_TLS_KEY`를 설정하면 Ingress가 TLS를 종료하고 두 cookie를 `Secure`로 표시합니다. `SHERRY_INGRESS_ALLOWED_ORIGINS`는 역프록시 origin을 추가합니다. 정적 자산은 공개되며 `Accept: text/html` GET은 `200.html` 또는 `index.html`을 받으므로 `/login`과 깊은 라우트는 세션 없이도 로드됩니다. API 호출은 계속 제한됩니다.
 
-## 👥 사용자, 신뢰 도메인, cell 전환
+## 👥 다중 사용자 기능: 계정, cell, 전환
 
-cell은 사용자 계정이 아니라 신뢰 도메인입니다. 여러 계정이 같은 `tenant_id`를 가리켜 해당 cell의 세션, 메모리, 스킬, 프로젝트 디렉터리를 공유할 수 있습니다. 자격 증명은 Ingress 데이터베이스에 계정별로 저장되며 한쪽 비밀번호를 바꿔도 다른 쪽은 영향받지 않습니다. 한 계정이 여러 cell에 속할 수 있고, 다대다 `user_tenants` 테이블에 보관됩니다(레거시 `users.tenant_id`는 기본값으로 남습니다). `init()`은 `tenant_id`가 `UNIQUE`였던 레거시 `users` 테이블을 한 번 재구성한 뒤 멤버십을 채웁니다.
+Ingress만 "사람"을 알며, cell은 사용자 이름을 보지 않습니다. 계정은 **관리자가 미리 만들어 두는** 것이고(셀프 가입 없음) Ingress 데이터베이스(`users`와 다대다 `user_tenants`)에 있습니다. SPA는 Ingress에서 항상 로그인 화면을 보여 주며(`/auth/status`가 `auth_required: true`, `username_required: true`, `has_account: true`를 반환), `POST /auth/login`은 `{username, password}`를 받아 `expires_in`을 돌려줍니다. 실패는 `(클라이언트 주소, 사용자 이름)` 단위로 제한되어 300초에 5회면 `429`를 반환하고, 알 수 없는 사용자 이름도 더미 해시 검증을 수행하므로 응답 시간으로 계정 존재를 추측할 수 없습니다. 멤버십이 없는 계정은 `403 no_tenant`로 거부됩니다.
 
-로그인은 계정의 기본 멤버십을 선택하고 인증 cookie 옆에 HttpOnly `sherry_tenant` cookie를 설정합니다. `GET /auth/tenants`는 `role`, `is_default`, `cell_status`를 포함한 모든 멤버십을 반환하고, `POST /auth/tenant`는 요청된 `tenant_id`를 실제 테이블로 검증한 뒤 cookie를 다시 씁니다. 프록시와 WebSocket 라우터는 요청마다 그 cookie를 읽고 멤버십을 재확인하므로 관리자가 cell 권한을 회수하면 즉시 반영됩니다. 오래된 cookie는 계정 기본값으로 폴백합니다. SPA의 `TenantSwitcher`는 cell이 둘 이상일 때만 나타나며 전환 후 페이지를 다시 로드합니다(캐시된 세션, 메모리, 소켓이 모두 이전 cell의 것이기 때문입니다).
+| 개념 | 저장 위치 | 의미 |
+| :--- | :--- | :--- |
+| 계정 | Ingress `users` | 사용자 이름 + scrypt 해시. 사람이 보유한 유일한 자격 증명입니다. 비밀번호 변경은 셀프서비스(`PUT /auth/account`)이고, 로그인 활성화/비활성화와 계정 삭제는 관리자 작업이며 `managed_by_admin`을 반환합니다. |
+| `role` | `users.role` / `user_tenants.role` | 기록되고 반환되지만(`GET /auth/tenants`, `/auth/me`) **권한 판정에는 쓰이지 않습니다**. 인가는 멤버십 기반이므로 현재 `owner`와 `member`는 같은 cell에 동일하게 접근합니다. 이 라벨은 메타데이터로 취급하십시오. |
+| cell(신뢰 도메인) | 하나의 `tenant_id` | 하나의 workspace, 하나의 메모리 저장소, 한 세트의 세션과 모델 설정. 내부의 모든 것은 모든 멤버가 공유합니다. |
+| 멤버십 | `user_tenants(user_id, tenant_id, role, is_default)` | 한 계정을 한 cell에 인가합니다. 다대다이므로 한 계정이 여러 cell에, 한 cell이 여러 계정에 쓰일 수 있습니다. |
 
-멤버십이 없는 계정은 로그인할 수 없습니다(`no_tenant`). 접근 관리는 `user-tenant-add`, `user-tenants`, `user-tenant-remove`로 수행합니다. 첫 멤버십이 owner이자 기본값입니다. `rm`은 cell만 삭제하고 멤버십은 남기므로 먼저 회수하거나 재배정하십시오.
+**공유되는 것과 계정별인 것.** 같은 cell의 멤버는 세션, 대화 기록, 메모리(FACTS / MEMORY / USER), 스킬, 프로젝트 디렉터리, 모델 설정을 공유합니다. 그것이 신뢰 도메인의 목적입니다. 자격 증명, refresh token 회전, 선택한 cell은 계정/브라우저 단위입니다. 두 계정은 서로의 비밀번호를 볼 수 없지만, 대화는 cell에 속하므로 서로 볼 수 있습니다.
+
+**전환과 회수.** 로그인은 계정의 기본 멤버십을 선택하고 인증 cookie 옆에 HttpOnly `sherry_tenant` cookie를 설정합니다. `GET /auth/tenants`는 `role`, `is_default`, 실시간 `cell_status`를 포함한 모든 멤버십을 반환하고, `POST /auth/tenant`는 요청된 `tenant_id`를 실제 테이블로 검증한 뒤 cookie를 다시 씁니다. 프록시와 WebSocket 라우터는 요청마다 멤버십을 재확인하므로 `user-tenant-remove`는 즉시 반영됩니다. 오래된 cookie는 계정의 기본 cell로 폴백합니다. SPA의 `TenantSwitcher`는 cell이 둘 이상일 때만 나타나며 전환 후 페이지를 다시 로드합니다(캐시된 세션, 메모리, 소켓이 모두 이전 cell의 것이기 때문입니다).
+
+**설정 빠른 안내.**
+
+```bash
+python -m fleet create --tenant team-a                     # OS 격리가 필요하면 --backend container
+python -m fleet user-add --username alice --password '...' --tenant team-a
+python -m fleet user-tenant-add --username bob --tenant team-a --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username bob --tenant team-a
+```
+
+첫 멤버십이 owner이자 기본값입니다. `rm`은 cell만 삭제하고 멤버십은 남기므로 먼저 회수하거나 재배정하십시오.
+
+**사용자 간 격리.** cell **내부**에는 격리가 없습니다. cell이 격리 단위입니다. 서로의 세션을 보여 주지 않아야 한다면 각자의 cell을 주고, 그 cell이 신뢰할 수 없는 테넌트의 것이라면 container 계층(파일 시스템·네트워크·cgroup 경계)을 사용하십시오. 컨테이너 cell은 자체 로그인을 구조상 끄며(`SHERRY_AUTH_ENABLED=false`와 강제 해제, container 절 참고), Ingress 트래픽은 loopback이 아니라 bridge 게이트웨이에서 도착하므로 실제로 의미 있는 로그인은 Ingress의 로그인입니다.
 
 ## 🧩 Cell 라이프사이클
 

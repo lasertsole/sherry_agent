@@ -26,17 +26,38 @@ Ingress とすべての cell は同じ OS ユーザーで実行されます。pr
 
 Ingress はすべての `/auth/*` ルートを所有し、`/auth/token` を逆プロキシしません。そのため cell が起動ごとに生成する gateway token がブラウザへ漏れることはありません。ログインは 2 つの HttpOnly cookie（`sherry_ingress_access`、`sherry_ingress_refresh`）を設定します。access token は短命の HS256 JWT で、`tenants`（既定値が先頭）、`tenant_id`、`role` を含みます。refresh token は使用のたびにローテーションし、サーバー側で失効できます。
 
-共有 SPA は単一テナント cell と同じ契約を見ます。`/auth/status` は `username_required` も返し、`/auth/login` は `{username, password}` を受けて `expires_in` を返し、`/auth/me` は有効な refresh cookie から期限切れの access cookie を回復し、`/auth/account` はパスワードを変更します（有効化・無効化は管理者のみ）。安全でないメソッドは Origin と `Sec-Fetch-Site` の CSRF 検査を通ります。同一 `(client, username)` で 300 秒に 5 回失敗すると `429` を返します。
+共有 SPA は単一テナント cell と同じ契約を見ますが、1 点だけ異なります。Ingress のログインは「ユーザー名 + パスワード」なので（下のマルチユーザー節を参照）、`/auth/status` は `username_required: true` も返します。`/auth/me` は有効な refresh cookie から期限切れの access cookie を回復し、安全でないメソッドは Origin と `Sec-Fetch-Site` の CSRF 検査を通ります。
 
 `SHERRY_INGRESS_TLS_CERT` と `SHERRY_INGRESS_TLS_KEY` を設定すると Ingress が TLS を終端し、両方の cookie を `Secure` にします。`SHERRY_INGRESS_ALLOWED_ORIGINS` は逆プロキシの追加オリジンです。静的アセットは公開され、`Accept: text/html` の GET は `200.html` または `index.html` を受け取るため、`/login` や深いルートはセッション確立前でも読み込めます。API 呼び出しは制限されたままです。
 
-## 👥 ユーザー、信頼ドメイン、cell の切り替え
+## 👥 マルチユーザー機能：アカウント、cell、切り替え
 
-cell はユーザーアカウントではなく信頼ドメインです。任意の数のアカウントが同じ `tenant_id` を指し、その cell のセッション・メモリ・スキル・プロジェクトディレクトリを共有できます。資格情報は Ingress データベースにアカウントごとに保存され、一方のパスワード変更は他方に影響しません。1 つのアカウントが複数の cell に所属でき、多対多の `user_tenants` テーブルに保持されます（旧 `users.tenant_id` は既定値として残ります）。`init()` は `tenant_id` が `UNIQUE` だった旧 `users` テーブルを一度だけ再構築し、その後メンバーシップを埋めます。
+Ingress だけが「人」を知っており、cell がユーザー名を見ることはありません。アカウントは**管理者が用意**するもので（セルフサインアップはありません）、Ingress のデータベース（`users` と多対多の `user_tenants`）にあります。SPA は Ingress で常にログイン画面を表示し（`/auth/status` は `auth_required: true`、`username_required: true`、`has_account: true` を返します）、`POST /auth/login` は `{username, password}` を受けて `expires_in` を返します。失敗は `(クライアントアドレス, ユーザー名)` 単位で制限され、300 秒に 5 回で `429`、未知のユーザー名でもダミーのハッシュ検証を行うため応答時間から存在を推測できません。メンバーシップのないアカウントは `403 no_tenant` で拒否されます。
 
-ログインはアカウントの既定メンバーシップを選び、認証 cookie の隣に HttpOnly の `sherry_tenant` cookie を設定します。`GET /auth/tenants` は `role`、`is_default`、`cell_status` を含む全メンバーシップを返し、`POST /auth/tenant` は要求された `tenant_id` を実テーブルで検証して cookie を書き換えます。プロキシと WebSocket ルーターはリクエストごとにその cookie を読み、メンバーシップを再確認するため、管理者が cell を取り消すと即座に反映されます。古い cookie はアカウントの既定値へフォールバックします。SPA の `TenantSwitcher` は複数の cell を持つ場合だけ表示され、切り替え後はページを再読み込みします（キャッシュされたセッション・メモリ・ソケットは前の cell のものだからです）。
+| 概念 | 保存場所 | 意味 |
+| :--- | :--- | :--- |
+| アカウント | Ingress `users` | ユーザー名 + scrypt ハッシュ。人が持つ唯一の資格情報です。パスワード変更はセルフサービス（`PUT /auth/account`）で、ログインの有効化・無効化とアカウント削除は管理者操作であり `managed_by_admin` を返します。 |
+| `role` | `users.role` / `user_tenants.role` | 記録・報告はされますが（`GET /auth/tenants`、`/auth/me`）、**権限判定には使われません**。認可はメンバーシップに基づくため、`owner` と `member` は現状まったく同じように cell へ到達できます。ラベルはメタデータとして扱ってください。 |
+| cell（信頼ドメイン） | 1 つの `tenant_id` | 1 つの workspace、1 つのメモリストア、1 組のセッションとモデル設定。中のものは全メンバーで共有されます。 |
+| メンバーシップ | `user_tenants(user_id, tenant_id, role, is_default)` | 1 アカウントを 1 cell に認可します。多対多で、1 アカウントが複数 cell に、1 cell が複数アカウントに使えます。 |
 
-メンバーシップのないアカウントはログインできません（`no_tenant`）。アクセス管理には `user-tenant-add`、`user-tenants`、`user-tenant-remove` を使います。最初のメンバーシップが owner かつ既定です。`rm` は cell を削除しますがメンバーシップは残すため、先に取り消すか再割り当てしてください。
+**共有されるもの、アカウント単位のもの。** 同じ cell のメンバーはセッション、会話履歴、メモリ（FACTS / MEMORY / USER）、スキル、プロジェクトディレクトリ、モデル設定を共有します——それが信頼ドメインの目的です。資格情報、refresh token のローテーション、選択中の cell はアカウント/ブラウザ単位です。2 つのアカウントが互いのパスワードを見ることはありませんが、会話は cell に属するため互いに見えます。
+
+**切り替えと取り消し。** ログインはアカウントの既定メンバーシップを選び、認証 cookie の隣に HttpOnly の `sherry_tenant` cookie を設定します。`GET /auth/tenants` は `role`、`is_default`、最新の `cell_status` を含む全メンバーシップを返し、`POST /auth/tenant` は要求された `tenant_id` を実テーブルで検証して cookie を書き換えます。プロキシと WebSocket ルーターはリクエストごとにメンバーシップを再確認するため、`user-tenant-remove` は即座に反映されます。古い cookie は既定の cell へフォールバックします。SPA の `TenantSwitcher` は複数の cell を持つ場合だけ表示され、切り替え後はページを再読み込みします（キャッシュされたセッション・メモリ・ソケットは前の cell のものだからです）。
+
+**セットアップ手順。**
+
+```bash
+python -m fleet create --tenant team-a                     # OS 分離が必要なら --backend container
+python -m fleet user-add --username alice --password '...' --tenant team-a
+python -m fleet user-tenant-add --username bob --tenant team-a --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username bob --tenant team-a
+```
+
+最初のメンバーシップが owner かつ既定です。`rm` は cell を削除しますがメンバーシップは残すため、先に取り消すか再割り当てしてください。
+
+**ユーザー間の分離。** cell の**内部**には分離がありません——cell が分離単位です。互いのセッションを見せたくない場合は別々の cell を与え、その cell が信頼できないテナントのものなら container 層（ファイルシステム・ネットワーク・cgroup の境界）を使ってください。コンテナ cell は自身のログインを構造上オフにします（`SHERRY_AUTH_ENABLED=false` と強制的な無効化。container 節を参照）。Ingress からのトラフィックは loopback ではなく bridge ゲートウェイから届くため、意味を持つログインは Ingress のログインです。
 
 ## 🧩 Cell のライフサイクル
 

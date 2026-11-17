@@ -26,17 +26,38 @@ The Ingress and the cells run as the same OS user. The process tier is the trust
 
 The Ingress owns every `/auth/*` route and never proxies `/auth/token`, so a cell's per-boot gateway token cannot leak to a browser. Login sets two HttpOnly cookies (`sherry_ingress_access`, `sherry_ingress_refresh`). The access token is a short-lived HS256 JWT carrying `tenants` (default first), `tenant_id` and `role`; the refresh token rotates on every use and is revocable server-side.
 
-The shared SPA sees the same contract as a standalone cell. `/auth/status` also reports `username_required`; `/auth/login` accepts `{username, password}` and returns `expires_in`; `/auth/me` heals an expired access cookie from a valid refresh cookie; `/auth/account` changes a password while enable/disable stays administrator-only. Unsafe requests pass an Origin and `Sec-Fetch-Site` CSRF check. Five failed logins per `(client, username)` in 300 s answer `429`.
+The shared SPA sees the same contract as a standalone cell, with one difference: the Ingress login is `username` + password (see the multi-user section below), so `/auth/status` also reports `username_required: true`. `/auth/me` heals an expired access cookie from a valid refresh cookie; unsafe requests pass an Origin and `Sec-Fetch-Site` CSRF check.
 
 Setting `SHERRY_INGRESS_TLS_CERT` and `SHERRY_INGRESS_TLS_KEY` makes the Ingress terminate TLS and marks both cookies `Secure`; `SHERRY_INGRESS_ALLOWED_ORIGINS` adds reverse-proxy origins. Static assets are public, and every `Accept: text/html` GET receives `200.html` or `index.html`, so `/login` and deep routes load before a session exists. API calls stay gated.
 
-## 👥 Users, trust domains and cell switching
+## 👥 Multi-user capability: accounts, cells and switching
 
-A cell is a trust domain, not a user account: any number of accounts may point at the same `tenant_id` and therefore share that cell's sessions, memory, skills and project directory. Credentials stay per account in the Ingress database; changing one password does not touch another. One account may also belong to several cells, held in the many-to-many `user_tenants` table (the legacy `users.tenant_id` remains the default). `init()` rebuilds a legacy `users` table whose `tenant_id` was `UNIQUE` once, then backfills the memberships.
+The Ingress is the only component that knows about people; a cell never sees a username. Accounts are **administrator-provisioned** — there is no self-service signup — and live in the Ingress database (`users` plus the many-to-many `user_tenants`). The SPA always shows the login form at the Ingress (`/auth/status` answers `auth_required: true`, `username_required: true`, `has_account: true`), `POST /auth/login` takes `{username, password}` and answers `expires_in`, and a failed attempt is limited per `(client address, username)`: five in 300 s answer `429`, while an unknown username still pays a dummy hash verification so timing does not leak existence. An account with no membership is refused with `403 no_tenant`.
 
-Login selects the account's default membership and sets an HttpOnly `sherry_tenant` cookie next to the auth cookies. `GET /auth/tenants` lists every membership with `role`, `is_default` and `cell_status`; `POST /auth/tenant` validates the requested `tenant_id` against the live table and rewrites the cookie. The proxy and WebSocket router read that cookie on every request and re-check the membership, so an administrator revoking a cell takes effect immediately; a stale cookie falls back to the account's default. The SPA's `TenantSwitcher` appears only when the account has more than one cell and reloads the page after a switch, because cached sessions, memory and sockets all belong to the previous cell.
+| Concept | Where it lives | What it means |
+| :--- | :--- | :--- |
+| Account | Ingress `users` | A username + scrypt hash — the only credential a person holds. Password change is self-service (`PUT /auth/account`); enabling or disabling the login and deleting an account are administrator actions and answer `managed_by_admin`. |
+| `role` | `users.role` / `user_tenants.role` | Recorded and reported (`GET /auth/tenants`, `/auth/me`), but **not enforced**: authorization is membership-based, so `owner` and `member` currently reach the same cell identically. Treat the label as metadata. |
+| Cell (trust domain) | One `tenant_id` | One workspace, one memory store, one set of sessions and model settings. Everything inside is shared by every member of the cell. |
+| Membership | `user_tenants(user_id, tenant_id, role, is_default)` | Authorizes one account for one cell. Many-to-many: one account may belong to several cells, and one cell may serve several accounts. |
 
-A user with no membership cannot sign in (`no_tenant`). Use `user-tenant-add`, `user-tenants` and `user-tenant-remove` to manage access; the first membership is the owner and default. `rm` deletes a cell but leaves its memberships, so revoke or reassign them first.
+**What is shared, what is per account.** Members of a cell share its sessions, chat history, memory (FACTS / MEMORY / USER), skills, project directory and model settings — that is what a trust domain is for. Credentials, refresh-token rotation and the active-cell choice are per account/per browser: two accounts never see each other's password, but they do see each other's conversations, because the conversation belongs to the cell.
+
+**Switching and revocation.** Login selects the account's default membership and sets an HttpOnly `sherry_tenant` cookie beside the auth cookies. `GET /auth/tenants` lists every membership with `role`, `is_default` and live `cell_status`; `POST /auth/tenant` validates the requested `tenant_id` against the live table and rewrites the cookie. The proxy and the WebSocket router re-check the membership on every request, so `user-tenant-remove` takes effect immediately — a stale cookie falls back to the account's default cell. The SPA's `TenantSwitcher` appears only above one membership and reloads the page after a switch, because cached sessions, memory and sockets belong to the previous cell.
+
+**Provisioning quickstart.**
+
+```bash
+python -m fleet create --tenant team-a                     # add --backend container for OS isolation
+python -m fleet user-add --username alice --password '...' --tenant team-a
+python -m fleet user-tenant-add --username bob --tenant team-a --role member
+python -m fleet user-tenants --username alice
+python -m fleet user-tenant-remove --username bob --tenant team-a
+```
+
+The first membership is the owner and the account's default. `rm` deletes a cell but leaves its memberships, so revoke or reassign them first.
+
+**Isolation between users.** There is none *inside* a cell — the cell is the isolation unit. Give two people separate cells when they must not see each other's sessions, and use the container tier when those cells belong to untrusted tenants (it adds the filesystem, network and cgroup boundary). A container cell runs with its own login disabled at rest (`SHERRY_AUTH_ENABLED=false` plus an enforced flip, see the container section), because Ingress traffic reaches it from the bridge gateway rather than loopback — the login that matters is the Ingress's.
 
 ## 🧩 Cell lifecycle
 
