@@ -554,6 +554,7 @@ async def _drive(
 
     state: dict[str, Any] = {
         "tool_calls": 0,
+        "tool_names": {},
         "text": "",
         "resumes": 0,
         "interrupted": 0,
@@ -576,6 +577,8 @@ async def _drive(
             kind = data.get("type") or data.get("event")
             if kind == "tool_start":
                 state["tool_calls"] += 1
+                name = str(data.get("content") or "unknown")
+                state["tool_names"][name] = state["tool_names"].get(name, 0) + 1
             elif kind == "text":
                 state["text"] += str(data.get("content") or "")
             _emit()

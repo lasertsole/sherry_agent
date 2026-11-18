@@ -115,36 +115,83 @@ def run(argv: list[str], *, timeout: float = 120.0, cwd: Path | None = None) -> 
     return CommandResult(completed.returncode, f"{completed.stdout}{completed.stderr}")
 
 
+def container_bin() -> str:
+    """The container engine binary the bench arms drive.
+
+    ``SHERRY_EVAL_CONTAINER_BIN`` pins one explicitly (``docker`` / ``podman``);
+    the default prefers docker and falls back to podman, whose CLI is
+    docker-compatible for everything the bench arms use (run/exec/cp/pull/
+    build/inspect). The DeepSWE arms never publish ports and run with
+    ``--network none``, which is also the WSL2/podman path that needs no
+    netavark bridge rules.
+    """
+    pinned = os.environ.get("SHERRY_EVAL_CONTAINER_BIN", "").strip().lower()
+    if pinned in {"docker", "podman"}:
+        return pinned
+    for candidate in ("docker", "podman"):
+        if shutil.which(candidate) is not None:
+            return candidate
+    return "docker"
+
+
 def _docker(args: list[str], *, timeout: float = 120.0) -> CommandResult:
-    return run(["docker", *args], timeout=timeout)
+    return run([container_bin(), *args], timeout=timeout)
 
 
 def docker_available() -> tuple[bool, str]:
-    """Whether a Docker CLI and a reachable daemon are present."""
-    if shutil.which("docker") is None:
-        return False, "the docker CLI is not on PATH"
-    result = _docker(["info", "--format", "{{.ServerVersion}}"], timeout=20.0)
+    """Whether a container CLI (docker or podman) and a reachable engine exist.
+
+    The probe is deliberately format-less: podman's ``info`` does not support
+    docker's ``{{.ServerVersion}}`` template (its report has no such field), so
+    a formatted probe reported a WORKING podman engine as unusable.
+    """
+    binary = container_bin()
+    if shutil.which(binary) is None:
+        return False, f"the {binary} CLI is not on PATH"
+    result = _docker(["info"], timeout=20.0)
     if not result.ok:
-        return False, result.output.strip()[-600:] or "docker info failed"
-    return True, result.output.strip()
+        return False, result.output.strip()[-600:] or f"{binary} info failed"
+    first = result.output.strip().splitlines()[0] if result.output.strip() else ""
+    return True, f"{binary} {first}".strip()
 
 
 # ── Dataset acquisition ─────────────────────────────────────────────────────
 
 
 def sync_repo(cache_dir: Path, url: str, pin: str, *, label: str) -> tuple[Path, str]:
-    """Clone (once) and check out *pin*; return the checkout and its commit."""
+    """Clone (once) and check out *pin*; return the checkout and its commit.
+
+        The clone forces ``core.autocrlf=false`` + ``core.eol=lf``: benchmark task
+        trees embed Linux scripts and patches that run inside containers, and a
+        Windows host with ``autocrlf=true`` materializes them as CRLF — the
+        verifier's ``test.sh`` then dies on ``set: pipefail
+    : invalid option``.
+        A cache cloned BEFORE this rule is repaired in place.
+    """
     if not (cache_dir / ".git").is_dir():
         if cache_dir.exists() and any(cache_dir.iterdir()):
             raise RuntimeError(f"{label} cache exists but is not a git checkout: {cache_dir}")
         cache_dir.parent.mkdir(parents=True, exist_ok=True)
         print(f"[evals] cloning {label} into {cache_dir} …", flush=True)
         clone = run(
-            ["git", "clone", "--depth", "1", url, str(cache_dir)],
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.eol=lf",
+                url,
+                str(cache_dir),
+            ],
             timeout=1800.0,
         )
         if not clone.ok:
             raise RuntimeError(f"could not clone {label}: {clone.output[-1500:]}")
+    else:
+        _repair_crlf_cache(cache_dir, label=label)
     # A local checkout may sit at another commit; fetch the pinned one when the
     # object is not already present locally.
     head = run(["git", "-C", str(cache_dir), "rev-parse", "HEAD"], timeout=30.0)
@@ -168,6 +215,28 @@ def sync_repo(cache_dir: Path, url: str, pin: str, *, label: str) -> tuple[Path,
             raise RuntimeError(f"could not check out {pin}: {checkout.output[-1000:]}")
         current = pin
     return cache_dir, current
+
+
+def _repair_crlf_cache(cache_dir: Path, *, label: str) -> None:
+    """Re-materialize a dataset cloned under ``autocrlf=true`` (CRLF poison).
+
+    The check is cheap (one ``git config`` read); the repair rewrites the
+    worktree once, after which the local config keeps it LF.
+    """
+    current = run(["git", "-C", str(cache_dir), "config", "--get", "core.autocrlf"], timeout=30.0)
+    if current.output.strip().lower() in {"", "false", "input"}:
+        return
+    print(
+        f"[evals] {label} cache was cloned with core.autocrlf=true (CRLF worktree); "
+        "re-materializing it with LF …",
+        flush=True,
+    )
+    run(["git", "-C", str(cache_dir), "config", "core.autocrlf", "false"], timeout=30.0)
+    run(["git", "-C", str(cache_dir), "config", "core.eol", "lf"], timeout=30.0)
+    run(["git", "-C", str(cache_dir), "rm", "--cached", "-r", "-q", "."], timeout=300.0)
+    reset = run(["git", "-C", str(cache_dir), "reset", "--hard", "-q"], timeout=600.0)
+    if not reset.ok:
+        raise RuntimeError(f"could not re-materialize {label} with LF: {reset.output[-1000:]}")
 
 
 def local_or_cloned(
@@ -201,7 +270,7 @@ def local_or_cloned(
 
 def _created_id(result: CommandResult) -> str:
     if not result.ok:
-        raise RuntimeError(f"docker run failed: {result.output[-1500:]}")
+        raise RuntimeError(f"{container_bin()} run failed: {result.output[-1500:]}")
     lines = [line.strip() for line in result.output.splitlines() if line.strip()]
     if not lines:
         raise RuntimeError("docker run returned no container id")
@@ -238,7 +307,13 @@ def create_container(
     for key, value in (env or {}).items():
         args += ["-e", f"{key}={value}"]
     args += [image, "-c", "sleep 2147483647"]
-    return _created_id(_docker(args, timeout=timeout))
+    try:
+        return _created_id(_docker(args, timeout=timeout))
+    except Exception:
+        # podman creates the container BEFORE starting it; a failed start left a
+        # "Created" husk behind that blocked the next run under the same name.
+        _docker(["rm", "-f", name], timeout=60.0)
+        raise
 
 
 def remove_container(container: str) -> None:
@@ -249,14 +324,38 @@ def remove_container(container: str) -> None:
 
 def pull_image(image: str, *, timeout: float = 1800.0) -> CommandResult:
     """Pull an image; a present image returns fast (Docker checks the manifest)."""
-    print(f"[evals] docker pull {image} …", flush=True)
+    print(f"[evals] {container_bin()} pull {image} …", flush=True)
     return _docker(["pull", image], timeout=timeout)
 
 
-def build_image(tag: str, context: Path, *, timeout: float = 1800.0) -> CommandResult:
-    """Build a task/verifier image from a context directory."""
-    print(f"[evals] docker build -t {tag} {context} …", flush=True)
-    return _docker(["build", "-q", "-t", tag, str(context)], timeout=timeout)
+def build_image(
+    tag: str,
+    context: Path,
+    *,
+    timeout: float = 1800.0,
+    network: str | None = None,
+) -> CommandResult:
+    """Build a task/verifier image from a context directory.
+
+    ``network`` pins the build-time network mode. This matters on podman/WSL2:
+    every ``RUN`` step creates a throwaway container whose bridge setup needs
+    nftables, which the WSL2 kernel does not ship — so a network-less build
+    both restores portability and keeps an offline verifier offline.
+    ``SHERRY_EVAL_BUILD_NETWORK`` overrides the default for builds that really
+    need to fetch (set it to ``host`` on WSL2 podman).
+    """
+    engine = container_bin()
+    mode = (
+        network
+        if network is not None
+        else (os.environ.get("SHERRY_EVAL_BUILD_NETWORK", "").strip() or None)
+    )
+    print(f"[evals] {engine} build -t {tag} {context} …", flush=True)
+    args = ["build", "-q", "-t", tag]
+    if mode:
+        args += ["--network", mode]
+    args += [str(context)]
+    return _docker(args, timeout=timeout)
 
 
 def image_exists(image: str) -> bool:
@@ -284,7 +383,7 @@ def _extract_with_tar(container: str, workdir: str, host_dir: Path, timeout: flo
         return False
     try:
         producer = subprocess.Popen(
-            ["docker", "exec", container, "tar", "-C", workdir, "-cf", "-", "."],
+            [container_bin(), "exec", container, "tar", "-C", workdir, "-cf", "-", "."],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -345,7 +444,9 @@ def extract_workdir(
     if host_dir.exists():
         shutil.rmtree(host_dir)
     host_dir.mkdir(parents=True, exist_ok=True)
-    container = create_container(image, name, workdir="/")
+    # network=none: this container only serves exec/cp, and podman-on-WSL2
+    # cannot create the default bridge (netavark needs nftables).
+    container = create_container(image, name, workdir="/", network="none")
     try:
         check = _docker(
             ["exec", container, "/bin/sh", "-c", f"test -d {shlex.quote(workdir)}"],
@@ -386,9 +487,15 @@ def start_agent_container(
     env: dict[str, str] | None = None,
 ) -> str:
     """Start the task container with the host tree mounted at both paths."""
-    mounts = [(str(host_workdir), str(host_workdir))]
-    if str(workdir) != str(host_workdir):
-        mounts.append((str(host_workdir), str(workdir)))
+    if os.name == "nt":
+        # A Windows host path cannot exist inside the Linux container, so the
+        # tree is mounted ONLY at the task's expected path; the bridge
+        # translates host paths in commands (see DockerBridge).
+        mounts = [(str(host_workdir), str(workdir))]
+    else:
+        mounts = [(str(host_workdir), str(host_workdir))]
+        if str(workdir) != str(host_workdir):
+            mounts.append((str(host_workdir), str(workdir)))
     print(
         f"[evals] starting {name} from {image} (tree {host_workdir} -> {workdir}, "
         f"network={network or 'default'}) …",
@@ -397,7 +504,9 @@ def start_agent_container(
     return create_container(
         image,
         name,
-        workdir=str(host_workdir),
+        # On Windows the container only has the task path; the POSIX design
+        # (tree mounted at the mirrored host path too) cannot exist there.
+        workdir=workdir if os.name == "nt" else str(host_workdir),
         mounts=tuple(mounts),
         network=network,
         env=env,
@@ -433,14 +542,32 @@ class DockerBridge:
     the wrapper then still returns what was produced so far.
     """
 
-    def __init__(self, container: str, *, host_workdir: Path) -> None:
+    def __init__(
+        self,
+        container: str,
+        *,
+        host_workdir: Path,
+        container_workdir: str | None = None,
+    ) -> None:
         self.container = container
         self.host_workdir = str(host_workdir)
+        # The cwd the commands see INSIDE the container. On POSIX it mirrors the
+        # host path (the tree is mounted twice); on Windows only the task path
+        # exists, so the caller passes it and every command is translated.
+        self.container_workdir = container_workdir or self.host_workdir
         self._state_env = f"{_STATE_ENV}-{uuid.uuid4().hex[:8]}"
         self._state_cwd = f"{_STATE_CWD}-{uuid.uuid4().hex[:8]}"
 
+    def _translate(self, command: str) -> str:
+        """Rewrite host paths in a command to their in-container locations."""
+        translated = command.replace(self.host_workdir, self.container_workdir)
+        forward = self.host_workdir.replace("\\", "/")
+        if forward != self.host_workdir:
+            translated = translated.replace(forward, self.container_workdir)
+        return translated
+
     def _script(self, command: str, timeout: int) -> str:
-        cwd = shlex.quote(self.host_workdir)
+        cwd = shlex.quote(self.container_workdir)
         return (
             "set +e\n"
             f"mkdir -p {_STATE_DIR} 2>/dev/null\n"
@@ -467,11 +594,12 @@ class DockerBridge:
 
     def exec(self, command: str, *, timeout: float = 300.0) -> str:
         """Run one command synchronously (the sync ``_run`` path)."""
+        command = self._translate(command)
         result = _docker(
             [
                 "exec",
                 "-w",
-                self.host_workdir,
+                self.container_workdir,
                 self.container,
                 "/bin/bash",
                 "-lc",
@@ -483,11 +611,12 @@ class DockerBridge:
 
     def exec_at(self, workdir: str, command: str, *, timeout: float = 300.0) -> str:
         """Run one fresh command at *workdir* (the benchmark's test phase)."""
+        command = self._translate(command)
         result = _docker(
             [
                 "exec",
                 "-w",
-                workdir,
+                self._translate(workdir),
                 self.container,
                 "/bin/bash",
                 "-lc",
@@ -499,11 +628,12 @@ class DockerBridge:
 
     async def aexec(self, command: str, *, timeout: float = 300.0) -> str:
         """Run one command without blocking the event loop."""
+        command = self._translate(command)
         argv = [
-            "docker",
+            container_bin(),
             "exec",
             "-w",
-            self.host_workdir,
+            self.container_workdir,
             self.container,
             "/bin/bash",
             "-lc",
@@ -516,7 +646,7 @@ class DockerBridge:
                 stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError:
-            return "[sherry-eval] the docker CLI is not on PATH"
+            return f"[sherry-eval] the {container_bin()} CLI is not on PATH"
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout + 20.0)
             result = CommandResult(
@@ -669,7 +799,9 @@ def localize_instruction(text: str, host_workdir: Path, workdir: str) -> str:
     if not workdir or workdir == "/" or str(host_workdir) == workdir:
         return text
     pattern = re.compile(rf"(?<![\w/]){re.escape(workdir)}(?=/|\b)")
-    return pattern.sub(str(host_workdir), text)
+    # A lambda keeps the replacement LITERAL: re.sub treats backslashes in a
+    # string replacement as escapes, and a Windows host path (\\app\\x) dies with 'bad escape \\c'.
+    return pattern.sub(lambda _match: str(host_workdir), text)
 
 
 def trim_tools() -> None:

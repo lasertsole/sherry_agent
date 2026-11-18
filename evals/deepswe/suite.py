@@ -28,6 +28,8 @@ Usage::
     uv run python evals/deepswe/suite.py --local
 
 ``--dry-run`` validates the dataset and task files without Docker or a model.
+``--preflight-only`` runs the container path (pull / verifier build / GOLD
+self-check) without a model key, so a broken engine fails before tokens.
 ``--local`` runs the Docker-free host mode in ``evals/deepswe/local.py``: a
 time-travelled checkout plus a task venv, graded by the same hidden tests and
 ``grader.py``. It is a developer/CI convenience, NOT an official DeepSWE score,
@@ -72,6 +74,20 @@ side. Use both to build and run the project's checks.
 - There is no internet access.
 - Do not modify test files and do not run `git commit`.
 - Complete the task; do not ask questions.
+
+## Orchestration mandate (harness requirement, not advice)
+
+Plan and execute this task THROUGH Sherry's planning and orchestration tools;
+the harness records tool usage and reports a run that skips them:
+
+1. First call the `todolist` tool to plan the work (investigation, fix,
+   verification items) and keep every item updated as you go.
+2. Create ONE TaskFlow flow for the task with `taskflow_flow(action="plan")`
+   (a short description is enough), dispatch and drive its steps through
+   `taskflow_step` (spawn a step child for the implementation), and close it
+   with `taskflow_flow(action="finish")` when the flow's criteria are met.
+3. Keep the todolist and the flow board consistent: an item or step is DONE
+   only when its verification command passed.
 """
 
 
@@ -115,6 +131,7 @@ def main() -> None:
             "--skip-self-check",
             "--keep-workdirs",
             "--update-baseline",
+            "--preflight-only",
         }:
             flags.add(arg)
         elif arg.startswith("--"):
@@ -191,6 +208,7 @@ def main() -> None:
                 skip_self_check="--skip-self-check" in flags,
                 keep_workdirs="--keep-workdirs" in flags,
                 update_baseline="--update-baseline" in flags,
+                preflight_only="--preflight-only" in flags,
             )
         )
     )
@@ -206,6 +224,7 @@ async def _run(
     skip_self_check: bool,
     keep_workdirs: bool,
     update_baseline: bool,
+    preflight_only: bool = False,
 ) -> int:
     run_id = external_bench.run_id_now()
     results_dir = REPO_ROOT / "evals" / "results" / "deepswe" / run_id
@@ -222,6 +241,29 @@ async def _run(
             flush=True,
         )
         return 3
+
+    if preflight_only:
+        # Validate the whole container path (pull, verifier build, GOLD grading)
+        # WITHOUT a model key: the expensive turn is gated on MAIN_LLM_API_KEY,
+        # but everything before it can and should be proven working first.
+        prepared = _preflight(
+            selected,
+            results_dir,
+            skip_self_check=skip_self_check,
+            docker_detail=docker_detail,
+        )
+        if prepared is None:
+            return 2
+        for task, verifier_image in prepared:
+            print(f"[evals] preflight ok: {task.task_id} (verifier {verifier_image})", flush=True)
+        print(
+            f"[evals] preflight-only: {len(prepared)} task(s) proven on "
+            f"{external_bench.container_bin()}; a scored run still needs MAIN_LLM_API_KEY",
+            flush=True,
+        )
+        if not keep_workdirs:
+            shutil.rmtree(results_dir / "tasks", ignore_errors=True)
+        return 0
 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401 — hydrates .env / .models / .network
@@ -287,7 +329,9 @@ async def _run(
             print(
                 f"[evals] {task.task_id}: resolved={result['resolved']} "
                 f"reward={result['reward']} duration={result['duration_s']}s "
-                f"tool_calls={result['tool_calls']} tokens={result['tokens']}",
+                f"tool_calls={result['tool_calls']} tokens={result['tokens']} "
+                f"todolist={result['todolist_calls']} taskflow={result['taskflow_calls']} "
+                f"orchestration={'ok' if result['orchestration_compliant'] else 'VIOLATED'}",
                 flush=True,
             )
     except Exception:  # noqa: BLE001 — a setup bug is a harness failure, not a zero
@@ -323,6 +367,17 @@ async def _run(
         "gold_self_check": {
             task.task_id: result["gold_self_check"]
             for task, result in zip(selected, results, strict=False)
+        },
+        "orchestration": {
+            "policy": (
+                "the prompt MANDATES planning through todolist and execution through "
+                "one taskflow flow; usage is counted from tool_start frames and "
+                "reported per task (orchestration_compliant = both > 0)"
+            ),
+            "todolist_calls": sum(int(r.get("todolist_calls") or 0) for r in results),
+            "taskflow_calls": sum(int(r.get("taskflow_calls") or 0) for r in results),
+            "compliant_tasks": [r["id"] for r in results if r.get("orchestration_compliant")],
+            "violating_tasks": [r["id"] for r in results if not r.get("orchestration_compliant")],
         },
         "aggregate": _aggregate(results, started),
         "tasks": results,
@@ -360,7 +415,10 @@ def _preflight(
             "deepswe", task.task_id, f"{task.base_commit[:8]}-verifier"
         )
         built = external_bench.build_image(
-            verifier_image, task.task_dir / "tests", timeout=task.build_timeout_s
+            verifier_image,
+            task.task_dir / "tests",
+            timeout=task.build_timeout_s,
+            network="none",
         )
         if not built.ok:
             print(
@@ -420,6 +478,10 @@ async def _run_task(
         "invalid_run": False,
         "duration_s": 0.0,
         "tool_calls": 0,
+        "tool_names": {},
+        "todolist_calls": 0,
+        "taskflow_calls": 0,
+        "orchestration_compliant": False,
         "resumes": 0,
         "timeout": False,
         "error": "",
@@ -444,7 +506,13 @@ async def _run_task(
             workdir="/app",
             network="none",
         )
-        bridge = external_bench.DockerBridge(container, host_workdir=host_workdir)
+        bridge = external_bench.DockerBridge(
+            container,
+            host_workdir=host_workdir,
+            # On Windows the container only sees the tree at /app; commands the
+            # agent builds with host paths are translated by the bridge.
+            container_workdir="/app" if os.name == "nt" else None,
+        )
         external_bench.install_terminal_bridge(bridge)
         payload = await external_bench.bind_external_session(session_id, host_workdir)
 
@@ -465,6 +533,17 @@ async def _run_task(
                 "error": "",
             }
         result["tool_calls"] = drive["tool_calls"]
+        tool_names: dict[str, int] = dict(drive.get("tool_names") or {})
+        result["tool_names"] = tool_names
+        result["todolist_calls"] = sum(
+            count for name, count in tool_names.items() if "todolist" in name
+        )
+        result["taskflow_calls"] = sum(
+            count for name, count in tool_names.items() if "taskflow" in name
+        )
+        result["orchestration_compliant"] = bool(
+            result["todolist_calls"] and result["taskflow_calls"]
+        )
         result["resumes"] = drive["resumes"]
         result["timeout"] = drive["timeout"]
         result["error"] = drive["error"]
@@ -473,7 +552,7 @@ async def _run_task(
 
         patch = _agent_patch(host_workdir, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"
-        patch_path.write_text(patch, encoding="utf-8")
+        patch_path.write_text(patch, encoding="utf-8", newline="\n")
         result["patch_path"] = str(patch_path)
         result["changed_paths"] = _changed_paths(patch)
 
@@ -519,10 +598,13 @@ def _grade(
         shutil.rmtree(out_dir)
     artifacts = out_dir / "artifacts"
     artifacts.mkdir(parents=True)
-    (artifacts / "model.patch").write_text(patch, encoding="utf-8")
+    # newline=\nn: Path.write_text translates \nn to \r\nn on Windows,
+    # and git apply inside the Linux verifier rejects a CRLF patch.
+    # git apply inside the Linux verifier rejects a CRLF patch.
+    (artifacts / "model.patch").write_text(patch, encoding="utf-8", newline="\n")
     network = "none" if task.verifier_network in {"no-network", "none"} else None
     args = [
-        "docker",
+        external_bench.container_bin(),
         "run",
         "--rm",
         "--entrypoint",
@@ -569,7 +651,8 @@ def _append_agents_note(workspace: Path) -> None:
         "the same tree is bind-mounted at `/app` inside the container. The task "
         "text's container paths are rewritten to the project directory.\n"
         "- The `terminal` tool runs inside the task container, in a persistent shell; "
-        "file tools edit the same files from the host side.\n"
+        "file tools edit the same files from the host side. Host paths inside "
+        "terminal commands are translated to the container mount automatically.\n"
         "- The task image is the only toolchain. There is no internet access. "
         "Never modify tests or run `git commit`.\n"
     )

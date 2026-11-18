@@ -446,7 +446,7 @@ async def _run_task(
 
         patch = _agent_patch(agent_repo, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"
-        patch_path.write_text(patch, encoding="utf-8")
+        patch_path.write_text(patch, encoding="utf-8", newline="\n")
         result["patch_path"] = str(patch_path)
         changed = _changed_paths(patch)
         result["changed_paths"] = changed
@@ -509,7 +509,8 @@ def _grade_local(
         shutil.rmtree(out_dir)
     artifacts = out_dir / "artifacts"
     artifacts.mkdir(parents=True)
-    (artifacts / "model.patch").write_text(patch, encoding="utf-8")
+    # newline=\nn: a CRLF model.patch is rejected by git apply in the verifier.
+    (artifacts / "model.patch").write_text(patch, encoding="utf-8", newline="\n")
     tests_dir = _copy_local_tests(task, out_dir)
     script = _localize_verifier_script(task, repo, out_dir, tests_dir)
     env = _local_env(repo, out_dir, tests_dir, artifacts)
@@ -554,7 +555,8 @@ def _localize_verifier_script(task: Task, repo: Path, out_dir: Path, tests_dir: 
     ):
         script = script.replace(old, new)
     target = out_dir / "run-verifier.sh"
-    target.write_text(script, encoding="utf-8")
+    # LF: this script runs under bash, which rejects CRLF line endings.
+    target.write_text(script, encoding="utf-8", newline="\n")
     target.chmod(0o755)
     return target
 
