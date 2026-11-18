@@ -263,6 +263,13 @@ export default defineConfig([
     }
   },
   {
+    // Packaged E2E runner scripts are CLI tools: stdout is the report.
+    files: ['e2e/**/*.mjs'],
+    rules: {
+      'no-console': 'off'
+    }
+  },
+  {
     plugins: {
       prettier: eslintPluginPrettier
     },

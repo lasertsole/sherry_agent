@@ -352,6 +352,53 @@ impl PythonBridge {
         format!("{}", ws_base.trim_end_matches('/'))
     }
 
+    /// Fetch the per-boot gateway token from the public bootstrap endpoint.
+    ///
+    /// The browser client holds this token in JS memory; the Tauri bridge talks
+    /// to the backend directly, so it must bootstrap its own copy. Every agent
+    /// WebSocket handshake is token-gated, even on loopback.
+    async fn gateway_token(&self) -> AppResult<String> {
+        let response = self
+            .client
+            .get(self.url("/auth/token"))
+            .send()
+            .await
+            .map_err(|e| AppError::Backend(format!("gateway token request failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(AppError::Backend(format!(
+                "gateway token request returned {}",
+                response.status()
+            )));
+        }
+        let header_token = response
+            .headers()
+            .get("token")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let body: serde_json::Value = response.json().await.unwrap_or_default();
+        let body_token = body
+            .get("token")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        header_token
+            .or(body_token)
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| AppError::Backend("gateway token response carried no token".into()))
+    }
+
+    /// Append the gateway token to an agent WebSocket URL.
+    async fn ws_url_with_token(&self, path: &str) -> AppResult<String> {
+        let token = self.gateway_token().await?;
+        let separator = if path.contains('?') { '&' } else { '?' };
+        Ok(format!(
+            "{}{}{}token={}",
+            self.ws_url(),
+            path,
+            separator,
+            token
+        ))
+    }
+
     /// Post a stop-generation request to the Python backend over WebSocket.
     ///
     /// Connects to `/sessions/agent/ws`, sends `{"type":"stop","session_id":...}`,
@@ -360,7 +407,13 @@ impl PythonBridge {
     /// endpoint. Errors are logged but not propagated because the stream may
     /// already be closing; the call never blocks indefinitely.
     pub async fn post_stop(&self, session_id: &str) {
-        let url = format!("{}/sessions/agent/ws", self.ws_url());
+        let url = match self.ws_url_with_token("/sessions/agent/ws").await {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!(session_id, error = %error, "stop request could not bootstrap a token");
+                return;
+            }
+        };
         // Wait a short time for the "stopped" acknowledgement; a timeout is
         // acceptable since the stream may already be closing.
         let ws_result = tokio::time::timeout(
@@ -424,18 +477,20 @@ impl PythonBridge {
     /// channels can reuse it.
     ///
     /// [`ChatRequest`]: crate::commands::agent::ChatRequest
-    pub async fn stream_agent_message<F>(
+    pub async fn stream_agent_message<F, H>(
         &self,
         path: &str,
         body: &serde_json::Value,
         mut on_chunk: F,
+        mut on_hitl: H,
     ) -> AppResult<()>
     where
         F: FnMut(&str, &str),
+        H: FnMut(&serde_json::Value),
     {
         use futures_util::SinkExt;
 
-        let url = format!("{}{}", self.ws_url(), path);
+        let url = self.ws_url_with_token(path).await?;
         let (mut socket, _) = tokio_tungstenite::connect_async(&url)
             .await
             .map_err(|e| AppError::Backend(format!("agent WS connect failed: {e}")))?;
@@ -468,6 +523,11 @@ impl PythonBridge {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("agent error");
                             return Err(AppError::Backend(msg.to_string()));
+                        }
+                        "hitl_request" => {
+                            if let Some(content) = obj.get("content") {
+                                on_hitl(content);
+                            }
                         }
                         "done" | "stopped" => return Ok(()),
                         _ => {}

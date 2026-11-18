@@ -225,6 +225,9 @@ ignore = [
 "skills/builtin/**/scripts/*" = ["E402", "S110", "N", "D200", "T20"]
 # Tests do sys.path setup before imports; docstring gate does not apply
 "tests/**" = ["E402", "D100", "D101", "D102", "D103", "D200", "T20"]
+# Packaged E2E mock/runner helpers are standalone CLI verifiers: printed JSON
+# is the deliverable, not a library docstring surface.
+"client/e2e/**" = ["D100", "D101", "D102", "D103", "D200", "T20"]
 # Vendored LDW entry point installs the deepagents stub BEFORE its package
 # imports (that ordering is the whole point of the file), so the imports after
 # that call are intentional.

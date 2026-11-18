@@ -334,6 +334,7 @@
                 type="button"
                 class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
                 :title="t(tool.title ?? tool.toolName)"
+                :data-test="`settings-menu-${tool.event}`"
                 @click="handleMenuSelect(tool.event)">
                 <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
                 <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>

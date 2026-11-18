@@ -1,5 +1,6 @@
 <template>
   <div
+    :data-session-id="props.historyRecord.id"
     :class="[
       'p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white',
       'dark:bg-[#2a2a36]/[0.6] dark:border-[#555] md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]',
