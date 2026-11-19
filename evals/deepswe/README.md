@@ -38,6 +38,11 @@ uv run python evals/deepswe/suite.py --local --skip-self-check
 uv run python evals/deepswe/suite.py --local httpx-streaming-json-iteration --timeout 1800
 ```
 
+Task checkouts are staged under the OS temp dir
+(`<temp>/sherry_evals/deepswe-work/<run_id>`, override with
+`SHERRY_EVAL_WORK_ROOT`) — never inside the product checkout, whose self-path
+guard refuses the agent's writes.
+
 `SHERRY_EVAL_CONTAINER_BIN` pins the engine (`docker` / `podman`; the default
 prefers docker). The container arm creates the task and verifier containers with
 `--http-proxy=false` on podman — podman propagates the host proxy into every

@@ -301,3 +301,27 @@ reviewer 也放行；但隐藏测试要的 media-type 校验始终没实现，F2
 是实现的边界处理缺口，不是 harness。
 
 结论：需求清单 + reviewer 逐条验收的机制把「差 9 个行为」压到「差 1 个边界」，且无空转。
+
+## 16. 连续冲分与发现的真 bug #25（2026-11-20 01:05–02:35）
+
+按「修 → 继续冲」跑了 4 轮（httpx + reasoner，带门禁/清单/续跑）：
+
+| 轮次 | 代码状态 | F2P | 说明 |
+| :--- | :--- | :--- | :--- |
+| a1 | 未带边界规则 | 94/108 | 332 次调用 |
+| a2 | 带边界规则 | 0/108 | 114s，`no_progress_stop=true`（止损生效） |
+| a3 | 带边界规则 | 0/108 | 620s，补丁 **0 行** |
+| a4 | 带边界规则 + work-root 修复 | 94/108 | 1820s，`reviewer injections=2`，无拒绝 |
+
+**a2/a3 的 0 分暴露了真 bug #25**：容器模式把任务工作区放在
+`evals/results/deepswe/<run>/tasks/<task>/workspace` —— **在 sherry 仓库内部**。
+agent 的 self-file 守卫因此拒绝 `write_file`（"Sherry self-file access denied"），
+退到 `/app` 又被 PathGuard 拒绝（"External file access denied"），terminal heredoc 同样被拒；
+结果补丁为空，而模型以为已经写完。local 模式早已为此把 checkout 放到仓库外，容器模式没跟上。
+
+修复（提交 `1e1a6340`）：`_work_root()` 把任务 checkout 放到系统临时目录
+（`<temp>/sherry_evals/deepswe-work/<run_id>`，`SHERRY_EVAL_WORK_ROOT` 可覆盖），
+与产品 checkout 分离；a4 实测写入零拒绝、补丁正常产出。
+
+边界规则（提交 `4433ea16`）：提示词加入通用流式边界要求（空输入/纯空白/截断/流结束后调用
+应返回空结果而不是抛异常），a1→a4 的分数波动说明模型稳定性仍是主要变量。
