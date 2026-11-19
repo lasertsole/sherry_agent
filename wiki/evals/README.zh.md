@@ -7,7 +7,7 @@
 
 | 套件 | 测量内容 | 入口 |
 | :--- | :--- | :--- |
-| [DeepSWE](../../evals/deepswe/README.md) | 外部编码任务，隐藏测试补丁 + benchmark 自带 grader；`--local` 是无 Docker 的宿主机模式 | `evals/deepswe/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | 外部编码任务，隐藏测试补丁 + benchmark 自带 grader；默认路径通过 docker 或 podman 运行基准的任务镜像，`--local` 是无 Docker 的宿主机模式 | `evals/deepswe/suite.py` |
 | 编码能力 | 自建编码任务与内置提示词 arm | `evals/coding_capability/` |
 | 外部基准 | 桥接的编码基准与 harness 适配器 | `evals/` |
 
@@ -22,13 +22,43 @@
 ## 运行
 
 ```bash
+# DeepSWE 容器模式（benchmark 任务镜像；docker 或 podman）：
+uv run --no-sync python evals/deepswe/suite.py --preflight-only  # 拉镜像 + 构建 verifier + GOLD 自检，不调用模型
+SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py --timeout 1800
+
 # DeepSWE 默认切片，无 Docker 宿主机模式：
 uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
-每次运行写入 `evals/results/deepswe-local/<run_id>/`，包含 `eval_report.json`
-和各任务 diff。该目录被 gitignore；本 wiki 记录稳定的结论。Docker 模式使用
-benchmark 镜像，与本地模式不是同一条路径。
+`SHERRY_EVAL_CONTAINER_BIN` 指定引擎（`docker` / `podman`；默认先找 docker，再退回 podman）。
+`--preflight-only` 在不消耗模型调用的情况下验证整条容器链路——拉镜像、构建 verifier、GOLD
+自检；评分运行仍需要 `MAIN_LLM_API_KEY`。在 podman 上，任务容器与 verifier 用
+`--http-proxy=false` 创建（podman 会把宿主代理注入每个容器，死代理会让基准自身的 localhost
+测试失败），verifier 用 `--network none` 构建（WSL2 没有 nftables，构建期的 bridge 建不起来）。
+
+每次运行写入 `evals/results/deepswe/<run_id>/`，包含 `eval_report.json` 和各任务 diff。该目录
+被 gitignore；本 wiki 记录稳定的结论。
+
+## Harness 强制的东西
+
+DeepSWE 驱动的是真实主 agent，因此 harness 把规则说出来并**核验**，而不是只靠提示词：
+
+- **编排门禁** —— 任何文件改动或派生子代理之前，必须先调过 `todowrite` 并开一个 TaskFlow
+  flow（`taskflow_flow` 的 `action="plan"`），否则写操作会收到规则提示。用量按工具计数并
+  汇报（`orchestration_compliant`）。
+- **验收清单** —— 任务文本里可判定的条款（*must* / *raise* / *reject* / *only* / *charset*
+  等规范性关键词）会变成带编号的清单写进提示词，门禁还会把清单追加到每个
+  `sessions_spawn(functional_role="reviewer")` 的任务里，让验收按条给 PASS/FAIL，而不是
+  “读一遍计划表示同意”。
+- **计划续跑** —— 生产环境的自动续跑触发器是 server 的 hook，所以 harness 自己驱动：每轮结束
+  读沙箱里的计划注册表，只要有未完成项就发一条有界的 `[PLAN CONTINUATION]` 回合（最多 3 次）。
+  若某次续跑对 diff 没有任何改变，循环立即停止（`no_progress_stop`）。
+- **报告字段** —— `orchestration`（策略、逐任务计数、门禁计数、`acceptance_checklist`、
+  `reviewer_checklist_injections`）、`continuations`、`no_progress_stop`，以及 verifier 判定
+  和补丁。
+
+已知缺口：容器模式用 `asyncio.wait_for` 约束每个回合；与 `--local` 的 worker 进程不同，它没有
+硬杀，进行中的 provider 调用可能超过截止时间。
 
 ## 结果
 

@@ -26,9 +26,10 @@ DeepSWE score.
 ## Commands
 
 ```bash
-# Docker-backed (official harness shape; needs Docker and MAIN_LLM_API_KEY)
-uv run python evals/deepswe/suite.py --dry-run
-uv run python evals/deepswe/suite.py
+# Container-backed (official harness shape; docker or podman + MAIN_LLM_API_KEY)
+uv run python evals/deepswe/suite.py --dry-run                 # dataset/task validation only
+uv run python evals/deepswe/suite.py --preflight-only          # pull + verifier build + GOLD check, no model
+SHERRY_EVAL_CONTAINER_BIN=podman uv run python evals/deepswe/suite.py --timeout 1800
 uv run python evals/deepswe/suite.py --all --n-tasks 5 --keep-workdirs
 
 # Docker-free host mode: Python tasks only
@@ -36,6 +37,12 @@ uv run python evals/deepswe/suite.py --local
 uv run python evals/deepswe/suite.py --local --skip-self-check
 uv run python evals/deepswe/suite.py --local httpx-streaming-json-iteration --timeout 1800
 ```
+
+`SHERRY_EVAL_CONTAINER_BIN` pins the engine (`docker` / `podman`; the default
+prefers docker). The container arm creates the task and verifier containers with
+`--http-proxy=false` on podman — podman propagates the host proxy into every
+container, and a stale proxy breaks the benchmark's own localhost tests — and
+builds verifiers with `--network none` (WSL2 has no nftables).
 
 `--local` requires `git`, `uv`, network access for the repository clone and the
 task dependencies, and `MAIN_LLM_API_KEY`. It writes the report under
@@ -52,6 +59,20 @@ the partial patch is graded if it applies, and the report records
 `--local` removes web tools and sets `PIP_NO_INDEX=1`; it does not create a
 network namespace. Do not treat a local run as the benchmark's no-internet
 guarantee.
+
+## What the harness enforces
+
+The agent runs for real, so the harness states its rules and then verifies them:
+
+- `todowrite` plus one TaskFlow flow (`taskflow_flow(action="plan")`) must exist
+  before any file edit or child spawn; the mutating tools answer with the rule
+  until they do, and per-tool usage is reported (`orchestration_compliant`).
+- The task text's decidable clauses become a numbered acceptance checklist in
+  the prompt, and the gate appends it to every reviewer spawn
+  (`sessions_spawn(functional_role="reviewer")`), so the verdict is per clause.
+- The production auto-turn trigger is a server hook; the harness drives plan
+  continuation itself (up to 3 turns) and stops as soon as a continuation
+  changes nothing (`no_progress_stop`).
 
 ## Verified locally (2026-11-01)
 
