@@ -2279,6 +2279,21 @@ The shell is one flex row — left session column, conversation, right sidebar �
 
 The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the Menu button. The interface language lives in the Menu's FIRST entry, System Config, as its LAST tab (Internationalization): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
 
+### Left Column: the Navigation Registry (`client/app/stores/nav.ts`)
+
+The left column's body is no longer a `sidebarBody: 'sessions' | 'files'` binary — it is a `NavItem[]` registry (id / icon / labelKey / component / scope, optional `badge()` and `minWidth`), persisted as `activeId`. `SessionSidebar.vue` renders the icon row from `items` and mounts `activeItem.component` inside `<KeepAlive :max="5">`, so a new feature registers its panel instead of editing the store and the shell.
+
+- **`component` is optional on purpose.** An item registered before its panel exists renders `components/NotImplementedPanel.vue` (S7: "not yet implemented / coming soon", four locales) instead of an empty column; swapping in the real component is a one-line change that leaves id / icon / label / scope untouched.
+- **`chat` and `files` are imported synchronously, the rest stays lazy.** `defineAsyncComponent` never commits a render without a Suspense boundary, so an async default panel leaves the nav body empty under happy-dom; only panels the integration suite does not assert on may stay async.
+- **The dynamic component needs `:key="nav.activeId"`.** Without a stable key, switching panels crashes KeepAlive in `parentComponent.ctx.deactivate is not a function`.
+- **`ensureSessionCharacter` lives in `pages/home/components/session-character.ts`**, not in `SessionSidebar.vue`: the session-list panel needs it, and importing it back from the shell closes the nav store → panel → shell → nav store cycle that dpdm gates on.
+- **Meeting conversations get their own route, `/meeting/:id`**, which `utils/session-route.ts` must keep in `RESERVED_SESSION_SEGMENTS` — otherwise the meeting id in the URL is parsed as a session id and scopes the right sidebar to a session that does not exist.
+- **Experts, meetings and the global flow board are UI-only today.** `expert-registry.ts` and `meeting.ts` default to `useMock = true` (the registry/meeting backends are specified in their own plans, not shipped); `taskflow.loadAllFlows()` reads `GET /api/taskflow/flows`. Flipping `useMock` switches the same action surface to `/api/experts` and `/api/meetings[/:id[/messages|interrupt|confirm-end|execute]]`. The mock branches must mutate their arrays in place — calling `loadAll()` after a mock mutation reseeds from the seed constant and silently discards the change.
+
+### Right Sidebar: Panel Groups and Search (`stores/right-sidebar.ts`)
+
+The panel kinds are partitioned into three groups (`PANEL_GROUPS`: `session` / `tools` / `config`) via `groupOfKind()`. The store owns `activeGroup`, `groupTabs` (the active group's tabs, what the strip renders) and `searchPanels(query, t)` (cross-group label search); `openTab()` also switches the group to the opened kind's group, so opening a panel from search or from a toolbar button lands on a strip that contains it. `RightSidebar.vue` keeps optional-chaining fallbacks (`store.groupTabs ?? store.tabsInScope(...)`, `store.searchPanels?.(...)`) so scope-only test doubles still drive the strip.
+
 ## Session Token Budget (`agent/middlewares/token_budget/`)
 
 A session can carry an optional token CAP (`PUT /sessions/budget`,
