@@ -229,15 +229,16 @@ async def _kill_verify_subagent(todo: dict, session_id: str) -> None:
 async def _normalize_verify(
     session_id: str, todos: list[dict], *, inherited: dict | None = None
 ) -> list[dict]:
-    """Keep exactly one verify todo, last, while a plan with >=2 work todos runs.
+    """Keep exactly one verify todo as the LAST step of any non-empty plan.
 
-    Idempotent and MAIN-agent-only. ``inherited`` is the active verify captured
-    before a full replacement: its reviewer link survives the rewrite (the row
-    itself cannot, because replace deletes every row).
+    No minimum work-item count: the acceptance check is unconditional, so a
+    single-item plan is verified too (that was the measured gap). Idempotent
+    and MAIN-agent-only. ``inherited`` is the active verify captured before a
+    full replacement: its reviewer link survives the rewrite (the row itself
+    cannot, because replace deletes every row).
     """
     if not _verify_enabled(session_id):
         return todos
-    minimum = int(TODOLIST_INFRA.get("verify_min_work_todos", 1))
     work = _work_todos(todos)
     active = _active_verify_todos(todos)
     has_active_work = any(t.get("status") in _ACTIVE_STATUSES for t in work)
@@ -248,9 +249,11 @@ async def _normalize_verify(
         and (t.get("metadata") or {}).get("cancelled_reason") == "budget_exhausted"
         for t in todos
     )
-    if len(work) < minimum:
-        # Nothing worth verifying (or the plan was abandoned): drop the active
-        # verify and any reviewer still attached to it.
+    if not work:
+        # An EMPTY plan (or one whose work is all cancelled) has nothing to
+        # verify: drop the active verify and any reviewer still attached to it.
+        # This is the only remaining structural guard — the acceptance step
+        # itself is unconditional.
         if inherited is not None:
             await _kill_verify_subagent(inherited, session_id)
         for todo in active:

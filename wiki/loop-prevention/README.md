@@ -291,11 +291,12 @@ as messages the user wrote.
 
 ### Plan level: the SYSTEM verify todo
 
-A plan with at least ONE work todo ends with one SYSTEM `[VERIFY]` todo
+Every non-empty plan ends with one SYSTEM `[VERIFY]` todo — there is NO
+minimum work-item count, so a one-item plan is verified too
 (`metadata.kind="verify"`, last position, priority high). The todolist service
 inserts it after every mutation (`replace`/`add`/`patch`/`remove`), keeps it
-last, removes it (and kills its reviewer) when the plan shrinks below two work
-todos, and never inserts one for a `:subagent:`/`:swarm:` session. The model
+last, removes it (and kills its reviewer) only when the plan has no work item
+left, and never inserts one for a `:subagent:`/`:swarm:` session. The model
 cannot forge it — the tool schema has no `metadata` field, the store only writes
 that column through a system-only argument, and a copied template line is
 stripped from `replace`. Evidence travels in the model-writable `notes` field.

@@ -57,7 +57,7 @@
 - AdversarialVerify：运行验收标准，排查陈旧状态、脏工作区、遗留资源。
 - FullyDone：只有验证通过后，才把复选框标记为 completed。
 - 如果验证失败，任务就没有完成，需要重新派发或修复。
-- VerifyTodo（系统自动）：含 2 个以上 work todo 的计划末尾会有一个 SYSTEM [VERIFY] todo。
+- VerifyTodo（系统自动）：任何非空计划的末尾都会有一个 SYSTEM [VERIFY] todo——没有最小工作项数量要求，单步计划同样要验证。
   到达它时不要自己内联跑验收：
   1. 读取每个 work todo 的验收标准。
   2. 用 sessions_spawn(functional_role="reviewer") 派只读 reviewer；brief 里列出每个

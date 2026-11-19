@@ -253,11 +253,11 @@
 
 ### 계획 수준: SYSTEM verify todo
 
-work todo가 1개 이상인 계획은 끝에 SYSTEM `[VERIFY]` todo
-(`metadata.kind="verify"`, 항상 마지막, priority high)를 가진다. todolist service가
-각 변경(`replace`/`add`/`patch`/`remove`) 후 유지한다: 마지막을 보장하고, work
-todo가 2개 미만이면 제거하며 reviewer를 kill하고, `:subagent:`/`:swarm:` 세션에는
-삽입하지 않는다. 모델은 위조할 수 없다——도구 schema에 `metadata`가 없고, store는
+비어 있지 않은 모든 계획은 끝에 SYSTEM `[VERIFY]` todo를 가진다——최소 작업 항목
+수는 없으며, 1개짜리 계획도 검증된다(`metadata.kind="verify"`, 항상 마지막,
+priority high). todolist service가 각 변경(`replace`/`add`/`patch`/`remove`) 후
+유지한다: 마지막을 보장하고, work todo가 하나도 남지 않았을 때만 제거하며 reviewer를
+kill하고, `:subagent:`/`:swarm:` 세션에는 삽입하지 않는다. 모델은 위조할 수 없다——도구 schema에 `metadata`가 없고, store는
 시스템 전용 인자로만 그 컬럼을 쓰며, `replace`에 복사된 템플릿 줄은 정확히
 제거한다. 증거는 모델이 쓸 수 있는 `notes` 필드에 들어간다.
 

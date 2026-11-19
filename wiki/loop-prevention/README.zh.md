@@ -250,10 +250,10 @@
 
 ### 计划级：SYSTEM verify todo
 
-含至少 1 个 work todo 的计划末尾会有一个 SYSTEM `[VERIFY]` todo
-（`metadata.kind="verify"`、始终最后、priority high）。todolist service 在每次
-变更（`replace`/`add`/`patch`/`remove`）后维护它：保持末尾；work todo 少于两个时
-移除它并 kill 其 reviewer；`:subagent:`/`:swarm:` 会话永不插入。模型无法伪造——
+任何非空计划的末尾都会有一个 SYSTEM `[VERIFY]` todo——没有最小工作项数量要求，
+单步计划同样要验证（`metadata.kind="verify"`、始终最后、priority high）。todolist
+service 在每次变更（`replace`/`add`/`patch`/`remove`）后维护它：保持末尾；只有计划里
+一个 work todo 都不剩时才移除它并 kill 其 reviewer；`:subagent:`/`:swarm:` 会话永不插入。模型无法伪造——
 工具 schema 没有 `metadata` 字段，store 只通过系统专用参数写该列，`replace` 抄入的
 模板行会被精确剥离。证据写在模型可写的 `notes` 字段。
 

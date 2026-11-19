@@ -254,11 +254,11 @@
 
 ### 計画レベル：SYSTEM verify todo
 
-work todo が 1 件以上の計画は末尾に 1 つの SYSTEM `[VERIFY]` todo
-（`metadata.kind="verify"`、常に最後、priority high）を持つ。todolist service が
-各変更（`replace`/`add`/`patch`/`remove`）後に維持する：末尾を保ち、work todo が
-2 件未満になると削除して reviewer を kill し、`:subagent:`/`:swarm:` セッションには
-挿入しない。モデルは偽造できない——ツール schema に `metadata` はなく、store は
+空でない計画はすべて末尾に 1 つの SYSTEM `[VERIFY]` todo を持つ——work todo の
+最小件数はなく、1 件だけの計画も検証される（`metadata.kind="verify"`、常に最後、
+priority high）。todolist service が各変更（`replace`/`add`/`patch`/`remove`）後に
+維持する：末尾を保ち、work todo が 1 件も残らないときだけ削除して reviewer を kill し、
+`:subagent:`/`:swarm:` セッションには挿入しない。モデルは偽造できない——ツール schema に `metadata` はなく、store は
 システム専用引数でのみその列を書き、`replace` にコピーされたテンプレート行は
 正確に剥がす。証拠はモデルが書ける `notes` フィールドに入る。
 

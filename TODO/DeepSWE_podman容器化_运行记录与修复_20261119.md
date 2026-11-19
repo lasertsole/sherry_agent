@@ -256,3 +256,13 @@ reviewer 也放行；但隐藏测试要的 media-type 校验始终没实现，F2
 - **需求清单驱动**：把 instruction 里可判定的条款沉淀成 checklist（属于 [VERIFY] todo 的验收项），
   reviewer 必须逐条给出通过/不通过，而不是只“读计划”；
 - 续跑 cap 从 6 降到 2–3，避免长尾空转。
+
+## 13. 收尾：自检改为无条件（2026-11-20）
+
+按产品决定，`[VERIFY]` 不再判断工作项数量：
+
+- `verify_min_work_todos` 配置项**整体删除**（TypedDict 与默认值），`_normalize_verify` 只保留
+  「计划为空才移除 verify」这一结构性守卫；任何非空计划的最后一步都是自动 `[VERIFY]`；
+- 同步更新：`AGENTS.md`、`wiki/loop-prevention/` 四语言、`workspace/template/*/AGENTS.md`
+  （四语言 persona 模板）、`todowrite` 工具描述、`test_verify_todo.py` 文档串；
+- 测试：todolist + plan-continuation **262 passed**；doc links / parity / language 全 PASS。

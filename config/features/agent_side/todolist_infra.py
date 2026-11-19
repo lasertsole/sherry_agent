@@ -41,13 +41,12 @@ class TodoListInfraConfig(TypedDict):
     #: turn resets it. Hitting the cap injects one final "stop and summarize"
     #: directive and the session then stays silent until the user speaks.
     max_continuation_turns: int
-    #: Auto-insert exactly one system verify todo at the end of a plan with at
-    #: least ``verify_min_work_todos`` work todos (MAIN agent only). The floor
-    #: is ONE: a single-item plan is exactly the case that used to skip the
-    #: mandatory acceptance check altogether (measured on a DeepSWE task whose
-    #: one-line plan ended the turn with the verify never inserted).
+    #: Auto-insert exactly one system verify todo as the LAST step of every
+    #: non-empty plan (MAIN agent only). There is no minimum work-item count:
+    #: a one-item plan is exactly the case that used to skip the mandatory
+    #: acceptance check altogether (measured on a DeepSWE task whose one-line
+    #: plan ended the turn with the verify never inserted).
     verify_todo_enabled: bool
-    verify_min_work_todos: int
     #: How many reviewer links a verify todo may replace before the gate offers
     #: the exhausted escape (cancel + verify yourself).
     max_verify_respawns: int
@@ -73,6 +72,5 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     # loop this ceiling exists for.
     "max_continuation_turns": 15,
     "verify_todo_enabled": True,
-    "verify_min_work_todos": 1,
     "max_verify_respawns": 2,
 }

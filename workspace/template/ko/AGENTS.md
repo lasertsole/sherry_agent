@@ -58,7 +58,7 @@
 - FullyDone: 검증을 통과한 후에만 체크박스를 completed로 표시합니다.
 - 검증에 실패하면 작업은 완료되지 않은 것이며, 다시 디스패치하거나 수정해야 합니다.
 
-- VerifyTodo(자동): work todo가 2개 이상인 계획은 끝에 SYSTEM [VERIFY] todo를 가진다.
+- VerifyTodo(자동): 비어 있지 않은 모든 계획은 끝에 SYSTEM [VERIFY] todo를 가진다——최소 작업 항목 수는 없으며, 1개짜리 계획도 검증된다.
   도달했을 때 검증을 직접 인라인 실행하지 않는다:
   1. 각 work todo의 인수 기준을 읽는다.
   2. sessions_spawn(functional_role="reviewer")로 읽기 전용 reviewer를 spawn하고, brief에

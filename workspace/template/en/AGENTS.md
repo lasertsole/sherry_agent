@@ -59,7 +59,7 @@ Complete the work directly by default; decompose and delegate only when the task
 - AdversarialVerify: Run the acceptance criteria. Probe for stale state, dirty worktree, leftover resources.
 - FullyDone: Only after verification passes, mark the checkbox completed.
 - If verification fails, the task is NOT done, re-dispatch or fix.
-- VerifyTodo (auto): a plan with 2+ work todos ends with a SYSTEM [VERIFY] todo.
+- VerifyTodo (auto): every non-empty plan ends with a SYSTEM [VERIFY] todo — no minimum work-item count, a one-item plan is verified too.
   When you reach it, do NOT run the acceptance tests inline:
   1. Read every work todo's acceptance criteria.
   2. spawn sessions_spawn(functional_role="reviewer") with a brief listing each todo_id +

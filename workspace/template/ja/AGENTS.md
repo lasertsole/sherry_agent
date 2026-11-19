@@ -58,7 +58,7 @@
 - FullyDone：検証が通過した後にのみ、チェックボックスを completed にマークする。
 - 検証に失敗した場合、タスクは未完了。再ディスパッチか修正が必要。
 
-- VerifyTodo（自動）：work todo が 2 件以上の計画は末尾に SYSTEM [VERIFY] todo を持つ。
+- VerifyTodo（自動）：空でない計画はすべて末尾に SYSTEM [VERIFY] todo を持つ——最小件数の要件はなく、1 件の計画も検証される。
   到達しても検証を自分でインライン実行しない：
   1. 各 work todo の受け入れ条件を読む。
   2. sessions_spawn(functional_role="reviewer") で読み取り専用 reviewer を spawn し、brief に

@@ -3,7 +3,7 @@
 The rest of the todolist suite runs with ``verify_todo_enabled=False`` (see
 conftest); this module turns the feature back on and covers the contract:
 
-- one verify todo, always last, for MAIN-agent plans with >=1 work todo;
+- one verify todo, always last, for EVERY non-empty MAIN-agent plan;
 - a model cannot forge it (metadata is system-only) or copy it into replace;
 - completion requires a linked, finished reviewer and no open work;
 - cancellation is guarded (reviewer-budget escape or a fully abandoned plan);
