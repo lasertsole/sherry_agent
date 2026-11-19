@@ -187,3 +187,35 @@ NO_PROXY='*' SHERRY_EVAL_CONTAINER_BIN=podman   uv run --no-sync python evals/de
 对比修复前同一模型（reasoner）那次：卡在 161 条熔断消息、无补丁；现在正常完成 55 次调用、产出补丁、P2P 全过。
 剩余 9 个失败全部是同一参数化用例 `test_iter_json_rejects_non_json_media_types`：实现没有对非 JSON
 media type 抛 `DecodingError` —— 隐藏测试里的一支行为，模型没实现（不是 harness 问题）。
+
+## 11. 追问：todolist 的强制自检为什么没生效（Bug #22）
+
+结论：**自检插入了，但没有被执行完**；根因是评测环境没有「自动续跑」的触发器。
+
+证据（run `20261119_221455`，F2P 99/108 那次）的 todo 表：
+
+| # | 状态 | kind | 内容 |
+| :--- | :--- | :--- | :--- |
+| 1-4 | completed | — | 调查 / 实现 / 跑测试 / 提交 |
+| 5 | **in_progress** | **verify** | `[VERIFY] Run the plan's acceptance checks with a reviewer subagent…` |
+| 6 | pending | — | `Add Response.iter_json()/aiter_json() with JSON streaming media type validation` |
+
+系统 `[VERIFY]` 待办由 `todolist/service.py::_normalize_verify` 插入（条件：非 verify 工作项 ≥
+`TODOLIST_INFRA["verify_min_work_todos"]`（默认 2）），插入本身是生效的。但它停在 `in_progress`，
+第 6 项也还是 `pending`，运行就结束了。
+
+根因：计划未完成时的续跑由 `PlanContinuationEnforcer` 触发，而它的 `_inject` 需要
+`runtime/hooks.py::MAYBE_TRIGGER_AUTO_TURN` —— **该 hook 由 server 层注册**（`server/__main__.py`）。
+评测 harness 没有 server，`_inject` 拿到 None 直接 `return False`（无日志），所以：
+计划未完成 → 没有续跑 → `[VERIFY]` 永远不跑 → 回合在第一次流结束后就收尾。
+
+修复（`evals/deepswe/suite.py`）：
+- 每轮结束后读沙箱的 `stores/registry.db`（todos + task_flows），得到未完成项；
+- 若还有未完成项，最多再驱动 6 轮 `[SYSTEM DIRECTIVE: PLAN CONTINUATION]`（列出未完成 todo/flow），
+  直到计划清空或达上限；
+- 报告新增 `continuations`。
+- 单测：`tests/evals/test_deepswe_continuation.py`（2 个）。
+
+注意一个产品侧边界：模型只建 **1 个工作项**时（本次 23:00 的复跑就是），
+`verify_min_work_todos=2` 使 `[VERIFY]` 根本不会插入 —— 单步任务等于没有强制自检。
+是否把阈值降到 1、或对“任务型”单步也插 verify，需要产品决策。

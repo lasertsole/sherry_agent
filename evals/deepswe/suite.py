@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import shutil
 import sys
 import time
@@ -90,6 +91,48 @@ the harness records tool usage and reports a run that skips them:
 3. Keep the todolist and the flow board consistent: an item or step is DONE
    only when its verification command passed.
 """
+
+
+#: One extra driven turn per unfinished plan item, bounded like the production
+#: continuation ceiling (the harness owns the auto-turn the server would fire).
+_MAX_PLAN_CONTINUATIONS = 6
+_CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
+
+Your plan is NOT finished. Open items:
+{items}
+
+Finish them now — including the system [VERIFY] acceptance checks — close the
+TaskFlow flow with taskflow_flow(action="finish"), then summarize. Do not ask
+questions."""
+
+
+def _open_plan_items(results_dir: Path) -> list[str]:
+    """Open todos + non-terminal flows from the sandbox's plan registry.
+
+    The production auto-turn trigger is a SERVER hook; the eval harness has no
+    server, so ``PlanContinuationEnforcer._inject`` silently returns False and
+    a mandatory [VERIFY] todo would never run. This reader is what lets the
+    harness drive the continuation itself.
+    """
+    database = results_dir / "stores" / "registry.db"
+    if not database.is_file():
+        return []
+    items: list[str] = []
+    try:
+        with sqlite3.connect(database, timeout=5) as connection:
+            for content, status in connection.execute(
+                "SELECT content, status FROM todos "
+                "WHERE status NOT IN ('completed', 'cancelled') ORDER BY todo_id"
+            ):
+                items.append(f"todo: {str(content)[:100]} ({status})")
+            for flow_id, status in connection.execute(
+                "SELECT flow_id, status FROM task_flows "
+                "WHERE status NOT IN ('done', 'failed', 'cancelled')"
+            ):
+                items.append(f"flow: {flow_id} ({status})")
+    except sqlite3.Error:
+        return items
+    return items
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -529,17 +572,42 @@ async def _run_task(
             base=task.base_commit[:12],
             project_dir=host_workdir,
         )
-        try:
-            drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
-        except TimeoutError:
-            drive = {
-                "tool_calls": 0,
-                "text": "",
-                "resumes": 0,
-                "interrupted": 0,
-                "timeout": True,
-                "error": "",
-            }
+        drive: dict[str, Any] = {
+            "tool_calls": 0,
+            "tool_names": {},
+            "text": "",
+            "resumes": 0,
+            "interrupted": 0,
+            "timeout": False,
+            "error": "",
+        }
+        continuations = 0
+        for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
+            try:
+                turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
+            except TimeoutError:
+                drive["timeout"] = True
+                break
+            drive["tool_calls"] += int(turn.get("tool_calls") or 0)
+            for name, count in (turn.get("tool_names") or {}).items():
+                drive["tool_names"][name] = drive["tool_names"].get(name, 0) + int(count)
+            drive["text"] += str(turn.get("text") or "")
+            drive["resumes"] += int(turn.get("resumes") or 0)
+            drive["interrupted"] += int(turn.get("interrupted") or 0)
+            drive["error"] = str(turn.get("error") or drive["error"])
+            if turn.get("timeout") or turn.get("error"):
+                drive["timeout"] = bool(turn.get("timeout"))
+                break
+            open_items = _open_plan_items(results_dir)
+            if not open_items:
+                break
+            if attempt >= _MAX_PLAN_CONTINUATIONS:
+                break
+            continuations += 1
+            prompt = _CONTINUATION_PROMPT.format(
+                items="\n".join(f"- {item}" for item in open_items[:12])
+            )
+        result["continuations"] = continuations
         result["tool_calls"] = drive["tool_calls"]
         tool_names: dict[str, int] = dict(drive.get("tool_names") or {})
         result["tool_names"] = tool_names
