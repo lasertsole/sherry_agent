@@ -88,3 +88,28 @@ SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py 
 - [ ] Bug #10：给容器模式补硬超时（复用 `agent_worker.py` 进程方案）。
 - [ ] Bug #11：模型构建 fail-fast，不再静默下载 GGUF。
 - [ ] 跑通后把 `--backend`/镜像前提写进 `wiki/evals/`（四语言）。
+
+## 7. 凭据与环境排查（2026-11-19）
+
+用户提供的 `Desktop/新建 文本文档.txt` 里的模型凭据逐个实测结果：
+
+| 提供项 | 端点 | 结果 |
+| :--- | :--- | :--- |
+| CHAT（glm-5.3-flash） | `open.bigmodel.cn` | **401 令牌已过期或验证不正确**；且原文件 `CHAT_API_BASE` 是 `hhttps://…/chat/completions`（多一个 h，且 base 应到 `/api/paas/v4`） |
+| REASONER（deepseek-reasoner） | `api.deepseek.com/v1` | **401 api key invalid** |
+| VL / RERANKER / EMBEDDING（ModelArts） | `api.modelarts-maas.com/v1` | key **有效**：`bge-m3` embedding 200、`bge-reranker-v2-m3` 可用；但 `glm-5.3` / `glm-5.2` / `openpangu-*` 等 chat 模型 **403 无权限** |
+| SIMPLE（ollama qwen3:8b） | `127.0.0.1:11434` | ollama CLI 已安装、服务可启动，但**本地无任何模型**；`ollama pull qwen3:8b` 实测 2.0 MB/s（5.2 GB ≈ 42 分钟），已中止 |
+
+**同时发现一个会打断所有模型调用的环境问题**：Windows 系统代理开关 `ProxyEnable = 1`、`ProxyServer = 127.0.0.1:7897`，但 **7897 端口没有进程监听**（代理客户端已退出）。httpx / OpenAI SDK 默认 `trust_env=True`，会读取该代理设置 → 所有模型请求得到 `WinError 10061 连接被拒绝`；而 `curl`（只读环境变量）能连通、`httpx(trust_env=False)` 也正常。规避方式：评测进程加 `NO_PROXY=*`（本次后续运行会带），或把系统代理开关关掉 / 重新启动代理客户端。
+
+结论：**chat 模型需要一个新的可用 key**（provider / api_name / api_base / api_key 四元组）。拿到后直接：
+
+```bash
+NO_PROXY=* SHERRY_EVAL_CONTAINER_BIN=podman \
+  MAIN_LLM_PROVIDER=<provider> MAIN_LLM_API_NAME=<model> \
+  MAIN_LLM_API_BASE=<base> MAIN_LLM_API_KEY=<key> \
+  MAIN_LLM_MAX_TOKEN=<window> \
+  uv run --no-sync python evals/deepswe/suite.py --timeout 1800
+```
+
+（embedding/reranker 可继续用 ModelArts 的有效 key，或保持本地配置。）
