@@ -237,7 +237,7 @@ async def _normalize_verify(
     """
     if not _verify_enabled(session_id):
         return todos
-    minimum = int(TODOLIST_INFRA.get("verify_min_work_todos", 2))
+    minimum = int(TODOLIST_INFRA.get("verify_min_work_todos", 1))
     work = _work_todos(todos)
     active = _active_verify_todos(todos)
     has_active_work = any(t.get("status") in _ACTIVE_STATUSES for t in work)

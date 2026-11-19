@@ -250,7 +250,7 @@
 
 ### 计划级：SYSTEM verify todo
 
-含 2 个以上 work todo 的计划末尾会有一个 SYSTEM `[VERIFY]` todo
+含至少 1 个 work todo 的计划末尾会有一个 SYSTEM `[VERIFY]` todo
 （`metadata.kind="verify"`、始终最后、priority high）。todolist service 在每次
 变更（`replace`/`add`/`patch`/`remove`）后维护它：保持末尾；work todo 少于两个时
 移除它并 kill 其 reviewer；`:subagent:`/`:swarm:` 会话永不插入。模型无法伪造——

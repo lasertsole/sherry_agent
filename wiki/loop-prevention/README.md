@@ -291,7 +291,7 @@ as messages the user wrote.
 
 ### Plan level: the SYSTEM verify todo
 
-A plan with 2+ work todos ends with one SYSTEM `[VERIFY]` todo
+A plan with at least ONE work todo ends with one SYSTEM `[VERIFY]` todo
 (`metadata.kind="verify"`, last position, priority high). The todolist service
 inserts it after every mutation (`replace`/`add`/`patch`/`remove`), keeps it
 last, removes it (and kills its reviewer) when the plan shrinks below two work

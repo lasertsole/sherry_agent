@@ -253,7 +253,7 @@
 
 ### 계획 수준: SYSTEM verify todo
 
-work todo가 2개 이상인 계획은 끝에 SYSTEM `[VERIFY]` todo
+work todo가 1개 이상인 계획은 끝에 SYSTEM `[VERIFY]` todo
 (`metadata.kind="verify"`, 항상 마지막, priority high)를 가진다. todolist service가
 각 변경(`replace`/`add`/`patch`/`remove`) 후 유지한다: 마지막을 보장하고, work
 todo가 2개 미만이면 제거하며 reviewer를 kill하고, `:subagent:`/`:swarm:` 세션에는

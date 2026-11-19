@@ -3,7 +3,7 @@
 The rest of the todolist suite runs with ``verify_todo_enabled=False`` (see
 conftest); this module turns the feature back on and covers the contract:
 
-- one verify todo, always last, only for MAIN-agent plans with >=2 work todos;
+- one verify todo, always last, for MAIN-agent plans with >=1 work todo;
 - a model cannot forge it (metadata is system-only) or copy it into replace;
 - completion requires a linked, finished reviewer and no open work;
 - cancellation is guarded (reviewer-budget escape or a fully abandoned plan);
@@ -89,10 +89,10 @@ def _verify_row(rows: list[dict]) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_adds_one_verify_after_two_work_todos_and_keeps_it_last():
+async def test_adds_one_verify_after_the_first_work_todo_and_keeps_it_last():
     await _call(action="add", content="a")
     rows = await _rows()
-    assert [t["content"] for t in rows] == ["a"]
+    assert [t["content"] for t in rows] == ["a", _VERIFY]
 
     await _call(action="add", content="b")
     rows = await _rows()
@@ -110,7 +110,7 @@ async def test_adds_one_verify_after_two_work_todos_and_keeps_it_last():
 
 
 @pytest.mark.asyncio
-async def test_replace_is_idempotent_and_single_todo_plans_never_get_verify():
+async def test_replace_is_idempotent_and_a_single_todo_plan_still_gets_verify():
     await _call(todos=[{"content": "a"}, {"content": "b"}])
     rows = await _rows()
     assert len(rows) == 3 and rows[-1]["content"] == _VERIFY
@@ -118,9 +118,10 @@ async def test_replace_is_idempotent_and_single_todo_plans_never_get_verify():
     await _call(todos=[{"content": "a"}, {"content": "b"}])
     assert len(await _rows()) == 3
 
+    # A ONE-item plan is the case that used to skip the mandatory check.
     await _call(todos=[{"content": "solo"}])
     rows = await _rows()
-    assert [t["content"] for t in rows] == ["solo"]
+    assert [t["content"] for t in rows] == ["solo", _VERIFY]
 
 
 @pytest.mark.asyncio
@@ -197,7 +198,7 @@ async def test_taskflow_root_bind_keeps_verify_last():
 
 
 @pytest.mark.asyncio
-async def test_shrinking_below_the_threshold_removes_the_verify():
+async def test_shrinking_to_zero_work_todos_removes_the_verify():
     await _call(todos=[{"content": "a"}, {"content": "b"}])
     rows = await _rows()
     verify = _verify_row(rows)
@@ -210,12 +211,19 @@ async def test_shrinking_below_the_threshold_removes_the_verify():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(todo_service, "_kill_verify_subagent", _kill)
     try:
+        # ONE work todo left still needs the acceptance check (threshold is 1).
         await _call(action="remove", todo_id=rows[0]["todo_id"])
+        rows = await _rows()
+        assert [t["content"] for t in rows] == ["b", _VERIFY]
+        assert killed == []
+
+        survivor = next(t for t in rows if t["content"] == "b")
+        await _call(action="remove", todo_id=survivor["todo_id"])
     finally:
         monkeypatch.undo()
 
     rows = await _rows()
-    assert [t["content"] for t in rows] == ["b"]
+    assert rows == []
     assert killed == [""]
     assert verify["todo_id"] not in {t["todo_id"] for t in rows}
 

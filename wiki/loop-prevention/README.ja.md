@@ -254,7 +254,7 @@
 
 ### 計画レベル：SYSTEM verify todo
 
-work todo が 2 件以上の計画は末尾に 1 つの SYSTEM `[VERIFY]` todo
+work todo が 1 件以上の計画は末尾に 1 つの SYSTEM `[VERIFY]` todo
 （`metadata.kind="verify"`、常に最後、priority high）を持つ。todolist service が
 各変更（`replace`/`add`/`patch`/`remove`）後に維持する：末尾を保ち、work todo が
 2 件未満になると削除して reviewer を kill し、`:subagent:`/`:swarm:` セッションには
