@@ -163,3 +163,27 @@ NO_PROXY='*' SHERRY_EVAL_CONTAINER_BIN=podman   uv run --no-sync python evals/de
 | 21 | **/app 路径幻觉**：模型第一次写文件用 `C:pp\httpx\_models.py`（容器路径与 Windows 盘符拼接），被 PathGuard 以 “External file access denied” 拒绝后没有纠正 | 工具结果 id 13：`External file access denied: C:pp\httpx\_models.py` | 在 prompt 中明确“项目根目录是 <host path>，不要使用 /app 或 C:pp”；或在 Windows 本地化时把 `/app/...` 一并替换为宿主路径（当前只替换独立 `/app` 前缀，`/app/httpx` 这类拼接可能漏改） |
 
 注：第 14 条（todowrite 工具名）修复后，deepseek-flash 与 reasoner 都能正确调用规划工具；本次 reasoner 的失败是状态机/熔断语义问题，不是编排门禁本身。
+
+## 10. 修复 #19–#21 后的复跑（2026-11-19 22:15，deepseek-reasoner）
+
+**修复内容**（提交 `15beb5b0`）：
+
+| Bug | 修复 |
+| :--- | :--- |
+| #19 熔断不终止回合 | `ToolGuardrails` 增加 `wrap_model_call`/`awrap_model_call`：`halt_decision` 已置位时直接返回终止 `AIMessage`（不再调用模型）。新增 2 个单测 |
+| #20 skipped 步骤死胡同 | `step_state` 允许 `skipped → ready` 显式重开；`update_steps` 接受该重开，并把报错改为「skipped 用 status=ready 重开 / dispatched 用 resume / done 不可变」。新增 2 个单测 |
+| #21 /app 路径幻觉 | DeepSWE 提示词显式给出唯一项目根目录，并禁止 `/app`、`C:pp` 及根外路径 |
+
+**复跑结果**（httpx，门禁开启，timeout 1800）：
+
+| 指标 | 数值 |
+| :--- | :--- |
+| F2P | **99/108（91.7%）** |
+| P2P | 1404/1404 |
+| 耗时 / 工具调用 | 782.0s / 55 |
+| 编排 | `todolist=6，taskflow=1，orchestration=ok` |
+| resolved | ✗（需 108/108） |
+
+对比修复前同一模型（reasoner）那次：卡在 161 条熔断消息、无补丁；现在正常完成 55 次调用、产出补丁、P2P 全过。
+剩余 9 个失败全部是同一参数化用例 `test_iter_json_rejects_non_json_media_types`：实现没有对非 JSON
+media type 抛 `DecodingError` —— 隐藏测试里的一支行为，模型没实现（不是 harness 问题）。
