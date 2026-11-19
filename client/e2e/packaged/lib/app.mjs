@@ -100,10 +100,15 @@ export async function ensureSession(ui) {
   return newSession(ui);
 }
 
-/** Switch the left sidebar back to the session list when it shows files. */
+/**
+ * Switch the left sidebar back to the session list. The nav is now a registry
+ * (UI upgrade S1): every item has a `nav-{id}` hook, so clicking the chat icon
+ * activates the session list from whichever panel is showing. Idempotent.
+ */
 async function ensureSessionList(ui) {
-  if (await ui.exists('[data-test="sidebar-files-panel"]')) {
-    await ui.clickAriaPrefix('Sessions');
+  const navChat = '[data-test="nav-chat"]';
+  if (await ui.exists(navChat)) {
+    await ui.click(navChat);
     await sleep(300);
   }
 }

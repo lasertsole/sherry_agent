@@ -407,6 +407,7 @@ import RightSidebar from './components/RightSidebar.vue';
 import { detachSideChatSession } from '~/composables/use-side-chat';
 import type { RightSidebarTab } from '~/stores/right-sidebar';
 import { useSidebarWidthStore } from '~/stores/sidebar-width';
+import { useNavStore } from '~/stores/nav';
 import { useChatFloatStore } from '~/stores/chat-float';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import OnboardingDialog from '~/components/OnboardingDialog.vue';
@@ -501,10 +502,12 @@ const toolbarCommands = buildHomeToolbarCommands(toolbarContext);
 
 /** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
 const uiStore = useUiStore();
+/** Left-sidebar navigation registry (UI upgrade S1). */
+const navStore = useNavStore();
 /** The shell's route: its `sid` param says which session the main area shows. */
 const route = useRoute();
 /** Whether the sidebar body shows the project file tree. */
-const showFiles = computed(() => uiStore.sidebarBody === 'files');
+const showFiles = computed(() => navStore.activeId === 'files');
 
 /** The session the main area shows (the route's `sid`). */
 const openSessionId = computed(() => String(route.params.sid ?? ''));
@@ -527,7 +530,7 @@ const canShowProjectFiles = computed(
 watch(
   canShowProjectFiles,
   available => {
-    if (!available) uiStore.sidebarBody = 'sessions';
+    if (!available && navStore.activeId === 'files') navStore.activate('chat');
   },
   { immediate: true }
 );
@@ -556,12 +559,12 @@ const toggleSidebarBodyWithHint = (): void => {
   // The working-directory body only exists in the docked column: put the chat
   // back first, otherwise the folder button looks like it did nothing.
   if (chatFloat.floating) dockChatFloat();
-  uiStore.toggleSidebarBody();
+  navStore.activate(navStore.activeId === 'files' ? 'chat' : 'files');
   // Reveal the body being switched to: with the sidebar collapsed the click would
   // otherwise look like it did nothing (the folder is the most obvious case — you
   // ask for the project files and the tree has to appear).
   uiStore.sidebarCollapsed = false;
-  if (uiStore.sidebarBody !== 'files') return;
+  if (navStore.activeId !== 'files') return;
   try {
     if (window.localStorage.getItem(SIDEBAR_FILES_HINT_KEY)) return;
     window.localStorage.setItem(SIDEBAR_FILES_HINT_KEY, '1');

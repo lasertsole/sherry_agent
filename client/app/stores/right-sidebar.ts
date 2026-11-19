@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { watch } from 'vue';
+import { computed, watch } from 'vue';
 
 /**
  * Panel kinds the right sidebar can host as tabs: the three viewers plus every
@@ -44,7 +44,66 @@ export type RightSidebarPanelKind =
   /** The toolbox's freehand whiteboard (one board per session tab). */
   | 'whiteboard'
   /** A helper session opened from a quoted chat selection (an ordinary session). */
-  | 'sideChat';
+  | 'sideChat'
+  /** Expert registry editor (UI upgrade S2). */
+  | 'expertEdit';
+
+/** Functional panel groups for the tab strip (UI upgrade S6). */
+export type PanelGroup = 'session' | 'tools' | 'config';
+
+/** Which functional group each panel kind belongs to (S6). */
+export const PANEL_GROUPS: Record<PanelGroup, { labelKey: string; icon: string; kinds: RightSidebarPanelKind[] }> = {
+  session: {
+    labelKey: 'rightSidebar.group.session',
+    icon: 'pi pi-comments',
+    kinds: [
+      'sideChat',
+      'subagentActivity',
+      'taskFlowBoard',
+      'sessionActivity',
+      'sessionPreset',
+      'gitDiff',
+      'contextViewer',
+      'trajectory',
+      'tokenBudget',
+      'fileViewer'
+    ]
+  },
+  tools: {
+    labelKey: 'rightSidebar.group.tools',
+    icon: 'pi pi-bolt',
+    kinds: ['browser', 'terminal', 'whiteboard', 'webSearch', 'extend']
+  },
+  config: {
+    labelKey: 'rightSidebar.group.config',
+    icon: 'pi pi-cog',
+    kinds: [
+      'systemConfig',
+      'persona',
+      'memory',
+      'heartbeat',
+      'cron',
+      'skills',
+      'knowledgeGraph',
+      'logs',
+      'stats',
+      'account',
+      'notification',
+      'expertEdit'
+    ]
+  }
+};
+
+/**
+ * Resolve the functional group for a panel kind; unknown kinds fall back to config.
+ * @param kind
+ */
+export function groupOfKind(kind: RightSidebarPanelKind): PanelGroup {
+  for (const group of Object.keys(PANEL_GROUPS) as PanelGroup[]) {
+    if (PANEL_GROUPS[group].kinds.includes(kind)) return group;
+  }
+  return 'config';
+}
 
 /**
  * Which group a tab belongs to: the CURRENT SESSION's own views (things read from
@@ -102,7 +161,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   browser: 'session',
   terminal: 'session',
   // The side session was created from this session's transcript.
-  sideChat: 'session'
+  sideChat: 'session',
+  // Expert editing is a process-wide registry concern, not per-session.
+  expertEdit: 'global'
 };
 
 /**
@@ -201,6 +262,8 @@ export interface RightSidebarTabPayload {
   prefillQuote?: boolean;
   /** The sub-agent run the activity panel shows (one tab per run). */
   runId?: string;
+  /** Expert name the editor opens (null = create a new expert, S2). */
+  expertName?: string | null;
 }
 
 /** One open tab of the right sidebar. */
@@ -318,6 +381,8 @@ export const useRightSidebarStore = defineStore(
      * global tool, so an untouched sidebar keeps exactly its old behaviour.
      */
     const activeScope = ref<RightSidebarScope>('global');
+    /** Functional group whose tabs the strip shows (S6). */
+    const activeGroup = ref<PanelGroup>('session');
     /** Panel width in px (draggable, clamped; persisted). */
     const width = ref(RIGHT_SIDEBAR_DEFAULT_WIDTH);
     /**
@@ -400,7 +465,10 @@ export const useRightSidebarStore = defineStore(
       const boardId = payload?.boardId ?? null;
       const sessionId = payload?.sessionId ?? null;
       const runId = payload?.runId ?? null;
+      const expertName = payload?.expertName ?? null;
       const scope = SCOPE_BY_KIND[kind];
+      // Opening (or re-activating) a tab reveals its functional group (S6).
+      activeGroup.value = groupOfKind(kind);
       // A side-chat tab belongs to its PARENT session; every other session tab
       // belongs to the session on screen when it was opened.
       const ownerSessionId =
@@ -415,7 +483,8 @@ export const useRightSidebarStore = defineStore(
           (tab.payload?.url ?? null) === url &&
           (tab.payload?.boardId ?? null) === boardId &&
           (tab.payload?.sessionId ?? null) === sessionId &&
-          (tab.payload?.runId ?? null) === runId
+          (tab.payload?.runId ?? null) === runId &&
+          (tab.payload?.expertName ?? null) === expertName
       );
       if (existing) {
         activeTabId.value = existing.id;
@@ -644,8 +713,35 @@ export const useRightSidebarStore = defineStore(
       if (activeSessionId.value === sessionId) activeSessionId.value = '';
     }
 
+    /** Tabs in the current functional group (S6); the strip renders these. */
+    const groupTabs = computed(() => tabs.value.filter(tab => groupOfKind(tab.kind) === activeGroup.value));
+
+    /**
+     * Search all panels by localized label. The component supplies `t`.
+     * @param query
+     * @param translate
+     */
+    function searchPanels(
+      query: string,
+      translate: (key: string) => string
+    ): Array<{ kind: RightSidebarPanelKind; label: string; group: PanelGroup }> {
+      const q = query.trim().toLowerCase();
+      if (!q) return [];
+      const results: Array<{ kind: RightSidebarPanelKind; label: string; group: PanelGroup }> = [];
+      for (const group of Object.keys(PANEL_GROUPS) as PanelGroup[]) {
+        for (const kind of PANEL_GROUPS[group].kinds) {
+          const label = translate(`rightSidebar.${kind}`);
+          if (label.toLowerCase().includes(q)) results.push({ kind, label, group });
+        }
+      }
+      return results;
+    }
+
     return {
       collapsed,
+      activeGroup,
+      groupTabs,
+      searchPanels,
       tabs,
       recentClosed,
       activeTabId,

@@ -43,7 +43,10 @@
   "common": {
     "confirmDelete": "确认删除",
     "delete": "删除",
-    "cancel": "取消"
+    "cancel": "取消",
+    "save": "保存",
+    "notImplemented": "暂未实现",
+    "comingSoon": "敬请期待"
   },
   "shortcuts": {
     "hint": "点击「重绑」后按下新的组合键（Esc 取消）。绑定保存在本机浏览器，立即生效。",
@@ -822,7 +825,12 @@
   "session": {
     "fork": "从此处分叉",
     "forkedFrom": "从 {parent} 分支",
-    "backToParent": "回到父分支"
+    "backToParent": "回到父分支",
+    "type": {
+      "chat": "对话",
+      "team": "团队",
+      "meeting": "会议"
+    }
   },
   "whiteboard": {
     "namePlaceholder": "白板名称",
@@ -859,5 +867,67 @@
     "planApprove": "批准计划",
     "planRevise": "退回修改",
     "planFeedbackPlaceholder": "指出需要修改的地方…"
+  },
+  "nav": {
+    "chat": "会话",
+    "files": "文件",
+    "experts": "专家库",
+    "tasks": "任务",
+    "meetings": "会议"
+  },
+  "experts": {
+    "create": "新建专家",
+    "edit": "编辑专家",
+    "search": "搜索专家…",
+    "name": "名称",
+    "nameHint": "唯一标识，创建后不可修改",
+    "description": "描述",
+    "personaPrompt": "角色提示词",
+    "personaHint": "定义专家的行为与定位",
+    "model": "模型",
+    "thinking": "思考级别",
+    "role": "功能角色",
+    "skills": "技能白名单",
+    "skillsHint": "留空表示不限技能",
+    "mcpServers": "MCP 服务",
+    "mcpHint": "输入服务名后回车",
+    "timeout": "单步超时",
+    "empty": "暂无专家",
+    "noMatch": "没有匹配的专家",
+    "teamsSuffix": "团",
+    "skillsSuffix": "技能"
+  },
+  "taskBoard": {
+    "all": "全部",
+    "running": "运行中",
+    "waiting": "等待",
+    "done": "已完成",
+    "failed": "失败",
+    "empty": "暂无任务流",
+    "stepsSuffix": "步骤"
+  },
+  "meetings": {
+    "create": "新建会议",
+    "empty": "暂无会议",
+    "topic": "会议主题",
+    "participants": "参会专家",
+    "participantsHint": "至少选择 2 位专家",
+    "noExperts": "暂无专家可选",
+    "peopleSuffix": "人",
+    "iteration": "轮次",
+    "status": {
+      "in_progress": "进行中",
+      "waiting_user": "等待插话",
+      "ended": "已结束",
+      "cancelled": "已取消"
+    },
+    "back": "返回",
+    "confirmEnd": "确认结束",
+    "execute": "立即执行",
+    "speaking": "当前发言",
+    "roleSummary": "总结",
+    "emptyStream": "等待发言人开始…",
+    "interrupt": "插话",
+    "interruptPlaceholder": "输入插话内容…"
   }
 }

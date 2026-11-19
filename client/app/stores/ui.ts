@@ -15,8 +15,6 @@ export const useUiStore = defineStore(
     // reference remains valid afterwards)
     const colorMode = useColorMode();
     const sidebarCollapsed = ref(false);
-    /** What the left sidebar shows: the session list or the project file tree. */
-    const sidebarBody = ref<'sessions' | 'files'>('sessions');
     const settingsMenuOpen = ref(false);
     /** The working-directory body's two sections (file tree / git graph), each collapsible. */
     const filesSectionOpen = ref(true);
@@ -28,9 +26,6 @@ export const useUiStore = defineStore(
     };
     const toggleSidebar = () => {
       sidebarCollapsed.value = !sidebarCollapsed.value;
-    };
-    const toggleSidebarBody = () => {
-      sidebarBody.value = sidebarBody.value === 'sessions' ? 'files' : 'sessions';
     };
     const toggleFilesSection = () => {
       filesSectionOpen.value = !filesSectionOpen.value;
@@ -48,13 +43,11 @@ export const useUiStore = defineStore(
     return {
       sidebarCollapsed,
       settingsMenuOpen,
-      sidebarBody,
       filesSectionOpen,
       gitSectionOpen,
       filesSplitSize,
       setTheme,
       toggleSidebar,
-      toggleSidebarBody,
       toggleFilesSection,
       toggleGitSection,
       setFilesSplitSize
@@ -62,7 +55,7 @@ export const useUiStore = defineStore(
   },
   {
     persist: {
-      pick: ['sidebarCollapsed', 'sidebarBody', 'filesSectionOpen', 'gitSectionOpen', 'filesSplitSize']
+      pick: ['sidebarCollapsed', 'filesSectionOpen', 'gitSectionOpen', 'filesSplitSize']
     }
   }
 );

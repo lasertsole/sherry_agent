@@ -17,10 +17,17 @@ describe('sessionIdFromPathname', () => {
   });
 
   it('honours caller-specific reserved segments', () => {
-    expect(RESERVED_SESSION_SEGMENTS).toEqual(['home']);
-    // The reserved set is a caller decision: the shell route is the only one
-    // every consumer agrees on, and others may add their own.
+    expect(RESERVED_SESSION_SEGMENTS).toEqual(['home', 'meeting']);
+    // The reserved set is a caller decision: the shell + conference routes are
+    // the shared baseline, and others may add their own.
     expect(sessionIdFromPathname('/home/other', ['home', 'other'])).toBeUndefined();
     expect(sessionIdFromPathname('/home/other/sess-9', ['home', 'other'])).toBe('sess-9');
+  });
+
+  it('never treats the meeting route segment as a session id (S4)', () => {
+    // `/meeting` is a route, not a session; the trailing meeting id in
+    // `/meeting/:id` is still the last segment, so those pages must not feed
+    // session-scoped state. Consumers that mount only under /home are safe.
+    expect(sessionIdFromPathname('/meeting')).toBeUndefined();
   });
 });

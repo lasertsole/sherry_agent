@@ -235,6 +235,7 @@ import type { MessageItem } from '../type';
 import type { ChatController } from '~/composables/messages';
 import type { SelectionPayload } from '~/composables/use-chat-selection';
 import { CHAT_ROLE } from '@/types/chat-role';
+import { useNavStore } from '@/stores/nav';
 
 /**
  * A helper session opened from a quoted selection, hosted by the right sidebar.
@@ -335,7 +336,7 @@ function onSelectionAdd(payload: SelectionPayload): void {
  * pre-merge behavior) where the user can drag or `@`-reference a file.
  */
 function openFilesInSidebar(): void {
-  ui.sidebarBody = 'files';
+  useNavStore().activate('files');
   ui.filesSectionOpen = true;
   ui.sidebarCollapsed = false;
 }

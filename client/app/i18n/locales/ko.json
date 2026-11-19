@@ -43,7 +43,10 @@
   "common": {
     "confirmDelete": "삭제 확인",
     "delete": "삭제",
-    "cancel": "취소"
+    "cancel": "취소",
+    "save": "저장",
+    "notImplemented": "아직 구현되지 않았습니다",
+    "comingSoon": "출시 예정"
   },
   "shortcuts": {
     "hint": "「다시 지정」을 누른 뒤 새 조합을 누르세요(Esc 취소). 설정은 이 브라우저에 저장되며 즉시 적용됩니다.",
@@ -822,7 +825,12 @@
   "session": {
     "fork": "여기서 분기",
     "forkedFrom": "{parent}에서 분기됨",
-    "backToParent": "상위 분기로 돌아가기"
+    "backToParent": "상위 분기로 돌아가기",
+    "type": {
+      "chat": "대화",
+      "team": "팀",
+      "meeting": "회의"
+    }
   },
   "whiteboard": {
     "namePlaceholder": "보드 이름",
@@ -859,5 +867,67 @@
     "planApprove": "계획 승인",
     "planRevise": "수정 요청",
     "planFeedbackPlaceholder": "수정할 점을 입력하세요…"
+  },
+  "nav": {
+    "chat": "채팅",
+    "files": "파일",
+    "experts": "전문가",
+    "tasks": "작업",
+    "meetings": "회의"
+  },
+  "experts": {
+    "create": "전문가 추가",
+    "edit": "전문가 편집",
+    "search": "전문가 검색…",
+    "name": "이름",
+    "nameHint": "고유 ID, 생성 후 변경 불가",
+    "description": "설명",
+    "personaPrompt": "페르소나 프롬프트",
+    "personaHint": "전문가의 행동을 정의",
+    "model": "모델",
+    "thinking": "사고 수준",
+    "role": "기능 역할",
+    "skills": "스킬 허용 목록",
+    "skillsHint": "비어 있으면 제한 없음",
+    "mcpServers": "MCP 서버",
+    "mcpHint": "이름을 입력하고 Enter",
+    "timeout": "단계 제한 시간",
+    "empty": "전문가가 없습니다",
+    "noMatch": "일치하는 전문가가 없습니다",
+    "teamsSuffix": "팀",
+    "skillsSuffix": "스킬"
+  },
+  "taskBoard": {
+    "all": "전체",
+    "running": "실행 중",
+    "waiting": "대기",
+    "done": "완료",
+    "failed": "실패",
+    "empty": "작업 흐름이 없습니다",
+    "stepsSuffix": "단계"
+  },
+  "meetings": {
+    "create": "회의 만들기",
+    "empty": "회의가 없습니다",
+    "topic": "주제",
+    "participants": "참가자",
+    "participantsHint": "전문가 2명 이상 선택",
+    "noExperts": "사용 가능한 전문가 없음",
+    "peopleSuffix": "명",
+    "iteration": "라운드",
+    "status": {
+      "in_progress": "진행 중",
+      "waiting_user": "입력 대기",
+      "ended": "종료",
+      "cancelled": "취소"
+    },
+    "back": "뒤로",
+    "confirmEnd": "종료 확인",
+    "execute": "지금 실행",
+    "speaking": "발언 중",
+    "roleSummary": "요약",
+    "emptyStream": "발언을 기다리는 중…",
+    "interrupt": "끼어들기",
+    "interruptPlaceholder": "끼어들 내용 입력…"
   }
 }
