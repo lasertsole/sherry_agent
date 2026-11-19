@@ -149,3 +149,17 @@ CHAT_MODEL（deepseek / deepseek-flash / 1M 窗口）验证可用后，podman �
 set -a; . /path/to/credential-env.sh; set +a   # MAIN_LLM_* / AUXILIARY_* / EMBEDDING_* / RERANKER_*
 NO_PROXY='*' SHERRY_EVAL_CONTAINER_BIN=podman   uv run --no-sync python evals/deepswe/suite.py --timeout 1800
 ```
+
+## 9. deepseek-reasoner 运行（2026-11-19 22:00）与 Bug #19–#21
+
+配置：`MAIN_LLM_NAME=deepseek-reasoner`（CHAT key 同样有效），单任务 httpx，门禁开启。
+
+结果：**未跑完**（人工在约 7 分钟时终止）。没有产出补丁，卡在三个产品 bug 的叠加回路里：
+
+| # | 现象 | 证据 | 修补方案 |
+| :--- | :--- | :--- | :--- |
+| 19 | **熔断器“halt”不终止回合**：它返回 `🔴 Agent halted: tool [todowrite] triggered circuit breaker … entire turn is being terminated`，但回合继续，模型把这句话当工具结果继续重试 | MesMemory 里 190 条工具结果中 **161 条是熔断 halt 消息**；日志中 `todowrite` 被调用 158 次（约 5 分钟） | 熔断触发必须真正结束当前回合（设置终止状态并让 stream 发 `done`/`stopped`，而不是返回一条可被模型消化的 ToolMessage）；同时给“同一工具连续 N 次相同调用”加硬上限 |
+| 20 | **TaskFlow 步骤状态死胡同**：auto-dispatch 把 step-1 置为 dispatched，随后它变成 skipped；模型尝试 `status=done` 被两次拒绝（`cannot become status=done; use dispatch/resume`），没有可用的恢复路径，于是开始重复调用 | 工具结果：`step 'step-1' is dispatched and cannot be downgraded to status=ready`、`step 'step-1' (status=skipped) cannot become status=done` | 为 skipped/failed 步骤提供幂等的恢复动作（例如 `taskflow_step(action="retry")` 或允许 done 覆盖 skipped 并说明语义），并让错误文案直接给出可用调用 |
+| 21 | **/app 路径幻觉**：模型第一次写文件用 `C:pp\httpx\_models.py`（容器路径与 Windows 盘符拼接），被 PathGuard 以 “External file access denied” 拒绝后没有纠正 | 工具结果 id 13：`External file access denied: C:pp\httpx\_models.py` | 在 prompt 中明确“项目根目录是 <host path>，不要使用 /app 或 C:pp”；或在 Windows 本地化时把 `/app/...` 一并替换为宿主路径（当前只替换独立 `/app` 前缀，`/app/httpx` 这类拼接可能漏改） |
+
+注：第 14 条（todowrite 工具名）修复后，deepseek-flash 与 reasoner 都能正确调用规划工具；本次 reasoner 的失败是状态机/熔断语义问题，不是编排门禁本身。
