@@ -37,3 +37,19 @@ def test_open_plan_items_reads_open_todos_and_flows(tmp_path: Path):
 
 def test_open_plan_items_without_a_registry_is_empty(tmp_path: Path):
     assert suite._open_plan_items(tmp_path) == []
+
+
+def test_open_plan_items_prefers_the_sandbox_registry(tmp_path: Path):
+    sandbox_stores = tmp_path / "sandbox" / "stores"
+    sandbox_stores.mkdir(parents=True)
+    with sqlite3.connect(sandbox_stores / "registry.db") as connection:
+        connection.execute(
+            "CREATE TABLE todos (todo_id INTEGER PRIMARY KEY, content TEXT, status TEXT)"
+        )
+        connection.execute("CREATE TABLE task_flows (flow_id TEXT PRIMARY KEY, status TEXT)")
+        connection.execute("INSERT INTO todos VALUES (1, 'sandbox item', 'pending')")
+        connection.commit()
+
+    items = suite._open_plan_items(tmp_path)
+
+    assert any("sandbox item" in item for item in items)

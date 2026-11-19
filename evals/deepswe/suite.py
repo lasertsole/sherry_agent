@@ -114,8 +114,14 @@ def _open_plan_items(results_dir: Path) -> list[str]:
     a mandatory [VERIFY] todo would never run. This reader is what lets the
     harness drive the continuation itself.
     """
-    database = results_dir / "stores" / "registry.db"
-    if not database.is_file():
+    # EvalSandbox redirects the plan registry under its own root; older runs
+    # (and a bare --local checkout) may keep it at the results root.
+    candidates = (
+        results_dir / "sandbox" / "stores" / "registry.db",
+        results_dir / "stores" / "registry.db",
+    )
+    database = next((path for path in candidates if path.is_file()), None)
+    if database is None:
         return []
     items: list[str] = []
     try:
