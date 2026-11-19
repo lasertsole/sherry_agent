@@ -68,7 +68,7 @@
         data-test="nav-content">
         <KeepAlive :max="5">
           <component
-            :is="nav.activeItem?.component"
+            :is="nav.activeItem.component ?? NotImplementedPanel"
             v-if="nav.activeItem"
             :key="nav.activeId"
             v-model:current-session-id="currentSessionId"
@@ -94,6 +94,7 @@ import { useI18n } from 'vue-i18n';
 import { RIGHT_SIDEBAR_MIN_WIDTH, useRightSidebarStore } from '@/stores/right-sidebar';
 import { useSidebarWidthStore } from '@/stores/sidebar-width';
 import { useNavStore } from '@/stores/nav';
+import NotImplementedPanel from '@/components/NotImplementedPanel.vue';
 
 const { t } = useI18n();
 const nav = useNavStore();

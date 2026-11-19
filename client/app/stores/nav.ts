@@ -19,8 +19,9 @@ export interface NavItem {
   icon: string;
   /** i18n key for the tooltip/title */
   labelKey: string;
-  /** Left-column content component */
-  component: Component;
+  /** Left-column content component; omitted while a panel is not built yet —
+   * the shell then renders the S7 "not implemented" placeholder. */
+  component?: Component;
   /** global = not bound to a session; session = bound to the current session */
   scope: 'global' | 'session';
   /** Optional live badge count (e.g. running flows) */
