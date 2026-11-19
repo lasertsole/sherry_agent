@@ -219,3 +219,40 @@ media type 抛 `DecodingError` —— 隐藏测试里的一支行为，模型没
 注意一个产品侧边界：模型只建 **1 个工作项**时（本次 23:00 的复跑就是），
 `verify_min_work_todos=2` 使 `[VERIFY]` 根本不会插入 —— 单步任务等于没有强制自检。
 是否把阈值降到 1、或对“任务型”单步也插 verify，需要产品决策。
+
+## 12. 阈值降到 1 后的验证（2026-11-19 23:19 → 00:06，httpx + reasoner）
+
+改动：`verify_min_work_todos` 2 → **1**（提交 `86c46426`），四语言 wiki 同步；续跑读 registry 的路径
+修正（`sandbox/stores/registry.db`，提交 `278b0cbe`）。
+
+运行结果：
+
+| 指标 | 数值 |
+| :--- | :--- |
+| 轮次 | **7 轮**（首轮 + 6 次续跑，达 cap） |
+| 工具调用 | 192 |
+| 耗时 / tokens | **2977s / 61.5M 输入** |
+| F2P / P2P | 87/108 / 1404/1404 |
+| 编排 | todolist=14，taskflow=12，compliant |
+
+**机制验证成功**：
+- `[VERIFY]` 待办在每轮计划里都插入了（#11/#13/#15/#17/#19 completed，#21 pending）；
+- 续跑真实驱动了 6 个额外回合（`continuations=6`）。
+
+**但暴露出新问题（Bug #24）**：模型把「自检」变成了空转——
+每次续跑都新建一个 “Closure flow for the N-th verification pass”，把 verify todo 标 completed，
+reviewer 也放行；但隐藏测试要的 media-type 校验始终没实现，F2P 仍停在 87/108。
+首轮 flow 以 `failed` 结束，之后 5 个 verify flow 全 `done` —— 自检在“流程上通过、行为上没通过”。
+
+原因分析：
+1. reviewer 校验的是计划/instruction 的语义，没有逐条对照 instruction 的硬性条款（这里第 3 行
+   明确要求非 JSON media type 抛 `DecodingError`），所以「验收通过」不等于「需求满足」；
+2. 续跑提示词写的是「完成未完成项并关闭 flow」，模型于是不断开新的 closure flow 来“完成”，
+   形成**验证空转**；
+3. 代价很高：6 次续跑 = 50 分钟、61M 输入 token，分数反而低于无续跑的 99/108。
+
+建议的修补（下一步，未实施）：
+- **无进展停止**：续跑前对比 `git diff`，若上一轮没有新增改动则不再续跑（直接收尾并标记未完成）；
+- **需求清单驱动**：把 instruction 里可判定的条款沉淀成 checklist（属于 [VERIFY] todo 的验收项），
+  reviewer 必须逐条给出通过/不通过，而不是只“读计划”；
+- 续跑 cap 从 6 降到 2–3，避免长尾空转。
