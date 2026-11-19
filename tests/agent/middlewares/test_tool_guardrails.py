@@ -875,3 +875,44 @@ def test_wrap_message_names_the_signature_streak_pathology():
 
     assert "repeated identical call" in outputs[-1].content
     assert outputs[-1].status == "success"
+
+
+# ---------------------------------------------------------------------------
+# HALT must actually end the turn (measured live: 161 halt ToolMessages in one
+# turn because nothing stopped the model from re-calling the tool).
+# ---------------------------------------------------------------------------
+
+
+def test_a_halted_turn_returns_a_terminal_message_instead_of_calling_the_model():
+    mw = make_mw()
+    session = "sess-halted"
+    gs = mod._TurnGuardrailState()
+    gs.halt_decision = HALT
+    mod.state_register_mem.set_state(session, mod._GUARDRAIL_STATE_KEY, gs)
+    called: list[object] = []
+
+    def handler(request):
+        called.append(request)
+        raise AssertionError("the model must not be called after a halt")
+
+    result = mw.wrap_model_call(SimpleNamespace(state={"session_id": session}), handler)
+
+    assert isinstance(result, mod.AIMessage)
+    assert "circuit breaker" in str(result.content)
+    assert called == []
+
+
+def test_an_unhalted_turn_still_calls_the_model():
+    mw = make_mw()
+    session = "sess-not-halted"
+    marker = object()
+    called: list[object] = []
+
+    def handler(request):
+        called.append(request)
+        return marker
+
+    result = mw.wrap_model_call(SimpleNamespace(state={"session_id": session}), handler)
+
+    assert result is marker
+    assert len(called) == 1

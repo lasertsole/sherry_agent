@@ -12,8 +12,9 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from typing import override
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
 
 from runtime import StateKey, state_register_mem
 from config.features import TOOL_GUARDRAILS
@@ -577,6 +578,50 @@ class ToolGuardrails(AgentMiddleware):
         if not session_id.strip():
             raise RuntimeError("ToolGuardrails: session_id is required")
         state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
+
+    def _halted_terminal(self, state: AgentState) -> AIMessage | None:
+        """End the turn for real once the breaker halted it.
+
+        The HALT decision only answered with a ToolMessage that CLAIMED the turn
+        was terminated; nothing stopped the model, so a thinking model kept
+        re-emitting the same call and burned the whole budget (measured: 161
+        halt messages in one turn). A terminal AIMessage without tool calls ends
+        the graph loop, the same contract the token budget relies on.
+        """
+        session_id = self._get_session_id(state)
+        if not session_id:
+            return None
+        state_obj = self._get_state(session_id)
+        if state_obj.halt_decision is None:
+            return None
+        return AIMessage(
+            content=(
+                "[SYSTEM] The turn was halted by the tool-loop circuit breaker. "
+                "Stop calling tools and report what was accomplished."
+            )
+        )
+
+    @override
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[Any]],
+    ) -> ModelResponse[Any] | AIMessage:
+        terminal = self._halted_terminal(request.state)
+        if terminal is not None:
+            return terminal
+        return handler(request)
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any] | AIMessage:
+        terminal = self._halted_terminal(request.state)
+        if terminal is not None:
+            return terminal
+        return await handler(request)
 
     @override
     def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:

@@ -74,6 +74,7 @@ side. Use both to build and run the project's checks.
 - There is no internet access.
 - Do not modify test files and do not run `git commit`.
 - Complete the task; do not ask questions.
+- The project directory is `{project_dir}` and is the ONLY valid root for file tools. Never use `/app`, `C:\app`, or any path outside it — the terminal translates project paths for you.
 
 ## Orchestration mandate (harness requirement, not advice)
 
@@ -526,6 +527,7 @@ async def _run_task(
             instruction=external_bench.localize_instruction(task.instruction, host_workdir, "/app"),
             repo=task.repo,
             base=task.base_commit[:12],
+            project_dir=host_workdir,
         )
         try:
             drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
