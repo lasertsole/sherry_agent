@@ -284,3 +284,20 @@ reviewer 也放行；但隐藏测试要的 media-type 校验始终没实现，F2
 3. **续跑上限 6 → 3**。
 
 测试：`tests/evals` **80 passed**（新增 2 个：清单抽取、reviewer 注入幂等）；ruff / format 全过。
+
+## 15. 修复 #24 后的验证运行（2026-11-20 00:43，httpx + reasoner）
+
+| 指标 | 数值 |
+| :--- | :--- |
+| F2P / P2P | **107/108（99.07%）** / 1404/1404 |
+| 耗时 / 工具调用 | 920s / 85（todolist=11，taskflow=23） |
+| 验收清单 | **抽取 8 条**，`reviewer_checklist_injections = 1`（门禁把清单追加进了 reviewer 的 task） |
+| 续跑 | `continuations = 0`（一轮内计划关闭，无需续跑），`no_progress_stop = False` |
+| 编排 | `orchestration_compliant = true` |
+
+对比历史：同一模型修复前 161 条熔断消息、无补丁（0/108）；清单驱动前 87–99/108。
+这次只剩 **1** 个失败：`test_iter_json_document_streaming_chunk_boundaries[chunks2-expected2]`
+—— `flush()` 在空/纯空白文档上抛 `DecodingError: Expecting value: line 1 column 1`，
+是实现的边界处理缺口，不是 harness。
+
+结论：需求清单 + reviewer 逐条验收的机制把「差 9 个行为」压到「差 1 个边界」，且无空转。
