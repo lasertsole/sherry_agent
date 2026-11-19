@@ -85,3 +85,14 @@ def test_a_reviewer_spawn_gets_the_checklist_exactly_once(monkeypatch):
     assert "ACCEPTANCE CHECKLIST" in args["task"]
     assert "item one" in args["task"] and "item two" in args["task"]
     assert external_bench._augment_reviewer_task(args) is False
+
+
+def test_the_task_work_root_stays_outside_the_product_checkout(monkeypatch):
+    results = suite.REPO_ROOT / "evals" / "results" / "deepswe" / "run-x"
+
+    default_root = suite._work_root(results)
+    assert not str(default_root).startswith(str(suite.REPO_ROOT))
+
+    monkeypatch.setenv("SHERRY_EVAL_WORK_ROOT", str(suite.REPO_ROOT / "_outside"))
+    overridden = suite._work_root(results)
+    assert overridden == suite.REPO_ROOT / "_outside" / "run-x"

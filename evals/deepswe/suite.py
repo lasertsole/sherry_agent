@@ -43,6 +43,7 @@ import os
 import re
 import sqlite3
 import shutil
+import tempfile
 import sys
 import time
 import traceback
@@ -146,6 +147,24 @@ def _open_plan_items(results_dir: Path) -> list[str]:
     except sqlite3.Error:
         return items
     return items
+
+
+def _work_root(results_dir: Path) -> Path:
+    """Where task checkouts live: OUTSIDE the sherry checkout.
+
+    The agent's self-path guard refuses writes inside the product checkout, so
+    a task tree under ``evals/results`` makes every real edit fail (measured:
+    three attempts produced an EMPTY patch while the agent believed it had
+    written the module). Local mode already stages its checkouts outside;
+    the container arm now does the same. ``SHERRY_EVAL_WORK_ROOT`` overrides.
+    """
+    override = os.environ.get("SHERRY_EVAL_WORK_ROOT", "").strip()
+    base = (
+        Path(override)
+        if override
+        else Path(tempfile.gettempdir()) / "sherry_evals" / "deepswe-work"
+    )
+    return base / results_dir.name
 
 
 #: Clauses worth verifying: normative language a reviewer can answer pass/fail.
@@ -371,7 +390,7 @@ async def _run(
             flush=True,
         )
         if not keep_workdirs:
-            shutil.rmtree(results_dir / "tasks", ignore_errors=True)
+            shutil.rmtree(_work_root(results_dir), ignore_errors=True)
         return 0
 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
@@ -454,7 +473,7 @@ async def _run(
         sandbox.restore()
         sandbox.close_aiosqlite_connections()
         if not keep_workdirs:
-            shutil.rmtree(results_dir / "tasks", ignore_errors=True)
+            shutil.rmtree(_work_root(results_dir), ignore_errors=True)
 
     report = {
         "run_id": run_id,
@@ -576,7 +595,7 @@ async def _run_task(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from evals.coding_capability import suite as harness
 
-    task_root = results_dir / "tasks" / task.task_id
+    task_root = _work_root(results_dir) / task.task_id
     host_workdir = task_root / "workspace"
     container = ""
     payload: dict[str, Any] = {}
