@@ -113,3 +113,39 @@ NO_PROXY=* SHERRY_EVAL_CONTAINER_BIN=podman \
 ```
 
 （embedding/reranker 可继续用 ModelArts 的有效 key，或保持本地配置。）
+
+## 8. 真实模型运行结果与新增 bug（2026-11-19 晚）
+
+CHAT_MODEL（deepseek / deepseek-flash / 1M 窗口）验证可用后，podman 容器模式下完整跑了两次：
+
+| 运行 | 任务 | F2P | P2P | 耗时 | 工具调用 | 编排 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 无门禁（run5，2 任务） | httpx | 88/108 (81%) | 1404/1404 | 706.8s | 181 | todowrite=1，taskflow=0 → VIOLATED |
+| 无门禁（run5） | cattrs | 0/69 | 7/7 | 31.3s | 8 | todowrite=1，taskflow=0 → VIOLATED |
+| 有门禁（单任务） | httpx | 0/108 | 1404/1404 | 323.3s | 183 | **todowrite=1，taskflow=1 → ok** |
+
+结论：容器链路 + 真实模型 + 评分全部工作；`deepseek-flash` 的解题能力是瓶颈（两轮都未 resolved），
+但**编排要求在有门禁时被满足**（todowrite + taskflow_flow(plan) 各≥1）。
+
+运行中的新 bug（全部已修）：
+
+| # | 现象 | 根因 | 修复 |
+| :--- | :--- | :--- | :--- |
+| 12 | GOLD 自检 F2P 全过但 126 个 P2P 失败（`ConnectError 127.0.0.1:7897`） | podman 默认把宿主/VM 的代理注入每个容器；httpx 测试把 localhost 也走死代理（`NO_PROXY` 是 Windows 分号格式，httpx 不认） | 任务容器与 verifier 都加 `--http-proxy=false` |
+| 13 | 模型客户端初始化 `ValidationError: model Field required` | 主模型读 `MAIN_LLM_NAME`，辅助家族读 `*_LLM_API_NAME`；手写环境的 `MAIN_LLM_API_NAME` 被忽略成空 model | 修正环境变量命名（记录为配置脚枪，建议构建时 fail-fast 指名缺失变量） |
+| 14 | 提示词要求 `todolist` 工具，但实际工具名是 `todowrite` / `todoread`，模型无法照做 | 工具注册名与文档/提示词不一致 | 提示词改为 `todowrite`/`todoread`；统计改为 `name.startswith("todo")`（taskflow 同） |
+| 15 | **提示词强制无效**：181 次工具调用只有 1 次 todowrite、0 次 taskflow | 只靠 prompt 指令无法约束模型 | 加 `install_orchestration_gate()`：在 `SafeToolNode._arun_one` 拦截，plan 完成前 `write_file`/`patch_file`/`sessions_spawn` 返回 HARNESS RULE 提示并计数 `blocked` |
+| 16 | 门禁第一版挂 `tool.ainvoke` 抛 `ValueError: object has no field "ainvoke"`（pydantic 锁属性）；改 `object.__setattr__` 后计数仍为 0 | 该挂点不在真实调用路径上 | 改为 patch `SafeToolNode._arun_one`（ToolNode 批执行入口），直接探测验证：未规划时 `write_file` 返回规则提示、`blocked=1` |
+| 17 | 报告里 `gate` 恒为 `{todo:0,taskflow:0,blocked:0}` | `gate_state.update(...)` 拷贝了安装时快照，闭包后续计数进不了报告 | 直接绑定门禁返回的活字典 |
+| 18 | 有门禁的 httpx 运行 `changed_paths: []`、F2P 0/108 | 模型把预算花在规划+探索（183 次调用），未落有效补丁 | 模型能力/预算问题，非 harness；已记录 |
+
+代码改动（`evals/external_bench.py`、`evals/deepswe/suite.py`）：`container_bin()` 引擎探测、podman
+`--http-proxy=false`、CRLF 自愈与 LF 写入、`--preflight-only`、编排门禁+统计、报告 `orchestration`
+（`enforced` / `gate` 实时计数 / `compliant_tasks` / `violating_tasks`）。
+
+### 复跑命令
+
+```bash
+set -a; . /path/to/credential-env.sh; set +a   # MAIN_LLM_* / AUXILIARY_* / EMBEDDING_* / RERANKER_*
+NO_PROXY='*' SHERRY_EVAL_CONTAINER_BIN=podman   uv run --no-sync python evals/deepswe/suite.py --timeout 1800
+```

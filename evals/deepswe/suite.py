@@ -80,8 +80,8 @@ side. Use both to build and run the project's checks.
 Plan and execute this task THROUGH Sherry's planning and orchestration tools;
 the harness records tool usage and reports a run that skips them:
 
-1. First call the `todolist` tool to plan the work (investigation, fix,
-   verification items) and keep every item updated as you go.
+1. First call `todowrite` to plan the work (investigation, fix, verification
+   items) and keep every item updated as you go; `todoread` shows the list.
 2. Create ONE TaskFlow flow for the task with `taskflow_flow(action="plan")`
    (a short description is enough), dispatch and drive its steps through
    `taskflow_step` (spawn a step child for the implementation), and close it
@@ -289,12 +289,16 @@ async def _run(
     os.environ["SANDBOX_POLICY"] = "auto"
     started = time.monotonic()
     last_payload: dict[str, Any] = {}
+    gate_state: dict[str, int] = {}
     results: list[dict[str, Any]] = []
     try:
         harness._seed_persona(eval_workspace)
         _append_agents_note(eval_workspace)
         harness.init_agent()
         external_bench.trim_tools()
+        # Bind the LIVE dict: .update() copied install-time zeros, so the
+        # report never saw later counts.
+        gate_state = external_bench.install_orchestration_gate()
         missing = sorted(
             {"read_file", "write_file", "patch_file", "terminal"}
             - {getattr(tool, "name", "") for tool in _agent_tools()}
@@ -369,8 +373,10 @@ async def _run(
             for task, result in zip(selected, results, strict=False)
         },
         "orchestration": {
+            "enforced": True,
+            "gate": gate_state,
             "policy": (
-                "the prompt MANDATES planning through todolist and execution through "
+                "the prompt MANDATES planning through todowrite/todoread and execution through "
                 "one taskflow flow; usage is counted from tool_start frames and "
                 "reported per task (orchestration_compliant = both > 0)"
             ),
@@ -536,10 +542,10 @@ async def _run_task(
         tool_names: dict[str, int] = dict(drive.get("tool_names") or {})
         result["tool_names"] = tool_names
         result["todolist_calls"] = sum(
-            count for name, count in tool_names.items() if "todolist" in name
+            count for name, count in tool_names.items() if name.startswith("todo")
         )
         result["taskflow_calls"] = sum(
-            count for name, count in tool_names.items() if "taskflow" in name
+            count for name, count in tool_names.items() if name.startswith("taskflow")
         )
         result["orchestration_compliant"] = bool(
             result["todolist_calls"] and result["taskflow_calls"]
@@ -612,6 +618,10 @@ def _grade(
     ]
     if network:
         args += ["--network", network]
+    if external_bench.container_bin() == "podman":
+        # see external_bench.create_container: a propagated dead proxy breaks
+        # the verifier's own localhost-based tests.
+        args += ["--http-proxy=false"]
     args += [
         "-v",
         f"{artifacts}:/logs/artifacts:ro",

@@ -306,6 +306,12 @@ def create_container(
         args += ["--network", network]
     for key, value in (env or {}).items():
         args += ["-e", f"{key}={value}"]
+    if container_bin() == "podman":
+        # podman propagates the host/VM proxy env into EVERY container by
+        # default. The benchmark containers are network-less, and a dead
+        # proxy (127.0.0.1:7897 on this host) makes the task's own test suite
+        # proxy its localhost connections and fail P2P en masse.
+        args += ["--http-proxy=false"]
     args += [image, "-c", "sleep 2147483647"]
     try:
         return _created_id(_docker(args, timeout=timeout))
@@ -815,6 +821,59 @@ def trim_tools() -> None:
             continue
         kept.append(tool)
     agent_core._tools[:] = kept
+
+
+#: Tools the orchestration gate withholds until the agent has planned.
+_ORCHESTRATION_GATED = frozenset({"write_file", "patch_file", "sessions_spawn"})
+_ORCHESTRATION_UNLOCK = (
+    "HARNESS RULE (enforced): before editing files or spawning a child you MUST "
+    'call `todowrite` to plan the work and `taskflow_flow(action="plan")` to '
+    "open the TaskFlow flow. Do that now, then retry this call."
+)
+_GATE_INSTALLED = False
+
+
+def install_orchestration_gate() -> dict[str, int]:
+    """Structurally require ``todowrite`` + one ``taskflow_flow(plan)``.
+
+    A prompt-level mandate is not enforcement: a measured ``deepseek-flash``
+    run read/patched straight through it (181 tool calls, one ``todowrite``,
+    zero ``taskflow_*``). The hook is ``SafeToolNode._arun_one`` — the batch
+    executor every tool call passes through — because per-tool ``ainvoke``
+    wrappers are not on that path. Until both planning calls exist, the
+    mutating tools answer with the rule instead of running.
+    """
+    global _GATE_INSTALLED
+    state = {"todo": 0, "taskflow": 0, "blocked": 0}
+    if _GATE_INSTALLED:
+        return state
+    from langchain_core.messages import ToolMessage
+
+    from agent.safe_tool_node import SafeToolNode
+
+    original = SafeToolNode._arun_one
+
+    async def gated_arun_one(self: Any, call: Any, input_type: Any, tool_runtime: Any) -> Any:
+        name = str((call or {}).get("name") or "")
+        args = (call or {}).get("args") or {}
+        if name.startswith("todo"):
+            state["todo"] += 1
+        elif name == "taskflow_flow":
+            if str(args.get("action") or "") == "plan":
+                state["taskflow"] += 1
+        elif name in _ORCHESTRATION_GATED and not (state["todo"] and state["taskflow"]):
+            state["blocked"] += 1
+            return ToolMessage(
+                content=_ORCHESTRATION_UNLOCK,
+                tool_call_id=str((call or {}).get("id") or ""),
+                name=name,
+            )
+        return await original(self, call, input_type, tool_runtime)
+
+    SafeToolNode._arun_one = gated_arun_one  # type: ignore[method-assign]
+    _GATE_INSTALLED = True
+    print("[evals] orchestration gate installed (todowrite + taskflow_flow plan)", flush=True)
+    return state
 
 
 async def bind_external_session(
