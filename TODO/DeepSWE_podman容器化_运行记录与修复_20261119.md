@@ -266,3 +266,21 @@ reviewer 也放行；但隐藏测试要的 media-type 校验始终没实现，F2
 - 同步更新：`AGENTS.md`、`wiki/loop-prevention/` 四语言、`workspace/template/*/AGENTS.md`
   （四语言 persona 模板）、`todowrite` 工具描述、`test_verify_todo.py` 文档串；
 - 测试：todolist + plan-continuation **262 passed**；doc links / parity / language 全 PASS。
+
+## 14. 修复 #24 验证空转（2026-11-20）
+
+三条一起做了：
+
+1. **无进展停止**：续跑前对 `git diff` 做快照；`attempt > 0` 且补丁与上一轮完全相同（没有任何新改动）
+   时立即停止续跑，`result["no_progress_stop"] = True`，让报告记录「计划未完成」而不是继续烧回合。
+2. **需求清单驱动**：
+   - `_acceptance_checklist(instruction)` 把任务文本按句子/分号切分，用规范性关键词（must / raise /
+     reject / only / charset…）筛出可判定条款（上限 8 条）；
+   - 清单进入初始提示词与续跑提示词的 `## Acceptance checklist` 块，并明确要求 `[VERIFY]` reviewer
+     **逐条 PASS/FAIL + 证据**；
+   - 编排门禁在 `sessions_spawn(functional_role="reviewer")` 时把清单**追加进 reviewer 的 task**
+     （幂等，已含清单则不重复），并计数 `reviewer_checklist_injected`；报告新增
+     `acceptance_checklist` 与 `reviewer_checklist_injections`。
+3. **续跑上限 6 → 3**。
+
+测试：`tests/evals` **80 passed**（新增 2 个：清单抽取、reviewer 注入幂等）；ruff / format 全过。

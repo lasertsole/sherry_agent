@@ -53,3 +53,35 @@ def test_open_plan_items_prefers_the_sandbox_registry(tmp_path: Path):
     items = suite._open_plan_items(tmp_path)
 
     assert any("sandbox item" in item for item in items)
+
+
+def test_acceptance_checklist_extracts_the_normative_clauses():
+    instruction = (
+        "httpx responses cannot currently stream JSON values.\n"
+        "Add Response.iter_json(). These must raise httpx.DecodingError unless "
+        "the Content-Type is application/json. Media type matching is "
+        "case-insensitive. The +json suffix applies only to application/ types.\n"
+    )
+
+    items = suite._acceptance_checklist(instruction)
+
+    joined = " ".join(items)
+    assert "must raise" in joined
+    assert "case-insensitive" in joined
+    assert "only" in joined
+    assert all(len(item) >= 20 for item in items)
+    assert len(items) <= 8
+
+
+def test_a_reviewer_spawn_gets_the_checklist_exactly_once(monkeypatch):
+    from evals import external_bench
+
+    monkeypatch.setattr(
+        external_bench, "_REVIEWER_CHECKLIST", ("item one", "item two"), raising=False
+    )
+    args = {"task": "verify the change", "functional_role": "reviewer"}
+
+    assert external_bench._augment_reviewer_task(args) is True
+    assert "ACCEPTANCE CHECKLIST" in args["task"]
+    assert "item one" in args["task"] and "item two" in args["task"]
+    assert external_bench._augment_reviewer_task(args) is False

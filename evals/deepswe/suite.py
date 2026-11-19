@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sqlite3
 import shutil
 import sys
@@ -77,6 +78,8 @@ side. Use both to build and run the project's checks.
 - Complete the task; do not ask questions.
 - The project directory is `{project_dir}` and is the ONLY valid root for file tools. Never use `/app`, `C:\app`, or any path outside it — the terminal translates project paths for you.
 
+{checklist}
+
 ## Orchestration mandate (harness requirement, not advice)
 
 Plan and execute this task THROUGH Sherry's planning and orchestration tools;
@@ -95,15 +98,18 @@ the harness records tool usage and reports a run that skips them:
 
 #: One extra driven turn per unfinished plan item, bounded like the production
 #: continuation ceiling (the harness owns the auto-turn the server would fire).
-_MAX_PLAN_CONTINUATIONS = 6
+_MAX_PLAN_CONTINUATIONS = 3
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
 
 Your plan is NOT finished. Open items:
 {items}
 
+{checklist}
+
 Finish them now — including the system [VERIFY] acceptance checks — close the
-TaskFlow flow with taskflow_flow(action="finish"), then summarize. Do not ask
-questions."""
+TaskFlow flow with taskflow_flow(action="finish"), then summarize. The [VERIFY]
+reviewer must answer EVERY acceptance item above with PASS/FAIL and evidence.
+Do not ask questions."""
 
 
 def _open_plan_items(results_dir: Path) -> list[str]:
@@ -139,6 +145,58 @@ def _open_plan_items(results_dir: Path) -> list[str]:
     except sqlite3.Error:
         return items
     return items
+
+
+#: Clauses worth verifying: normative language a reviewer can answer pass/fail.
+_CLAUSE_KEYWORDS = (
+    "must",
+    "raise",
+    "reject",
+    "only",
+    "return",
+    "yield",
+    "parse",
+    "decode",
+    "encode",
+    "support",
+    "require",
+    "case-insensitive",
+    "allow",
+    "ignore",
+)
+
+
+def _acceptance_checklist(instruction: str, *, limit: int = 8) -> list[str]:
+    """Turn the task text's decidable clauses into reviewer checklist items.
+
+    Deterministic sentence/semicolon split plus a normative-keyword filter:
+    the reviewer gets concrete, answerable lines instead of the whole essay
+    (a measured run passed its self-check while missing an explicitly stated
+    media-type rule).
+    """
+    text = re.sub(r"\s+", " ", instruction or "").strip()
+    if not text:
+        return []
+    chunks: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        chunks.extend(part.strip() for part in sentence.split(";") if part.strip())
+    items = [
+        chunk
+        for chunk in chunks
+        if len(chunk) >= 20 and any(word in chunk.lower() for word in _CLAUSE_KEYWORDS)
+    ]
+    return items[:limit]
+
+
+def _checklist_block(items: list[str]) -> str:
+    """The prompt block that makes the acceptance items explicit."""
+    if not items:
+        return ""
+    lines = "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
+    return (
+        "## Acceptance checklist (from the task text)\n\n"
+        "Every item is binary: the work is done only when each one is PROVEN.\n\n" + lines
+    )
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -425,6 +483,8 @@ async def _run(
         "orchestration": {
             "enforced": True,
             "gate": gate_state,
+            "acceptance_checklist": results[0].get("acceptance_checklist") if results else [],
+            "reviewer_checklist_injections": int(gate_state.get("reviewer_checklist_injected", 0)),
             "policy": (
                 "the prompt MANDATES planning through todowrite/todoread and execution through "
                 "one taskflow flow; usage is counted from tool_start frames and "
@@ -572,11 +632,16 @@ async def _run_task(
         external_bench.install_terminal_bridge(bridge)
         payload = await external_bench.bind_external_session(session_id, host_workdir)
 
+        checklist_items = _acceptance_checklist(task.instruction)
+        external_bench.set_reviewer_checklist(checklist_items)
+        checklist = _checklist_block(checklist_items)
+        result["acceptance_checklist"] = checklist_items
         prompt = _PROMPT.format(
             instruction=external_bench.localize_instruction(task.instruction, host_workdir, "/app"),
             repo=task.repo,
             base=task.base_commit[:12],
             project_dir=host_workdir,
+            checklist=checklist,
         )
         drive: dict[str, Any] = {
             "tool_calls": 0,
@@ -588,6 +653,8 @@ async def _run_task(
             "error": "",
         }
         continuations = 0
+        result["no_progress_stop"] = False
+        last_patch = _agent_patch(host_workdir, task.base_commit)
         for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
             try:
                 turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
@@ -609,9 +676,18 @@ async def _run_task(
                 break
             if attempt >= _MAX_PLAN_CONTINUATIONS:
                 break
+            # No-progress stop: a continuation turn that changed NOTHING is
+            # churn (measured: repeated "closure flow" passes). Stop and let
+            # the result record the unfinished plan instead of burning turns.
+            current_patch = _agent_patch(host_workdir, task.base_commit)
+            if attempt > 0 and current_patch == last_patch:
+                result["no_progress_stop"] = True
+                break
+            last_patch = current_patch
             continuations += 1
             prompt = _CONTINUATION_PROMPT.format(
-                items="\n".join(f"- {item}" for item in open_items[:12])
+                items="\n".join(f"- {item}" for item in open_items[:12]),
+                checklist=checklist,
             )
         result["continuations"] = continuations
         result["tool_calls"] = drive["tool_calls"]

@@ -833,6 +833,41 @@ _ORCHESTRATION_UNLOCK = (
 _GATE_INSTALLED = False
 
 
+#: Acceptance clauses every reviewer spawn must answer (set per eval run).
+_REVIEWER_CHECKLIST: tuple[str, ...] = ()
+_REVIEWER_LABEL = "ACCEPTANCE CHECKLIST"
+
+
+def set_reviewer_checklist(items: list[str] | tuple[str, ...]) -> None:
+    """Install the clause list a reviewer spawn must answer pass/fail.
+
+    The clause list comes from the TASK TEXT (see ``deepswe.suite``); injecting
+    it into the reviewer's own task makes the self-check answerable instead of
+    "read the plan and agree with it" (a measured run passed its verify while
+    missing an explicitly stated media-type rule).
+    """
+    global _REVIEWER_CHECKLIST
+    _REVIEWER_CHECKLIST = tuple(str(item).strip() for item in items if str(item).strip())
+
+
+def _augment_reviewer_task(args: dict[str, Any]) -> bool:
+    """Append the checklist to one reviewer spawn; True when injected."""
+    if not _REVIEWER_CHECKLIST:
+        return False
+    task = str(args.get("task") or "")
+    if _REVIEWER_LABEL in task:
+        return False
+    lines = "\n".join(f"{index}. {item}" for index, item in enumerate(_REVIEWER_CHECKLIST, 1))
+    args["task"] = (
+        task.rstrip()
+        + "\n\n"
+        + _REVIEWER_LABEL
+        + " (answer PASS/FAIL for EVERY item, with the evidence):\n"
+        + lines
+    )
+    return True
+
+
 def install_orchestration_gate() -> dict[str, int]:
     """Structurally require ``todowrite`` + one ``taskflow_flow(plan)``.
 
@@ -844,7 +879,7 @@ def install_orchestration_gate() -> dict[str, int]:
     mutating tools answer with the rule instead of running.
     """
     global _GATE_INSTALLED
-    state = {"todo": 0, "taskflow": 0, "blocked": 0}
+    state = {"todo": 0, "taskflow": 0, "blocked": 0, "reviewer_checklist_injected": 0}
     if _GATE_INSTALLED:
         return state
     from langchain_core.messages import ToolMessage
@@ -858,10 +893,14 @@ def install_orchestration_gate() -> dict[str, int]:
         args = (call or {}).get("args") or {}
         if name.startswith("todo"):
             state["todo"] += 1
-        elif name == "taskflow_flow":
-            if str(args.get("action") or "") == "plan":
-                state["taskflow"] += 1
-        elif name in _ORCHESTRATION_GATED and not (state["todo"] and state["taskflow"]):
+        elif name == "taskflow_flow" and str(args.get("action") or "") == "plan":
+            state["taskflow"] += 1
+        # A reviewer spawn carries the task text's acceptance clauses, so its
+        # report can be answered per item instead of "looks fine".
+        if name == "sessions_spawn" and str(args.get("functional_role") or "") == "reviewer":
+            if _augment_reviewer_task(args):
+                state["reviewer_checklist_injected"] += 1
+        if name in _ORCHESTRATION_GATED and not (state["todo"] and state["taskflow"]):
             state["blocked"] += 1
             return ToolMessage(
                 content=_ORCHESTRATION_UNLOCK,
