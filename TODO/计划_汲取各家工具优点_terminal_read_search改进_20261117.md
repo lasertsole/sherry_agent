@@ -12,7 +12,7 @@
 
 | 维度 | Sherry 排名 | 缺口 |
 |------|-----------|------|
-| Terminal 沙箱 | 第 2（Codex 第 1） | Windows 无沙箱（H3 风险）；缺 landlock |
+| Terminal 沙箱 | 第 2（Codex 第 1） | ~~Windows 无沙箱（H3 风险）~~ 已补齐（AppContainer+受限令牌+Job Object 三层，独立计划落地，commit 16547314 / 漂移清理 e3ce97e7）；缺 landlock fallback |
 | Terminal 持久 shell | 无 | Madorin/DSH 有持久交互式 shell |
 | Terminal 多后端 | 无 | Hermes 有 docker/modal/ssh/singularity/daytona |
 | Terminal PTY | 无 | Codex 有 PTY（tty:true） |
@@ -217,6 +217,10 @@ async def adopt_running_process(self, session_id, proc, command, stdout_tmp) -> 
 
 ---
 
+### 1.2 landlock 沙箱 fallback（来自 Codex）——优先级：低
+
+> 1.1 Windows 沙箱已拆分到《计划_沙箱超越Codex_20261117.md》并落地（AppContainer 三层，commit 16547314），此处不再重复。
+
 **现状**：Sherry Linux 沙箱只有 bwrap。某些环境（无 bwrap 的精简容器）无沙箱。
 
 **Codex 怎么做**：bwrap + landlock 双重——landlock 是内核级 LSM，无需外部二进制。
@@ -397,7 +401,7 @@ search_files(query="function", file_glob="*.ts", type="typescript")     # 语言
 | 8 | PTY 支持 | Codex | 低 | ~150 行 | 交互式程序少见 |
 | ~~9~~ | ~~rg --json~~ | ~~DSH~~ | ~~已实现~~ | ~~0~~ | ~~删除——rg_backend.py:104 已用 --json~~ |
 | 10 | 多后端 terminal | Hermes | 低 | ~500 行/后端 | Fleet+DockerBridge 已覆盖 |
-| ~~11~~ | ~~Windows 沙箱~~ | ~~Codex~~ | ~~降级~~ | ~~300 行~~ | ~~多租户用容器隔离已覆盖；桌面单用户风险低~~ |
+| ~~11~~ | ~~Windows 沙箱~~ | ~~Codex~~ | ~~已实现~~ | ~~—~~ | ~~独立计划落地：AppContainer+受限令牌+Job Object（16547314）；文档漂移清理 e3ce97e7~~ |
 
 ---
 
@@ -446,7 +450,7 @@ search_files(query="function", file_glob="*.ts", type="typescript")     # 语言
 
 ## 8. Kill criteria
 
-- Windows 沙箱：如果 pywin32/ctypes 调 CreateRestrictedToken 在目标 Windows 版本上不稳定，退化为现有的正则黑名单（H3 接受）
+- ~~Windows 沙箱：如果 pywin32/ctypes 调 CreateRestrictedToken 在目标 Windows 版本上不稳定，退化为现有的正则黑名单（H3 接受）~~ → 已按 AppContainer 路线落地（16547314），此条作废
 - landlock：如果 Python landlock 绑定不可用，保持 bwrap-only（当前行为）
 - GJC 语法：如果 LLM 不使用 `:50-200` 语法而继续用 offset+limit，删除 GJC 解析（省 prompt token）
 - 持久 shell：如果 PTY/subprocess 持久 shell 在长时间运行后死锁/泄漏，退化为 cwd 恢复机制（DockerBridge 已有）
