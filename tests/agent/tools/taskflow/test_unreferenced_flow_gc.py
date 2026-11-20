@@ -374,7 +374,9 @@ async def test_create_auto_binds_a_flow_level_todo(isolated_db: Path):
     assert "TaskFlow created" in out
     assert "todo bound: 检查内存泄漏" in out
     todos = [
-        todo for todo in await todo_store.get_todos(SESSION) if not todo_service.is_verify_todo(todo)
+        todo
+        for todo in await todo_store.get_todos(SESSION)
+        if not todo_service.is_verify_todo(todo)
     ]
     assert len(todos) == 1
     assert todos[0]["status"] == "pending"
