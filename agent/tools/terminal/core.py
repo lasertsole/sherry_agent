@@ -21,12 +21,12 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   ``SHERRY_SESSION_ID`` — the session tag a scripted skill uses to address the
   session-scoped artifact store (the background path inherits the same env).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
-  command is exec'd in list form via ``backend.wrap([shell, "-c", ...])``,
-  where ``shell`` is ``/bin/sh`` on POSIX and Git Bash (``resolve_windows_bash``,
-  falling back to ``COMSPEC``) on Windows — the tool promises a POSIX shell, so
-  a sandboxed Windows command must not silently become ``cmd.exe``; backend
-  ``None`` (platform without a backend / unavailable) degrades to the
-  byte-identical pre-existing path;
+  command is exec'd in list form via ``backend.wrap(backend.sandbox_shell(...))``.
+  The backend owns the shell choice: ``/bin/sh -c`` on POSIX, ``cmd.exe /c`` on
+  Windows while AppContainer is active (MSYS2/Git Bash cannot initialise inside
+  an AppContainer), Git Bash (``resolve_windows_bash``, ``COMSPEC`` when no bash
+  exists) when AppContainer is off. A backend ``None`` (platform without a
+  backend / probe failure) degrades to the historical unsandboxed path;
   on the HITL path the degradation is approved BEFORE the tool runs
   (str join + ``shell=True`` / ``create_subprocess_shell``) with ONLY
   ``env=`` added, plus one loguru warning line for the AUTO degrade.
@@ -610,9 +610,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
     ) -> str:
         """Run command with explicit encoding for stdout/stderr, with timeout.
 
-        BYTE-IDENTICAL Windows fallback: the command string construction
-        (str join / passthrough) and ``shell=True`` are unchanged vs the
-        pre-sandbox-hardening path; the ONLY addition is ``env=``.
+        The unsandboxed fallback: commands join with ``" && "`` and the spawn
+        uses Git Bash (list-exec) when a Windows bash exists, else the platform
+        shell via ``shell=True``; ``env=`` and ``cwd=`` ride along unchanged.
         """
         cmd_str = self._join_commands(commands)
         return self._execute_sync(

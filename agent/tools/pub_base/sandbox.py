@@ -6,7 +6,8 @@ python_repl tools. It defines:
 - ``SandboxPolicy``: the three-state ``SANDBOX_POLICY`` configuration enum.
 - ``parse_policy`` / ``read_policy``: strict env parsing (no silent fallback).
 - ``SandboxBackend``: the ABC that the platform backends (bwrap on Linux,
-  seatbelt on macOS, restricted-token + Job Object on Windows) must satisfy.
+  seatbelt on macOS, AppContainer + restricted token + Job Object on Windows)
+  must satisfy.
 - ``get_backend``: platform dispatch + probe + degrade semantics.
 
 Backends are imported *lazily* inside ``get_backend`` so this module works even
