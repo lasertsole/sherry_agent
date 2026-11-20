@@ -72,7 +72,7 @@
 
 ### 回合级：`DelegationPressureGate`（仅主 Agent）
 
-安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **7** 次通过自己的 mid-turn `abefore_model` 路径注入一条 `<system-reminder source="delegation_pressure">` 警告；第 **12** 次注入语气更强的 escalated 系统提醒。两个阶段工具都保持可用——门只建议，不阻断（浏览器调试工具不计次）。成功 accepted/pending 的 spawn 会清零计数，主 Agent 可以检查/验证，之后再次达到 7/12 时门会重新生效；失败 spawn 不清零。写本身不会清零，回合内每次图调用都累计，直到 spawn 或 `after_agent` 清零。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
+安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用，分三级建议、从不阻断（浏览器调试工具不计次）：第 **5** 次（`plan_nudge_after`）发一次 **PLANNING NUDGE**，只提真正注册了的规划工具——简单任务用 `todowrite`，多步任务用 `taskflow_flow(action="plan")`；且仅在回合内既没调过 `todowrite` 也没建过 flow 时触发。第 **7** 次通过自己的 mid-turn `abefore_model` 路径注入一条 `<system-reminder source="delegation_pressure">` 警告；第 **12** 次注入语气更强的 escalated 系统提醒。当本回合已经通过 TaskFlow dispatch 派发过步骤时，7/12 的消息切换成 TaskFlow 版本（“`wait_all` / `dispatch`，别再自己读”，而不是“去调 `sessions_spawn`”）——因为 dispatch 本身就是委派。成功 accepted/pending 的 `sessions_spawn`，或成功的一次 TaskFlow dispatch（`taskflow_step(action="dispatch")`、plan 的 auto-dispatch）会清零计数，主 Agent 可以检查/验证，之后重新生效；失败的 spawn/dispatch 不清零。写本身不会清零，回合内每次图调用都累计，直到该次交接或 `after_agent`；`after_agent` 会清空一切——包括规划追踪标记——所以新回合会重新被催促规划。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 

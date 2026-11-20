@@ -331,14 +331,21 @@ User message → Robyn WS → agent.core.built_agent() graph
 
   `DelegationPressureGate` is a MAIN-agent-only middleware (never added to
   `_build_child_middlewares`, and `_active` also rejects any
-  `:subagent:`/`:swarm:` session): at 7 read calls it injects a
-  `<system-reminder source="delegation_pressure">` delegation warning through
-  its own mid-turn `abefore_model` path; at 12 it injects the escalated
-  `<system-reminder>` with stronger language. Tools remain available at both
-  levels — the gate advises, never blocks. Browser debugging tools are excluded
-  from counting. A successful accepted/pending `sessions_spawn` resets the
-  counter; a failed spawn does not reset, writes alone do not reset, and
-  `after_agent` also resets at the turn boundary.
+  `:subagent:`/`:swarm:` session). It counts read/exploration calls per turn and
+  advises at three levels through its own mid-turn `abefore_model` path, never
+  blocking: at 5 (`plan_nudge_after`) one PLANNING NUDGE names the planning
+  tools that are actually registered (`todowrite`, and
+  `taskflow_flow(action="plan")`); at 7 a `<system-reminder
+  source="delegation_pressure">` delegation warning; at 12 the escalated variant.
+  When the turn already dispatched TaskFlow steps, the 7/12 messages switch from
+  "call `sessions_spawn`" to "`wait_all` / `dispatch`, stop reading" — a TaskFlow
+  dispatch IS delegation. A successful accepted/pending `sessions_spawn` or a
+  successful TaskFlow dispatch wave (`taskflow_step(action="dispatch")` or the
+  plan's auto-dispatch, detected from the answer text) resets the counter; a
+  failed spawn/dispatch does not, and writes alone do not. `after_agent` clears
+  everything — including the plan-tracking flags (`has_todowrite` /
+  `has_taskflow` / `has_taskflow_dispatch`) — so a NEW turn is nudged to plan
+  again. Browser debugging tools are excluded from counting.
 
   completion gates (all always-on; Gate C's evidence READ is the one
   unavailable-means-reject rule while the rest fail open):
