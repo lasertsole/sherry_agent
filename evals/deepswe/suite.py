@@ -505,6 +505,8 @@ async def _run(
             "gate": gate_state,
             "acceptance_checklist": results[0].get("acceptance_checklist") if results else [],
             "reviewer_checklist_injections": int(gate_state.get("reviewer_checklist_injected", 0)),
+            "path_denials": int(gate_state.get("path_denials", 0)),
+            "blocked_writes": int(gate_state.get("blocked_writes", 0)),
             "policy": (
                 "the prompt MANDATES planning through todowrite/todoread and execution through "
                 "one taskflow flow; usage is counted from tool_start frames and "
@@ -674,6 +676,7 @@ async def _run_task(
         }
         continuations = 0
         result["no_progress_stop"] = False
+        gate_before = dict(external_bench.orchestration_state())
         last_patch = _agent_patch(host_workdir, task.base_commit)
         for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
             try:
@@ -710,6 +713,13 @@ async def _run_task(
                 checklist=checklist,
             )
         result["continuations"] = continuations
+        gate_after = external_bench.orchestration_state()
+        result["path_denials"] = int(gate_after.get("path_denials", 0)) - int(
+            gate_before.get("path_denials", 0)
+        )
+        result["blocked_writes"] = int(gate_after.get("blocked_writes", 0)) - int(
+            gate_before.get("blocked_writes", 0)
+        )
         result["tool_calls"] = drive["tool_calls"]
         tool_names: dict[str, int] = dict(drive.get("tool_names") or {})
         result["tool_names"] = tool_names

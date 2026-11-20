@@ -96,3 +96,15 @@ def test_the_task_work_root_stays_outside_the_product_checkout(monkeypatch):
     monkeypatch.setenv("SHERRY_EVAL_WORK_ROOT", str(suite.REPO_ROOT / "_outside"))
     overridden = suite._work_root(results)
     assert overridden == suite.REPO_ROOT / "_outside" / "run-x"
+
+
+def test_path_denial_markers_cover_the_three_guards():
+    from evals import external_bench
+
+    assert external_bench._is_path_denial('{"error": "External file access denied: C:/x"}')
+    assert external_bench._is_path_denial(
+        "Sherry self-file access denied: /repo/evals/results/x/workspace/httpx/_a.py"
+    )
+    assert external_bench._is_path_denial("PathGuard: rejected terminal(commands='cd /app')")
+    assert not external_bench._is_path_denial("all tests passed")
+    assert not external_bench._is_path_denial("")

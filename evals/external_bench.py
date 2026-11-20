@@ -868,6 +868,25 @@ def _augment_reviewer_task(args: dict[str, Any]) -> bool:
     return True
 
 
+#: Tool results that mean a path guard refused the write (self-file / external /#: shell PathGuard). A run with many calls and an EMPTY patch almost always#: carries these, so the report counts them explicitly.
+_PATH_DENIAL_MARKERS = (
+    "access denied",
+    "PathGuard: rejected",
+)
+_GATE_STATE: dict[str, int] = {}
+
+
+def _is_path_denial(text: str) -> bool:
+    """True when a tool result is a path-guard refusal."""
+    lowered = (text or "").lower()
+    return any(marker.lower() in lowered for marker in _PATH_DENIAL_MARKERS)
+
+
+def orchestration_state() -> dict[str, int]:
+    """The LIVE gate counters (or a detached copy before the gate installs)."""
+    return _GATE_STATE
+
+
 def install_orchestration_gate() -> dict[str, int]:
     """Structurally require ``todowrite`` + one ``taskflow_flow(plan)``.
 
@@ -878,8 +897,15 @@ def install_orchestration_gate() -> dict[str, int]:
     wrappers are not on that path. Until both planning calls exist, the
     mutating tools answer with the rule instead of running.
     """
-    global _GATE_INSTALLED
-    state = {"todo": 0, "taskflow": 0, "blocked": 0, "reviewer_checklist_injected": 0}
+    global _GATE_INSTALLED, _GATE_STATE
+    state = {
+        "todo": 0,
+        "taskflow": 0,
+        "blocked": 0,
+        "reviewer_checklist_injected": 0,
+        "path_denials": 0,
+        "blocked_writes": 0,
+    }
     if _GATE_INSTALLED:
         return state
     from langchain_core.messages import ToolMessage
@@ -907,9 +933,15 @@ def install_orchestration_gate() -> dict[str, int]:
                 tool_call_id=str((call or {}).get("id") or ""),
                 name=name,
             )
-        return await original(self, call, input_type, tool_runtime)
+        result = await original(self, call, input_type, tool_runtime)
+        if _is_path_denial(str(getattr(result, "content", "") or "")):
+            state["path_denials"] += 1
+            if name in {"write_file", "patch_file", "terminal", "python_repl", "execute_code"}:
+                state["blocked_writes"] += 1
+        return result
 
     SafeToolNode._arun_one = gated_arun_one  # type: ignore[method-assign]
+    _GATE_STATE = state
     _GATE_INSTALLED = True
     print("[evals] orchestration gate installed (todowrite + taskflow_flow plan)", flush=True)
     return state

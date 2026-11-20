@@ -325,3 +325,15 @@ agent 的 self-file 守卫因此拒绝 `write_file`（"Sherry self-file access d
 
 边界规则（提交 `4433ea16`）：提示词加入通用流式边界要求（空输入/纯空白/截断/流结束后调用
 应返回空结果而不是抛异常），a1→a4 的分数波动说明模型稳定性仍是主要变量。
+
+## 17. 诊断增强：blocked_writes（2026-11-20）
+
+「调用很多但补丁为空」之前只能靠翻工具结果判断。现在编排门禁在每次工具调用后检查结果文本里的
+路径守卫标记（`access denied` / `PathGuard: rejected`），统计：
+
+- `path_denials`：所有路径拒绝；
+- `blocked_writes`：写类工具（write_file / patch_file / terminal / python_repl / execute_code）
+  被拒绝的次数。
+
+报告 `eval_report.json` 的 `orchestration` 段与每个任务的结果都带这两个字段（按任务取差值）。
+新增单测覆盖三种守卫标记。以后 0/108 与「模型没写」可以一眼区分。
