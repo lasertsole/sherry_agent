@@ -273,12 +273,24 @@ def _atomic_write_bytes_legacy(
                 exc,
             )
             _write_bytes_in_place_no_follow(path, data)
-            with contextlib.suppress(OSError):
-                tmp_path.unlink()
+            _unlink_temp(tmp_path)
     except BaseException:
-        with contextlib.suppress(OSError):
-            tmp_path.unlink()
+        _unlink_temp(tmp_path)
         raise
+
+
+def _unlink_temp(tmp_path: Path) -> None:
+    """Remove a failed write's temp file even when its cloned mode is read-only.
+
+    The temp clones the TARGET's mode, so a read-only target leaves a read-only
+    temp — and on Windows ``unlink`` refuses that (POSIX never did), leaking a
+    ``.sherry-tmp-*.swp`` into the project tree. Make it writable first; on
+    POSIX the chmod is a harmless no-op before a successful unlink.
+    """
+    with contextlib.suppress(OSError):
+        os.chmod(tmp_path, stat.S_IWRITE)
+    with contextlib.suppress(OSError):
+        tmp_path.unlink()
 
 
 def _create_temp_at(dir_fd: int) -> tuple[str, int]:

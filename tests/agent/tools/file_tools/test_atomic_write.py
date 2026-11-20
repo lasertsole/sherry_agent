@@ -13,6 +13,7 @@ import errno
 import json
 import os
 import stat
+import sys
 import time
 
 import pytest
@@ -172,6 +173,33 @@ def test_rename_failure_falls_back_to_an_in_place_write(target, monkeypatch):
     assert not list(target.parent.glob(".sherry-tmp-*"))
     # The degradation is visible in the log, not silent.
     assert any("in-place write" in message for message in captured), captured
+
+
+def test_read_only_target_never_leaks_the_temp_file(target):
+    """A read-only target defeats ``os.replace`` on Windows (the in-place
+    fallback fails too), and the temp clones the TARGET's mode — the cloned
+    read-only bit must not defeat the cleanup. The every-failure-path-unlinks
+    contract holds: no ``.sherry-tmp-*`` survives either outcome."""
+    target.write_text("keep = 1\n", encoding="utf-8")
+    target.chmod(stat.S_IREAD)
+    try:
+        if sys.platform == "win32":
+            with pytest.raises(OSError):
+                atomic_write_text_no_follow(
+                    target, "keep = 2\n", expected_revision=file_revision(target)
+                )
+            assert target.read_text(encoding="utf-8") == "keep = 1\n"
+        else:
+            # POSIX replace ignores the target's mode: the write succeeds and
+            # the cloned read-only mode lands on the new file.
+            atomic_write_text_no_follow(
+                target, "keep = 2\n", expected_revision=file_revision(target)
+            )
+            assert target.read_text(encoding="utf-8") == "keep = 2\n"
+            assert stat.S_IMODE(target.stat().st_mode) == stat.S_IREAD
+        assert not list(target.parent.glob(".sherry-tmp-*"))
+    finally:
+        target.chmod(stat.S_IWRITE | stat.S_IREAD)
 
 
 def test_revision_id_shape(target):
