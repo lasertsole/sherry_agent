@@ -400,7 +400,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
   whiteboard: defineAsyncComponent(() => import('./WhiteboardPanel.vue')),
   sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue')),
-  expertEdit: defineAsyncComponent(() => import('./ExpertEditPanel.vue'))
+  expertEdit: defineAsyncComponent(() => import('./ExpertEditPanel.vue')),
+  highRiskGuard: defineAsyncComponent(() => import('./HighRiskGuardPanel.vue'))
 };
 
 /**
@@ -598,6 +599,7 @@ onBeforeUnmount(() => {
       "sideChat": "侧聊",
       "tokenBudget": "Token 预算",
       "expertEdit": "专家编辑",
+      "highRiskGuard": "高危防护",
       "group": {
         "session": "会话",
         "tools": "工具",
@@ -645,6 +647,7 @@ onBeforeUnmount(() => {
       "sideChat": "Side chat",
       "tokenBudget": "Token budget",
       "expertEdit": "Expert editor",
+      "highRiskGuard": "High-risk guard",
       "group": {
         "session": "Session",
         "tools": "Tools",
@@ -692,6 +695,7 @@ onBeforeUnmount(() => {
       "sideChat": "サイドチャット",
       "tokenBudget": "Token 予算",
       "expertEdit": "エキスパート編集",
+      "highRiskGuard": "高リスク保護",
       "group": {
         "session": "セッション",
         "tools": "ツール",
@@ -739,6 +743,7 @@ onBeforeUnmount(() => {
       "sideChat": "사이드 채팅",
       "tokenBudget": "Token 예산",
       "expertEdit": "전문가 편집",
+      "highRiskGuard": "고위험 보호",
       "group": {
         "session": "세션",
         "tools": "도구",

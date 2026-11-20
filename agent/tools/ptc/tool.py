@@ -132,5 +132,9 @@ def build_ptc_tool(available_tools: list[Any], session_id: str) -> ExecuteCodeTo
         "idempotent": False,
         "scope": "subagent_only",
         "side_effect_scope": "system",
+        # Arbitrary code with real tool calls: ledgered (a re-run is refused
+        # with the first result) and keyword-scanned.
+        "high_risk": True,
+        "scan_keywords": True,
     }
     return tool

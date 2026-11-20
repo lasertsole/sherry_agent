@@ -376,6 +376,11 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             "idempotent": False,
             "side_effect_scope": "system",
             "streak_warn_after": 5,
+            # The tool is not high-risk, but its command text is scanned for
+            # high-risk keywords (rm -rf / credentials / …): the command, not
+            # the tool, decides the risk.
+            "high_risk": False,
+            "scan_keywords": True,
         }
 
     # ── Guards & helpers ────────────────────────────────────────────────────

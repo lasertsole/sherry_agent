@@ -152,6 +152,15 @@ async def purge_session_data(session_id: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to clear planning stores for session_id={session_id}: {e}")
 
+    # (2.5) High-risk guard — this session's keyword rows and executed-operation
+    # ledger. Global keywords are deliberately kept (they are not session state).
+    try:
+        from agent.tools.pub_base.high_risk_guard_store import default_store as high_risk_store
+
+        high_risk_store().purge_session(session_id)
+    except Exception as e:  # noqa: BLE001 - a guard-store failure must not keep the session
+        logger.warning(f"Failed to clear high-risk guard rows for session_id={session_id}: {e}")
+
     # (3) In-memory HITL flag — a deleted session must not leave a pending flag
     # that keeps its (now nonexistent) thread "busy" for the drain loop.
     try:

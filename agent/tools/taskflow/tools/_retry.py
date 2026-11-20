@@ -21,6 +21,7 @@ The replacement spawn goes through the shared, monkeypatchable
 
 import asyncio
 import time
+from typing import Any
 
 from ..config import StepStatus
 from . import _dispatch
@@ -203,6 +204,7 @@ async def spawn_replacement(
     step_timeout_seconds: float | None = None,
     flow_id: str | None = None,
     step_id: str | None = None,
+    approval_context: dict | None = None,
 ) -> str:
     """Spawn the step's replacement child through the shared dispatch seam.
 
@@ -223,6 +225,7 @@ async def spawn_replacement(
         step_timeout_seconds=step_timeout_seconds,
         flow_id=flow_id,
         step_id=step_id,
+        approval_context=approval_context,
     )
 
 
@@ -234,7 +237,7 @@ def step_spawn_kwargs(step: dict, *, flow_id: str | None = None) -> dict:
     The TaskFlow context rides along too: a replacement child must still stamp
     its evidence with the flow it is executing.
     """
-    return {
+    kwargs: dict[str, Any] = {
         "output_schema": step.get("response_schema"),
         "functional_role": step.get("functional_role"),
         "step_model": step.get("step_model"),
@@ -242,6 +245,12 @@ def step_spawn_kwargs(step: dict, *, flow_id: str | None = None) -> dict:
         "flow_id": flow_id,
         "step_id": step.get("step_id"),
     }
+    # A step approved after a high-risk bubble carries its approval; an
+    # ordinary step omits the key entirely so existing dispatch seams (and
+    # their callers) keep their exact keyword set.
+    if step.get("approval_context"):
+        kwargs["approval_context"] = step.get("approval_context")
+    return kwargs
 
 
 def apply_redispatch(step: dict, new_child_key: str, retry_count: int) -> None:

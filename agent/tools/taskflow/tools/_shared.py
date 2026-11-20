@@ -233,6 +233,9 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "retry_policy",  # existing: failure retry policy
     "skills",  # skill names whose SKILL.md is prepended at dispatch (see _skill_prepend)
     "file_deps",  # project-relative files this step's verification depends on
+    # High-risk keyword approval carried into this step's (re)dispatch. Written
+    # only by an explicit approval resume; cleared with the next plan write.
+    "approval_context",
 )
 
 

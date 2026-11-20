@@ -322,6 +322,7 @@
       "pickerTruncated": "先頭 {shown} 件のみ表示（全 {total} 件）",
       "pickerUp": "上の階層へ"
     },
+    "highRiskGuard": "高リスク保護",
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開",
     "floatChat": "会話をフローティング表示",

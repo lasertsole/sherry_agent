@@ -55,6 +55,7 @@ async def dispatch_child(
     step_timeout_seconds: float | None = None,
     flow_id: str | None = None,
     step_id: str | None = None,
+    approval_context: dict | None = None,
 ) -> str:
     """Dispatch a detached child session and return its child_session_key.
 
@@ -82,6 +83,7 @@ async def dispatch_child(
         run_timeout_seconds=step_timeout_seconds,
         flow_id=flow_id,
         step_id=step_id,
+        approval_context=approval_context,
     )
     if result.status != "accepted" or not result.child_session_key:
         raise RuntimeError(f"status={result.status} error={result.error}")

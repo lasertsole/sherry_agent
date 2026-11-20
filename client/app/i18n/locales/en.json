@@ -322,6 +322,7 @@
       "pickerTruncated": "Showing the first {shown} of {total}",
       "pickerUp": "Up one level"
     },
+    "highRiskGuard": "High-risk guard",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
     "floatChat": "Float conversation",

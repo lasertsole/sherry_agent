@@ -322,6 +322,7 @@
       "pickerTruncated": "仅显示前 {shown} 个（共 {total} 个）",
       "pickerUp": "上一级"
     },
+    "highRiskGuard": "高危防护",
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏",
     "floatChat": "浮动显示对话",

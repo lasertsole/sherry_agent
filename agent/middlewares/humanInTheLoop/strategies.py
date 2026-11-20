@@ -21,10 +21,13 @@ from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.errors import GraphInterrupt
 from loguru import logger
 
+from runtime import StateKey
+
 from .approval import is_confirm_all_mode, is_yolo_mode, set_session_yolo
 from .approval_scope import NO_OPERATOR_MESSAGE
 from .approval_store import ApprovalVerdict
 from .detection import detect_clawhub_command, detect_dangerous_command
+from .interrupts import freeze_heartbeat, unfreeze_heartbeat
 from .types import (
     HITL_CONFIRMED_TOOLS_KEY,
     ApprovalDecision,
@@ -215,12 +218,14 @@ class TerminalApprovalHandler(ToolApprovalHandler):
                 allowed_decisions=allowed_decisions,
             )
             try:
+                freeze_heartbeat(ctx.session_id)
                 hitl_response = interrupt(
                     HITLRequest(
                         action_requests=[action_request],
                         review_configs=[review_config],
                     )
                 )
+                unfreeze_heartbeat(ctx.session_id)
                 decisions = hitl_response.get("decisions", [])
                 decision_type = decisions[0]["type"] if decisions else ""
                 if decision_type == "yolo":
@@ -391,12 +396,14 @@ class FirstCallConfirmationHandler(ToolApprovalHandler):
             allowed_decisions=["approve", "reject"],
         )
         try:
+            freeze_heartbeat(ctx.session_id)
             hitl_response = interrupt(
                 HITLRequest(
                     action_requests=[action_request],
                     review_configs=[review_config],
                 )
             )
+            unfreeze_heartbeat(ctx.session_id)
             decisions = hitl_response.get("decisions", [])
             decision_type = decisions[0]["type"] if decisions else ""
             if decision_type == "yolo":
@@ -483,12 +490,14 @@ class InterruptOnApprovalHandler(ToolApprovalHandler):
             ctx.outcome.deny(tool_call, tool_name, NO_OPERATOR_MESSAGE)
             return True
         try:
+            freeze_heartbeat(ctx.session_id)
             hitl_response = interrupt(
                 HITLRequest(
                     action_requests=[action_request],
                     review_configs=[review_config],
                 )
             )
+            unfreeze_heartbeat(ctx.session_id)
             decisions = hitl_response.get("decisions", [])
             if not decisions:
                 ctx.outcome.deny(tool_call, tool_name, f"No decision received. {BLOCKED_MESSAGE}")
@@ -533,6 +542,139 @@ class InterruptOnApprovalHandler(ToolApprovalHandler):
         return True
 
 
+class HighRiskKeywordApprovalHandler(ToolApprovalHandler):
+    """High-risk keyword gate (main agent only — children have no HITL).
+
+    Scans the tool-call arguments of the tools whose text can carry a dangerous
+    operation (terminal / python_repl / PTC / MCP). A ``block`` keyword hit
+    interrupts for a human decision unless the session already recorded an
+    approval for that keyword+tool(+args). Once the operation has EXECUTED, a
+    repeat is refused outright with the first result (no card) — the
+    verify-retest guard. YOLO skips the card for reversible tools only; a
+    high-risk non-idempotent tool (PTC / MCP) still asks, because its effect is
+    irreversible. Children never reach this handler; ToolGuardrails answers
+    them with ``[NEEDS_APPROVAL]`` instead.
+    """
+
+    def matches(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
+        from agent.tools.pub_base.high_risk_policy import should_scan_keywords_by_name
+
+        return should_scan_keywords_by_name(str(tool_call.get("name", "")))
+
+    def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
+        from agent.tools.pub_base.high_risk_guard_store import (
+            args_hash as guard_args_hash,
+            default_store,
+            scan_high_risk_keywords,
+        )
+        from agent.tools.pub_base.high_risk_policy import should_scan_keywords_by_name
+
+        mw = ctx.mw
+        tool_name: str = str(tool_call.get("name", ""))
+        tool_args: dict[str, Any] = tool_call.get("args", {}) or {}
+        if not should_scan_keywords_by_name(tool_name):
+            return False
+        store = default_store()
+        blockers = store.load_active_blockers(ctx.session_id)
+        hit = scan_high_risk_keywords(
+            json.dumps(tool_args, ensure_ascii=False, default=str), blockers
+        )
+        if hit is None:
+            return False
+
+        # A recorded approval for this exact call short-circuits the card.
+        digest = guard_args_hash(tool_name, tool_args)
+        for entry in self._approvals(mw, ctx.session_id):
+            if str(entry.get("keyword") or "").lower() != hit.keyword.lower():
+                continue
+            if str(entry.get("tool") or "") not in {"", tool_name}:
+                continue
+            if str(entry.get("args_hash") or "") not in {"", digest}:
+                continue
+            ctx.outcome.approve(tool_call)
+            return True
+
+        entry = store.get_keyword(ctx.session_id, hit.keyword)
+        if entry is not None and entry.get("executed"):
+            summary = str(entry.get("result_summary") or "")[:200]
+            ctx.outcome.deny(
+                tool_call,
+                tool_name,
+                f"High-risk keyword '{hit.keyword}' already ran in this session. "
+                f"First result: {summary}. A repeat is refused.",
+            )
+            return True
+
+        irreversible = tool_name.startswith("mcp__") or tool_name == "execute_code"
+        if is_yolo_mode(mw.config, ctx.session_id) and not irreversible:
+            # full_access trusts reversible tools; the operation ledger (if any)
+            # is enforced by ToolGuardrails, not by a prompt.
+            return False
+        if mw._turn_operator(ctx.state) is None:
+            ctx.outcome.deny(tool_call, tool_name, _auto_deny_content())
+            return True
+
+        description = (
+            f"High-risk keyword '{hit.keyword}' in this {tool_name} call. "
+            f"Approve to run it once; the operation is then marked executed and a "
+            f"repeat is refused until the marker is cleared. Context: {hit.context[:160]}"
+        )
+        action_request = ActionRequest(name=tool_name, args=tool_args, description=description)
+        review_config = ReviewConfig(action_name=tool_name, allowed_decisions=["approve", "reject"])
+        try:
+            freeze_heartbeat(ctx.session_id)
+            hitl_response = interrupt(
+                HITLRequest(
+                    action_requests=[action_request],
+                    review_configs=[review_config],
+                )
+            )
+            unfreeze_heartbeat(ctx.session_id)
+            decisions = hitl_response.get("decisions", [])
+            decision_type = decisions[0]["type"] if decisions else ""
+            if decision_type == "approve":
+                self._record_approval(mw, ctx.session_id, hit.keyword, tool_name, digest)
+                ctx.outcome.approve(tool_call)
+                return True
+            message = (
+                (decisions[0].get("message") or "Rejected by user") if decisions else "No decision"
+            )
+            ctx.outcome.deny(
+                tool_call,
+                tool_name,
+                _deny_content(f"User denied the high-risk keyword '{hit.keyword}': {message}"),
+            )
+            return True
+        except GraphInterrupt:
+            raise
+        except Exception:
+            ctx.outcome.deny(tool_call, tool_name, f"Approval interrupt failed. {BLOCKED_MESSAGE}")
+            return True
+
+    @staticmethod
+    def _approvals(mw: HumanInTheLoop, session_id: str) -> list[dict[str, Any]]:
+        stored = mw._get_state(session_id, StateKey.KEYWORD_APPROVALS, []) or []
+        if not isinstance(stored, list):
+            return []
+        return [entry for entry in stored if isinstance(entry, dict)]
+
+    @classmethod
+    def _record_approval(
+        cls,
+        mw: HumanInTheLoop,
+        session_id: str,
+        keyword: str,
+        tool_name: str,
+        args_digest: str,
+    ) -> None:
+        approvals = cls._approvals(mw, session_id)
+        entry = {"keyword": keyword, "tool": tool_name, "args_hash": args_digest}
+        if entry not in approvals:
+            approvals.append(entry)
+        # Bound the list: the oldest approvals fall off first.
+        mw._set_state(session_id, StateKey.KEYWORD_APPROVALS, approvals[-50:])
+
+
 class PluginToolApprovalHandler(ToolApprovalHandler):
     """Plugin-escalated tool approval (layer 10) — catch-all for every
     tool call not consumed by an earlier handler."""
@@ -567,6 +709,7 @@ class ApprovalHandlerRegistry:
                 MemoryWriteApprovalHandler(),
                 FirstCallConfirmationHandler(),
                 InterruptOnApprovalHandler(),
+                HighRiskKeywordApprovalHandler(),
                 PluginToolApprovalHandler(),
             )
         self._handlers: list[ToolApprovalHandler] = list(handlers)

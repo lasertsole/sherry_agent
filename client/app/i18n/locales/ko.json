@@ -322,6 +322,7 @@
       "pickerTruncated": "처음 {shown}개만 표시 (전체 {total}개)",
       "pickerUp": "상위 폴더"
     },
+    "highRiskGuard": "고위험 보호",
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기",
     "floatChat": "대화를 플로팅으로 표시",

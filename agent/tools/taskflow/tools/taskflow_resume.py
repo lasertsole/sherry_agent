@@ -58,6 +58,92 @@ from ._shared import (
 _STATUS_ORDER = tuple(status.value for status in StepStatus)
 
 
+async def _approve_and_redispatch(
+    *,
+    flow_id: str,
+    flow: dict,
+    revision: int,
+    session_id: str,
+    step_id: str,
+    child_session_key: str,
+    approval: dict,
+) -> str:
+    """Re-dispatch one step with a human-approved high-risk keyword.
+
+    The approved child is a NEW spawn: the old one already finished with a
+    ``[NEEDS_APPROVAL]`` result, so there is no result to inject. The approval
+    rides on the step's ``approval_context`` (and therefore on every replacement
+    this step spawns, including schema retries); the new child's ToolGuardrails
+    reads it from its own register.
+    """
+    state = dict(flow["state"])
+    steps = list(state.get("steps") or [])
+    results = list(state.get("results") or [])
+    target = None
+    if step_id:
+        target = next(
+            (candidate for candidate in steps if str(candidate.get("step_id")) == step_id), None
+        )
+    if target is None and child_session_key:
+        target = next(
+            (
+                candidate
+                for candidate in steps
+                if str(candidate.get("child_session_key") or "") == child_session_key
+            ),
+            None,
+        )
+    if target is None:
+        return f"Error: no step matches step_id={step_id!r} child_session_key={child_session_key!r}"
+    target_id = str(target.get("step_id") or "")
+    if step_status(target) == StepStatus.DONE:
+        return f"Error: step {target_id} is already done; nothing to approve"
+    if not deps_satisfied(target, steps):
+        return f"Error: step {target_id}'s dependencies are not satisfied yet"
+
+    task_text = build_task_with_bindings(
+        build_task_with_dep_results(target, steps, results), target, steps, results
+    )
+    spawn_kwargs = step_spawn_kwargs({**target, "approval_context": approval}, flow_id=flow_id)
+    retry_count = step_retry_count(target) + 1
+    try:
+        new_child_key = await spawn_replacement(
+            task_text, requester_session_key(session_id), **spawn_kwargs
+        )
+    except Exception as exc:  # noqa: BLE001 - returned as text by the tool boundary
+        return f"Error: approval re-dispatch failed: {type(exc).__name__}: {exc}"
+
+    def build_state(fresh_flow: dict, _attempt: int) -> dict:
+        fresh_state = dict(fresh_flow["state"])
+        fresh_steps = list(fresh_state.get("steps") or [])
+        fresh_target = next(
+            (candidate for candidate in fresh_steps if str(candidate.get("step_id")) == target_id),
+            None,
+        )
+        if fresh_target is not None:
+            fresh_target["approval_context"] = approval
+            apply_redispatch(fresh_target, new_child_key, retry_count)
+        fresh_state["steps"] = fresh_steps
+        return fresh_state
+
+    updated, error = await update_flow_with_conflict_retry(
+        flow_id,
+        revision,
+        flow,
+        build_state,
+        child_keys=[new_child_key],
+        session_id=session_id,
+        update_kwargs={"wait": None, "status": TaskFlowStatus.RUNNING},
+    )
+    if updated is None:
+        return error or "Error: approval re-dispatch state write failed"
+    return (
+        f"TaskFlow step approved and re-dispatched: flow_id={flow_id}, step_id={target_id}, "
+        f"child_session_key={new_child_key}, keyword={approval['keyword']}, "
+        f"retry_count={retry_count}"
+    )
+
+
 @tool("taskflow_resume")
 async def taskflow_resume(
     flow_id: str,
@@ -69,6 +155,8 @@ async def taskflow_resume(
     structured_result: dict | None = None,
     step_outcome: str | None = None,
     auto_dispatch: bool = True,
+    step_id: str = "",
+    approval_context: dict | None = None,
     session_id: SessionId = "",
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
@@ -126,16 +214,32 @@ async def taskflow_resume(
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
+    step_id = (step_id or "").strip()
     result = result or ""
     declared_outcome = (step_outcome or "").strip().lower() or None
-    if declared_outcome is not None and declared_outcome not in {
+    approval: dict | None = None
+    if isinstance(approval_context, dict):
+        keyword = str(approval_context.get("keyword") or "").strip()
+        if not keyword:
+            return "Error: approval_context requires a non-empty keyword"
+        approval = {
+            "keyword": keyword,
+            "tool": str(approval_context.get("tool") or "").strip(),
+            "args_hash": str(approval_context.get("args_hash") or "").strip(),
+        }
+    if declared_outcome == "approved":
+        if approval is None:
+            return "Error: step_outcome='approved' requires approval_context {keyword, tool}"
+    elif declared_outcome is not None and declared_outcome not in {
         member.value for member in StepOutcome
     }:
         allowed = ", ".join(member.value for member in StepOutcome)
-        return f"Error: step_outcome must be one of: {allowed}"
+        return f"Error: step_outcome must be one of: {allowed}, approved"
+    if approval is not None and declared_outcome != "approved":
+        return "Error: approval_context requires step_outcome='approved'"
     if not flow_id:
         return "Error: flow_id is required"
-    if not child_session_key and not result:
+    if approval is None and not child_session_key and not result:
         return "Error: taskflow_step(action='resume') requires child_session_key or result"
 
     flow = await store_sqlite.get_flow(flow_id, session_id)
@@ -147,6 +251,20 @@ async def taskflow_resume(
     revision = (
         int(expected_revision) if expected_revision is not None else flow["expected_revision"]
     )
+
+    # Approval resume: the human approved a high-risk keyword that a step's
+    # child bubbled up. Re-dispatch the step with the approval attached — this
+    # is NOT a result injection, so it returns before the result bookkeeping.
+    if approval is not None:
+        return await _approve_and_redispatch(
+            flow_id=flow_id,
+            flow=flow,
+            revision=revision,
+            session_id=session_id,
+            step_id=step_id,
+            child_session_key=child_session_key,
+            approval=approval,
+        )
 
     result_hash_value = result_hash(child_session_key, result)
     state = dict(flow["state"])

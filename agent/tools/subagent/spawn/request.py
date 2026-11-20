@@ -48,6 +48,11 @@ class SpawnRequest:
     isolation: bool = False
     flow_id: str | None = None
     step_id: str | None = None
+    #: High-risk keyword approval carried into the child: after a human approves
+    #: a child's ``[NEEDS_APPROVAL]`` bubble, the replacement spawn receives
+    #: ``{"keyword": ..., "tool": ..., "args_hash"?: ...}`` and its ToolGuardrails
+    #: lets that keyword through (per-spawn, never a permanent allow).
+    approval_context: dict | None = None
 
     @classmethod
     def from_legacy(cls, **kwargs: Any) -> SpawnRequest:

@@ -29,6 +29,8 @@ export type RightSidebarPanelKind =
   | 'taskFlowBoard'
   /** The session's live activity overview (flows + sub-agents + tools). */
   | 'sessionActivity'
+  /** The session's high-risk keyword registry + executed-operation ledger. */
+  | 'highRiskGuard'
   /** One file's diff from one commit of the session project (opened from the git graph). */
   | 'gitDiff'
   /** The session's live context: system prompt, tools and message list. */
@@ -61,6 +63,7 @@ export const PANEL_GROUPS: Record<PanelGroup, { labelKey: string; icon: string; 
       'subagentActivity',
       'taskFlowBoard',
       'sessionActivity',
+      'highRiskGuard',
       'sessionPreset',
       'gitDiff',
       'contextViewer',
@@ -139,6 +142,8 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // Both overviews describe the session on screen when they were opened.
   taskFlowBoard: 'session',
   sessionActivity: 'session',
+  // High-risk keywords and the executed-operation ledger are per session.
+  highRiskGuard: 'session',
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).
   fileViewer: 'session',

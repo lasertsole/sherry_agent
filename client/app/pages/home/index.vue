@@ -250,6 +250,17 @@
                 <SessionPresetButton
                   v-if="currentSessionId"
                   :session-id="currentSessionId" />
+                <!-- High-risk guard: this session's keyword registry and the
+                 executed-operation ledger (the shield). -->
+                <Button
+                  v-if="currentSessionId"
+                  icon="pi pi-shield"
+                  :title="t('toolbar.highRiskGuard')"
+                  :aria-label="t('toolbar.highRiskGuard')"
+                  variant="text"
+                  class="@max-[300px]:hidden!"
+                  data-test="high-risk-guard-button"
+                  @click="rightSidebarStore.openTab('highRiskGuard', { sessionId: currentSessionId })" />
                 <!-- Toolbox: the hammer button. Three working surfaces that are not
                  settings — the browser, the user's terminal and the whiteboard
                  — open as tabs in the session group (see toolboxTools). -->

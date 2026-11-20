@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -19,6 +20,12 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from runtime import StateKey, state_register_mem
 from config.features import TOOL_GUARDRAILS
 from agent.middlewares.base import args_hash, require_session_id
+from agent.tools.pub_base.high_risk_guard_store import (
+    args_hash as high_risk_args_hash,
+    default_store as high_risk_store,
+    scan_high_risk_keywords,
+)
+from agent.tools.pub_base.high_risk_policy import should_ledger, should_scan_keywords
 
 
 class GuardrailAction(StrEnum):
@@ -806,6 +813,196 @@ class ToolGuardrails(AgentMiddleware):
 
         return result
 
+    # ── High-risk guard: keyword scan + executed-operation ledger ───────
+
+    @staticmethod
+    def _approval_scope(session_id: str) -> str:
+        """The session whose approvals/ledger this call shares (root for a child)."""
+        parent = state_register_mem.get_state(session_id, StateKey.APPROVAL_SCOPE_PARENT, None)
+        return parent if isinstance(parent, str) and parent else session_id
+
+    @staticmethod
+    def _is_child_session(session_id: str) -> bool:
+        return ":subagent:" in session_id
+
+    @staticmethod
+    def _hitl_flags(session_id: str) -> tuple[bool, bool]:
+        """(yolo, confirm_all) for the session; fail-open to (False, False)."""
+        try:
+            from agent.middlewares.humanInTheLoop.approval import (
+                is_confirm_all_mode,
+                is_yolo_mode,
+            )
+            from agent.middlewares.humanInTheLoop.types import HITLConfig
+
+            config = HITLConfig()
+            return is_yolo_mode(config, session_id), is_confirm_all_mode(config, session_id)
+        except Exception:  # noqa: BLE001 - the guard must never break a turn
+            logger.debug("high-risk guard: HITL flag lookup failed", exc_info=True)
+            return False, False
+
+    @staticmethod
+    def _keyword_approved(
+        scope: str, session_id: str, tool_name: str, args: dict[str, Any], keyword: str
+    ) -> bool:
+        """Whether a human already approved this keyword+tool(+args) call."""
+        digest = high_risk_args_hash(tool_name, args)
+        for owner in (scope, session_id):
+            approvals = state_register_mem.get_state(owner, StateKey.KEYWORD_APPROVALS, []) or []
+            if not isinstance(approvals, list):
+                continue
+            for entry in approvals:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("keyword") or "").lower() != keyword.lower():
+                    continue
+                entry_tool = str(entry.get("tool") or "")
+                if entry_tool and entry_tool != tool_name:
+                    continue
+                entry_hash = str(entry.get("args_hash") or "")
+                if entry_hash and entry_hash != digest:
+                    continue
+                return True
+        return False
+
+    def _high_risk_gate(
+        self, request: ToolCallRequest
+    ) -> tuple[ToolMessage | None, str | None, str]:
+        """Check the executed-operation ledger, then scan for keywords.
+
+        Returns ``(blocking_message, matched_keyword, approval_scope)``. The
+        matched keyword is recorded as executed after a successful call; the
+        scope is the session whose ledger/approvals this call shares.
+        """
+        tool = getattr(request, "tool", None)
+        tool_call = getattr(request, "tool_call", None) or {}
+        name = str(tool_call.get("name") or getattr(tool, "name", "") or "unknown")
+        raw_args = tool_call.get("args")
+        args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
+        ledgered = should_ledger(tool)
+        scanned = should_scan_keywords(tool)
+        if not ledgered and not scanned:
+            return None, None, ""
+        try:
+            session_id = self._get_session_id(request.state)
+        except Exception:  # noqa: BLE001 - no session id means no durable guard scope
+            return None, None, ""
+        scope = self._approval_scope(session_id)
+        store = high_risk_store()
+        tool_call_id = str(tool_call.get("id") or "")
+
+        if ledgered:
+            existing = store.check_op(scope, name, args)
+            if existing is not None:
+                summary = str(existing.get("result_summary") or "")[:200]
+                return (
+                    ToolMessage(
+                        content=(
+                            f"[NON-IDEMPOTENT GUARD] This exact operation already ran in this "
+                            f"session (tool={name}). First result: {summary}. Re-running is "
+                            "refused; delete the ledger entry in the high-risk panel if it really "
+                            "must run again."
+                        ),
+                        name=name,
+                        tool_call_id=tool_call_id,
+                        status="error",
+                    ),
+                    None,
+                    scope,
+                )
+
+        hit_keyword: str | None = None
+        if scanned:
+            blockers = store.load_active_blockers(scope)
+            hit = scan_high_risk_keywords(
+                json.dumps(args, ensure_ascii=False, default=str), blockers
+            )
+            if hit is not None:
+                hit_keyword = hit.keyword
+                entry = store.get_keyword(scope, hit.keyword)
+                if entry is not None and entry.get("executed"):
+                    summary = str(entry.get("result_summary") or "")[:200]
+                    return (
+                        ToolMessage(
+                            content=(
+                                f"[HIGH-RISK GUARD] The keyword '{hit.keyword}' operation already "
+                                f"ran in this session. First result: {summary}. A repeat is "
+                                "refused; delete the keyword's executed marker in the high-risk "
+                                "panel if it really must run again."
+                            ),
+                            name=name,
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        ),
+                        None,
+                        scope,
+                    )
+                approved = self._keyword_approved(scope, session_id, name, args, hit.keyword)
+                yolo, confirm_all = self._hitl_flags(session_id)
+                if not approved and yolo and (not ledgered or self._is_child_session(session_id)):
+                    # full_access: reversible tools (and children, which carry no
+                    # HITL) are trusted; the ledger above still blocks repeats.
+                    approved = True
+                if not approved:
+                    if confirm_all and self._is_child_session(session_id):
+                        return (
+                            ToolMessage(
+                                content=(
+                                    "[BLOCKED: confirm_all mode] This operation needs approval, "
+                                    "but the session runs in confirm-before-changes mode and a "
+                                    "subagent has no approval channel."
+                                ),
+                                name=name,
+                                tool_call_id=tool_call_id,
+                                status="error",
+                            ),
+                            None,
+                            scope,
+                        )
+                    return (
+                        ToolMessage(
+                            content=(
+                                f"[NEEDS_APPROVAL: keyword={hit.keyword}, tool={name}]\n"
+                                f"This operation contains the high-risk keyword '{hit.keyword}'.\n"
+                                "If you are a subagent: include this [NEEDS_APPROVAL] block "
+                                "verbatim in your final result so the parent agent can ask the user.\n"
+                                "If you are the main agent: use the `question` tool to ask the "
+                                "user; after approval resume the step with approval_context (or "
+                                "retry the call — the approval is recorded for this session)."
+                            ),
+                            name=name,
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        ),
+                        None,
+                        scope,
+                    )
+        return None, hit_keyword, scope
+
+    def _record_high_risk_result(
+        self,
+        request: ToolCallRequest,
+        result: ToolMessage,
+        hit_keyword: str | None,
+        scope: str,
+    ) -> None:
+        """Record a successful high-risk execution (ledger + keyword marker)."""
+        if not scope or getattr(result, "status", "") == "error":
+            return
+        tool = getattr(request, "tool", None)
+        tool_call = getattr(request, "tool_call", None) or {}
+        name = str(tool_call.get("name") or getattr(tool, "name", "") or "unknown")
+        raw_args = tool_call.get("args")
+        args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
+        summary = str(getattr(result, "content", "") or "")
+        try:
+            if should_ledger(tool):
+                high_risk_store().record_op(scope, name, args, summary)
+            if hit_keyword:
+                high_risk_store().mark_executed(scope, hit_keyword, summary)
+        except Exception:  # noqa: BLE001 - recording must never fail the turn
+            logger.warning("high-risk guard: recording the execution failed", exc_info=True)
+
     def _wrap_tool_call_precheck(
         self,
         request: ToolCallRequest,
@@ -863,7 +1060,11 @@ class ToolGuardrails(AgentMiddleware):
         blocked = self._wrap_tool_call_precheck(request)
         if blocked is not None:
             return blocked
+        gate, hit_keyword, scope = self._high_risk_gate(request)
+        if gate is not None:
+            return gate
         result: ToolMessage = handler(request)
+        self._record_high_risk_result(request, result, hit_keyword, scope)
         return self._wrap_tool_call_impl(request, result)
 
     @override
@@ -876,5 +1077,9 @@ class ToolGuardrails(AgentMiddleware):
         blocked = self._wrap_tool_call_precheck(request)
         if blocked is not None:
             return blocked
+        gate, hit_keyword, scope = self._high_risk_gate(request)
+        if gate is not None:
+            return gate
         result: ToolMessage = await handler(request)
+        self._record_high_risk_result(request, result, hit_keyword, scope)
         return self._wrap_tool_call_impl(request, result)

@@ -568,6 +568,20 @@ def resolve_approval_store_path() -> Path:
     return SRC_DIR / "data" / "approvals.json"
 
 
+def resolve_high_risk_guard_path() -> Path:
+    """Return the absolute high-risk guard SQLite path.
+
+    ``SRC_DIR/data/high_risk_guard.db`` holds both the keyword table and the
+    executed-operation ledger. It is Sherry-owned runtime state (same tree as
+    the boulder pointer and the evidence ledger), read at call time so tests can
+    repoint ``SRC_DIR``; ``SHERRY_HIGH_RISK_GUARD_PATH`` overrides it outright.
+    """
+    override = os.environ.get("SHERRY_HIGH_RISK_GUARD_PATH", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return SRC_DIR / "data" / "high_risk_guard.db"
+
+
 def file_locks_dir() -> Path:
     """Return the cross-process file-lock directory (``SRC_DIR/data/locks``).
 

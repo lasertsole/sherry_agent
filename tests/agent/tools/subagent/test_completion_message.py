@@ -152,3 +152,31 @@ def test_task7_skip_check_matches_builtin_message():
 def test_task7_skip_check_ignores_plain_messages():
     assert not _is_subagent_completion(HumanMessage(content="regular user message"))
     assert not _is_subagent_completion(HumanMessage(content="x", metadata={"internal": True}))
+
+
+# --------------------------------------------------------------------------
+# High-risk keyword bubble: the parent receives approval guidance
+# --------------------------------------------------------------------------
+
+
+def test_a_needs_approval_result_carries_the_parent_guidance():
+    content = (
+        "Deploy blocked.\n"
+        "[NEEDS_APPROVAL: keyword=payment, tool=terminal]\n"
+        "I could not run the operation."
+    )
+    msg = build_completion_message(_make_run(), content, "completed")
+
+    assert msg.content.startswith("[subagent:test-child completed]")
+    assert "[NEEDS_APPROVAL: keyword=payment" in msg.content
+    assert "[SYSTEM:" in msg.content
+    assert "`question` tool" in msg.content
+    assert "approval_context" in msg.content
+    # The guidance is appended, never replacing the child's own text.
+    assert msg.content.index("I could not run the operation") < msg.content.index("[SYSTEM:")
+
+
+def test_plain_content_gets_no_approval_guidance():
+    msg = build_completion_message(_make_run(), "all done", "completed")
+    assert "[SYSTEM:" not in msg.content
+    assert msg.content == "[subagent:test-child completed]\nall done"

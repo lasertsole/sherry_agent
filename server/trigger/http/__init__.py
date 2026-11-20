@@ -20,6 +20,7 @@ import server.trigger.http.access_mode
 import server.trigger.http.env
 import server.trigger.http.sherry_config
 import server.trigger.http.safety_filter  # noqa: F401  (side-effect route registration)
+import server.trigger.http.high_risk_guard  # noqa: F401  (side-effect route registration)
 import server.trigger.http.models_config
 import server.trigger.http.code_embedder  # noqa: F401  (side-effect route registration)
 import server.trigger.http.model_downloads  # noqa: F401  (side-effect route registration)
