@@ -15,6 +15,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
   - [3. Per-path locks](#3-per-path-locks)
   - [4. Leftover sweep](#4-leftover-sweep)
 - [Read-before-write license](#-read-before-write-license)
+- [Multi-file patch mode](#-multi-file-patch-mode)
 - [Shadow git checkpoints](#-shadow-git-checkpoints-the-git-readiness-gate-is-gone)
 - [Isolated subagent workspaces (git worktrees)](#-isolated-subagent-workspaces-git-worktrees)
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
@@ -65,6 +66,18 @@ The rule that surprises people: **lock files are never deleted.** The lock lives
 ### 4. Leftover sweep
 
 Only a hard kill between the temporary file's creation and the replace can leave a `.sherry-tmp-*.swp` behind; every failure path unlinks it. The next write into the same directory sweeps those older than 1 hour (`sweep_stale_temp_files`): a live writer's temporary file is seconds old, so the age threshold is what keeps the sweep away from it. The sweep never raises — a scan that cannot read the directory must not fail the write it precedes.
+
+## 🧩 Multi-file patch mode
+
+`patch_file` accepts a `patch` document instead of `file_path`/`old_string`/`new_string` (the Codex format: `*** Begin Patch` … `*** End Patch` with `*** Add File`, `*** Update File` plus `@@` hunks, `*** Delete File`, `*** Move to`). It is ONE tool: patch mode rides the same HITL / parallel-safety / plan-mode / PTC gates and the same metadata as str_replace.
+
+Three phases; a refusal in either of the first two changes NOTHING on disk:
+
+1. **parse** (`file_tools/patch_parser.py`) — headers, hunks, path validation (relative only: absolute, drive-letter and `..` paths are refused) and caps (1 MB patch, 100 operations, 100 hunks/file, 20k added lines).
+2. **preflight** (`file_tools/patch_apply.py`) — every path is resolved through `resolve_tool_path` (external / self-path gates), then the whole patch is SIMULATED in memory: file existence, binary refusal, destination collision, and each hunk through the same 11-strategy fuzzy matcher. A mismatch reports "Did you mean?" with the nearest sections.
+3. **commit** — one operation at a time: `file_write_lock` + `atomic_write_bytes_no_follow` with the revision CAS (`absent` for a create), `_format_py_code` for `.py` targets, `note_edit`, `sync_edited_file`, `claim_notice_for`, and a per-path evidence-stale mark. `ensure_checkpoint` runs ONCE for the whole patch. A commit failure stops the run: already-applied operations stay, the rest are reported `skipped` — no rollback.
+
+The str_replace mode is untouched (`patch` empty means the old path, same fields and the same `_core`). Patch mode does NOT require a read license — like str_replace, its contract is the two-layer CAS. Operations may target a path created/deleted earlier in the SAME patch (add → update, delete → add), and a move may carry hunks. `tests/agent/tools/file_tools/test_patch_parser.py` and `test_patch_file_patch_mode.py` pin the parser, preflight refusals, commit order, CAS, the per-op hooks and the "no partial write on refusal" rule.
 
 ## 🔒 Shadow git checkpoints (the git-readiness gate is gone)
 
@@ -246,6 +259,8 @@ browsable because it is the user's file.
 
 ## 🧪 Testing
 
+Patch mode: `test_patch_parser.py` (headers, hunks, path/caps refusals) and `test_patch_file_patch_mode.py` (add/update/delete/move, multi-hunk, preflight refusals with no disk change, partial-commit stop, UTF-16, hooks). 
+
 `tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix), `tests/agent/middlewares/test_license_invalidation.py` (compression drops the license of the reads it discards). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the dirty baseline, the auto-init deny list, the materialization (links, copies, untracked files), the external-path exemption, the merge CAS, conflicts, symlink skipping, the interface-change report and the per-root serialization; `tests/agent/tools/code_intel/test_symbol_diff.py` pins the symbol comparator (rename pairing, the group rule, creation/deletion, the error paths); `tests/server/test_project_files.py` pins the web browser's boundary plus the unbound-session and sherry-credential refusals.
 
 ## 🗺️ File Map
@@ -253,6 +268,8 @@ browsable because it is the user's file.
 | Path | Role |
 | --- | --- |
 | `agent/tools/pub_base/atomic_write.py` | Atomic write, revision ids, the leftover sweep |
+| `agent/tools/file_tools/patch_parser.py` | Multi-file patch parser: paths, hunks and caps |
+| `agent/tools/file_tools/patch_apply.py` | Preflight simulation + per-operation commit (CAS, locks, hooks) |
 | `agent/tools/pub_base/path_lock.py` | In-process per-path lock registry |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecars, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | The read-before-write license registry |

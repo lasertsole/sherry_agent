@@ -15,6 +15,7 @@
   - [3. 경로별 잠금](#3-경로별-잠금)
   - [4. 잔여 파일 청소](#4-잔여-파일-청소)
 - [읽기 우선 라이선스](#-읽기-우선-라이선스)
+- [다중 파일 patch 모드](#-다중-파일-patch-모드)
 - [Shadow git 체크포인트](#-shadow-git-체크포인트-기존-git-준비-게이트-제거)
 - [격리 서브에이전트 워크스페이스 (git worktree)](#-격리-서브에이전트-워크스페이스-git-worktree)
 - [대안과 실측](#%EF%B8%8F-대안과-실측)
@@ -65,6 +66,18 @@
 ### 4. 잔여 파일 청소
 
 임시 파일 생성과 replace 사이에 하드 킬된 경우에만 `.sherry-tmp-*.swp`가 남을 수 있습니다. 나머지 모든 실패 경로는 그것을 unlink합니다. 같은 디렉터리에 대한 다음 쓰기가 1시간을 넘긴 잔여를 청소합니다(`sweep_stale_temp_files`): 살아 있는 쓰는 자의 임시 파일은 몇 초밖에 살지 않으며, 나이 임계값이 바로 그것과 거리를 두기 위한 장치입니다. 청소는 결코 예외를 던지지 않습니다——디렉터리를 읽지 못하는 스캔이, 그것이 앞서는 쓰기를 실패시켜서는 안 됩니다.
+
+## 🧩 다중 파일 patch 모드
+
+`patch_file`은 `file_path`/`old_string`/`new_string` 대신 `patch` 문서를 받을 수 있습니다(Codex 형식: `*** Begin Patch` … `*** End Patch`, `*** Add File`, `*** Update File` + `@@` hunk, `*** Delete File`, `*** Move to`). 같은 하나의 도구이며, patch 모드도 동일한 HITL / 병렬 안전 / plan-mode / PTC 게이트와 metadata를 통과합니다.
+
+세 단계. 처음 두 단계 중 하나라도 거부되면 디스크는 **전혀 변경되지 않습니다**:
+
+1. **파싱**(`file_tools/patch_parser.py`) — 헤더, hunk, 경로 검증(상대 경로만: 절대 경로, 드라이브 문자, `..`는 거부), 상한(1 MB patch, 100 작업, 파일당 100 hunk, 2만 추가 줄).
+2. **프리플라이트**(`file_tools/patch_apply.py`) — 모든 경로를 `resolve_tool_path`(외부 / self-path 게이트)로 해석한 뒤, patch 전체를 메모리에서 **시뮬레이션**합니다: 파일 존재, 바이너리 거부, 대상 충돌, 각 hunk를 동일한 11단계 퍼지 매처로 검사. 불일치 시 가장 가까운 섹션으로 "Did you mean?"을 제공합니다.
+3. **커밋** — 작업별로 `file_write_lock` + `atomic_write_bytes_no_follow`(생성은 revision=`absent`), `.py` 대상은 `_format_py_code`, `note_edit`, `sync_edited_file`, `claim_notice_for`, 경로별 evidence stale 표시. `ensure_checkpoint`는 patch 전체에서 한 번만 실행됩니다. 커밋 실패 시 중단되며 완료된 작업은 남고 나머지는 `skipped`로 보고됩니다 — 롤백 없음.
+
+str_replace 모드는 그대로입니다(`patch`가 비어 있으면 기존 경로, 필드와 `_core`도 동일). patch 모드는 읽기 라이선스를 **요구하지 않습니다** — str_replace와 마찬가지로 이중 CAS가 계약입니다. 같은 patch 안에서 앞서 생성/삭제한 경로도 대상으로 할 수 있고(add → update, delete → add), move는 hunk를 가질 수 있습니다. `tests/agent/tools/file_tools/test_patch_parser.py`와 `test_patch_file_patch_mode.py`가 파서, 프리플라이트 거부, 커밋 순서, CAS, 작업별 훅, "거부 시 쓰기 없음"을 고정합니다.
 
 ## 🔒 Shadow git 체크포인트 (기존 git 준비 게이트 제거)
 
@@ -207,6 +220,8 @@
 
 ## 🧪 테스트
 
+patch 모드: `test_patch_parser.py`(헤더, hunk, 경로/상한 거부)와 `test_patch_file_patch_mode.py`(add/update/delete/move, 다중 hunk, 거부 시 무변경, 부분 커밋 중단, UTF-16, 훅).
+
 `tests/agent/tools/file_tools/`가 쓰기 경로를 고정합니다: `test_atomic_write.py`(원자성, 심볼릭 링크 거부, 두 CAS 계층, 잔여 청소), `test_file_write_concurrency.py`(병렬 패치, 찢어진 읽기 부재), `test_file_lock_cross_process.py`(실제 프로세스 둘, `kill -9` 해제), `test_read_before_write.py`(라이선스 매트릭스), `tests/agent/middlewares/test_license_invalidation.py`(압축이 버린 읽기의 라이선스를 삭제함). `tests/agent/tools/subagent/test_workspace_isolation.py`는 더러운 베이스라인, auto-init 거부 목록, 물질화(링크·복사·미추적 파일), 외부 경로 면제, 병합 CAS, 충돌, 심볼릭 링크 건너뛰기, 인터페이스 변경 보고, 부모 루트 단위 직렬화를 고정합니다; `tests/agent/tools/code_intel/test_symbol_diff.py`는 심볼 비교기(이름 변경 짝짓기, 그룹 규칙, 생성/삭제, 오류 경로)를 고정합니다.
 
 ## 🗺️ 파일 지도
@@ -214,6 +229,8 @@
 | 경로 | 역할 |
 | --- | --- |
 | `agent/tools/pub_base/atomic_write.py` | 원자적 쓰기, revision 식별자, 잔여 청소 |
+| `agent/tools/file_tools/patch_parser.py` | 다중 파일 patch 파서: 경로, hunk, 상한 |
+| `agent/tools/file_tools/patch_apply.py` | 프리플라이트 시뮬레이션 + 작업별 커밋(CAS, 잠금, 훅) |
 | `agent/tools/pub_base/path_lock.py` | 프로세스 내 경로별 잠금 레지스트리 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 읽기 우선 라이선스 레지스트리 |

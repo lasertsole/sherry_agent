@@ -15,6 +15,7 @@
   - [3. 按路径锁](#3-按路径锁)
   - [4. 残留清扫](#4-残留清扫)
 - [先读后写许可证](#-先读后写许可证)
+- [多文件 patch 模式](#-多文件-patch-模式)
 - [Shadow git 快照](#-shadow-git-快照原-git-就绪门已移除)
 - [隔离子代理工作区（git worktree）](#-隔离子代理工作区git-worktree)
 - [备选方案与实测](#%EF%B8%8F-备选方案与实测)
@@ -65,6 +66,18 @@
 ### 4. 残留清扫
 
 只有在临时文件创建到 replace 之间被硬杀，才可能留下 `.sherry-tmp-*.swp`；其余每个失败路径都会 unlink 它。下一次写入同一目录时会清扫其中超过 1 小时的残留（`sweep_stale_temp_files`）：活着的写者的临时文件只有几秒寿命，年龄阈值正是用来与它保持距离的。清扫从不抛异常——一次读不动目录的扫描绝不能让它所服务的那次写入失败。
+
+## 🧩 多文件 patch 模式
+
+`patch_file` 可以传 `patch` 文档代替 `file_path`/`old_string`/`new_string`（Codex 格式：`*** Begin Patch` … `*** End Patch`，内含 `*** Add File`、`*** Update File` + `@@` hunk、`*** Delete File`、`*** Move to`）。它仍然是同一个工具：patch 模式沿用相同的 HITL / 并发安全 / plan-mode / PTC 门禁与 metadata。
+
+三个阶段；前两个阶段任一拒绝都**不会改动磁盘**：
+
+1. **解析**（`file_tools/patch_parser.py`）——头部、hunk、路径校验（只允许相对路径：绝对路径、盘符路径与 `..` 一律拒绝）与上限（1 MB patch、100 个操作、每文件 100 个 hunk、2 万行新增）。
+2. **预检**（`file_tools/patch_apply.py`）——每个路径都经 `resolve_tool_path`（外部 / self-path 门禁）解析，然后在内存中**模拟整个 patch**：文件存在性、二进制拒绝、目标冲突，以及每个 hunk 走同一套 11 级模糊匹配。不匹配时用最近段落给出 "Did you mean?"。
+3. **提交**——逐操作执行：`file_write_lock` + `atomic_write_bytes_no_follow`（创建时 revision=`absent`）、`.py` 目标走 `_format_py_code`、`note_edit`、`sync_edited_file`、`claim_notice_for`，并为每个路径标记 evidence 失效。整个 patch 只调一次 `ensure_checkpoint`。提交失败即停止：已完成的保留，其余标记 `skipped`——不回滚。
+
+str_replace 模式完全不变（`patch` 为空即旧路径，字段与 `_core` 相同）。patch 模式**不要求先读**——与 str_replace 一样，它的契约是两层 CAS。操作可以针对**同一个 patch 内**先前创建/删除的路径（add → update、delete → add），move 可以带 hunk。`tests/agent/tools/file_tools/test_patch_parser.py` 与 `test_patch_file_patch_mode.py` 钉住解析器、预检拒绝、提交顺序、CAS、逐操作 hook 以及"拒绝即零改动"。
 
 ## 🔒 Shadow git 快照（原 git 就绪门已移除）
 
@@ -200,6 +213,8 @@
 
 ## 🧪 测试
 
+patch 模式：`test_patch_parser.py`（头部、hunk、路径/上限拒绝）与 `test_patch_file_patch_mode.py`（add/update/delete/move、多 hunk、拒绝时零改动、部分提交停止、UTF-16、hooks）。
+
 `tests/agent/tools/file_tools/` 钉住写路径：`test_atomic_write.py`（原子性、软链拒绝、两层 CAS、残留清扫）、`test_file_write_concurrency.py`（并发补丁、无撕裂读）、`test_file_lock_cross_process.py`（两个真实进程、`kill -9` 释放）、`test_read_before_write.py`（许可证矩阵）、`tests/agent/middlewares/test_license_invalidation.py`（压缩会清掉它丢弃的那些读取的许可证）。`tests/agent/tools/subagent/test_workspace_isolation.py` 钉住脏基线、auto-init 的拒入清单、物化（软链、复制、未跟踪文件）、外部路径豁免、合并 CAS、冲突、软链跳过、接口变更报告与按父根串行化；`tests/agent/tools/code_intel/test_symbol_diff.py` 钉住符号比较器（改名配对、分组规则、创建/删除、错误路径）。
 
 ## 🗺️ 文件地图
@@ -207,6 +222,8 @@
 | 路径 | 职责 |
 | --- | --- |
 | `agent/tools/pub_base/atomic_write.py` | 原子写、revision 标识、残留清扫 |
+| `agent/tools/file_tools/patch_parser.py` | 多文件 patch 解析器：路径、hunk 与上限 |
+| `agent/tools/file_tools/patch_apply.py` | 预检模拟 + 逐操作提交（CAS、锁、hooks） |
 | `agent/tools/pub_base/path_lock.py` | 进程内按路径锁注册表 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 先读后写许可证注册表 |
