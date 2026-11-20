@@ -43,6 +43,11 @@ class BackgroundTask:
     status: str = "running"  # running | completed | failed | killed
     exit_code: int | None = None
     live: bool = False  # whether a watcher still holds the process handle
+    #: Set for an ADOPTED task (timeout → background): the task's output lives
+    #: in a ``.sherry-tmp-stdout-*`` file the adopted child still holds an fd to,
+    #: and this is the retained ``evicted/`` path the file is moved to once the
+    #: child exits (a rename mid-run would fail on Windows and diverge on POSIX).
+    retained_path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The JSON shape the query tools and the WS frame share."""
@@ -226,6 +231,7 @@ class BackgroundTaskRegistry:
         task = self._tasks.get(task_id)
         if task is None:
             return
+        self._retain_adopted_output(task)
         if task.status == "killed":
             # A killed process exits non-zero, but "failed" is the wrong story:
             # the user/agent stopped it. Keep the status, record only the code.
@@ -248,6 +254,25 @@ class BackgroundTaskRegistry:
             return
         await self._push_exit_notification(task)
         await self._trigger_auto_turn(task)
+
+    def _retain_adopted_output(self, task: BackgroundTask) -> None:
+        """Move an adopted task's temp output into its retained evicted/ path.
+
+        The child is dead by now, so the rename that was impossible mid-run
+        (Windows locks a file with an open child handle) succeeds. Fail-open:
+        a failed move leaves the task pointing at the temp file, which the next
+        write into that session directory sweeps anyway.
+        """
+        source, dest = task.output_path, task.retained_path
+        if source is None or dest is None or not source.exists():
+            return
+        try:
+            import shutil
+
+            shutil.move(str(source), str(dest))
+            task.output_path = dest
+        except OSError:
+            logger.debug("background task {}: adopted output retention move failed", task.task_id)
 
     async def push_started(self, task: BackgroundTask) -> None:
         """Best-effort ``terminal_bg_started`` frame (the UI's "a task exists" edge).

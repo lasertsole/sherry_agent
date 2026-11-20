@@ -12,6 +12,7 @@
 
 - [개요와 위협 모델](#-개요와-위협-모델)
 - [격리 기능과 우선순위](isolation/README.ko.md)
+- [landlock 폴백](#landlock-폴백linux-bwrap-없음)
   - [🧱 격리 기능](isolation/README.ko.md#-격리-기능)
   - [📊 우선순위 매트릭스](isolation/README.ko.md#-우선순위-매트릭스)
 - [구현과 아키텍처](#%EF%B8%8F-구현과-아키텍처)
@@ -149,6 +150,10 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 1+3계층만 사용, 샌드박스 
 - **reject**: `{"decisions": [{"type": "reject", "message": "..."}]}`로 재개. 도구 결과가 오류 `ToolMessage`(`User denied: <msg>. <BLOCKED_MESSAGE>`)가 되고 아무것도 실행되지 않습니다.
 
 터미널 승인 카드는 백엔드가 `allowed_decisions`에 `session`을 넣은 경우에만 **세션 내 허용**을 표시합니다(카드에 도달한 캐시 가능한 일반 명령). 선택하면 명령의 처음 두 단어 패턴이 session allowlist에 기록되어 이후 일치 명령은 카드를 띄우지 않습니다. **approve**는 여전히 이번 한 번만 허용합니다. 위험 명령, confirm-all 모드, clawhub 원격 실행은 session 캐시를 제공하거나 기록하지 않으며, 이전에 일치 패턴이 저장되어 있어도 위험 명령은 session allowlist를 건너뜁니다.
+
+### landlock 폴백(Linux, bwrap 없음)
+
+`agent/tools/pub_base/sandbox_landlock.py`는 두 번째 Linux 백엔드입니다. bwrap이 없는 환경(슬림 컨테이너, distroless 이미지)에서는 커널 수준 landlock LSM(Linux 5.13+)이 외부 바이너리 없이 명령을 제한합니다. 규칙 집합은 **허용 목록** 방식 — 시스템 트리(`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`)는 읽기 전용, 호출자의 쓰기 루트와 `/dev/null`은 읽기+쓰기 — 이며, `~/.ssh` 같은 자격 증명 디렉터리는 **기본적으로 제외**됩니다(bwrap의 마스크보다 강하고, "파일 시스템 전체 읽기"보다 엄격). landlock은 **호출 프로세스 자신**만 제한할 수 있으므로 `wrap()`은 런처(`python -I -c <loader> -- <실제 명령>`)를 반환합니다. 런처는 규칙을 적용한 뒤(ctypes, 시스템 콜 444-446, 먼저 `PR_SET_NO_NEW_PRIVS`) `execvp`로 실제 명령을 실행합니다. 초기화 실패는 종료 코드 126 — 샌드박스는 **페일 클로즈**입니다(`required`에서 bwrap 누락과 동일).冻结 빌드와 x86_64/aarch64가 아닌 머신은 미지원을 보고합니다. REFER(ABI v2)와 TRUNCATE(ABI v3)는 커널에 따라 처리 권한이 늘어납니다. 테스트: `tests/agent/tools/pub_base/test_sandbox_landlock.py`(probe/사양/팩토리. 실제 시스템 콜 경로에는 5.13+ 커널 필요).
 
 ## 🧪 테스트
 

@@ -12,6 +12,7 @@
 
 - [概览与威胁模型](#-概览与威胁模型)
 - [隔离能力与优先级](isolation/README.zh.md)
+- [landlock 兜底](#landlock-兜底linux无-bwrap)
   - [🧱 隔离能力](isolation/README.zh.md#-隔离能力)
   - [📊 优先级矩阵](isolation/README.zh.md#-优先级矩阵)
 - [实现与架构](#%EF%B8%8F-实现与架构)
@@ -150,6 +151,10 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 只用第 1+3 层，沙箱 shell �
 - **reject**：以 `{"decisions": [{"type": "reject", "message": "..."}]}` 恢复；工具结果变成错误 `ToolMessage`（`User denied: <msg>. <BLOCKED_MESSAGE>`），什么都不会执行。
 
 终端审批卡片只有在后端把 `session` 放进 `allowed_decisions` 时才显示 **本会话允许**：即真正到达卡片的可缓存普通命令。选择后会把命令前两个词的模式写入 session allowlist，后续匹配命令不再弹卡；**approve** 仍只放行本次。危险命令、变更前确认模式和 clawhub 远程执行不提供也不写入 session 缓存；即使之前存过匹配模式，危险命令也会跳过 session allowlist。
+
+### landlock 兜底（Linux，无 bwrap）
+
+`agent/tools/pub_base/sandbox_landlock.py` 是第二个 Linux 后端：bwrap 缺失时（精简容器、distroless 镜像），内核级 landlock LSM（Linux 5.13+）不需要任何外部二进制就能限制命令。规则是**允许清单**——系统树（`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`）只读，调用方的可写根与 `/dev/null` 可读写——因此 `~/.ssh` 等凭据目录被**默认排除**（比 bwrap 的遮挡更强，比"整个文件系统只读"更严格）。landlock 只能限制**调用进程自身**，所以 `wrap()` 返回一个启动器——`python -I -c <loader> -- <真实命令>`——先应用规则（ctypes，系统调用号 444-446，先 `PR_SET_NO_NEW_PRIVS`）再 `execvp` 真实命令；规则放在一个环境变量里，加载器会把它弹出。初始化失败以 126 退出：沙箱**失败即关闭**，与 `required` 下缺失 bwrap 一致。冻结构建与非 x86_64/aarch64 机器报告不支持，保持原派发。REFER（ABI v2）与 TRUNCATE（ABI v3）随内核扩展受控集合。测试：`tests/agent/tools/pub_base/test_sandbox_landlock.py`（probe/规则/工厂；真实系统调用路径需要 5.13+ 内核）。
 
 ## 🧪 测试
 

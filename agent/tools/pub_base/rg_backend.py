@@ -250,19 +250,32 @@ def _run_ripgrep(
     return matches, stop_reason
 
 
-def rg_search(query: Any, state: Any, *, binary: str) -> dict | None:
+def rg_search(query: Any, state: Any, *, binary: str, output_mode: str = "content") -> dict | None:
     """Content search through ripgrep, or ``None`` when the walk must run.
 
     ``query`` is a :class:`~agent.tools.file_tools.search_scan.SearchQuery`,
     ``state`` a :class:`~agent.tools.file_tools.search_scan.ScanState`.
+    ``output_mode="count"`` aggregates the same match stream into per-file
+    totals instead of returning the matches themselves.
+
+    The aggregation happens in Python over the usual ``--json`` match frames
+    rather than via rg's own ``--count`` — the frame contract is stable across
+    rg versions while the count frames are not, and this shares the whole
+    existing pipeline (globs, watchdog, budget, fallbacks) with content mode.
     """
     page_cap = state.offset + state.limit + 1
-    includes = [query.file_glob] if query.file_glob else []
-    args = [*_base_args(binary, include_globs=includes)]
+    args = [*_base_args(binary, include_globs=list(query.include_globs))]
+    if query.multiline:
+        # -U lets the pattern span lines; --multiline-dotall makes `.` cross
+        # them too, which is what the Python walk's re.DOTALL answers with.
+        args.extend(["--multiline", "--multiline-dotall"])
     # `-m` is per file; it bounds a single pathological file, while the total
     # cap below is what actually stops the scan (one match past the page proves
-    # more exist, which is how the walk decides the same thing).
-    args.extend(["-m", str(page_cap)])
+    # more exist, which is how the walk decides the same thing). A per-file
+    # MATCH COUNT is itself the result in count mode, so the cap there is the
+    # global match budget instead of the page size.
+    per_file_cap = state.max_matches if output_mode == "count" else page_cap
+    args.extend(["-m", str(per_file_cap)])
     args.extend(["--", query.pattern, "."])
 
     budget = float(TOOLS_TIMEOUTS["file_tools_search_time_budget_s"])
@@ -270,15 +283,19 @@ def rg_search(query: Any, state: Any, *, binary: str) -> dict | None:
     if stop_reason == "unavailable":
         return None
 
-    if len(matches) >= page_cap:
-        # More results exist than the page can hold: keep the page and say so.
-        matches = matches[:page_cap]
-        state.page_truncated = True
     if len(matches) >= state.max_matches:
         matches = matches[: state.max_matches]
         stop_reason = "max_matches"
     if stop_reason is not None:
         state.stop_reason = stop_reason
+
+    if output_mode == "count":
+        return _count_result(matches, state)
+
+    if len(matches) >= page_cap:
+        # More results exist than the page can hold: keep the page and say so.
+        matches = matches[:page_cap]
+        state.page_truncated = True
 
     entries = [entry for entry, _ in matches]
     if query.context > 0:
@@ -290,6 +307,26 @@ def rg_search(query: Any, state: Any, *, binary: str) -> dict | None:
             entry.pop("context_before", None)
             entry.pop("context_after", None)
     return result
+
+
+def _count_result(matches: list[tuple[dict[str, Any], Path]], state: Any) -> dict:
+    """Group the collected match stream into per-file totals.
+
+    ``--sort=path`` makes one file's matches contiguous in the stream, so the
+    grouping preserves rg's deterministic order. The page is cut over FILES,
+    and ``count`` names what the number means (matches, not matching lines) —
+    the same distinction rg's own ``--count-matches`` makes. Paths render
+    through ``display_path(path)`` — the same anchor the walk's count mode
+    uses, so both engines answer the same shape.
+    """
+    grouped: dict[Path, int] = {}
+    for _entry, path in matches:
+        grouped[path] = grouped.get(path, 0) + 1
+    entries = [{"path": display_path(path), "count": count} for path, count in grouped.items()]
+    page_cap = state.offset + state.limit + 1
+    if len(entries) >= page_cap:
+        state.page_truncated = True
+    return state.finish("counts", entries)
 
 
 def rg_search_files(query: Any, state: Any, *, binary: str) -> dict | None:

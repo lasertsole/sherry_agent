@@ -305,9 +305,28 @@ def register_sandbox_backend(
     _BACKEND_FACTORIES[name] = factory
 
 
-register_sandbox_backend(
-    "Linux", _lazy_backend("agent.tools.pub_base.sandbox_bwrap", "BwrapBackend")
-)
+def _linux_backend_factory() -> SandboxBackend:
+    """bwrap when the binary exists, landlock (kernel LSM) when it does not.
+
+    The eval harness's slim containers ship no bwrap and used to fall all the
+    way back to unsandboxed; landlock needs only a 5.13+ kernel. The composite
+    keeps bwrap first (it can also mask the credential directories an
+    allow-list LSM cannot carve out).
+    """
+    try:
+        from agent.tools.pub_base.sandbox_bwrap import BwrapBackend
+
+        backend = BwrapBackend()
+        if backend.probe():
+            return backend
+    except ImportError:
+        pass  # a broken bwrap module degrades to the landlock probe
+    from agent.tools.pub_base.sandbox_landlock import LandlockBackend
+
+    return LandlockBackend()
+
+
+register_sandbox_backend("Linux", _linux_backend_factory)
 register_sandbox_backend(
     "Darwin", _lazy_backend("agent.tools.pub_base.sandbox_seatbelt", "SeatbeltBackend")
 )

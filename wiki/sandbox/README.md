@@ -12,6 +12,7 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 
 - [Overview & Threat Model](#-overview--threat-model)
 - [Isolation Capabilities & Precedence](isolation/README.md)
+- [The landlock fallback](#the-landlock-fallback-linux-no-bwrap)
   - [🧱 Isolation Capabilities](isolation/README.md#-isolation-capabilities)
   - [📊 Precedence Matrix](isolation/README.md#-precedence-matrix)
 - [Implementation & Architecture](#%EF%B8%8F-implementation--architecture)
@@ -149,6 +150,10 @@ When a server-side caller requests `sandbox=False` in the main session (non-YOLO
 - **reject**: resume with `{"decisions": [{"type": "reject", "message": "..."}]}`; the tool result becomes an error `ToolMessage` (`User denied: <msg>. <BLOCKED_MESSAGE>`) and nothing executes.
 
 The terminal approval card also offers **Allow for Session** only when the backend sends `session` in `allowed_decisions`: a cacheable ordinary command that actually reached the card. Choosing it writes the command's first two-word pattern to the session allowlist, so later matching commands skip the card; **approve** remains one-shot. Dangerous commands, confirm-all mode and clawhub remote execution never offer or write the session cache, and a dangerous command skips the session allowlist even when a matching pattern was stored earlier.
+
+### The landlock fallback (Linux, no bwrap)
+
+`agent/tools/pub_base/sandbox_landlock.py` is the second Linux backend: when bwrap is absent (slim containers, distroless images), the kernel-level landlock LSM (Linux 5.13+) restricts the command with no external binary. The ruleset is an ALLOW-LIST — read only on the system trees (`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`), read+write on the caller's writable roots and `/dev/null` — so `~/.ssh` and the other credential directories are denied by OMISSION (stronger than bwrap's mask, stricter than "whole filesystem read-only"). landlock can only restrict the CALLING process, so `wrap()` returns a launcher — `python -I -c <loader> -- <real command>` — that applies the rules (ctypes, syscall numbers 444-446, `PR_SET_NO_NEW_PRIVS` first) and `execvp`s the command; the rules ride one env var that the loader pops. An init failure exits 126: the sandbox fails CLOSED, like a missing bwrap under `required`. Frozen builds and non-x86_64/aarch64 machines report unsupported and keep the previous dispatch. REFER (ABI v2) and TRUNCATE (ABI v3) grow the handled set with the kernel. Tests: `tests/agent/tools/pub_base/test_sandbox_landlock.py` (probe/spec/factory; the real syscall path needs a 5.13+ kernel).
 
 ## 🧪 Testing
 

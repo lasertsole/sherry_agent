@@ -54,6 +54,11 @@ from agent.tools.pub_base import (
     sniff_text_encoding,
 )
 from agent.tools.pub_base.stream_read import read_line_window
+from agent.tools.file_tools.line_selector import (
+    LineSelector,
+    conflict_blocks,
+    parse_line_selector,
+)
 from config.features import MEDIA_PIPELINE, TOKEN_ESTIMATION, TOOLS_TIMEOUTS
 from config.path import TEMP_DIR
 from pub.func.cjk import is_cjk_codepoint
@@ -257,8 +262,12 @@ class ReadFileInput(BaseModel):
         the model controls, and a model-level error (``loc=()``) is dropped —
         the model would get a blank "fix the error" message instead of this
         refusal.
+
+        A trailing GJC selector (``archive.zip:10-20``) is stripped first, or
+        the extension check would see ``.zip:10-20`` and miss the refusal.
         """
-        lower = path.lower()
+        stripped, _selector, _error = parse_line_selector(path)
+        lower = (stripped if _selector is not None else path).lower()
 
         if lower in _BLOCKING_DEVICE_PATHS:
             raise ValueError(
@@ -303,6 +312,10 @@ class ReadFileTool(BaseTool):
         "whole-file read of a file over the whole-read limit is refused with "
         "the file size, so pass offset/limit to page it. Binary files and "
         "device paths are refused. "
+        "A GJC line selector on the path reads a section directly: "
+        "'src/app.py:50-200' reads lines 50-200, ':50-200,960-973' several "
+        "ranges, ':42' one line, ':conflicts' the git conflict hunks, ':raw' "
+        "the file without line numbers. A selector overrides offset/limit. "
         "Reading the WHOLE file (first page, nothing truncated) is what allows "
         "write_file to overwrite it later — write_file refuses to replace a file "
         "this session has not read. Image files (png/jpg/gif/webp/bmp/tiff) are "
@@ -506,7 +519,10 @@ class ReadFileTool(BaseTool):
         limit: int = _READ_DEFAULT_LIMIT,
         session_id: str = "",
     ) -> str | list[dict[str, Any]]:
-        root, resolved, error = resolve_tool_path(file_path, session_id, "read file", mode="read")
+        path_part, selector, selector_error = parse_line_selector(file_path)
+        if selector_error:
+            return json.dumps({"error": selector_error}, ensure_ascii=False)
+        root, resolved, error = resolve_tool_path(path_part, session_id, "read file", mode="read")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
         root = root
@@ -563,6 +579,20 @@ class ReadFileTool(BaseTool):
         except OSError:
             file_size = 0
 
+        # The selective views (multi-range, :conflicts) need their own reader:
+        # they join discontiguous windows and never license a write. A single
+        # range and :raw translate into the ordinary offset/limit machinery
+        # below and keep every behaviour it already has.
+        if selector is not None and (selector.kind == "conflicts" or selector.is_selective):
+            return self._read_selected(resolved, root, file_size, selector, session_id)
+        if selector is not None and selector.ranges:
+            start, end = selector.ranges[0]
+            offset, limit = start, end - start + 1
+        elif selector is not None and selector.kind == "raw":
+            # A bare :raw reads the whole file without line numbers; it pages
+            # like an explicit range so a huge file is still bounded.
+            offset, limit = 1, _READ_MAX_LIMIT
+
         # Whole-read refusal: the caller did not ask for a RANGE (first page at
         # the default limit) and the file is over the limit. A range read of the
         # same file is never refused — refusing it would leave a model that
@@ -590,8 +620,11 @@ class ReadFileTool(BaseTool):
 
         # Streaming path: the file is read chunk by chunk, so only the window
         # (plus one clipped line head) ever reaches the heap.
+        numbered = selector.wants_line_numbers if selector is not None else True
         if _FAST_PATH_THRESHOLD > 0 and file_size >= _FAST_PATH_THRESHOLD:
-            return self._paginate_streaming(resolved, root, file_size, offset, limit, session_id)
+            return self._paginate_streaming(
+                resolved, root, file_size, offset, limit, session_id, numbered=numbered
+            )
 
         # A same-path writer must not change the bytes between the read and the
         # revision/license below. Different paths take independent gates.
@@ -601,8 +634,134 @@ class ReadFileTool(BaseTool):
                 return error or tool_error("Failed to read file")
 
             return self._paginate(
-                resolved, root, data, read_stat, file_size, offset, limit, session_id
+                resolved,
+                root,
+                data,
+                read_stat,
+                file_size,
+                offset,
+                limit,
+                session_id,
+                numbered=numbered,
             )
+
+    def _read_selected(
+        self,
+        resolved: Path,
+        root: Path,
+        file_size: int,
+        selector: LineSelector,
+        session_id: str,
+    ) -> str:
+        """The discontiguous views: several ranges or the git conflict hunks.
+
+        The whole file is read once (bounded by the same streaming threshold a
+        whole read has) and the requested windows are cut out of it. The result
+        is a SELECTIVE view by construction: it never licenses a write and is
+        never stubbed as unchanged, whatever it covers.
+        """
+        del session_id  # the read state is deliberately not advanced
+        if _FAST_PATH_THRESHOLD > 0 and file_size >= _FAST_PATH_THRESHOLD:
+            return json.dumps(
+                {
+                    "error": (
+                        f"File is {file_size} bytes — too large for a "
+                        f"':{selector.kind or 'ranges'}' read (limit {_FAST_PATH_THRESHOLD}). "
+                        "Use single ranges (offset/limit, they stream) or search_files."
+                    ),
+                    "path": display_path(resolved, root),
+                    "file_size": file_size,
+                },
+                ensure_ascii=False,
+            )
+
+        with file_read_lock(resolved):
+            data, read_stat, error = self._read_bytes(resolved)
+        if error is not None or data is None or read_stat is None:
+            return error or tool_error("Failed to read file")
+        encoding = sniff_text_encoding(data)
+        if encoding is None:
+            return json.dumps(
+                {
+                    "error": (
+                        "File is binary or not UTF-8/UTF-16 text "
+                        f"({file_size} bytes); read_file shows text only."
+                    ),
+                    "path": display_path(resolved, root),
+                },
+                ensure_ascii=False,
+            )
+        all_lines = decode_text(data, encoding).splitlines(keepends=True)
+        total_lines = len(all_lines)
+
+        blocks = conflict_blocks(all_lines) if selector.kind == "conflicts" else selector.ranges
+        if not blocks:
+            return json.dumps(
+                {
+                    "content": "",
+                    "total_lines": total_lines,
+                    "file_size": file_size,
+                    "truncated": False,
+                    "truncated_by_token_cap": False,
+                    "note": "no conflict markers found in this file",
+                },
+                ensure_ascii=False,
+            )
+
+        requested = sum(end - start + 1 for start, end in blocks)
+        if requested > 2 * _READ_MAX_LIMIT:
+            return json.dumps(
+                {
+                    "error": (
+                        f"Selector asks for {requested} lines; a selective read is "
+                        f"capped at {2 * _READ_MAX_LIMIT}. Split it into calls or page "
+                        "with offset/limit."
+                    ),
+                    "path": display_path(resolved, root),
+                },
+                ensure_ascii=False,
+            )
+
+        pieces: list[str] = []
+        clamped = False
+        _, per_line_cap = _page_budget_limits()
+        for start, end in blocks:
+            if start > total_lines:
+                clamped = True
+                continue
+            stop = min(end, total_lines)
+            if stop < end:
+                clamped = True
+            chunk: list[str] = []
+            for index in range(start - 1, stop):
+                line = all_lines[index]
+                cost = _line_token_cost(line, cap=per_line_cap)
+                if cost > per_line_cap:
+                    keep = _chars_for_tokens(line, per_line_cap)
+                    line = line[:keep] + _LINE_CLIP_MARKER.format(
+                        omitted=len(all_lines[index]) - keep
+                    )
+                chunk.append(line)
+            text = "".join(chunk)
+            if text.endswith("\n"):
+                text = text[:-1]
+            pieces.append(_add_line_numbers(text, start) if selector.wants_line_numbers else text)
+
+        content = "\n...\n".join(pieces)
+        result: dict[str, object] = {
+            "content": content,
+            "total_lines": total_lines,
+            "file_size": file_size,
+            "truncated": clamped,
+            "truncated_by_token_cap": False,
+            "selected": True,
+        }
+        if clamped:
+            result["hint"] = (
+                "One or more requested ranges ran past the end of the file and "
+                f"were clamped (the file has {total_lines} lines)."
+            )
+        return json.dumps(result, ensure_ascii=False)
 
     def _paginate_streaming(
         self,
@@ -612,6 +771,8 @@ class ReadFileTool(BaseTool):
         offset: int,
         limit: int,
         session_id: str,
+        *,
+        numbered: bool = True,
     ) -> str:
         """Read a window of an oversized file without loading it into memory.
 
@@ -680,7 +841,9 @@ class ReadFileTool(BaseTool):
         page_text = "".join(page_lines)
         if page_text.endswith("\n"):
             page_text = page_text[:-1]
-        numbered_content = _add_line_numbers(page_text, offset) if page_text else ""
+        numbered_content = (
+            _add_line_numbers(page_text, offset) if page_text and numbered else page_text
+        )
 
         target_tokens, _ = _page_budget_limits()
         result: dict[str, object] = {
@@ -718,6 +881,8 @@ class ReadFileTool(BaseTool):
         offset: int,
         limit: int,
         session_id: str,
+        *,
+        numbered: bool = True,
     ) -> str:
         """Decode a window of the file and license a whole-file read.
 
@@ -768,7 +933,9 @@ class ReadFileTool(BaseTool):
         if page_text.endswith("\n"):
             page_text = page_text[:-1]
 
-        numbered_content = _add_line_numbers(page_text, offset) if page_text else ""
+        numbered_content = (
+            _add_line_numbers(page_text, offset) if page_text and numbered else page_text
+        )
         # A clipped single line is truncation too: the caller has NOT seen the
         # whole file, so no write license may be granted off this read.
         truncated = total_lines > end_line or clipped

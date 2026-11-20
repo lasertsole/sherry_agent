@@ -61,20 +61,31 @@ def _stays_within_root(candidate: Path, root: Path) -> bool:
     return True
 
 
-def _search_content(query: SearchQuery, state: ScanState) -> dict:
+def _glob_admits(fname: str, include_globs: tuple[str, ...]) -> bool:
+    """True when *fname* passes every include glob (empty set admits all)."""
+    if not include_globs:
+        return True
+    return any(fnmatch.fnmatch(fname, glob) for glob in include_globs)
+
+
+def _search_content(query: SearchQuery, state: ScanState, output_mode: str = "content") -> dict:
     try:
-        regex = re.compile(query.pattern, re.IGNORECASE)
+        flags = re.IGNORECASE | (re.DOTALL | re.MULTILINE if query.multiline else 0)
+        regex = re.compile(query.pattern, flags)
     except re.error as e:
         return {"error": f"Invalid regex pattern: {e}"}
 
     matches: list[dict] = []
+    # Per-match display paths keyed the same way the rg engine's count mode
+    # keys them (display_path of the RESOLVED path), so both engines agree.
+    count_paths: list[str] = []
 
     for dirpath, filenames in bounded_walk(query.root, state):
         for fname in sorted(filenames):
             if state.expired():
                 state.note_budget()
                 break
-            if query.file_glob and not fnmatch.fnmatch(fname, query.file_glob):
+            if not _glob_admits(fname, query.include_globs):
                 continue
 
             fpath = dirpath / fname
@@ -84,30 +95,62 @@ def _search_content(query: SearchQuery, state: ScanState) -> dict:
                 continue
 
             try:
-                lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
+                # newline="" keeps the bytes as-is (no universal-newline
+                # translation), so the walk and rg see the SAME text — a
+                # multi-line pattern's \n must match a CRLF file the same way
+                # it matches an LF one.
+                with fpath.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+                    text = handle.read()
             except (OSError, PermissionError):
                 continue
 
-            for i, line in enumerate(lines):
-                if regex.search(line):
-                    ctx_before = lines[max(0, i - query.context) : i] if query.context else []
-                    ctx_after = lines[i + 1 : i + 1 + query.context] if query.context else []
+            if query.multiline:
+                # The pattern spans lines: scan the file text and report each
+                # match at its STARTING line (the same convention rg -U uses).
+                for m in regex.finditer(text):
+                    start_line = text.count("\n", 0, m.start()) + 1
                     matches.append(
                         {
                             "path": display_path(fpath, query.root),
-                            "line_number": i + 1,
-                            "content": line[:500],
-                            "context_before": ctx_before,
-                            "context_after": ctx_after,
+                            "line_number": start_line,
+                            "content": m.group(0)[:500],
                         }
                     )
+                    count_paths.append(display_path(fpath))
                     state.note_match(len(matches))
                     if state.stopped:
                         break
+            else:
+                lines = text.splitlines()
+                for i, line in enumerate(lines):
+                    if regex.search(line):
+                        ctx_before = lines[max(0, i - query.context) : i] if query.context else []
+                        ctx_after = lines[i + 1 : i + 1 + query.context] if query.context else []
+                        matches.append(
+                            {
+                                "path": display_path(fpath, query.root),
+                                "line_number": i + 1,
+                                "content": line[:500],
+                                "context_before": ctx_before,
+                                "context_after": ctx_after,
+                            }
+                        )
+                        count_paths.append(display_path(fpath))
+                        state.note_match(len(matches))
+                        if state.stopped:
+                            break
             if state.stopped:
                 break
         if state.stopped:
             break
+
+    if output_mode == "count":
+        grouped: dict[str, int] = {}
+        for path_key in count_paths:
+            grouped[path_key] = grouped.get(path_key, 0) + 1
+        return state.finish(
+            "counts", [{"path": path, "count": count} for path, count in grouped.items()]
+        )
 
     result = state.finish("matches", matches)
     if query.context <= 0:
@@ -148,6 +191,34 @@ def _search_files(query: SearchQuery, state: ScanState) -> dict:
 # ── LangChain tool ───────────────────────────────────────────────────────
 
 
+#: The ``type`` filter: a language name expands to filename globs BOTH engines
+#: apply identically (the rg engine gets them as ``--glob`` includes, so no
+#: dependence on rg's own --type table being installed or versioned the same).
+_TYPE_GLOBS: dict[str, tuple[str, ...]] = {
+    "python": ("*.py", "*.pyi"),
+    "typescript": ("*.ts", "*.tsx", "*.mts", "*.cts"),
+    "javascript": ("*.js", "*.jsx", "*.mjs", "*.cjs"),
+    "rust": ("*.rs",),
+    "go": ("*.go",),
+    "java": ("*.java",),
+    "kotlin": ("*.kt", "*.kts"),
+    "swift": ("*.swift",),
+    "c": ("*.c", "*.h"),
+    "cpp": ("*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh"),
+    "csharp": ("*.cs",),
+    "ruby": ("*.rb",),
+    "php": ("*.php",),
+    "shell": ("*.sh", "*.bash", "*.zsh"),
+    "sql": ("*.sql",),
+    "html": ("*.html", "*.htm"),
+    "css": ("*.css", "*.scss", "*.sass", "*.less"),
+    "markdown": ("*.md", "*.markdown"),
+    "yaml": ("*.yaml", "*.yml"),
+    "json": ("*.json",),
+    "toml": ("*.toml",),
+}
+
+
 class SearchFilesInput(BaseModel):
     pattern: str = Field(
         description="Search pattern: regex for content search, glob for file name search"
@@ -163,6 +234,28 @@ class SearchFilesInput(BaseModel):
     file_glob: str | None = Field(
         default=None,
         description="File name filter for content search, e.g. '*.py' (only used when target='content')",
+    )
+    output_mode: str = Field(
+        default="content",
+        description=(
+            "'content' (default) returns the matching lines; 'count' returns "
+            "one match COUNT per file (the page lists files, limit caps files)"
+        ),
+    )
+    multiline: bool = Field(
+        default=False,
+        description=(
+            "Let the pattern match across lines (e.g. 'try.*catch' spanning a "
+            "body); matches report their starting line"
+        ),
+    )
+    type: str | None = Field(
+        default=None,
+        description=(
+            "Language filter for content search: python, typescript, javascript, "
+            "rust, go, java, kotlin, swift, c, cpp, csharp, ruby, php, shell, "
+            "sql, html, css, markdown, yaml, json, toml"
+        ),
     )
     limit: int = Field(
         default=50,
@@ -197,7 +290,9 @@ class SearchFilesTool(BaseTool):
     description: str = (
         "Search for a regex pattern inside files (target='content') or "
         "find files by name pattern (target='files'). "
-        "Use file_glob to filter by extension when searching content."
+        "Use file_glob to filter by extension, `type` for a language filter "
+        "(e.g. python, rust), output_mode='count' for per-file match counts, "
+        "and multiline=true when the pattern spans lines."
     )
     metadata: dict = {"idempotent": True}
 
@@ -213,6 +308,9 @@ class SearchFilesTool(BaseTool):
         offset: int = 0,
         context: int = 0,
         session_id: str = "",
+        output_mode: str = "content",
+        multiline: bool = False,
+        type_filter: str | None = None,
     ) -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
@@ -243,18 +341,40 @@ class SearchFilesTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        if target != "files" and output_mode not in ("content", "count"):
+            return tool_error(
+                f"Unknown output_mode {output_mode!r}: expected 'content' or 'count'."
+            )
+        include_globs: tuple[str, ...] = ()
+        if target != "files":
+            globs: list[str] = []
+            if file_glob:
+                globs.append(file_glob)
+            if type_filter:
+                language = type_filter.strip().lower()
+                mapped = _TYPE_GLOBS.get(language)
+                if mapped is None:
+                    return tool_error(
+                        f"Unknown type {type_filter!r}; available: "
+                        + ", ".join(sorted(_TYPE_GLOBS))
+                    )
+                globs.extend(mapped)
+            include_globs = tuple(dict.fromkeys(globs))
+
         state = ScanState.start(offset, limit)
         query = (
             SearchQuery(pattern, resolved)
             if target == "files"
-            else SearchQuery(pattern, resolved, file_glob, context)
+            else SearchQuery(pattern, resolved, include_globs, context, multiline)
         )
 
-        result = self._engine(query, target, state)
+        result = self._engine(query, target, state, output_mode)
         return json.dumps(result, ensure_ascii=False)
 
     @staticmethod
-    def _engine(query: SearchQuery, target: str, state: ScanState) -> dict:
+    def _engine(
+        query: SearchQuery, target: str, state: ScanState, output_mode: str = "content"
+    ) -> dict:
         """Run the ripgrep engine, or the Python walk when it cannot serve this query.
 
         The walk is not a leftover: it is the answer for hosts without ``rg``, for
@@ -274,12 +394,16 @@ class SearchFilesTool(BaseTool):
             result = (
                 rg_search_files(query, state, binary=binary)
                 if target == "files"
-                else rg_search(query, state, binary=binary)
+                else rg_search(query, state, binary=binary, output_mode=output_mode)
             )
             if result is not None:
                 return result
 
-        return _search_files(query, state) if target == "files" else _search_content(query, state)
+        return (
+            _search_files(query, state)
+            if target == "files"
+            else _search_content(query, state, output_mode)
+        )
 
     @override
     def _run(
@@ -292,10 +416,25 @@ class SearchFilesTool(BaseTool):
         offset: int = 0,
         context: int = 0,
         session_id: str = "",
+        output_mode: str = "content",
+        multiline: bool = False,
+        type: str | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = resolve_tool_session_id(session_id, run_manager)
-        return self._core(pattern, target, path, file_glob, limit, offset, context, session_id)
+        return self._core(
+            pattern,
+            target,
+            path,
+            file_glob,
+            limit,
+            offset,
+            context,
+            session_id,
+            output_mode,
+            multiline,
+            type,
+        )
 
     @override
     async def _arun(
@@ -308,13 +447,27 @@ class SearchFilesTool(BaseTool):
         offset: int = 0,
         context: int = 0,
         session_id: str = "",
+        output_mode: str = "content",
+        multiline: bool = False,
+        type: str | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = resolve_tool_session_id(session_id, run_manager)
         # The scan (walk or child process) is blocking work; run it in a worker
         # thread so a search cannot stall the event loop for its whole budget.
         return await asyncio.to_thread(
-            self._core, pattern, target, path, file_glob, limit, offset, context, session_id
+            self._core,
+            pattern,
+            target,
+            path,
+            file_glob,
+            limit,
+            offset,
+            context,
+            session_id,
+            output_mode,
+            multiline,
+            type,
         )
 
 

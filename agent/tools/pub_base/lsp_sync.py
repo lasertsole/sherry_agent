@@ -42,6 +42,7 @@ from .evidence_ledger import EvidenceLedger, normalize_evidence_path
 from .path_utils import session_workspace_root
 
 __all__ = [
+    "format_edited_file",
     "schedule_auto_diagnostics",
     "shutdown_auto_diagnostics",
     "sync_edited_file",
@@ -113,6 +114,50 @@ def sync_edited_path(file_path: str, session_id: str = "") -> bool:
     except Exception:  # noqa: BLE001 - the edit already succeeded
         logger.opt(exception=True).debug("LSP path sync failed (fail-open)")
         return False
+
+
+def format_edited_file(file_path: str, session_id: str = "") -> int:
+    """Format a just-written file through its ALREADY-ACQUIRED language server.
+
+    The write-side counterpart of :func:`sync_edited_file`: the server that
+    already holds the document is asked for ``textDocument/formatting`` and the
+    returned edits are applied to the file on disk. A server is never STARTED
+    (the LSP layer stays lazy — a cold start would turn every write into a
+    seconds-long stall, which is the plan's own kill criterion), a method or
+    transport failure leaves the file exactly as written, and the caller re-reads
+    the revision afterwards, so the write license covers the formatted bytes.
+
+    :returns: the number of applied edits (0 = nothing happened, fail-open).
+    """
+    try:
+        _language, client = _client_for(file_path, session_id)
+        if client is None:
+            return 0
+        raw = Path(file_path).read_bytes()
+        if len(raw) > int(LSP["lsp_max_file_bytes"]):
+            return 0
+        client.sync_document(file_path, raw.decode("utf-8", "replace"))
+        response = client.request(
+            "textDocument/formatting",
+            {
+                "textDocument": {"uri": path_to_uri(file_path)},
+                "options": {"tabSize": 4, "insertSpaces": True},
+            },
+            timeout=max(1.0, float(LSP["lsp_diagnostics_timeout_s"])),
+        )
+        if "error" in response:
+            return 0
+        result = response.get("result")
+        if not isinstance(result, list) or not result:
+            return 0
+        from agent.tools.code_intel.lsp.tools import _apply_text_edits
+
+        edits = [item for item in result if isinstance(item, dict)]
+        applied, _error = _apply_text_edits(Path(file_path), edits)
+        return applied
+    except Exception:  # noqa: BLE001 - formatting is advisory, the write succeeded
+        logger.opt(exception=True).debug("LSP write-time format failed (fail-open)")
+        return 0
 
 
 def schedule_auto_diagnostics(file_path: str, session_id: str) -> None:

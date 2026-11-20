@@ -12,6 +12,7 @@
 
 - [概要と脅威モデル](#-概要と脅威モデル)
 - [分離機能と優先順位](isolation/README.ja.md)
+- [landlock フォールバック](#landlock-フォールバックlinuxbwrap-なし)
   - [🧱 分離機能](isolation/README.ja.md#-分離機能)
   - [📊 優先順位マトリクス](isolation/README.ja.md#-優先順位マトリクス)
 - [実装とアーキテクチャ](#%EF%B8%8F-実装とアーキテクチャ)
@@ -149,6 +150,10 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 第 1+3 層のみ、サンドボ�
 - **reject**: `{"decisions": [{"type": "reject", "message": "..."}]}` で再開。ツール結果はエラー `ToolMessage`(`User denied: <msg>. <BLOCKED_MESSAGE>`)になり、何も実行されません。
 
 端末承認カードは、バックエンドが `allowed_decisions` に `session` を含めた場合だけ **セッション内で許可** を表示します（カードに到達したキャッシュ可能な通常コマンド）。選ぶとコマンドの先頭 2 語パターンが session allowlist に書き込まれ、以後の一致コマンドはカードを出しません。**approve** は今回限りのままです。危険コマンド、confirm-all モード、clawhub リモート実行は session キャッシュを提供も書き込みもしません。以前に一致パターンが保存されていても、危険コマンドは session allowlist をスキップします。
+
+### landlock フォールバック(Linux、bwrap なし)
+
+`agent/tools/pub_base/sandbox_landlock.py` は 2 つ目の Linux バックエンドです。bwrap が存在しない環境(スリムコンテナ、distroless イメージ)では、カーネルレベルの landlock LSM(Linux 5.13+)が外部バイナリなしでコマンドを制限します。ルールセットは**許可リスト**方式 — システムツリー(`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`)は読み取りのみ、呼び出し側の書き込みルートと `/dev/null` は読み書き可 — であり、`~/.ssh` などの認証情報ディレクトリは**初期状態で除外**されます(bwrap のマスクより強く、「ファイルシステム全体の読み取り」より厳格)。landlock は**呼び出しプロセス自身**しか制限できないため、`wrap()` はランチャー(`python -I -c <loader> -- <本体コマンド>`)を返します。ランチャーはルールを適用し(ctypes、システムコール 444-446、先に `PR_SET_NO_NEW_PRIVS`)、`execvp` で本体コマンドに交代します。初期化に失敗すると終了コード 126 — サンドボックスは**フェイルクローズ**です(`required` 下の bwrap 欠落と同じ)。凍結ビルドと x86_64/aarch64 以外のマシンは非対応を報告します。REFER(ABI v2)と TRUNCATE(ABI v3)はカーネルに応じて扱う権限が増えます。テスト:`tests/agent/tools/pub_base/test_sandbox_landlock.py`(probe/仕様/ファクトリ。実際のシステムコール経路には 5.13+ カーネルが必要)。
 
 ## 🧪 テスト
 
