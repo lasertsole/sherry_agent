@@ -187,6 +187,6 @@ def test_retention_expires_old_ops(tmp_path):
     with sqlite3.connect(str(path)) as conn:
         conn.execute("UPDATE high_risk_ops SET executed_at = 0")
         conn.commit()
-    store._last_purge = 0.0  # force the next access to sweep
+    store._last_purge = None  # force the next access to sweep
     store.list_keywords(SESSION)
     assert store.list_ops(SESSION) == []

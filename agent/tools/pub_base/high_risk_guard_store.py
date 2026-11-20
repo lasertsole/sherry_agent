@@ -180,7 +180,8 @@ class HighRiskGuardStore:
         from pathlib import Path
 
         self.path = Path(path) if path is not None else resolve_high_risk_guard_path()
-        self._last_purge = 0.0
+        # ``None`` = never swept; a monotonic seconds value otherwise.
+        self._last_purge: float | None = None
 
     # ── connection / schema ─────────────────────────────────────────────
 
@@ -212,7 +213,7 @@ class HighRiskGuardStore:
     def _maybe_purge(self, conn: sqlite3.Connection) -> None:
         """Lazy retention sweep (at most once an hour per store instance)."""
         now = time.monotonic()
-        if now - self._last_purge < 3600:
+        if self._last_purge is not None and now - self._last_purge < 3600:
             return
         self._last_purge = now
         cutoff = _now() - int(HIGH_RISK_GUARD["retention_hours"]) * 3600
