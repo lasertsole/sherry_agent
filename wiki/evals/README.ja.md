@@ -10,6 +10,16 @@
 | スイート | 測るもの | エントリ |
 | :--- | :--- | :--- |
 | [DeepSWE](../../evals/deepswe/README.md) | 隠しテストパッチと benchmark 自身の grader を使う外部コーディング課題。既定の経路は docker または podman で benchmark のタスクイメージを実行し、`--local` は Docker 不要のホストモード | `evals/deepswe/suite.py` |
+| [DevBench（SWE-bench Verified）](../../evals/devbench/README.md) | 公式 F2P/P2P リストをイメージ内 pytest で判定。agent はホスト側の `/testbed` コピーを編集 | `evals/devbench/suite.py` |
+| [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | devbench コアで ByteDance の多言語データを実行(`--lang` フィルタ、イメージはレコードから) | `evals/multi_swe_bench/suite.py` |
+| [TAU-bench](../../evals/tau_bench/README.md) | 模擬ビジネス API を sherry ツールへラップ。記録された呼び出し+出力で汎用判定 | `evals/tau_bench/suite.py` |
+| [GAIA](../../evals/gaia/README.md) | 汎用アシスタント課題、ホストモード、全ツール面。公式の回答正規化 | `evals/gaia/suite.py` |
+| [CyberSecEval 系](../../evals/cybersec/README.md) | セキュリティ選択式/コード分析、ホストモード、選択肢の文字一致 | `evals/cybersec/suite.py` |
+| [WebArena](../../evals/webarena/README.md) | docker-compose スタックを常駐。browser ツール保持。URL 系評価をネイティブ判定 | `evals/webarena/suite.py` |
+| [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + ビジョン差分(JS-evaluate 有効、vision-model 証跡を報告) | `evals/visualwebarena/suite.py` |
+| [OSWorld](../../evals/osworld/README.md) | Ubuntu タスクコンテナ、TERMINAL-FIRST(計画どおり VNC は降級)。vm_* 状態評価をネイティブ判定 | `evals/osworld/suite.py` |
+
+共有基盤は `evals/shared/`: データセット解決、バッチ+再開、統一レポート(計画の token/文脈命中率/code-intel サマリ付き)、compose を含むコンテナ生命周期、3 つのトラッカー(`token_tracker`、`context_analyzer`、`code_intel_tracker`)。全スイートは契約としてデータオプション：データセット・コンテナ実行環境・キーの欠落は大声で SKIP(exit 3)、黙通過はしません。
 | コーディング能力 | 自作のコーディング課題と同梱プロンプト arm | `evals/coding_capability/` |
 | 外部ベンチ | ブリッジされたコーディングベンチと harness アダプタ | `evals/` |
 

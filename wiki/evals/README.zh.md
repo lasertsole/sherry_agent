@@ -8,6 +8,16 @@
 | 套件 | 测量内容 | 入口 |
 | :--- | :--- | :--- |
 | [DeepSWE](../../evals/deepswe/README.md) | 外部编码任务，隐藏测试补丁 + benchmark 自带 grader；默认路径通过 docker 或 podman 运行基准的任务镜像，`--local` 是无 Docker 的宿主机模式 | `evals/deepswe/suite.py` |
+| [DevBench（SWE-bench Verified）](../../evals/devbench/README.md) | 官方 F2P/P2P 测试清单经镜像内 pytest 判分；agent 编辑宿主侧 `/testbed` 副本 | `evals/devbench/suite.py` |
+| [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | devbench 核心跑字节跳动多语言数据（`--lang` 过滤；镜像来自数据集字段） | `evals/multi_swe_bench/suite.py` |
+| [TAU-bench](../../evals/tau_bench/README.md) | 模拟业务 API 包装为 sherry 工具；按记录的调用与输出做通用判分 | `evals/tau_bench/suite.py` |
+| [GAIA](../../evals/gaia/README.md) | 通用助手任务，宿主模式、全工具面；官方答案归一化 | `evals/gaia/suite.py` |
+| [CyberSecEval 风格](../../evals/cybersec/README.md) | 安全选择题/代码分析，宿主模式，选项字母匹配 | `evals/cybersec/suite.py` |
+| [WebArena](../../evals/webarena/README.md) | docker-compose web 栈常驻；保留 browser 工具；URL 型评估器原生判分 | `evals/webarena/suite.py` |
+| [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + 视觉增量（JS-evaluate 打开；报告带 vision-model 证据） | `evals/visualwebarena/suite.py` |
+| [OSWorld](../../evals/osworld/README.md) | Ubuntu 任务容器，TERMINAL-FIRST（按计划降级 VNC）；vm_* 状态评估器原生判分 | `evals/osworld/suite.py` |
+
+共享基础设施在 `evals/shared/`：数据集解析、分批+断点续跑、统一报告（含计划的 token / 上下文命中率 / code-intel 汇总）、逐套件容器生命周期（含 compose 工程）、三个追踪器（`token_tracker`、`context_analyzer`、`code_intel_tracker`）。每个套件按契约"数据可选"：缺数据集、缺容器运行时或缺密钥都大声跳过（exit 3），绝不静默通过。
 | 编码能力 | 自建编码任务与内置提示词 arm | `evals/coding_capability/` |
 | 外部基准 | 桥接的编码基准与 harness 适配器 | `evals/` |
 

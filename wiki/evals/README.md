@@ -10,6 +10,21 @@ a score is not a capability percentage.
 | Suite | What it measures | Entry point |
 | :--- | :--- | :--- |
 | [DeepSWE](../../evals/deepswe/README.md) | External coding tasks with hidden test patches and the benchmark's own grader; the default arm runs the benchmark's task images through docker or podman, `--local` is the Docker-free host mode | `evals/deepswe/suite.py` |
+| [DevBench (SWE-bench Verified)](../../evals/devbench/README.md) | Official F2P/P2P test lists judged from an in-image pytest pass; the agent edits a host copy of `/testbed` | `evals/devbench/suite.py` |
+| [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | The devbench core over ByteDance's multi-language records (`--lang` filter; per-record images) | `evals/multi_swe_bench/suite.py` |
+| [TAU-bench](../../evals/tau_bench/README.md) | Simulated business API wrapped as sherry tools; generic reward over recorded calls + outputs | `evals/tau_bench/suite.py` |
+| [GAIA](../../evals/gaia/README.md) | General-assistant tasks, host mode, full tool surface; official answer normalization | `evals/gaia/suite.py` |
+| [CyberSecEval-style](../../evals/cybersec/README.md) | Security MCQ / code analysis, host mode, choice-letter match | `evals/cybersec/suite.py` |
+| [WebArena](../../evals/webarena/README.md) | The docker-compose web stack kept resident; browser tools kept; URL-shaped evaluators judged natively | `evals/webarena/suite.py` |
+| [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + vision deltas (JS-evaluate on, vision-model evidence in the report) | `evals/visualwebarena/suite.py` |
+| [OSWorld](../../evals/osworld/README.md) | Ubuntu task containers, TERMINAL-FIRST (VNC degraded per the plan); vm_* state getters judged natively | `evals/osworld/suite.py` |
+
+Shared infrastructure lives in `evals/shared/`: dataset resolution, batch
+slicing + resume, the uniform report (with the plan's token / context-hit-rate
+/ code-intel summaries), the per-suite container lifecycle including compose
+projects, and three trackers (`token_tracker`, `context_analyzer`,
+`code_intel_tracker`). Every suite is dataset-optional by contract: a missing
+dataset, container runtime or key SKIPS loudly (exit 3), never a silent pass.
 | Coding capability | Self-designed coding tasks and the shipped prompt arms | `evals/coding_capability/` |
 | External benches | Bridged coding benchmarks and harness adapters | `evals/` |
 

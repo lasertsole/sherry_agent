@@ -9,6 +9,16 @@
 | 스위트 | 측정 대상 | 진입점 |
 | :--- | :--- | :--- |
 | [DeepSWE](../../evals/deepswe/README.md) | 숨겨진 테스트 패치와 benchmark 자체 grader를 쓰는 외부 코딩 과제. 기본 경로는 docker 또는 podman으로 benchmark의 작업 이미지를 실행하고, `--local`은 Docker 없는 호스트 모드 | `evals/deepswe/suite.py` |
+| [DevBench（SWE-bench Verified）](../../evals/devbench/README.md) | 공식 F2P/P2P 목록을 이미지 내 pytest로 판정. 에이전트는 호스트측 `/testbed` 복사본 편집 | `evals/devbench/suite.py` |
+| [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | devbench 코어로 ByteDance 다국어 데이터 실행(`--lang` 필터, 이미지는 레코드에서) | `evals/multi_swe_bench/suite.py` |
+| [TAU-bench](../../evals/tau_bench/README.md) | 모의 비즈니스 API를 sherry 도구로 랩. 기록된 호출+출력으로 일반 판정 | `evals/tau_bench/suite.py` |
+| [GAIA](../../evals/gaia/README.md) | 범용 어시스턴트 과제, 호스트 모드, 전체 도구면. 공식 답 정규화 | `evals/gaia/suite.py` |
+| [CyberSecEval 계열](../../evals/cybersec/README.md) | 보안 선다형/코드 분석, 호스트 모드, 선택지 문자 일치 | `evals/cybersec/suite.py` |
+| [WebArena](../../evals/webarena/README.md) | docker-compose 스택 상주. browser 도구 유지. URL형 평가 네이티브 판정 | `evals/webarena/suite.py` |
+| [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + 비전 델타(JS-evaluate 활성, vision-model 증거 보고) | `evals/visualwebarena/suite.py` |
+| [OSWorld](../../evals/osworld/README.md) | Ubuntu 작업 컨테이너, TERMINAL-FIRST(계획에 따라 VNC 강등). vm_* 상태 평가 네이티브 판정 | `evals/osworld/suite.py` |
+
+공유 기반은 `evals/shared/`: 데이터셋 해석, 배치+재개, 통합 보고서(계획의 token/문맥 적중률/code-intel 요약 포함), compose를 포함한 컨테이너 수명주기, 세 개의 트래커(`token_tracker`, `context_analyzer`, `code_intel_tracker`). 모든 스위트는 계약상 데이터 옵션：데이터셋·컨테이너 런타임·키 부재는 큰 소리로 SKIP(exit 3), 조용한 통과는 없습니다.
 | 코딩 능력 | 자체 설계한 코딩 과제와 내장 프롬프트 arm | `evals/coding_capability/` |
 | 외부 벤치 | 브리지된 코딩 벤치마크와 harness 어댑터 | `evals/` |
 
