@@ -21,9 +21,12 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   ``SHERRY_SESSION_ID`` — the session tag a scripted skill uses to address the
   session-scoped artifact store (the background path inherits the same env).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
-  command is exec'd in list form via ``backend.wrap(["/bin/sh", "-c", ...])``
-  (semantically identical to POSIX ``shell=True``); backend ``None``
-  (Windows / unavailable) degrades to the byte-identical pre-existing path;
+  command is exec'd in list form via ``backend.wrap([shell, "-c", ...])``,
+  where ``shell`` is ``/bin/sh`` on POSIX and Git Bash (``resolve_windows_bash``,
+  falling back to ``COMSPEC``) on Windows — the tool promises a POSIX shell, so
+  a sandboxed Windows command must not silently become ``cmd.exe``; backend
+  ``None`` (platform without a backend / unavailable) degrades to the
+  byte-identical pre-existing path;
   on the HITL path the degradation is approved BEFORE the tool runs
   (str join + ``shell=True`` / ``create_subprocess_shell``) with ONLY
   ``env=`` added, plus one loguru warning line for the AUTO degrade.
@@ -44,6 +47,7 @@ import locale
 import asyncio
 import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import warnings
@@ -94,6 +98,24 @@ from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 #: Ceiling for a per-call ``timeout`` (see ``_resolve_timeout``).
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
+
+
+def _sandbox_shell_argv(cmd_str: str) -> list[str]:
+    """The list-exec argv a sandboxed command runs through.
+
+    POSIX keeps ``/bin/sh -c`` (identical to ``shell=True``). Windows has no
+    ``/bin/sh``: the unsandboxed path already prefers Git Bash because the tool
+    promises a POSIX shell, so the sandboxed path uses the same resolver and
+    only falls back to ``COMSPEC`` when no bash exists. Using ``cmd.exe``
+    unconditionally would change ``&&``/``$()``/quoting semantics under the
+    sandbox — the exact behavior the tool documents.
+    """
+    if platform.system() == "Windows":
+        bash_exe = resolve_windows_bash()
+        if bash_exe:
+            return [bash_exe, "-c", cmd_str]
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", cmd_str]
+    return ["/bin/sh", "-c", cmd_str]
 
 
 def _child_env(session_id: str) -> dict[str, str]:
@@ -477,10 +499,10 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 "(HITL-gated when an operator is in scope)"
             )
             return None, env
-        # List-exec form for the sandbox: ["/bin/sh", "-c", cmd] is
-        # semantically identical to POSIX shell=True (and Windows never has a
-        # backend, so cmd.exe is untouched).
-        return backend.wrap(["/bin/sh", "-c", cmd_str], env, writable_roots)
+        # List-exec form for the sandbox: [shell, "-c", cmd] is semantically
+        # identical to shell=True on the same platform (POSIX sh, or Git Bash
+        # on Windows — never a silent cmd.exe switch).
+        return backend.wrap(_sandbox_shell_argv(cmd_str), env, writable_roots)
 
     # ── Sync execution paths ────────────────────────────────────────────────
 

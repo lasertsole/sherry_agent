@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -246,6 +247,8 @@ class TestEnvScrubWiring:
             return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
+        # No Git Bash: force the platform-shell branch deterministically.
+        monkeypatch.setattr(terminal, "resolve_windows_bash", lambda: None)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
         _set_policy(monkeypatch, SandboxPolicy.OFF)
         tool = _tool()
@@ -554,11 +557,12 @@ class TestSensitiveFileAccess:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestWindowsFallback:
     def test_sync_fallback_string_shell_true_and_env(self, monkeypatch):
-        # get_backend -> None (Windows reality): the existing path must be
+        # get_backend -> None AND no Git Bash: the pre-Git-Bash path must stay
         # byte-identical — args[0] is a plain str " && " join, shell=True —
-        # with ONLY env= added on top.
+        # with ONLY env=/cwd= added on top.
         record: list[dict[str, Any]] = []
         monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
+        monkeypatch.setattr(terminal, "resolve_windows_bash", lambda: None)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
         _set_policy(monkeypatch, SandboxPolicy.AUTO)
         monkeypatch.setattr(terminal, "get_backend", lambda policy: None)
@@ -578,6 +582,33 @@ class TestWindowsFallback:
         assert popen_kwargs.get("env") == _SCRUBBED_ENV
         assert popen_kwargs.get("cwd") == str(ROOT_DIR)
 
+    def test_sync_fallback_uses_git_bash_when_available(self, monkeypatch):
+        # The unsandboxed Windows path promises a POSIX shell: Git Bash is
+        # exec'd as a list (no shell=True), so `&&`/`$()` keep their meaning.
+        record: list[dict[str, Any]] = []
+        monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
+        monkeypatch.setattr(
+            terminal, "resolve_windows_bash", lambda: r"C:\Program Files\Git\bin\bash.exe"
+        )
+        monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
+        monkeypatch.setattr(terminal, "get_backend", lambda policy: None)
+        tool = _tool()
+
+        out = tool._run(["echo ok", "git status"])
+
+        assert out == "ok"
+        assert len(record) == 1
+        popen_args = record[0]["args"]
+        popen_kwargs = record[0]["kwargs"]
+        assert popen_args[0] == [
+            r"C:\Program Files\Git\bin\bash.exe",
+            "-c",
+            "echo ok && git status",
+        ]
+        assert "shell" not in popen_kwargs, "list-exec must not add shell=True"
+        assert popen_kwargs.get("env") == _SCRUBBED_ENV
+
     def test_async_fallback_shell_string_and_env(self, monkeypatch):
         record: list[dict[str, Any]] = []
 
@@ -586,6 +617,7 @@ class TestWindowsFallback:
             return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
+        monkeypatch.setattr(terminal, "resolve_windows_bash", lambda: None)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
         _set_policy(monkeypatch, SandboxPolicy.AUTO)
         monkeypatch.setattr(terminal, "get_backend", lambda policy: None)
@@ -722,6 +754,60 @@ class TestSandboxWrap:
         assert isinstance(out, str)
         assert "Required sandbox unavailable" in out
         assert "echo" not in out.split("Required")[0], "no command output leaked"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6b. Platform-aware sandbox shell (POSIX sh / Git Bash / COMSPEC)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestSandboxShell:
+    def test_posix_uses_bin_sh(self, monkeypatch):
+        monkeypatch.setattr(terminal.platform, "system", lambda: "Linux")
+        assert terminal._sandbox_shell_argv("echo ok") == ["/bin/sh", "-c", "echo ok"]
+
+    def test_windows_prefers_git_bash(self, monkeypatch):
+        monkeypatch.setattr(terminal.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(
+            terminal, "resolve_windows_bash", lambda: r"C:\Program Files\Git\bin\bash.exe"
+        )
+        assert terminal._sandbox_shell_argv("echo ok") == [
+            r"C:\Program Files\Git\bin\bash.exe",
+            "-c",
+            "echo ok",
+        ]
+
+    def test_windows_falls_back_to_comspec(self, monkeypatch):
+        monkeypatch.setattr(terminal.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(terminal, "resolve_windows_bash", lambda: None)
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\system32\cmd.exe")
+        assert terminal._sandbox_shell_argv("dir") == [
+            r"C:\Windows\system32\cmd.exe",
+            "/c",
+            "dir",
+        ]
+
+    def test_sandboxed_run_uses_the_platform_shell(self, monkeypatch):
+        record: list[dict[str, Any]] = []
+        monkeypatch.setattr(subprocess, "Popen", _no_spawn_popen(record))
+        monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
+        _set_policy(monkeypatch, SandboxPolicy.AUTO)
+        backend = _FakeBackend(wrapper="win-launcher")
+        monkeypatch.setattr(terminal, "get_backend", lambda policy: backend)
+        monkeypatch.setattr(terminal.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(terminal, "resolve_windows_bash", lambda: "C:/Git/bin/bash.exe")
+        tool = _tool()
+
+        out = tool._run(["echo ok"])
+
+        assert out == "ok"
+        wrapped_cmd, _ = backend.calls[0]
+        assert wrapped_cmd == ["C:/Git/bin/bash.exe", "-c", "echo ok"]
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="a real Windows backend")
+    def test_real_backend_runs_a_posix_command_on_windows(self):
+        # The whole chain: get_backend -> wrap -> launcher -> shell -> fd stdout.
+        tool = _tool()
+        out = tool._run(["echo sandboxed-ok"])
+        assert "sandboxed-ok" in out
 
 
 # ─────────────────────────────────────────────────────────────────────────────

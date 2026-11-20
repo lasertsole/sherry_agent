@@ -1,481 +1,164 @@
-# 计划：Windows 沙箱后端——三层完整隔离（对齐+超越 Codex）
+# 计划：Windows 沙箱后端——AppContainer 文件/网络隔离（第 2 阶段）
 
-- 日期：2026-11-17（r3，三层全做，对齐+超越 Codex）
-- 状态：**待评审**
-- 定位：CreateRestrictedToken + AppContainer + Job Object 三层合一。Codex 有的 Sherry 全有，Job Object 是 Sherry 额外多的。
-- 风险等级：**中-高** — launcher + 三层 ctypes Win32 API
-- 依赖：现有 `sandbox.py` ABC
-
----
-
-## 0. 对齐+超越 Codex
-
-| 层 | Codex | Sherry（本计划） | 对齐/超越 |
-|---|-------|-----------------|----------|
-| CreateRestrictedToken（权限移除） | ✅ | ✅ | 对齐 |
-| AppContainer（文件系统/网络/注册表隔离） | ✅ | ✅ | 对齐 |
-| Job Object（进程限制/内存/kill-on-close） | ❌ | ✅ | **超越** |
-| Fail-open 降级链 | 可能有 | ✅ 四层 | 超越 |
-| Stale handle 清理 | 不清楚 | ✅ 定期+atexit | 超越 |
-| Env 可配限制 | 不清楚 | ✅ | 超越 |
-
-**三层全做**：Codex 的两层（RestrictedToken + AppContainer）Sherry 全有 + Sherry 额外加 Job Object（进程限制 + kill-on-close）。
+- 日期：2026-11-20（r4：第 1 阶段已实施并合入，本文件只保留剩余工作）
+- 状态：**待实施**（层 1 + 层 3 已上线；本阶段只做层 2）
+- 定位：在已合入的 launcher 上补 AppContainer——文件写入围堵、读遮蔽、按需断网。
+- 依赖：现有 `agent/tools/pub_base/sandbox_win.py`、共享 `sandbox.py` ABC（本阶段**不改** ABC / spawn 点）
 
 ---
 
-## 1. 三层隔离
+## 0. 第 1 阶段完成情况（2026-11-20）
 
-```
-层 1: CreateRestrictedToken（Win2000+，不需要管理员）
-  → 移除 SeDebug / SeTcb / SeLoadDriver / SeTakeOwnership / SeBackup / SeRestore 等
-  → 效果：agent 不能提权、不能调试其他进程、不能加载驱动
+已合入 Windows terminal 沙箱（`WinSandboxBackend`，注册于 `platform.system() == "Windows"`）：
 
-层 2: AppContainer（Win8+，需要创建 profile）
-  → 文件系统：只能写 writable_roots（workspace + session dir + TEMP）
-  → 网络：可选限制（默认允许，SHERRY_WIN_SANDBOX_BLOCK_NETWORK 可配）
-  → 注册表：限制写 HKLM
-  → 效果：agent 不能破坏系统文件、不能偷其他文件
+| 能力 | 状态 | 位置 |
+|---|---|---|
+| launcher（`python -c <base64>`，payload 内嵌 cmd/roots/limits） | ✅ | `sandbox_win.py::build_launcher_source` |
+| 层 1 受限令牌（`CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`） | ✅ | launcher |
+| 层 3 Job Object（ActiveProcessLimit / JobMemoryLimit / KILL_ON_JOB_CLOSE，挂起后绑定再恢复） | ✅ | launcher |
+| stdout/stderr 传递（可继承副本 + `STARTF_USESTDHANDLES` + `bInheritHandles`） | ✅ | launcher |
+| 每层独立 fail-open + stderr 报 Win32 错误码 | ✅ | launcher |
+| probe（OpenProcessToken + CreateRestrictedToken + CreateJobObject） | ✅ | `WinSandboxBackend.probe` |
+| 配置 `SHERRY_WIN_SANDBOX_MAX_PROCESSES` / `_MAX_MEMORY_MB` / `_BLOCK_NETWORK` | ✅（BLOCK_NETWORK 只告警） | `read_win_config` |
+| terminal 沙箱 shell 平台感知（Git Bash → COMSPEC） | ✅ | `terminal/core.py::_sandbox_shell_argv` |
+| 全条件路径测试（配置/负载/探测/真实 stdout/退出码/cwd/env/进程上限/内存上限/kill-on-close） | ✅ | `tests/agent/tools/pub_base/test_sandbox_win.py` |
 
-层 3: Job Object（Win2000+，不需要管理员）
-  → 进程数上限（防 fork bomb，默认 50）
-  → 内存上限（防 OOM，默认 4GB）
-  → kill-on-close（launcher 死 → command 死）
-  → 效果：agent 不能耗尽资源
-
-AppContainer 不可用时（Win7）：层 1 + 层 3（受限 token + Job Object）
-```
+**尚未强制执行**：`writable_roots`（写入围堵）、读遮蔽、`SHERRY_WIN_SANDBOX_BLOCK_NETWORK`、注册表限制——它们全部属于层 2。当前 Windows 上的文件边界仍是工具层路径门禁 + HITL。
 
 ---
 
-## 2. 设计——launcher 方案
+## 1. 剩余目标
 
-### 2.1 为什么用 launcher
+| 层 | 能力 | 状态 |
+|---|---|---|
+| 1 | 受限令牌：移除全部特权（不能调试进程、加载驱动、夺取所有权） | ✅ 已完成 |
+| 2 | **AppContainer：只能写 writable_roots；读默认隔离；按需断网；HKLM 只读** | ⬜ 本阶段 |
+| 3 | Job Object：进程数 / 内存 / kill-on-close | ✅ 已完成 |
 
-`wrap()` 只能改 `(argv, env)`。三层隔离都需要在**进程创建时**干预：
-- CreateRestrictedToken → `CreateProcessAsUser(restricted_token, ...)`
-- AppContainer → `CreateProcess` with `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`
-- Job Object → `AssignProcessToJobObject` 在 spawn 后
-
-launcher 统一处理三层，不需要改 ABC / 不需要改 spawn 点。
-
-### 2.2 wrap() 返回 launcher 命令
-
-```python
-def wrap(self, cmd, env, writable_roots, *, allow_network=False):
-    """返回 launcher 命令。launcher 内部做三层隔离。"""
-    normalize_writable_roots(writable_roots)
-    roots = [str(p) for p in writable_roots]
-    launcher_code = self._build_launcher(cmd, roots, allow_network)
-    encoded = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
-    return [sys.executable, "-c",
-            f"import base64;exec(base64.b64decode('{encoded}').decode())"], env
-```
-
-### 2.3 launcher 执行流程
-
-```
-Sherry spawn → python -c <launcher>
-  ↓
-launcher 启动（普通 Python 进程，继承了 Sherry 的 stdout handle → 临时文件）
-  ↓
-层 1: OpenProcessToken + CreateRestrictedToken → restricted_token
-  ↓ 失败 → fall back 到普通创建（fail-open 层 2）
-层 2: 检测 AppContainer 可用？
-  → 是（Win8+）: CreateAppContainerProfile → 配置 ACL → appcontainer_token
-  → 否（Win7）: 跳过，只用 restricted_token
-  ↓ 失败 → fall back 到 restricted_token only（fail-open 层 3）
-层 3: CreateJobObject → 设置限制（进程/内存/kill-on-close）
-  ↓ 失败 → 继续，不绑 Job Object（fail-open 层 4）
-创建子进程: CreateProcessAsUserW(token, cmd, STARTUPINFO, bInheritHandles=TRUE)
-  ↓ 失败 → fall back 到 CreateProcessW（普通创建，fail-open）
-绑定 Job Object: AssignProcessToJobObject(job, child)
-等待: WaitForSingleObject(child, INFINITE)
-退出: GetExitCodeProcess(child) → sys.exit(exit_code)
-
-如果 Sherry kill launcher:
-  → launcher 进程死 → Job Object handle 关闭 → kill-on-close 杀 child
-```
-
-### 2.3.1 stdout/stderr 传递（关键修复）
-
-Sherry 把 stdout 重定向到临时文件（`os.fdopen(fd)`），不是 pipe。launcher 继承了这个 handle，但 **必须显式传递给子进程**——否则子进程输出丢失。
-
-launcher 创建子进程前必须：
-
-```python
-# 1. 获取 launcher 继承的 stdout handle（指向 Sherry 的临时文件）
-stdout_handle = KERNEL32.GetStdHandle(STD_OUTPUT_HANDLE)  # -11
-stderr_handle = KERNEL32.GetStdHandle(STD_ERROR_HANDLE)   # -12
-
-# 2. 确保 handle 可被子进程继承（DuplicateHandle 标记 inheritable）
-inheritable_stdout = ctypes.c_void_p()
-KERNEL32.DuplicateHandle(
-    KERNEL32.GetCurrentProcess(), stdout_handle,
-    KERNEL32.GetCurrentProcess(), ctypes.byref(inheritable_stdout),
-    0, True,  # bInheritHandle=True
-    DUPLICATE_SAME_ACCESS)
-
-# 3. 构建 STARTUPINFO（带 hStdOutput + STARTF_USESTDHANDLES）
-STARTF_USESTDHANDLES = 0x00000100
-si = STARTUPINFOW()
-si.cb = ctypes.sizeof(STARTUPINFOW)
-si.dwFlags = STARTF_USESTDHANDLES
-si.hStdOutput = inheritable_stdout
-si.hStdError = inheritable_stdout  # Sherry 合并 stderr 到 stdout（STDOUT）
-si.hStdInput = KERNEL32.GetStdHandle(STD_INPUT_HANDLE)  # -10
-
-# 4. 创建子进程时传 bInheritHandles=TRUE
-result = ADVAPI32.CreateProcessAsUserW(
-    token, None, cmd_line, None, None,
-    True,  # bInheritHandles=TRUE ← 关键！
-    CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, None, None,
-    ctypes.byref(si), ctypes.byref(pi))
-```
-
-**AppContainer + handle 继承**：AppContainer token 限制 handle 继承。如果 AppContainer 创建的子进程无法访问继承的 stdout handle：
-1. 先尝试 `bInheritHandles=TRUE` + 继承 handle（通常对文件 handle 有效）
-2. 如果失败：fall back 到非 AppContainer 创建（用受限 token + 继承 handle）
-3. 终极 fall back：launcher 自己读子进程 stdout 管道 → 写到自己的 stdout（多一层中转，但保证输出不丢）
-
-### 2.3.2 性能评估
-
-| 维度 | 值 | 影响 |
-|------|-----|------|
-| launcher 启动（warm） | ~50ms | 每次 tool call 一次（命令先 join 成一条再 sandbox） |
-| launcher 启动（cold） | ~150-300ms | 首次调用 / DLL cache 被清 |
-| launcher 内存 | ~15-17MB | 一个额外 Python 进程 |
-| 频率 | 每次 terminal/python_repl 调用 1 次 | 不按命令数，按 tool call 数 |
-
-**50ms 可接受**——terminal 命令本身通常 >1 秒，50ms 占比 <5%。如果不可接受，改为 C helper binary（~5ms 启动）。
-
-### 2.4 进程树
-
-```
-Sherry agent (Python)
-  └── launcher (python -c <launcher_code>)  ← Sherry 的 proc.pid
-       └── command (cmd.exe /c <user_command>)  ← launcher 的子进程
-            └── command 的子进程（如有）
-
-Sherry kill_process_tree(launcher.pid):
-  → launcher 死
-  → Job Object KILL_ON_JOB_CLOSE → command + 其子进程全死
-```
-
-Sherry 看到的 `proc.pid` 是 launcher 的 PID。launcher 内部管理 command。kill-on-close 保证 launcher 死时 command 也死。
+层 2 的验收口径：沙箱命令**能**读写 `writable_roots`（项目目录 + 本会话 `SESSIONS_DIR/<id>` + `TEMP_DIR`），**不能**写这些之外的用户目录或 `C:\Windows`，读不到未授权用户文件（AppContainer 默认），`SHERRY_WIN_SANDBOX_BLOCK_NETWORK=1` 时无外网，同时层 1/层 3 与 stdout 传递全部保持。
 
 ---
 
-## 3. WinSandboxBackend 实现
+## 2. AppContainer 设计
 
-### 3.1 probe
+### 2.1 Profile（每用户一个，幂等）
 
-```python
-def probe(self) -> bool:
-    """烟雾测试：CreateRestrictedToken + CreateJobObject 都可用。"""
-    if self._probe_cache is not None:
-        return self._probe_cache
-    try:
-        if sys.platform != "win32" or _KERNEL32 is None:
-            self._probe_cache = False
-            return False
-        # 测试 1: CreateRestrictedToken
-        current_token = ctypes.c_void_p()
-        if not _ADVAPI32.OpenProcessToken(
-                _KERNEL32.GetCurrentProcess(),
-                TOKEN_QUERY | TOKEN_DUPLICATE, ctypes.byref(current_token)):
-            self._probe_cache = False
-            return False
-        restricted = ctypes.c_void_p()
-        result = _ADVAPI32.CreateRestrictedToken(
-            current_token, DISABLE_MAX_PRIVILEGE,
-            0, None, 0, None, 0, None, ctypes.byref(restricted))
-        _KERNEL32.CloseHandle(current_token)
-        if not (result and restricted):
-            self._probe_cache = False
-            return False
-        _KERNEL32.CloseHandle(restricted)
-        # 测试 2: CreateJobObject
-        job = _KERNEL32.CreateJobObjectW(None, None)
-        if not job:
-            self._probe_cache = False
-            return False
-        _KERNEL32.CloseHandle(job)
-        self._probe_cache = True
-    except Exception:
-        self._probe_cache = False
-    return self._probe_cache
+- 名称：`sherry-agent-<sha256(用户名)[:12]>`（稳定即可，不随会话变化；session 隔离靠 ACL 的 root 集合，不靠 profile 数量）。
+- 创建顺序：
+  1. `DeriveAppContainerSidFromAppContainerName(name, &sid)` —— 已存在则直接复用；
+  2. 不存在则 `CreateAppContainerProfile(name, display_name, description, NULL, 0, &sid)`；
+  3. 两者都失败 → 层 2 整体 fail-open（保留当前层 1 + 层 3）。
+- **不删除 profile**：`DeleteAppContainerProfile` 会连带删掉该用户所有 Sherry 沙箱的授权状态，运行期删除等于给下一个会话埋坑；卸载是打包/文档层面的事，不在 launcher 里做。
+
+### 2.2 以 AppContainer 创建进程
+
+launcher 里新增一条创建分支，优先于现有 `CreateProcessAsUserW`：
+
+```text
+SECURITY_CAPABILITIES caps = { AppContainerSid = sid, Capabilities = NULL / {internetClient}, CapabilityCount = 0 / 1 }
+InitializeProcThreadAttributeList(NULL, 1, 0, &size) → 分配
+UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &caps, sizeof(caps), NULL, NULL)
+STARTUPINFOEXW si = { StartupInfo: 现有 STARTF_USESTDHANDLES + 三个 handle, lpAttributeList = list }
+CreateProcessAsUserW(restricted_token, ..., EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, ...)
+→ AssignProcessToJobObject → ResumeThread
 ```
 
-### 3.2 launcher 脚本（三层合一）
+要点：
 
-launcher 是一段 Python 代码，做三件事：
+- **必须同时带受限令牌**：AppContainer 单独用也能隔离，但受限令牌是层 1 的既有保证；两者叠加没有冲突。
+- `EXTENDED_STARTUPINFO_PRESENT` 与现有 `STARTF_USESTDHANDLES` 共存；不继承 handle 的实现（kill criterion 2）直接回退。
+- 环境变量继续继承 launcher 的环境（scrubbed），`TEMP`/`TMP` 指向 `TEMP_DIR`（该目录在 2.3 里授权）。
 
-```python
-# launcher 核心逻辑（简化版，实际嵌入 base64）
+### 2.3 ACL 授权（写入面）
 
-import ctypes, json, sys
+对 payload 的每个 `roots` 条目 + `TEMP_DIR`：
 
-KERNEL32 = ctypes.windll.kernel32
-ADVAPI32 = ctypes.windll.advapi32
+- 给 package SID 添加一条 `FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE` 的 allow ACE（`SetNamedSecurityInfoW` + `EXPLICIT_ACCESS_W`，`SUB_CONTAINERS_AND_OBJECTS_INHERIT`，保证新建文件/子目录继承）。
+- 幂等：先枚举 DACL，已有同 SID 同 mask 的 ACE 就跳过；单个 root 失败只记 stderr，继续处理其余 root（fail-open per-root）。
+- 只授权**这些 root**，不给 `C:\Users\<user>` 整体、不给仓库外的任何路径。
 
-# === 层 1: CreateRestrictedToken ===
-current_token = ctypes.c_void_p()
-ADVAPI32.OpenProcessToken(KERNEL32.GetCurrentProcess(),
-    TOKEN_QUERY | TOKEN_DUPLICATE, ctypes.byref(current_token))
+读取面：
 
-restricted_token = ctypes.c_void_p()
-ADVAPI32.CreateRestrictedToken(current_token, DISABLE_MAX_PRIVILEGE,
-    0, None, 0, None, 0, None, ctypes.byref(restricted_token))
-KERNEL32.CloseHandle(current_token)
+- AppContainer 进程默认读不到用户目录（只有系统目录上 `ALL APPLICATION PACKAGES` 的 ACE 可读），因此读遮蔽天然成立；`SHERRY_DENY_READ_PATHS` 在 Windows 上没有额外工作。
+- **shell 与解释器本身**必须可读可执行：Git Bash（`resolve_windows_bash()` 的路径）与 `sys.executable` 所在目录通常位于 `Program Files` / venv。若这些目录没有 `ALL APPLICATION PACKAGES` 读权限，launcher 必须给 shell 的**安装目录**（不是每个文件）补一条只读 + 执行 ACE，否则命令根本起不来。这是本阶段最可能踩的坑，验收里单列。
+- `read_file` 等文件工具不经沙箱，行为不变。
 
-# === 层 2: AppContainer（Win8+ 时） ===
-appcontainer_sid = None
-if appcontainer_available:
-    try:
-        appcontainer_sid = _create_appcontainer_profile("sherry-agent")
-        # 配置文件系统 ACL
-        for root in writable_roots:
-            _grant_write_access(appcontainer_sid, root)
-        if block_network:
-            _deny_network_access(appcontainer_sid)
-    except Exception:
-        appcontainer_sid = None  # fail-open，只用受限 token
+### 2.4 网络
 
-# === 层 3: Job Object ===
-job_handle = KERNEL32.CreateJobObjectW(None, None)
-if job_handle:
-    limits = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-    limits.BasicLimitInformation.LimitFlags = (
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS |
-        JOB_OBJECT_LIMIT_JOB_MEMORY |
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    )
-    limits.BasicLimitInformation.ActiveProcessLimit = max_processes
-    limits.JobMemoryLimit = max_memory_bytes
-    KERNEL32.SetInformationJobObject(job_handle, 9,
-        ctypes.byref(limits), ctypes.sizeof(limits))
+- `SECURITY_CAPABILITIES` 里**不加** `internetClient` → AppContainer 无外网（默认）。
+- `SHERRY_WIN_SANDBOX_BLOCK_NETWORK` 语义就此变成真实开关：为 false 时加 `internetClient`（保持旧行为“默认允许网络”）；为 true 时不加。PTC 的 `allow_network=True` 映射为“加 capability”，与 bwrap 的 `--share-net` 对齐。
+- 不做防火墙规则（需要管理员，且会把整个用户/进程路径变成配置面）；capability 粒度已经够用。
 
-# === 创建子进程 ===
-if appcontainer_sid:
-    # AppContainer 进程创建（带 SECURITY_CAPABILITIES）
-    token = _create_appcontainer_token(restricted_token, appcontainer_sid)
-    result = ADVAPI32.CreateProcessAsUserW(token, None, cmd_line, ...)
-else:
-    # 受限 token 进程创建
-    result = ADVAPI32.CreateProcessAsUserW(restricted_token, None, cmd_line, ...)
+### 2.5 注册表与系统
 
-if not result:
-    # fail-open: 受限 token 失败 → 普通创建
-    result = KERNEL32.CreateProcessW(None, cmd_line, ...)
-
-# === 绑定 Job Object ===
-if job_handle and result:
-    KERNEL32.AssignProcessToJobObject(job_handle, pi.hProcess)
-
-# === 等待 + 退出 ===
-KERNEL32.WaitForSingleObject(pi.hProcess, INFINITE)
-exit_code = ctypes.c_uint32()
-KERNEL32.GetExitCodeProcess(pi.hProcess, ctypes.byref(exit_code))
-# 清理 handles
-KERNEL32.CloseHandle(pi.hProcess)
-KERNEL32.CloseHandle(pi.hThread)
-if restricted_token: KERNEL32.CloseHandle(restricted_token)
-if job_handle: KERNEL32.CloseHandle(job_handle)  # → kill-on-close 杀残留子进程
-sys.exit(exit_code.value)
-```
-
-### 3.3 AppContainer 创建（Win8+）
-
-```python
-def _create_appcontainer_profile(package_name: str):
-    """创建 AppContainer profile，返回 package SID。"""
-    # 1. 生成 package family name
-    family_name = f"sherry.agent.{package_name}"
-    
-    # 2. 调用 CreateAppContainerProfile（Win8+ API）
-    #    返回 package SID
-    sid = ctypes.c_void_p()
-    result = _USERENV.CreateAppContainerProfile(
-        ctypes.c_wchar_p(package_name),
-        ctypes.c_wchar_p(f"Sherry Agent Sandbox ({package_name})",
-        None, 0, None, ctypes.byref(sid))
-    if not result:
-        return None
-    
-    return sid
-
-def _grant_write_access(package_sid, path: str):
-    """给 AppContainer SID 在指定路径的写权限。"""
-    # 修改路径的 DACL，给 package_sid 添加 FILE_GENERIC_WRITE
-    # 使用 SetNamedSecurityInfo + BuildExplicitAccessWithName
-    ...
-
-def _deny_network_access(package_sid):
-    """拒绝 AppContainer 的网络访问。"""
-    # 通过 Windows Firewall 规则或 AppContainer network capabilities
-    ...
-```
-
-### 3.4 配置
-
-```bash
-# Job Object 限制（env 可配）
-SHERRY_WIN_SANDBOX_MAX_PROCESSES=50      # 最大子进程数
-SHERRY_WIN_SANDBOX_MAX_MEMORY_MB=4096     # 最大内存（MB）
-
-# AppContainer
-SHERRY_WIN_SANDBOX_BLOCK_NETWORK=false    # 是否阻止网络（默认允许）
-
-# SANDBOX_POLICY（同现有）
-SANDBOX_POLICY=auto       # auto → Windows 后端 probe → 三层隔离
-SANDBOX_POLICY=required   # required → 必须可用
-SANDBOX_POLICY=off        # off → 不用沙箱
-```
+- AppContainer 的 HKCU 是独立 hive；HKLM 默认只读，无需额外 ACE。
+- 不授予 `lpacCapability` / `runAsClient` 等能力。
 
 ---
 
-## 4. Fail-open 四层降级链
+## 3. 代码改动点
 
+| 文件 | 改动 |
+|---|---|
+| `agent/tools/pub_base/sandbox_win.py` | launcher 内新增 `_create_appcontainer_profile` / `_grant_root_access` / `_spawn_in_appcontainer`；`wrap()` 的 payload 增加 `appcontainer_name`；`read_win_config` 增加 `SHERRY_WIN_SANDBOX_APPCONTAINER`（默认 on，off 时保持当前层 1+3） |
+| `tests/agent/tools/pub_base/test_sandbox_win.py` | 新增层 2 用例（profile 复用 / 授权幂等 / 越界写被拒 / 网络被拒 / shell 可执行 / 回退） |
+| `wiki/sandbox/README*.md` + `isolation/README*.md` | 把“AppContainer 未实现”改为已实现，补验收与限制 |
+| `AGENTS.md` | 更新 Windows 段落的层 2 状态 |
+
+不改：ABC、`terminal/core.py`、`python_repl.py`、bwrap / seatbelt、HITL、PTC。
+
+---
+
+## 4. Fail-open（在现有四步上再加三步）
+
+```text
+probe 失败                                   → 裸 subprocess（现有）
+CreateRestrictedToken 失败                   → 普通 CreateProcessW（现有）
+AppContainer profile 创建/派生失败            → 受限令牌 + Job Object（层 2 跳过）
+某个 root 授权失败                            → 跳过该 root，其余继续（命令仍启动）
+EXTENDED_STARTUPINFO / 属性列表失败           → 现有 CreateProcessAsUserW 分支
+Job Object 创建/绑定失败                      → 受限令牌（+ AppContainer 若可用）
 ```
-层 1: probe() 失败
-  → ctypes 不可用 / API 被禁 / 非 Windows
-  → get_backend() 返回 None → 裸 subprocess + 日志（现有行为）
 
-层 2: CreateRestrictedToken 失败（launcher 内）
-  → fall back 到普通 CreateProcessW（无受限 token）
-  → Job Object + AppContainer 也跳过（都需要进程 token）
-  → 命令继续执行 + stderr 警告
-
-层 3: AppContainer 创建失败（Win7 / 权限不足 / SID 失败）
-  → 只用受限 token + Job Object（不用 AppContainer）
-  → 文件系统/网络/注册表不隔离，但权限已移除 + 进程已限制
-  → 命令继续执行
-
-层 4: Job Object 创建或绑定失败
-  → 只用受限 token（+ AppContainer 如果可用）
-  → 进程限制/kill-on-close 不生效
-  → 命令继续执行
-```
-
-**每一层独立 fail-open**——即使三层中两层都失败，剩下的一层仍然提供部分保护。
+每一层失败都在 stderr 留 Win32 错误码；`SANDBOX_POLICY=required` 的语义不变（probe 仍只看层 1 + 层 3，AppContainer 不参与 probe）。
 
 ---
 
-## 5. 不需要改的东西
+## 5. 验收
 
-| 组件 | 改不改 | 理由 |
-|------|--------|------|
-| SandboxBackend ABC | ❌ 不改 | 不加 post_spawn，launcher 自己处理 |
-| terminal/core.py spawn 点（4 处） | ❌ 不改 | launcher 在 wrap() 返回的命令里 |
-| python_repl.py | ❌ 不改 | 调同一个 get_backend().wrap() |
-| bwrap 后端 | ❌ 不改 | Linux 不受影响 |
-| seatbelt 后端 | ❌ 不改 | macOS 不受影响 |
-| HITL / parallel_safety / PTC | ❌ 不改 | 沙箱独立于这些机制 |
-
-**只改 2 个文件 + 新建 2 个文件**。
-
----
-
-## 6. 文件变更清单
-
-| 文件 | 操作 | 行数 |
-|------|------|------|
-| `agent/tools/pub_base/sandbox_win.py` | 新建：WinSandboxBackend + launcher 生成 + 三层 ctypes | ~500 |
-| `agent/tools/pub_base/sandbox.py` | 改：注册 Windows 后端（1 行） | 1 |
-| `agent/tools/terminal/core.py` | 改：shell 构造平台感知（2 行） | 2 |
-| `tests/agent/tools/pub_base/test_sandbox_win.py` | 新建：probe + 三层 + fail-open + **stdout 传递** + 后台输出测试 | ~200 |
-| **总计** | | **~703** |
-
----
-
-## 7. 验收
-
-### 三层隔离
-
-| # | 场景 | 层 | 预期 |
-|---|------|---|------|
-| 1 | agent 尝试 taskkill 其他进程 | 层 1 | SeDebugPrivilege 移除 → 阻止 |
-| 2 | agent 尝试加载驱动 | 层 1 | SeLoadDriverPrivilege 移除 → 阻止 |
-| 3 | agent 写 C:\Windows | 层 2 | AppContainer 文件系统隔离 → 阻止（Win8+） |
-| 4 | agent 写用户其他目录 | 层 2 | AppContainer → 阻止（Win8+） |
-| 5 | agent 访问网络（BLOCK_NETWORK=true） | 层 2 | AppContainer → 阻止 |
-| 6 | agent spawn >50 子进程 | 层 3 | Job Object → 第 51 个被拒绝 |
-| 7 | agent 用 >4GB 内存 | 层 3 | Job Object → 进程被杀 |
-| 8 | launcher 被 kill | 层 3 | kill-on-close → command 全死 |
-
-### stdout/stderr 传递（关键修复验证）
+### 层 2 隔离
 
 | # | 场景 | 预期 |
 |---|------|------|
-| 9 | sandboxed `echo hello` | 输出 "hello"（不丢失） |
-| 10 | sandboxed `dir C:\workspace` | 输出目录列表 |
-| 11 | sandboxed 命令 stderr 输出 | stderr 合并到 stdout（Sherry 现有行为） |
-| 12 | 后台 sandboxed 命令 | output 文件非空，`read_output_tail` 有内容 |
-| 13 | sandboxed 命令超时 | 部分输出保留（launcher 被 kill → kill-on-close 杀子进程） |
-| 14 | AppContainer 模式 stdout 传递 | 输出不丢（或 fall back 到非 AppContainer） |
+| 1 | 在 `writable_roots` 内创建/改写/删除文件 | 成功 |
+| 2 | 写 `C:\Windows` / 用户桌面 / 其他会话目录 | 拒绝（Access denied） |
+| 3 | 读 `~/.ssh` / `~/.aws` | 拒绝 |
+| 4 | `SHERRY_WIN_SANDBOX_BLOCK_NETWORK=1` 时访问外网 | 失败（无 internetClient） |
+| 5 | 默认（BLOCK_NETWORK 未设）访问外网 | 成功 |
+| 6 | `git status` / `bash -c 'echo hi'` | 正常执行（shell 目录已授权） |
+| 7 | `python_repl` 同一路径 | 正常执行 |
+| 8 | 同一会话连续多次 terminal 调用 | profile 复用，无新 profile 堆积 |
+| 9 | 层 2 被 `SHERRY_WIN_SANDBOX_APPCONTAINER=0` 关闭 | 退回当前层 1 + 层 3，命令仍执行 |
+| 10 | profile 创建被策略禁止 | 命令仍执行（层 2 跳过，stderr 有错误码） |
 
-### Fail-open
+### 不回归（第 1 阶段用例全部保持）
 
-| # | 场景 | 预期 |
-|---|------|------|
-| 9 | probe 失败 | 降级为裸 subprocess |
-| 10 | CreateRestrictedToken 失败 | 普通创建 + 警告 |
-| 11 | AppContainer 不可用（Win7） | 受限 token + Job Object（不用 AppContainer） |
-| 12 | Job Object 绑定失败 | 受限 token + AppContainer（不用 Job Object） |
-| 13 | CreateProcessAsUserW 失败 | CreateProcessW 普通创建 |
-
-### 不破坏现有
-
-| # | 场景 | 预期 |
-|---|------|------|
-| 14 | Linux bwrap | 不变 |
-| 15 | macOS seatbelt | 不变 |
-| 16 | terminal 超时 | launcher 被 kill → kill-on-close 杀 command |
-| 17 | terminal 后台 | launcher 在后台跑，watcher 监控 launcher |
-| 18 | 子 agent | 继承 SANDBOX_POLICY → 三层隔离 |
-| 19 | eval harness | SANDBOX_POLICY=auto → Windows backend |
-| 20 | python_repl | 同 terminal 路径 |
-
-### 配置
-
-| # | 场景 | 预期 |
-|---|------|------|
-| 21 | SHERRY_WIN_SANDBOX_MAX_PROCESSES=10 | Job Object 进程上限 10 |
-| 22 | SHERRY_WIN_SANDBOX_MAX_MEMORY_MB=1024 | 内存上限 1GB |
-| 23 | SHERRY_WIN_SANDBOX_BLOCK_NETWORK=true | AppContainer 阻止网络 |
+stdout/stderr/退出码/cwd/env、进程上限、内存上限、kill-on-close、Git Bash/COMSPEC 选择、Linux/macOS 后端不受影响。
 
 ---
 
-## 8. 和 Codex 的对比
+## 6. Kill criteria
 
-| 维度 | Codex | Sherry（本计划） |
-|------|-------|-----------------|
-| CreateRestrictedToken | ✅ | ✅ 对齐 |
-| AppContainer | ✅ | ✅ 对齐 |
-| Job Object | ❌ | ✅ **超越** |
-| 进程数限制 | ❌（靠 timeout） | ✅ Job Object |
-| 内存限制 | ❌ | ✅ Job Object |
-| kill-on-close | ❌（靠 process-tree kill） | ✅ Job Object |
-| Fail-open 降级 | 不清楚 | ✅ 四层独立降级 |
-| Stale handle 清理 | 不清楚 | ✅ 定期 + atexit |
-| Env 可配限制 | 不清楚 | ✅ |
-| 版本要求 | Win8+（AppContainer） | **Win2000+**（受限 token + Job Object 在 Win7 也可用，AppContainer 在 Win8+ 自动启用） |
-| 管理员权限 | 需要（AppContainer） | **不需要**（受限 token + Job Object 不需要管理员，AppContainer 失败时 fail-open） |
-
-**Sherry 超越 Codex 的点**：
-1. Job Object（进程限制 + 内存限制 + kill-on-close）——Codex 没有
-2. Win7 支持（受限 token + Job Object 在 Win7 可用，AppContainer 自动跳过）
-3. 不需要管理员（AppContainer 失败时 fail-open 到受限 token + Job Object）
-4. 四层独立 fail-open（每一层独立降级）
+- **AppContainer + handle 继承冲突**：AppContainer 子进程无法继承 stdout 句柄 → 层 2 对该命令回退到层 1 + 层 3（现有路径），并在文档中记录为已知限制。
+- **Git Bash 无法在 AppContainer 内启动**（安装目录 ACE 不可写 / 依赖 DLL 不在系统目录）→ 允许为 shell 目录追加只读 ACE；仍失败则回退到 `cmd.exe`，再失败则层 2 fail-open。
+- **`CreateAppContainerProfile` 在受限企业策略下失败** → 层 2 跳过，不升级为 probe 失败（否则整台机器失去沙箱）。
+- **ACL 授权污染用户目录**（每次 wrap 都改 DACL）→ 只在首次（ACE 不存在时）写一次；同一 SID 的 ACE 幂等，不重复添加。
+- 如果层 2 的实施让 `test_sandbox_win.py` 的现有 Windows 用例出现不稳定 → 先保证层 1/3 用例全绿，层 2 用例标记为条件跳过并保留计划。
 
 ---
 
-## 9. Kill criteria
+## 7. 文档与收尾
 
-- **stdout 传递失败**（最关键）：如果 `CreateProcessAsUserW` + `bInheritHandles=TRUE` + `STARTUPINFO.hStdOutput` 仍然丢失输出 → launcher 改为自己创建 pipe 给子进程 + 读 pipe 写到自己的 stdout（多一层中转但保证不丢）
-- **AppContainer + handle 继承冲突**：如果 AppContainer token 创建的子进程无法继承 stdout handle → AppContainer 路径 fall back 到非 AppContainer 创建（受限 token + Job Object 仍有效，文件系统隔离降级）
-- 如果 launcher 导致 ~50ms 延迟不可接受 → 评估用 C helper 替代 Python launcher（~5ms 启动）
-- 如果 AppContainer profile 创建在某些 Win8/10 版本上失败 → fail-open 到受限 token + Job Object
-- 如果 `CreateProcessAsUserW` 在某些环境下不稳定 → fall back 到 `CreateProcessW`
-- 如果 base64 launcher 代码太长（超过 Windows argv 上限 32767 字符）→ 改为写临时 .py 文件 + 执行文件
-- 如果 launcher 的 grandchild 进程逃逸 Job Object（CREATE_BREAKAWAY_FROM_JOB）→ 加 `JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0` 禁止 breakaway
+- `wiki/sandbox/README*.md`（四语言）：L2 表的 Windows 列从“待 AppContainer”改为“AppContainer”；新增 profile/ACL/网络 capability 说明；诚实声明里删掉“未实现”，保留“profile 不自动删除”。
+- `wiki/sandbox/isolation/README*.md`（四语言）：§2 Windows 小节补第 2 层构造与 `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`。
+- `AGENTS.md`：Windows 段落补 AppContainer 层、`SHERRY_WIN_SANDBOX_APPCONTAINER`，并把“Windows file confinement is still the tool-level path gate”改为层 2 生效后的表述。

@@ -46,7 +46,7 @@ bwrap
 
 `--clearenv`가 모든 `--setenv`보다 앞에 오는 것과 결합해야 세척된 딕셔너리가 진짜 환경 변수 화이트리스트가 됩니다. 루트 파일시스템은 읽기 전용이고, 쓰기는 프로젝트 루트와 임시 디렉터리에만 가능합니다.
 
-**리드 실드.** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 두 백엔드 모두 기본 민감 경로 목록 `DEFAULT_DENY_READ_PATHS` — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 호출마다 `_sensitive_read_paths()`가 해석하며, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장, 빈 항목 건너뜀, 순서 유지, 중복 제거)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
+**리드 실드.** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 Linux와 macOS 백엔드는 기본 민감 경로 목록 `DEFAULT_DENY_READ_PATHS` — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 호출마다 `_sensitive_read_paths()`가 해석하며, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장, 빈 항목 건너뜀, 순서 유지, 중복 제거)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
 
 **macOS: Seatbelt(`sandbox-exec`)**. 명령은 `sandbox-exec -p <profile> -- <cmd...>`로 실행되며 profile은 다음과 같습니다:
 
@@ -65,10 +65,19 @@ bwrap
 
 순서가 곧 규격입니다: `(allow default)` 아래의 `(deny file-write*)`는 "파일 쓰기만 금지하고 나머지는 허용"을 뜻하고, 이후 명시적 allow가 두 쓰기 가능 경로와 `/dev/null`, `/dev/tty` 리터럴을 다시 엽니다. 리드 실드의 `deny file-read*` 규칙은 `(deny file-write*)` 바로 뒤에 놓입니다: 민감 경로마다 하나의 `subpath` 규칙(기본 목록과 `SHERRY_DENY_READ_PATHS` 확장은 bwrap과 공통)과 임의 위치의 `.env` / `.env.*`를 덮는 두 개의 정규식 규칙입니다. 존재하지 않는 경로도 여전히 거부됩니다 — 존재하지 않는 경로에 대한 거부는 무해합니다. 경로는 `json.dumps`로 삽입되어, 경로 안의 따옴표나 역슬래시가 sbpl 주입 코드로 탈출할 수 없습니다.
 
-**프로브(가용성 확인)**. 두 백엔드 모두 클래스 수준 캐시와 함께 `probe() -> bool`을 구현합니다(프로세스당 한 번 프로브, 실패 결과도 캐시):
+**Windows: 제한 토큰 + Job Object(`WinSandboxBackend`)**. Windows에는 `bwrap`도 `sandbox-exec`도 없고, `wrap()`은 프로세스 생성 속성을 바꿀 수 없습니다. 그래서 백엔드는 작은 launcher(`python -c <base64 launcher>`)를 반환하고 커널 수준 작업은 그 안에서 합니다:
+
+1. **제한 토큰** — 호출자 자신의 토큰에 `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`. 자식은 신원과 파일 접근을 유지하지만 모든 권한을 잃습니다(다른 프로세스 디버깅, 드라이버 로드, 소유권 탈취 불가). 관리자 권한이 필요 없고, 파일 봉쇄가 아직 없는 단계에서도 "샌드박스됨"에 실질적 의미를 부여합니다.
+2. **Job Object** — `ActiveProcessLimit`(`SHERRY_WIN_SANDBOX_MAX_PROCESSES`, 기본 50), `JobMemoryLimit`(`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`, 기본 4096), `KILL_ON_JOB_CLOSE`. fork bomb이나 OOM을 봉쇄하고, launcher를 죽이면(도구의 타임아웃 경로) 명령과 모든 자손이 함께 죽습니다. 자식은 **중단 상태**로 만들어 job에 할당한 뒤 재개하므로, 할당 틈새에서 탈출 프로세스를 spawn할 수 없습니다.
+3. **stdout/stderr 전달** — 도구는 자식의 stdout을 FILE 핸들로 보내고, launcher는 상속 가능한 복제본을 넘깁니다(`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`). 이것이 없으면 샌드박스된 출력은 어디에도 닿지 않습니다.
+
+각 계층은 독립적으로 fail-open합니다(`CreateProcessAsUserW` → `CreateProcessW`, 토큰 실패 시 권한 유지, job 실패 시 토큰만). 실패는 Win32 오류 코드와 함께 stderr에 보고되므로, 한 계층을 금지하는 호스트 정책은 실행 거부가 아니라 명시적 강등이 됩니다. **AppContainer는 미구현**: 쓰기 가능 루트와 요청된 네트워크 차단은 페이로드에 실리기만 하고 Windows에서는 강제되지 않으며, 파일 봉쇄는 도구 계층 경로 게이트 + HITL 그대로입니다.
+
+**프로브(가용성 확인)**. 모든 백엔드가 클래스 수준 캐시와 함께 `probe() -> bool`을 구현합니다(프로세스당 한 번 프로브, 실패 결과도 캐시):
 
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true`를 3초 타임아웃으로 스모크 실행. 바이너리 존재만으로는 부족합니다. Ubuntu 24.04+의 AppArmor 비특권 user namespace 제한은 uid-map 단계에서 모든 bwrap을 죽일 수 있으므로, 실제 스모크 실행만이 정직한 확인입니다.
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")`만 확인. sbpl에는 종료 코드 기반 스모크 프로브가 없습니다.
+- `WinSandboxBackend.probe()`: 이 호스트에서 `OpenProcessToken` + `CreateRestrictedToken` + `CreateJobObject`가 모두 성공해야 합니다. 하나라도 실패하면 `bwrap` 바이너리가 없을 때와 똑같이 `auto`는 강등하고 `required`는 거부합니다.
 
 **PTC는 이 백엔드를 재사용합니다.** `execute_code`(프로그래매틱 도구 호출)는 `sandbox` 플래그가 없으므로 모든 정책에서 `sandbox=True` 호출처럼 동작합니다: 쓸 수 있는 백엔드는 `[sys.executable, script_path]`를 감싸고, `SANDBOX_POLICY=required`인데 백엔드가 없으면 spawn하지 않고 `status: "sandbox_unavailable"` 엔벨로프를 반환하며, `SANDBOX_POLICY=auto`에서 백엔드가 없어도 spawn하지 않고 `status: "sandbox_unavailable"`을 반환합니다(PTC에는 HITL 경로가 없어 강등하지 않습니다). `off`일 때만 샌드박스 없이 실행합니다. PTC는 `allow_network=True`를 넘기므로 bwrap은 `--unshare-all` 옆에 `--share-net`을 추가합니다: 자식이 부모의 loopback RPC 리스너에 도달해야 하며, 쓰기/읽기 샌드박스는 그대로입니다. [PTC 페이지](../../ptc/README.ko.md)를 보십시오.
 

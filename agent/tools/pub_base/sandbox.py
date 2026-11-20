@@ -6,7 +6,7 @@ python_repl tools. It defines:
 - ``SandboxPolicy``: the three-state ``SANDBOX_POLICY`` configuration enum.
 - ``parse_policy`` / ``read_policy``: strict env parsing (no silent fallback).
 - ``SandboxBackend``: the ABC that the platform backends (bwrap on Linux,
-  seatbelt on macOS) must satisfy.
+  seatbelt on macOS, restricted-token + Job Object on Windows) must satisfy.
 - ``get_backend``: platform dispatch + probe + degrade semantics.
 
 Backends are imported *lazily* inside ``get_backend`` so this module works even
@@ -145,7 +145,7 @@ def read_policy() -> SandboxPolicy:
 
 
 class SandboxBackend(ABC):
-    """Contract for OS-native sandbox backends (bwrap on Linux, seatbelt on macOS)."""
+    """Contract for OS-native sandbox backends (bwrap / seatbelt / Windows)."""
 
     @abstractmethod
     def probe(self) -> bool:
@@ -299,6 +299,9 @@ register_sandbox_backend(
 register_sandbox_backend(
     "Darwin", _lazy_backend("agent.tools.pub_base.sandbox_seatbelt", "SeatbeltBackend")
 )
+register_sandbox_backend(
+    "Windows", _lazy_backend("agent.tools.pub_base.sandbox_win", "WinSandboxBackend")
+)
 
 
 def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
@@ -307,7 +310,8 @@ def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     Semantics:
     - ``OFF``: skip probe entirely (no import, no subprocess) -> ``None``.
     - The registered factory for ``platform.system()`` builds the backend
-      (Linux -> bwrap, Darwin -> seatbelt, anything else -> no factory).
+      (Linux -> bwrap, Darwin -> seatbelt, Windows -> restricted token + Job
+      Object, anything else -> no factory).
     - Backend imports are lazy and failures degrade: a missing/broken backend
       module is treated as "sandbox unavailable".
     - If the backend exists but ``probe()`` fails, or there is no backend for
