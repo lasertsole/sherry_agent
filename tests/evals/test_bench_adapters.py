@@ -104,6 +104,7 @@ class TestDevbench:
         monkeypatch.setattr(
             devbench.env_setup, "resolve_dataset_dir", lambda *_: tmp_path / "absent"
         )
+        monkeypatch.setattr(sys, "argv", ["evals.py", "devbench"])  # not pytest's argv
         with pytest.raises(SystemExit) as exc:
             devbench.main()
         assert exc.value.code == 3
