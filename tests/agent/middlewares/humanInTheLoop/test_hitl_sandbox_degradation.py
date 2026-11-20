@@ -294,10 +294,13 @@ class TestRealToolDegradedApprovalE2E:
             # Windows with Git Bash: the unsandboxed path prefers a POSIX
             # shell via list-exec (no shell=True).
             assert command[0].lower().endswith("bash.exe")
-            assert command[1:3] == ["-c", "echo ok"]
+            assert command[1:2] == ["-c"]
+            # The spawned script may carry the persistent-cwd wrapper around
+            # the command; the command itself must be in it either way.
+            assert "echo ok" in command[2]
         else:
             assert kwargs.get("shell") is True, "degraded path is the unsandboxed shell spawn"
-            assert command == "echo ok"
+            assert "echo ok" in command
         env = kwargs.get("env") or {}
         for name in SHERRY_SECRET_NAMES:
             assert name not in env
