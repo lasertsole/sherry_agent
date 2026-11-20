@@ -873,7 +873,11 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         # commands (e.g. `timeout` needs a real console handle). Bypass it entirely and
         # use _run_with_encoding which has proper timeout and encoding handling.
         bash_exe = resolve_windows_bash()
-        spawn_str = cmd_str if not bash_exe else _wrap_persistent_shell(cmd_str, bound_session)
+        # A POSIX-capable shell runs the persistent-cwd wrapper: the platform
+        # shell on Linux/macOS, Git Bash on Windows. (resolve_windows_bash
+        # answers None on POSIX by design — the gate must not depend on it.)
+        posix_capable = os.name != "nt" or bool(bash_exe)
+        spawn_str = _wrap_persistent_shell(cmd_str, bound_session) if posix_capable else cmd_str
         return self._record_verification(
             cmd_str,
             self._run_with_encoding(
@@ -1144,13 +1148,18 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 ran_sandboxed = True
             else:
                 # Same POSIX-shell preference as the sync path (Git Bash on
-                # Windows when installed; the platform shell otherwise).
+                # Windows when installed; the platform shell otherwise). Both
+                # POSIX-capable branches run the persistent-cwd wrapper.
                 bash_exe = resolve_windows_bash()
+                posix_capable = os.name != "nt" or bool(bash_exe)
+                spawn_str = (
+                    _wrap_persistent_shell(cmd_str, bound_session) if posix_capable else cmd_str
+                )
                 if bash_exe:
                     proc = await asyncio.create_subprocess_exec(
                         bash_exe,
                         "-c",
-                        _wrap_persistent_shell(cmd_str, bound_session),
+                        spawn_str,
                         stdout=tmp_handle,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=cwd or str(ROOT_DIR),
@@ -1159,7 +1168,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                     )
                 else:
                     proc = await asyncio.create_subprocess_shell(
-                        cmd_str,
+                        spawn_str,
                         stdout=tmp_handle,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=cwd or str(ROOT_DIR),

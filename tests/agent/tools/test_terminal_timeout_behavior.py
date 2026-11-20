@@ -71,8 +71,9 @@ def _clean_registry():
 
 
 def _run_env_probe(env: dict[str, str]) -> str:
+    repo_root = Path(__file__).resolve().parents[3]
     code = (
-        "import sys; sys.path.insert(0, r'C:\\app\\code\\project\\sherry_agent'); "
+        f"import sys; sys.path.insert(0, r'{repo_root}'); "
         "from config.features.agent_side.tools_timeouts import TOOLS_TIMEOUTS; "
         "print(TOOLS_TIMEOUTS['terminal_timeout_seconds'], "
         "TOOLS_TIMEOUTS['terminal_max_timeout_seconds'])"

@@ -212,12 +212,18 @@ class TestProbeFallback:
 
     def test_get_backend_auto_degrades_when_bwrap_absent(self, monkeypatch: pytest.MonkeyPatch):
         BwrapBackend._probe_cache = None
+        import agent.tools.pub_base.sandbox_landlock as landlock_module
+
+        monkeypatch.setattr(landlock_module, "_probe_abi", lambda: 0)
         monkeypatch.setattr(platform, "system", lambda: "Linux")
         monkeypatch.setenv("PATH", "")
         assert get_backend(SandboxPolicy.AUTO) is None
 
     def test_get_backend_required_raises_when_bwrap_absent(self, monkeypatch: pytest.MonkeyPatch):
         BwrapBackend._probe_cache = None
+        import agent.tools.pub_base.sandbox_landlock as landlock_module
+
+        monkeypatch.setattr(landlock_module, "_probe_abi", lambda: 0)
         monkeypatch.setattr(platform, "system", lambda: "Linux")
         monkeypatch.setenv("PATH", "")
         with pytest.raises(RuntimeError, match="Required sandbox unavailable on Linux"):

@@ -99,8 +99,9 @@ class TestWrapperBuilder:
         assert "npm test" in wrapped
         assert "set +e" in wrapped
         assert "terminal-state" in wrapped
-        # restore → run → capture, in that order
-        assert wrapped.index(". '") < wrapped.index("npm test") < wrapped.index("pwd > ")
+        # restore → run → capture, in that order (state paths may be quoted or
+        # bare depending on the platform: a POSIX path with no spaces is bare)
+        assert wrapped.index(". ") < wrapped.index("npm test") < wrapped.index("pwd > ")
         assert wrapped.rstrip().endswith("exit $__sherry_rc")
         # every state write is silent
         assert "2>/dev/null" in wrapped

@@ -202,7 +202,7 @@ SPOT_DEFAULTS = [
     (TOOLS_TIMEOUTS, "session_messages_token_budget", 4000),
     (TOOLS_TIMEOUTS, "session_messages_per_message_token_budget", 500),
     (TOOLS_TIMEOUTS, "web_search_timeout_seconds", 15),
-    (TOOLS_TIMEOUTS, "terminal_timeout_seconds", 30),
+    (TOOLS_TIMEOUTS, "terminal_timeout_seconds", 120),
     (TOOLS_TIMEOUTS, "fd_write_threshold_bytes", 100_000),
     (TOOLS_TIMEOUTS, "python_repl_timeout_seconds", 30),
     (TOOLS_TIMEOUTS, "ptc_timeout_seconds", 120),
