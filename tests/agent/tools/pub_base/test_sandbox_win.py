@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def _decode_launcher(argv: list[str]) -> str:
     """Decode the ``python -c`` body back to the launcher source."""
     match = _B64_RE.search(argv[2])
     assert match, f"not a launcher command: {argv[2][:80]!r}"
-    return base64.b64decode(match.group(1)).decode("utf-8")
+    return zlib.decompress(base64.b64decode(match.group(1))).decode("utf-8")
 
 
 def _payload_of(argv: list[str]) -> dict:
@@ -68,6 +69,14 @@ def test_defaults_when_nothing_is_configured():
     assert config.max_processes == 50
     assert config.max_memory_mb == 4096
     assert config.block_network is False
+    assert config.appcontainer is True
+
+
+def test_appcontainer_is_on_unless_explicitly_disabled():
+    for raw in ("", "1", "true", "on", "yes"):
+        assert read_win_config({"SHERRY_WIN_SANDBOX_APPCONTAINER": raw}).appcontainer is True
+    for raw in ("0", "false", "off", "no", "OFF"):
+        assert read_win_config({"SHERRY_WIN_SANDBOX_APPCONTAINER": raw}).appcontainer is False
 
 
 def test_values_are_read_and_clamped():
@@ -114,7 +123,10 @@ def test_wrap_returns_a_self_contained_python_launcher(tmp_path):
     argv, returned = backend.wrap(["cmd.exe", "/c", "echo hi"], env, [tmp_path])
 
     assert argv[:2] == [sys.executable, "-c"]
-    assert returned is env, "wrap must not replace the scrubbed env"
+    assert returned == {**env, "TEMP": returned["TEMP"], "TMP": returned["TMP"]}, (
+        "wrap must keep the scrubbed env and only repoint temp at a granted root"
+    )
+    assert returned["TEMP"] == returned["TMP"]
     assert len(argv[2]) < 32_000, "the launcher must stay under the Windows argv limit"
 
     payload = _payload_of(argv)
@@ -122,6 +134,8 @@ def test_wrap_returns_a_self_contained_python_launcher(tmp_path):
     assert payload["max_processes"] == 50
     assert payload["max_memory_mb"] == 4096
     assert payload["block_network"] is False
+    assert payload["appcontainer"] is True
+    assert payload["appcontainer_name"].startswith("sherry-agent-")
     assert str(tmp_path.resolve()) in payload["roots"]
     # TEMP_DIR is appended by the shared normalizer, exactly like the POSIX backends.
     from config.path import TEMP_DIR
@@ -155,8 +169,7 @@ def test_wrap_dedupes_the_write_surface(tmp_path):
     assert roots.count(str(tmp_path.resolve())) == 1
 
 
-def test_block_network_is_carried_and_warned_once(tmp_path, monkeypatch, log_capture):
-    monkeypatch.setattr(sandbox_win, "_WARNED_NETWORK_BLOCK", False)
+def test_block_network_is_carried_in_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("SHERRY_WIN_SANDBOX_BLOCK_NETWORK", "1")
     backend = WinSandboxBackend()
 
@@ -165,8 +178,12 @@ def test_block_network_is_carried_and_warned_once(tmp_path, monkeypatch, log_cap
 
     assert _payload_of(first)["block_network"] is True
     assert _payload_of(second)["block_network"] is True
-    warnings = [line for line in log_capture if "AppContainer" in line]
-    assert len(warnings) == 1, "the unsupported request must be reported once, not per call"
+
+
+def test_appcontainer_switch_is_carried_in_the_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHERRY_WIN_SANDBOX_APPCONTAINER", "0")
+    argv, _ = WinSandboxBackend().wrap(["cmd.exe", "/c", "ver"], {}, [tmp_path])
+    assert _payload_of(argv)["appcontainer"] is False
 
 
 def test_allow_network_suppresses_the_block_request(tmp_path, monkeypatch):
@@ -188,6 +205,18 @@ def test_allow_network_suppresses_the_block_request(tmp_path, monkeypatch):
         "CreateProcessW",
         "ResumeThread",
         "WaitForSingleObject",
+        "CreateAppContainerProfile",
+        "DeriveAppContainerSidFromAppContainerName",
+        "DeriveCapabilitySidsFromName",
+        "PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES",
+        "EXTENDED_STARTUPINFO_PRESENT",
+        "SetEntriesInAclW",
+        "SetNamedSecurityInfoW",
+        "KILL_ON_JOB_CLOSE",
+        "venv_home",
+        "pyvenv.cfg",
+        "system_path",
+        "build_command_line",
     ],
 )
 def test_launcher_source_keeps_every_layer(needle: str):
@@ -201,7 +230,7 @@ def test_launcher_source_keeps_every_layer(needle: str):
 def test_build_launcher_source_is_pure_and_payload_specific():
     first = build_launcher_source({"cmd": ["a"], "roots": [], "max_processes": 1})
     second = build_launcher_source({"cmd": ["b"], "roots": [], "max_processes": 2})
-    assert first.startswith("import base64;exec(base64.b64decode('")
+    assert first.startswith("import base64,zlib;exec(zlib.decompress(base64.b64decode('")
     assert first != second
     assert _payload_of([sys.executable, "-c", first])["cmd"] == ["a"]
 
@@ -350,3 +379,132 @@ def test_kill_on_job_close_reaps_grandchildren(tmp_path):
 
     time.sleep(4.5)
     assert not marker.exists(), "the grandchild outlived the launcher's job object"
+
+
+# --------------------------------------------------------------------------
+# AppContainer (layer 2) — Windows only
+# --------------------------------------------------------------------------
+
+
+def _run_wrapped(cmd: list[str], roots: list[Path]) -> subprocess.CompletedProcess:
+    argv, env = WinSandboxBackend().wrap(cmd, dict(os.environ), roots)
+    return subprocess.run(argv, capture_output=True, env=env, timeout=180)
+
+
+@_WINDOWS_ONLY
+def test_appcontainer_confines_writes_and_reads(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "existing.txt").write_text("existing", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    code = (
+        "import os, pathlib\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        f"outside = pathlib.Path({str(outside)!r})\n"
+        "(root / 'new.txt').write_text('new')\n"
+        "print('inside-write-ok')\n"
+        "print('existing', (root / 'existing.txt').read_text())\n"
+        "try:\n"
+        "    (pathlib.Path(os.environ['TEMP']) / 'sandbox-temp.txt').write_text('t')\n"
+        "    print('temp-write-ok')\n"
+        "except OSError as exc:\n"
+        "    print('temp-write-denied', type(exc).__name__)\n"
+        "try:\n"
+        "    (outside / 'out.txt').write_text('out')\n"
+        "    print('outside-write-ok')\n"
+        "except OSError as exc:\n"
+        "    print('outside-write-denied', type(exc).__name__)\n"
+        "try:\n"
+        "    print('outside-read', (outside / 'secret.txt').read_text())\n"
+        "except OSError as exc:\n"
+        "    print('outside-read-denied', type(exc).__name__)\n"
+    )
+
+    result = _run_wrapped([sys.executable, "-c", code], [root])
+    out = result.stdout.decode("utf-8", "replace")
+
+    assert result.returncode == 0, out + result.stderr.decode("utf-8", "replace")
+    assert "inside-write-ok" in out
+    assert "existing existing" in out
+    assert "temp-write-ok" in out, "the AppContainer profile temp must stay writable"
+    assert "outside-write-ok" not in out
+    assert "outside-read-denied" in out
+    assert not (outside / "out.txt").exists()
+
+
+@_WINDOWS_ONLY
+def test_appcontainer_allows_network_by_default_and_blocks_on_request(tmp_path, monkeypatch):
+    code = (
+        "import socket\n"
+        "try:\n"
+        "    socket.create_connection(('192.0.2.1', 80), timeout=1).close()\n"
+        "    print('allowed')\n"
+        "except PermissionError:\n"
+        "    print('blocked')\n"
+        "except OSError:\n"
+        "    print('allowed')\n"
+    )
+
+    monkeypatch.delenv("SHERRY_WIN_SANDBOX_BLOCK_NETWORK", raising=False)
+    allowed = _run_wrapped([sys.executable, "-c", code], [tmp_path]).stdout.decode(
+        "utf-8", "replace"
+    )
+    assert "allowed" in allowed, allowed
+
+    monkeypatch.setenv("SHERRY_WIN_SANDBOX_BLOCK_NETWORK", "1")
+    blocked = _run_wrapped([sys.executable, "-c", code], [tmp_path]).stdout.decode(
+        "utf-8", "replace"
+    )
+    assert "blocked" in blocked, blocked
+
+
+@_WINDOWS_ONLY
+def test_appcontainer_off_disables_file_confinement(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHERRY_WIN_SANDBOX_APPCONTAINER", "0")
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    code = (
+        "import pathlib\n"
+        f"pathlib.Path({str(outside / 'out.txt')!r}).write_text('out')\n"
+        "print('outside-write-ok')\n"
+    )
+
+    result = _run_wrapped([sys.executable, "-c", code], [root])
+    out = result.stdout.decode("utf-8", "replace")
+
+    assert "outside-write-ok" in out, out + result.stderr.decode("utf-8", "replace")
+
+
+@_WINDOWS_ONLY
+def test_a_broken_profile_still_runs_the_command(tmp_path):
+    """Layer 2 failure is fail-open: the restricted-token + Job path still runs."""
+    payload = {
+        "cmd": [r"C:\Windows\System32\cmd.exe", "/c", "echo fallback-ok"],
+        "roots": [str(tmp_path)],
+        "max_processes": 50,
+        "max_memory_mb": 4096,
+        "block_network": False,
+        "appcontainer": True,
+        "appcontainer_name": "sherry\\invalid/profile name",
+    }
+    launcher = build_launcher_source(payload)
+    result = subprocess.run(
+        [sys.executable, "-c", launcher],
+        capture_output=True,
+        env=os.environ.copy(),
+        timeout=120,
+    )
+
+    assert result.returncode == 0
+    assert b"fallback-ok" in result.stdout
+    stderr = result.stderr.decode("utf-8", "replace")
+    # Either the profile is refused or the SID it derives names no profile
+    # (CreateProcess then fails); both must log and fall back to layers 1+3.
+    assert (
+        "AppContainer profile unavailable" in stderr
+        or "AppContainer process creation failed" in stderr
+    ), stderr

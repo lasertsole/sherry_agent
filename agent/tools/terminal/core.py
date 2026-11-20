@@ -47,7 +47,6 @@ import locale
 import asyncio
 import os
 from pathlib import Path
-import platform
 import re
 import subprocess
 import warnings
@@ -98,24 +97,6 @@ from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 #: Ceiling for a per-call ``timeout`` (see ``_resolve_timeout``).
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
-
-
-def _sandbox_shell_argv(cmd_str: str) -> list[str]:
-    """The list-exec argv a sandboxed command runs through.
-
-    POSIX keeps ``/bin/sh -c`` (identical to ``shell=True``). Windows has no
-    ``/bin/sh``: the unsandboxed path already prefers Git Bash because the tool
-    promises a POSIX shell, so the sandboxed path uses the same resolver and
-    only falls back to ``COMSPEC`` when no bash exists. Using ``cmd.exe``
-    unconditionally would change ``&&``/``$()``/quoting semantics under the
-    sandbox — the exact behavior the tool documents.
-    """
-    if platform.system() == "Windows":
-        bash_exe = resolve_windows_bash()
-        if bash_exe:
-            return [bash_exe, "-c", cmd_str]
-        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", cmd_str]
-    return ["/bin/sh", "-c", cmd_str]
 
 
 def _child_env(session_id: str) -> dict[str, str]:
@@ -499,10 +480,11 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 "(HITL-gated when an operator is in scope)"
             )
             return None, env
-        # List-exec form for the sandbox: [shell, "-c", cmd] is semantically
-        # identical to shell=True on the same platform (POSIX sh, or Git Bash
-        # on Windows — never a silent cmd.exe switch).
-        return backend.wrap(_sandbox_shell_argv(cmd_str), env, writable_roots)
+        # List-exec form for the sandbox: the backend owns the shell choice,
+        # because Windows' AppContainer cannot host Git Bash (MSYS2 needs
+        # global named objects) — it answers cmd.exe while a POSIX host gets
+        # /bin/sh. Both are semantically identical to shell=True on that host.
+        return backend.wrap(backend.sandbox_shell(cmd_str), env, writable_roots)
 
     # ── Sync execution paths ────────────────────────────────────────────────
 

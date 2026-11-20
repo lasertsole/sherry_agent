@@ -65,14 +65,14 @@ bwrap
 
 順序こそが仕様です: `(allow default)` の下の `(deny file-write*)` は「ファイル書き込み以外はすべて許可」を意味し、その後の明示的 allow が2つの書き込み可能パスと `/dev/null`、`/dev/tty` のリテラルを再び開きます。リードシールドの `deny file-read*` ルールは `(deny file-write*)` の直後に置かれます: 機密パスごとに1つの `subpath` ルール(既定リストと `SHERRY_DENY_READ_PATHS` 拡張は bwrap と共通)と、任意の場所の `.env` / `.env.*` を覆う2つの正規表現ルールです。存在しないパスも拒否されます — 存在しないパスへの拒否は無害です。パスは `json.dumps` で埋め込まれ、パス中の引用符やバックスラッシュが sbpl 注入コードとして脱出することはできません。
 
-**Windows: 制限トークン + Job Object(`WinSandboxBackend`)**。Windows には `bwrap` も `sandbox-exec` もなく、`wrap()` はプロセス作成属性を変えられません。そこでバックエンドは小さな launcher(`python -c <base64 launcher>`)を返し、カーネルレベルの処理をそこで行います:
+**Windows: AppContainer + 制限トークン + Job Object(`WinSandboxBackend`)**。Windows には `bwrap` も `sandbox-exec` もなく、`wrap()` はプロセス作成属性を変えられません。そこでバックエンドは小さな launcher(`python -c` で zlib 圧縮・base64 のソースを実行)を返し、カーネルレベルの処理をそこで行います:
 
-1. **制限トークン** — 呼び出し元自身のトークンに `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`。子は同一性とファイルアクセスを保ちますが、すべての特権を失います(他プロセスのデバッグ、ドライバのロード、所有権の奪取が不可)。管理者権限は不要で、ファイル封じ込めがまだ無い段階でも「サンドボックス化」に実質的な意味を与えます。
-2. **Job Object** — `ActiveProcessLimit`(`SHERRY_WIN_SANDBOX_MAX_PROCESSES`、既定 50)、`JobMemoryLimit`(`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`、既定 4096)、`KILL_ON_JOB_CLOSE`。fork bomb や OOM を封じ込め、launcher を殺す(ツールのタイムアウト経路)とコマンドと全子孫が死にます。子は**中断状態**で作成し、ジョブに割り当ててから再開するため、割り当ての隙間で逃亡プロセスを spawn できません。
-3. **stdout/stderr 伝播** — ツールは子の stdout を FILE ハンドルに向け、launcher は継承可能な複製を渡します(`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`)。これが無いとサンドボックス化された出力はどこにも届きません。
+1. **AppContainer** —— ユーザーごとの profile(`CreateAppContainerProfile`、既存なら `DeriveAppContainerSidFromAppContainerName`)がパッケージ SID を与えます。launcher はその SID に `writable_roots` の継承可能な読み書き/実行/削除 ACE を付与し、コマンド自身の実行ファイル、venv のベースインタープリタ(`pyvenv.cfg` の `home`、`Lib`/`DLLs`/`python*.dll`)、launcher 自身のインタープリタに読み取り+実行を付与します。`UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES)` + `EXTENDED_STARTUPINFO_PRESENT` でプロセスを**コンテナ内**に作成します: 書き込みは許可ルートのみ、読み取りはパッケージ SID が許された範囲のみ。設定がネットワーク遮断を要求した場合は `internetClient` 能力を付けず、外向き socket は connect 時に拒否されます。システムツリー(`%SystemRoot%`、`%ProgramFiles%`)は既に `ALL APPLICATION PACKAGES` の読み取り+実行を持つためスキップします。`%TEMP%`/`%TMP%` は Windows が profile の `AC\Temp`(書き込み可)へリダイレクトします。AppContainer 無効時は launcher が許可ルートを指します。
+2. **制限トークン** —— 呼び出し元自身のトークンに `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`。子は全特権を失います(他プロセスのデバッグ、ドライバのロード、所有権の奪取が不可)。管理者権限は不要です。`DISABLE_MAX_PRIVILEGE` は `SeChangeNotifyPrivilege` を残すため、祖先ディレクトリごとに ACE を付けなくても許可済みパスを通過できます。
+3. **Job Object** —— `ActiveProcessLimit`(`SHERRY_WIN_SANDBOX_MAX_PROCESSES`、既定 50)、`JobMemoryLimit`(`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`、既定 4096)、`KILL_ON_JOB_CLOSE`。fork bomb や OOM を封じ込め、launcher を殺す(ツールのタイムアウト経路)とコマンドと全子孫が死にます。子は**中断状態**で作成して job に割り当ててから再開するため、割り当ての隙間で逃亡プロセスを spawn できません。
+4. **stdout/stderr 伝播** —— ツールは子の stdout を FILE ハンドルに向け、launcher は継承可能な複製を渡します(`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`)。これが無いとサンドボックス出力はどこにも届きません。
 
-各層は独立に fail-open します(`CreateProcessAsUserW` → `CreateProcessW`、トークン失敗なら特権はそのまま、ジョブ失敗ならトークンのみ)。失敗は Win32 エラーコード付きで stderr に報告されるので、ある層を禁じるホストポリシーは実行拒否ではなく明示的な降格になります。**AppContainer は未実装**: 書き込み可能ルートと要求されたネットワーク遮断はペイロードに載るだけで Windows では強制されず、ファイル封じ込めはツール層のパスゲート + HITL のままです。
-
+各層は独立に fail-open します——AppContainer profile/作成失敗は制限トークン経路へ、`CreateProcessAsUserW` は `CreateProcessW` へ、トークン失敗なら特権はそのまま、job 失敗ならトークンのみ——失敗は必ず Win32 エラーコード付きで stderr に出るので、ある層を禁じるホストポリシーは実行拒否ではなく明示的な降格になります。`SHERRY_WIN_SANDBOX_APPCONTAINER=0` で第 2 層を無効化できます(サンドボックス shell は Git Bash に戻る)。Windows の意図的な制限が 2 つあります: **MSYS2/Git Bash は AppContainer 内で初期化できない**(ランタイムがグローバル名前付きオブジェクトを必要とする)ため、サンドボックス shell は `cmd.exe` です。また DACL 付与と profile は永続するため、コマンド終了後も許可ルートに `S-1-15-2-…` ACE と AppContainer profile が残ります。
 **プローブ(可用性確認)**。すべてのバックエンドがクラスレベルキャッシュ付きの `probe() -> bool` を実装します(プロセスにつき1回プローブ、失敗結果もキャッシュ):
 
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true` を3秒のタイムアウトでスモーク実行。バイナリの存在だけでは不十分です。Ubuntu 24.04+ の AppArmor 非特権 user namespace 制限は uid-map 段階ですべての bwrap を殺せます。だからこそ実際のスモーク実行だけが誠実な確認です。

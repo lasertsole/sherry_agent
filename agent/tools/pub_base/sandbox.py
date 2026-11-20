@@ -186,6 +186,17 @@ class SandboxBackend(ABC):
         """
         ...
 
+    def sandbox_shell(self, cmd: str) -> list[str]:
+        """The shell argv a sandboxed terminal command runs through.
+
+        POSIX hosts use ``/bin/sh -c`` (semantically identical to
+        ``shell=True``). The Windows backend overrides this: Git Bash cannot
+        initialise inside an AppContainer (the MSYS2 runtime needs global
+        named objects an AppContainer cannot open), so the AppContainer shell
+        is ``cmd.exe``; with AppContainer disabled the override keeps Git Bash.
+        """
+        return ["/bin/sh", "-c", cmd]
+
 
 def with_own_session_root(writable_roots: Sequence[Path], session_id: str) -> list[Path]:
     """Append this session's private ``SESSIONS_DIR`` tree to the write surface.

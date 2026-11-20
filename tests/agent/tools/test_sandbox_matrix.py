@@ -85,6 +85,7 @@ import agent.tools.python_repl as python_repl_mod
 import agent.tools.terminal.core as terminal_mod
 from agent.middlewares.humanInTheLoop import HITLConfig, HumanInTheLoop
 from agent.tools.pub_base.env_scrub import SHERRY_SECRET_NAMES
+from agent.tools.pub_base.sandbox import SandboxBackend
 from agent.tools.python_repl import build_python_repl_tool
 from agent.tools.terminal import build_terminal_tool
 from config import ROOT_DIR
@@ -98,7 +99,7 @@ pytestmark = [  # The upstream ShellInput validator warns on every validation; k
 # ─────────────────────────────────────────────────────────────────────────────
 # Backend stand-ins
 # ─────────────────────────────────────────────────────────────────────────────
-class _RecordingBackend:
+class _RecordingBackend(SandboxBackend):
     """SandboxBackend stand-in: probe()=True, wrap() records + marks the env."""
 
     def __init__(self, wrapper: str = "fakewrap"):

@@ -17,10 +17,12 @@ What it checks, with and without the whitelist:
 5. reading a file outside the root (*and* not a system path) fails when the
    whitelist is on — and lists what the whitelist still allows.
 
-On Windows the backend's layers 1 and 3 (restricted token + Job Object) are
-live, but file confinement (AppContainer) is not implemented yet: checks 3 and
-5 are reported as SKIP there instead of failing, because the documented
-contract does not claim them on Windows yet. Everything else still runs.
+On Windows the same checks apply to the AppContainer backend (layer 2): the
+command can write inside the root, cannot write outside it, and — with
+`SANDBOX_READ_ALLOWLIST=1` — cannot read a file outside it. The default
+`--outside` on Windows is a fresh temp directory (writing to the drive root fails for a
+normal account regardless of the sandbox, which would make the check
+meaningless).
 
 Usage::
 
@@ -69,7 +71,11 @@ def main() -> int:
     parser.add_argument(
         "--root", default=None, help="the writable root to probe (default: a temp dir)"
     )
-    parser.add_argument("--outside", default="/", help="a path that must NOT be writable")
+    parser.add_argument(
+        "--outside",
+        default=None,
+        help="a path that must NOT be writable (default: / on POSIX, a fresh temp dir on Windows)",
+    )
     args = parser.parse_args()
 
     policy = read_policy()
@@ -91,7 +97,8 @@ def main() -> int:
     root.mkdir(parents=True, exist_ok=True)
     inside = root / "inside.txt"
     inside.write_text("inside", encoding="utf-8")
-    outside = Path(args.outside).resolve()
+    outside_default = tempfile.mkdtemp(prefix="sandbox-smoke-outside-") if os.name == "nt" else "/"
+    outside = Path(args.outside or outside_default).resolve()
     whitelist = os.environ.get("SANDBOX_READ_ALLOWLIST", "").strip().lower() in (
         "1",
         "true",
@@ -101,6 +108,11 @@ def main() -> int:
     print(f"     root={root} outside={outside} read_allowlist={whitelist}")
 
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(root)}
+    windows = platform.system() == "Windows"
+    if windows:
+        # AppContainer creation needs the user's real environment (a minimal
+        # PATH/HOME makes CreateProcess fail with ERROR_ENVVAR_NOT_FOUND).
+        env = {**os.environ, "HOME": str(root)}
     failures = 0
 
     def check(label: str, ok: bool, detail: str = "") -> None:
@@ -110,8 +122,6 @@ def main() -> int:
         else:
             failures += 1
             print(f"FAIL {label}{(' — ' + detail) if detail else ''}")
-
-    windows = platform.system() == "Windows"
 
     wrapped, wrapped_env = backend.wrap(_py("print('ok')"), env, [root])
     rc, out = _run(wrapped, wrapped_env, str(root))
@@ -128,22 +138,19 @@ def main() -> int:
     )
 
     target = outside / "sherry-sandbox-smoke.txt"
-    if windows:
-        print("SKIP write OUTSIDE the root — AppContainer write confinement is not implemented yet")
-    else:
-        wrapped, wrapped_env = backend.wrap(
-            _py(
-                "import pathlib,sys\n"
-                "try:\n"
-                f"    pathlib.Path({str(target)!r}).write_text('x')\n"
-                "except OSError:\n"
-                "    sys.exit(1)\n"
-            ),
-            env,
-            [root],
-        )
-        _run(wrapped, wrapped_env, str(root))
-        check("write OUTSIDE the root is refused", not target.exists(), f"{target} was created")
+    wrapped, wrapped_env = backend.wrap(
+        _py(
+            "import pathlib,sys\n"
+            "try:\n"
+            f"    pathlib.Path({str(target)!r}).write_text('x')\n"
+            "except OSError:\n"
+            "    sys.exit(1)\n"
+        ),
+        env,
+        [root],
+    )
+    _run(wrapped, wrapped_env, str(root))
+    check("write OUTSIDE the root is refused", not target.exists(), f"{target} was created")
 
     wrapped, wrapped_env = backend.wrap(
         _py(f"import pathlib\nprint(pathlib.Path({str(inside)!r}).read_text())"),
@@ -173,22 +180,17 @@ def main() -> int:
             print(f"INFO /etc/hostname read rc={rc} (whitelist off: the whole root is readable)")
 
     if whitelist:
-        if windows:
-            print("SKIP non-whitelisted read — the Windows read-shield (AppContainer) is pending")
-        else:
-            probe = Path(tempfile.gettempdir()) / "sherry-smoke-hidden.txt"
-            try:
-                probe.write_text("hidden", encoding="utf-8")
-                wrapped, wrapped_env = backend.wrap(
-                    _py(f"print(open({str(probe)!r}).read())"), env, [root]
-                )
-                rc, _out = _run(wrapped, wrapped_env, str(root))
-                check(
-                    "non-whitelisted read fails under SANDBOX_READ_ALLOWLIST=1", rc != 0, f"rc={rc}"
-                )
-                probe.unlink(missing_ok=True)
-            except OSError:
-                print("INFO could not create the hidden-read probe; skipped")
+        probe = Path(tempfile.gettempdir()) / "sherry-smoke-hidden.txt"
+        try:
+            probe.write_text("hidden", encoding="utf-8")
+            wrapped, wrapped_env = backend.wrap(
+                _py(f"print(open({str(probe)!r}).read())"), env, [root]
+            )
+            rc, _out = _run(wrapped, wrapped_env, str(root))
+            check("non-whitelisted read fails under SANDBOX_READ_ALLOWLIST=1", rc != 0, f"rc={rc}")
+            probe.unlink(missing_ok=True)
+        except OSError:
+            print("INFO could not create the hidden-read probe; skipped")
 
     if failures:
         print(

@@ -65,14 +65,14 @@ bwrap
 
 顺序即规范：`(allow default)` 之下的 `(deny file-write*)` 表示"除文件写入外全部放行"，随后用显式 allow 重新打开两个可写路径以及 `/dev/null`、`/dev/tty` 两个字面量。读遮蔽的 `deny file-read*` 规则紧跟在 `(deny file-write*)` 之后：每个敏感路径一条 `subpath` 规则（默认清单与 bwrap 相同，同样支持 `SHERRY_DENY_READ_PATHS` 扩展），另加两条正则覆盖任意位置的 `.env` / `.env.*`。不存在的路径照样拒绝——对不存在路径的拒绝无害。路径通过 `json.dumps` 嵌入，路径里的引号或反斜杠无法逃逸成注入的 sbpl 片段。
 
-**Windows：受限令牌 + Job Object（`WinSandboxBackend`）**。Windows 既没有 `bwrap` 也没有 `sandbox-exec`，而 `wrap()` 无法改变进程创建属性，因此后端返回一个小 launcher（`python -c <base64 launcher>`），由它在启动命令前完成内核级工作：
+**Windows：AppContainer + 受限令牌 + Job Object（`WinSandboxBackend`）**。Windows 没有 `bwrap` 也没有 `sandbox-exec`，`wrap()` 又不能改变进程创建属性，所以后端返回一个小 launcher（`python -c` 执行 zlib 压缩、base64 编码的源码），由它在启动命令前完成内核级工作：
 
-1. **受限令牌**——对调用方自己的令牌执行 `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`。子进程保留自己的身份与文件访问，但失去全部特权（不能调试其他进程、不能加载驱动、不能夺取所有权）；这不需要管理员权限，也让"已沙箱化"在文件围堵尚未落地时就有实质含义。
-2. **Job Object**——`ActiveProcessLimit`（`SHERRY_WIN_SANDBOX_MAX_PROCESSES`，默认 50）、`JobMemoryLimit`（`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`，默认 4096）与 `KILL_ON_JOB_CLOSE`。fork bomb 或 OOM 会被围堵；杀掉 launcher（工具的 timeout 路径）会连命令及其全部后代一起杀掉。子进程以**挂起状态**创建，先加入 job 再恢复运行，因此无法在加入的间隙里 spawn 出逃逸进程。
-3. **stdout/stderr 传递**——工具把子进程 stdout 指向 FILE 句柄，launcher 再把可继承的副本交给命令（`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`）；没有这一步，沙箱命令的输出无处可去。
+1. **AppContainer** —— 每用户 profile（`CreateAppContainerProfile`，已存在则 `DeriveAppContainerSidFromAppContainerName`）给出包 SID。launcher 给该 SID 在 `writable_roots` 上添加可继承的读写/执行/删除 ACE，并给命令自身的可执行文件、venv 的基础解释器（`pyvenv.cfg` 的 `home`，以及 `Lib`/`DLLs`/`python*.dll`）和 launcher 自己的解释器授予读+执行。`UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES)` + `EXTENDED_STARTUPINFO_PRESENT` 让进程**运行在容器内**：只能写被授权的根、只能读包 SID 可读的内容；配置要求断网时不授予 `internetClient` 能力，出站 socket 在 connect 阶段被拒绝。系统目录（`%SystemRoot%`、`%ProgramFiles%`）本身已给 `ALL APPLICATION PACKAGES` 读+执行，直接跳过。`%TEMP%`/`%TMP%` 由 Windows 重定向到 profile 的 `AC\Temp`（可写）；非 AppContainer 路径下 launcher 也会把它们指向某个被授权根。
+2. **受限令牌** —— 对调用方自己的令牌执行 `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`。子进程失去全部特权（不能调试其他进程、加载驱动、夺取所有权），不需要管理员。`DISABLE_MAX_PRIVILEGE` 保留 `SeChangeNotifyPrivilege`，这样容器可以穿越已获授权的路径，而不必给每一级祖先目录加 ACE。
+3. **Job Object** —— `ActiveProcessLimit`（`SHERRY_WIN_SANDBOX_MAX_PROCESSES`，默认 50）、`JobMemoryLimit`（`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`，默认 4096）与 `KILL_ON_JOB_CLOSE`。fork bomb 或 OOM 被围堵；杀掉 launcher（工具的 timeout 路径）会连命令及全部后代一起杀掉。子进程以**挂起状态**创建并加入 job 后再恢复，绑定窗口内无法 spawn 逃逸进程。
+4. **stdout/stderr 传递** —— 工具把子进程 stdout 指向 FILE 句柄，launcher 把可继承副本交给命令（`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`）。没有这一步，沙箱输出无处可去。
 
-每一层都独立 fail-open（`CreateProcessAsUserW` → `CreateProcessW`；令牌失败则保留特权；job 失败则只剩令牌），每次失败都会带 Win32 错误码写到 stderr，因此禁止某一层的主机策略是明示降级，而不是拒绝运行。**AppContainer 尚未实现**：可写根清单与请求的网络封锁虽随 payload 传递，但在 Windows 上并不强制执行，文件围堵仍由工具层路径门禁 + HITL 承担。
-
+每一层独立 fail-open——AppContainer profile/创建失败会退回受限令牌路径，`CreateProcessAsUserW` 退回 `CreateProcessW`，令牌失败保留全部特权，job 失败只剩令牌——每次失败都带 Win32 错误码写到 stderr，因此禁止某一层的主机策略是明示降级而不是拒绝运行。`SHERRY_WIN_SANDBOX_APPCONTAINER=0` 关闭第 2 层（沙箱 shell 恢复 Git Bash）。两条刻意的 Windows 限制：**MSYS2/Git Bash 无法在 AppContainer 内初始化**（其运行时需要全局命名对象），所以受沙箱的 shell 是 `cmd.exe`；DACL 授权与 profile 是持久的，命令结束后被授权的根上会留下 `S-1-15-2-…` ACE（以及一个 AppContainer profile）。
 **探测（可用性检查）**。所有后端都实现 `probe() -> bool`，带类级缓存（每个进程只探测一次，失败结果同样缓存）：
 
 - `BwrapBackend.probe()`：以 3 秒超时冒烟运行 `bwrap --ro-bind / / --proc /proc --dev /dev true`。二进制存在并不代表可用；Ubuntu 24.04+ 的 AppArmor 非特权 user namespace 限制可以在 uid-map 阶段杀死所有 bwrap，所以真实的冒烟运行才是诚实的检查。
