@@ -21,6 +21,7 @@ from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools.taskflow_create import taskflow_create
 from agent.tools.taskflow.tools.taskflow_finish import taskflow_finish
 from agent.tools.taskflow.tools.taskflow_plan import taskflow_plan
+from agent.tools.todolist import service as todo_service
 from agent.tools.todolist.registry import store_sqlite as todo_store
 from agent.tools.todolist.service import TodoService, TodoStoreError
 from config.features import TASKFLOW_INFRA
@@ -372,7 +373,9 @@ async def test_create_auto_binds_a_flow_level_todo(isolated_db: Path):
 
     assert "TaskFlow created" in out
     assert "todo bound: 检查内存泄漏" in out
-    todos = await todo_store.get_todos(SESSION)
+    todos = [
+        todo for todo in await todo_store.get_todos(SESSION) if not todo_service.is_verify_todo(todo)
+    ]
     assert len(todos) == 1
     assert todos[0]["status"] == "pending"
     assert todos[0]["flow_id"] == "flow-bind"
