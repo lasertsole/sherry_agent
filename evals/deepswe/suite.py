@@ -68,11 +68,13 @@ _NETWORK = "no-network"
 #: is declared a harness failure.
 _PULL_RETRIES = 3
 _PULL_RETRY_PAUSE_S = 20.0
-#: Per-child wall clock for orchestration step spawns: 3× the configured spawn
-#: default (600 s), because a DeepSWE step (read + implement + run the task's
-#: tests) burns the default to TIMEOUT and the retry loop eats the task's whole
-#: wall clock. ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the
-#: value outright, clamped to the spawn bounds.
+#: The LEAF budget of the spawn depth ladder (``resolve_run_timeout_for_requester``):
+#: 3× the configured spawn default (600 s), because a DeepSWE step (read +
+#: implement + run the task's tests) burns the default to TIMEOUT and the retry
+#: loop eats the task's whole wall clock. Under the ladder this value governs
+#: the LEAF; a depth-1 step child gets 3× IT (1800 → 5400).
+#: ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the value outright,
+#: clamped to the spawn bounds.
 _EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER = 3.0
 _EVAL_CHILD_RUN_TIMEOUT_ENV = "SHERRY_EVAL_CHILD_RUN_TIMEOUT_S"
 

@@ -240,7 +240,14 @@ User message → Robyn WS → agent.core.built_agent() graph
 
      spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
      `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
-     callers bypass the clamp and keep their own bounds). The timeout is a
+     callers bypass the clamp and keep their own bounds). The DEFAULT rides the
+     DEPTH LADDER (`resolve_run_timeout_for_requester`): the LEAF
+     (depth == `max_spawn_depth`) gets the configured
+     `run_timeout_seconds`, and every level above the leaf triples it — a
+     depth-1 child of a max-depth-2 tree gets ×3 (600→1800 default,
+     1800→5400 with the eval's leaf knob); MAIN is excluded (its budget is the
+     caller's own turn). An explicit caller timeout wins over the ladder. The
+     timeout is a
      SUBTREE budget: the effective value is frozen on the run
      (`SubagentRunRecord.run_timeout_seconds`), and a descendant spawn is
      capped by its parent's remaining wall clock (`started_at + timeout - now`,
