@@ -181,7 +181,10 @@ class TestStructuredOutputLadder:
         _build(role=SubagentSessionRole.ORCHESTRATOR, strategy_level=2)
 
         assert create_agent_capture["bind_calls"] == []
-        assert create_agent_capture["main_llm_calls"] == [{}]
+        # The learned label's THINKING aspect applies to free-form children too
+        # (their multi-turn thinking calls die with no schema to escalate on),
+        # but the JSON-MODE aspect stays schema-bound: no binding happens here.
+        assert create_agent_capture["main_llm_calls"] == [{"thinking": False}]
 
     def test_a_free_form_profile_child_leaves_thinking_to_the_env(self, create_agent_capture):
         _build(model_profile={"model": "deepseek-flash", "provider": "deepseek"})

@@ -682,7 +682,11 @@ async def _build_child_agent(
             prompt as the prompt-level fallback and Tier 1 re-validates on
             resume. Because some providers (DeepSeek) reject a forced
             ``tool_choice`` in thinking mode, a schema-bound child is built with
-            thinking OFF (``_select_child_llm(thinking_off=True)``).
+            thinking OFF when the learned cap says so
+            (``_select_child_llm(thinking_off=True)``); the same learned label
+            gates thinking for schema-FREE children too — their multi-turn
+            thinking calls die with ``reasoning_content must be passed back``
+            and no structured request to escalate on.
             ``None`` = free-form output.
         tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
         tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
@@ -720,8 +724,12 @@ async def _build_child_agent(
         model_tier,
         role,
         # The thinking-off rung exists because the provider rejected even the
-        # self-sent response_format while reasoning.
-        thinking_off=bool(output_schema) and strategy.thinking_off,
+        # self-sent response_format while reasoning — and, on reasoning-mode
+        # models, because the SECOND turn of a thinking conversation demands
+        # its reasoning_content back (a plain child dies with no schema in
+        # sight). The learned label therefore gates thinking for every child
+        # of the model; only sends_json_mode stays schema-bound (above).
+        thinking_off=strategy.thinking_off,
     )
     # Which model the child actually runs on, and which rung answered: the
     # spawn log plus one trajectory event make a configured role family (or a
@@ -757,7 +765,7 @@ async def _build_child_agent(
                 "provider": model_provider,
                 "model": model_name,
                 "structured": bool(output_schema),
-                "thinking_off": bool(output_schema) and strategy.thinking_off,
+                "thinking_off": strategy.thinking_off,
             },
         )
     # Levels 1/2: no framework-level structured output (no forced tool_choice);

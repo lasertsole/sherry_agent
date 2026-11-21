@@ -695,18 +695,20 @@ async def _execute_subagent_scoped(
 
     from .. import model_caps
 
-    identity = (
-        _child_model_identity(model_profile, run.functional_role, model_tier, run.role)
-        if output_schema
-        else ("", "")
-    )
+    identity = _child_model_identity(model_profile, run.functional_role, model_tier, run.role)
     # A model that already degraded starts at its learned level, so a later
-    # subagent never pays for the same rejected request again.
-    strategy_level = model_caps.get_level(*identity) if output_schema else 0
+    # subagent never pays for the same rejected request again. The level is
+    # resolved for EVERY spawn, schema or not: the label's STRUCTURED aspect
+    # only matters to schema-bound children, but its THINKING aspect applies
+    # to all of them — deepseek-flash's reasoning mode rejects a multi-turn
+    # conversation once the first turn's reasoning_content must be passed
+    # back, and a plain (no output_schema) child has no structured request
+    # for the ladder to ride on, so without this it simply dies mid-run.
+    strategy_level = model_caps.get_level(*identity)
     strategy = model_caps.strategy_for(strategy_level)
-    if output_schema and strategy_level:
+    if strategy_level:
         logger.info(
-            "Subagent structured output: {} starts at level {} ({})",
+            "Subagent model caps: {} starts at level {} ({})",
             "/".join(identity),
             strategy_level,
             strategy.label,
@@ -771,11 +773,7 @@ async def _execute_subagent_scoped(
             try:
                 agent_result = await _invoke(messages)
             except Exception as exc:  # noqa: BLE001 - a rejection is classified below
-                if (
-                    output_schema is not None
-                    and strategy_level < model_caps.MAX_LEVEL
-                    and _is_structured_output_rejection(exc)
-                ):
+                if strategy_level < model_caps.MAX_LEVEL and _is_structured_output_rejection(exc):
                     # Degrade ONE rung and retry from a clean conversation. The
                     # level is persisted, so the NEXT child on this model starts
                     # here instead of re-hitting the same 400.
