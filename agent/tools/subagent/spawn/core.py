@@ -305,6 +305,7 @@ def _assemble_child_prompts(
     attachment_prompt_suffix: str,
     isolated: bool,
     output_schema: dict | None,
+    persona_prompt: str | None = None,
 ) -> tuple[str, str]:
     """Phase 10: the child's system prompt and initial user message."""
     system_prompt = build_subagent_system_prompt_from_context(
@@ -322,6 +323,11 @@ def _assemble_child_prompts(
             can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
         )
     )
+
+    # An expert persona rides BEHIND the role prompt (the registry-defined
+    # domain identity for expert-panel / meeting participants).
+    if persona_prompt:
+        system_prompt = f"{system_prompt}\n\n## Expert Persona\n\n{persona_prompt.strip()}"
 
     # Append attachment-aware and schema-constraint suffixes to the system prompt
     if attachment_prompt_suffix:
@@ -459,6 +465,7 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
     goal_max_turns = request.goal_max_turns
     functional_role_hint = request.functional_role_hint
     extra_tools = request.extra_tools
+    persona_prompt = request.persona_prompt
     isolation = request.isolation
     flow_id = request.flow_id
     step_id = request.step_id
@@ -708,6 +715,7 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
         attachment_prompt_suffix=attachment_prompt_suffix,
         isolated=isolated_workspace is not None,
         output_schema=output_schema,
+        persona_prompt=persona_prompt,
     )
     # Warn if the run already looks orphaned at creation time (e.g. parent disconnected)
     orphan_reason = resolve_run_orphan_reason(run)

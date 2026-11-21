@@ -205,6 +205,9 @@ async def spawn_replacement(
     flow_id: str | None = None,
     step_id: str | None = None,
     approval_context: dict | None = None,
+    step_persona: str | None = None,
+    step_skills_whitelist: list[str] | None = None,
+    step_goal_max_turns: int | None = None,
 ) -> str:
     """Spawn the step's replacement child through the shared dispatch seam.
 
@@ -226,6 +229,9 @@ async def spawn_replacement(
         flow_id=flow_id,
         step_id=step_id,
         approval_context=approval_context,
+        step_persona=step_persona,
+        step_skills_whitelist=step_skills_whitelist,
+        step_goal_max_turns=step_goal_max_turns,
     )
 
 
@@ -244,6 +250,9 @@ def step_spawn_kwargs(step: dict, *, flow_id: str | None = None) -> dict:
         "step_timeout_seconds": step.get("step_timeout_seconds"),
         "flow_id": flow_id,
         "step_id": step.get("step_id"),
+        "step_persona": step.get("persona_prompt"),
+        "step_skills_whitelist": step.get("skills_whitelist"),
+        "step_goal_max_turns": step.get("goal_max_turns"),
     }
     # A step approved after a high-risk bubble carries its approval; an
     # ordinary step omits the key entirely so existing dispatch seams (and

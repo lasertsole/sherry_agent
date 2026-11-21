@@ -56,6 +56,9 @@ async def dispatch_child(
     flow_id: str | None = None,
     step_id: str | None = None,
     approval_context: dict | None = None,
+    step_persona: str | None = None,
+    step_skills_whitelist: list[str] | None = None,
+    step_goal_max_turns: int | None = None,
 ) -> str:
     """Dispatch a detached child session and return its child_session_key.
 
@@ -84,6 +87,9 @@ async def dispatch_child(
         flow_id=flow_id,
         step_id=step_id,
         approval_context=approval_context,
+        persona_prompt=step_persona,
+        skills_whitelist=step_skills_whitelist,
+        goal_max_turns=step_goal_max_turns,
     )
     if result.status != "accepted" or not result.child_session_key:
         raise RuntimeError(f"status={result.status} error={result.error}")

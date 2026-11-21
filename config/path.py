@@ -215,6 +215,10 @@ SKILLS_DIR = ROOT_DIR / "skills"
 USER_SKILLS_DIR = APP_HOME / "skills"
 AUTO_SKILLS_DIR = USER_SKILLS_DIR / "auto/"
 PLUGIN_SKILLS_DIR = USER_SKILLS_DIR / "plugins"
+#: Persisted expert definitions for the expert-panel / meeting modes
+#: (``APP_HOME/experts/<name>.json``) — one JSON file per expert, shared by
+#: every team and meeting that references it by name.
+EXPERTS_DIR = APP_HOME / "experts"
 SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
 #: Loader cache (written on every scan) — writable by definition.
 SKILLS_SNAPSHOT_FILE = USER_SKILLS_DIR / "skills_snapshot.json"
