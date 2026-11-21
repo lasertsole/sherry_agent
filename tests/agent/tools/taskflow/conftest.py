@@ -194,7 +194,6 @@ def _isolated_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
         step_timeout_seconds=None,
         flow_id=None,
         step_id=None,
-<<<<<<< HEAD
         approval_context=None,
         **_expert_kwargs,
     ) -> str:
