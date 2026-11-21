@@ -68,9 +68,35 @@ _NETWORK = "no-network"
 #: is declared a harness failure.
 _PULL_RETRIES = 3
 _PULL_RETRY_PAUSE_S = 20.0
-#: Per-child wall clock for orchestration step spawns (the spawn default is
-#: 600 s; a DeepSWE step needs the room — see the set_config block in _run).
-_EVAL_CHILD_RUN_TIMEOUT_S = 1800.0
+#: Per-child wall clock for orchestration step spawns: 3× the configured spawn
+#: default (600 s), because a DeepSWE step (read + implement + run the task's
+#: tests) burns the default to TIMEOUT and the retry loop eats the task's whole
+#: wall clock. ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the
+#: value outright, clamped to the spawn bounds.
+_EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER = 3.0
+_EVAL_CHILD_RUN_TIMEOUT_ENV = "SHERRY_EVAL_CHILD_RUN_TIMEOUT_S"
+
+
+def _eval_child_run_timeout_s() -> float:
+    """The eval's step-child wall clock: 3× the configured spawn default.
+
+    ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the multiplier's
+    result outright; the value is clamped to the spawn bounds (a 60 s floor,
+    the configured 7200 s ceiling).
+    """
+    from agent.tools.subagent.config import get_config
+
+    cfg = get_config()
+    default = cfg.run_timeout_seconds * _EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER
+    raw = os.environ.get(_EVAL_CHILD_RUN_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(60.0, min(value, cfg.run_timeout_max_seconds))
+
 
 _PROMPT = """{instruction}
 
@@ -438,20 +464,12 @@ async def _run(
         # CONCURRENCY itself works (step children demonstrably overlap); the
         # per-child BUDGET was the weak spot. The model can still raise a step
         # further via step_timeout_seconds (clamped at 7200 s).
-        from agent.tools.subagent.config import get_config, set_config
-        from dataclasses import replace as _dc_replace
+        _child_timeout = _eval_child_run_timeout_s()
+        from agent.tools.subagent.config import get_config
 
         _cfg = get_config()
-        if _cfg.run_timeout_seconds < _EVAL_CHILD_RUN_TIMEOUT_S:
-            set_config(
-                _dc_replace(
-                    _cfg,
-                    run_timeout_seconds=_EVAL_CHILD_RUN_TIMEOUT_S,
-                    run_timeout_min_seconds=min(
-                        _cfg.run_timeout_min_seconds, _EVAL_CHILD_RUN_TIMEOUT_S
-                    ),
-                )
-            )
+        if _cfg.run_timeout_seconds < _child_timeout:
+            _cfg.run_timeout_seconds = _child_timeout
         external_bench.trim_tools()
         # Bind the LIVE dict: .update() copied install-time zeros, so the
         # report never saw later counts.
