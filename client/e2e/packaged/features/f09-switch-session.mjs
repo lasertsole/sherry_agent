@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { currentSid, newSession, switchToSession } from '../lib/app.mjs';
+import { newSession, currentSid, switchToSession } from '../lib/app.mjs';
 
 export default {
   id: 'F09',

@@ -53,7 +53,11 @@ export class Ui {
   }
 
   async clickText(text, tag = 'button') {
-    const xpath = `//${tag}[normalize-space(.)=${JSON.stringify(String(text))}]`;
+    const literal = JSON.stringify(String(text));
+    const xpath =
+      tag === '*'
+        ? `//*[normalize-space(.)=${literal}]`
+        : `//${tag}[normalize-space(.)=${literal}] | //*[@role='button'][normalize-space(.)=${literal}]`;
     const element = await this.driver.wait(
       until.elementLocated(By.xpath(xpath)),
       this.timeout,
@@ -61,6 +65,22 @@ export class Ui {
     );
     await this.driver.executeScript('arguments[0].click()', element);
     return element;
+  }
+
+  /** Click the first visible element whose trimmed text equals *text* (any tag). */
+  async clickTextDeep(text) {
+    const clicked = await this.driver.executeScript(
+      `const want = arguments[0];
+       const nodes = [...document.querySelectorAll('button, span, div, li, a, label')]
+         .filter(el => el.offsetParent !== null && el.innerText.trim() === want);
+       if (!nodes.length) return false;
+       nodes[0].click();
+       return true;`,
+      String(text)
+    );
+    if (!clicked) throw new Error(`clickTextDeep: no visible element with text ${text}`);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    return true;
   }
 
   async clickAriaPrefix(prefix) {
@@ -75,7 +95,11 @@ export class Ui {
     await this.driver.executeScript(
       `const el = arguments[0], text = arguments[1];
        el.focus();
-       el.textContent = text;
+       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+         el.value = text;
+       } else {
+         el.textContent = text;
+       }
        el.dispatchEvent(new InputEvent('input', {
          bubbles: true, cancelable: true, inputType: 'insertText', data: text
        }));`,
@@ -96,7 +120,10 @@ export class Ui {
   }
 
   async bodyText() {
-    return (await this.find('body')).getText();
+    // Selenium's getText on WebKitGTK drops text inside truncating spans
+    // (sidebar titles, file-tree rows); JS innerText is the authoritative
+    // rendered text.
+    return this.driver.executeScript('return document.body.innerText;');
   }
 
   async exists(css) {
@@ -147,6 +174,14 @@ export class Ui {
       await sleep(200);
     }
     throw new Error(`element stayed visible: ${css}`);
+  }
+
+  /** A real pointer click (pointerdown fires, popovers dismiss). */
+  async nativeClick(css) {
+    const element = await this.find(css);
+    await this.driver.actions().move({ origin: element }).press().release().perform();
+    await new Promise(resolve => setTimeout(resolve, 400));
+    return element;
   }
 
   async clickIfPresent(css) {

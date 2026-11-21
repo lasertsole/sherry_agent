@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lastAiText, newSession, sendMessage } from '../lib/app.mjs';
+import { newSession, sendMessage, lastAiText } from '../lib/app.mjs';
 
 export default {
   id: 'F07',

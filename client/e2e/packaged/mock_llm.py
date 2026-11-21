@@ -29,7 +29,14 @@ STREAM_CHUNKS = ("Streaming ", "one ", "chunk ", "at ", "a ", "time.")
 SLOW_CHUNKS = ("Still ", "working ", "on ", "the ", "answer...")
 TOOLS_FINAL = "Tool result received from the real backend."
 HITL_FINAL = "Approved tool finished."
-MARKERS = ("[e2e:error]", "[e2e:hitl]", "[e2e:tools]", "[e2e:slow]", "[e2e:stream]")
+MARKERS = (
+    "[e2e:error]",
+    "[e2e:hitl]",
+    "[e2e:tools]",
+    "[e2e:slow]",
+    "[e2e:stream]",
+    "[e2e:reasoning]",
+)
 
 
 def _content_text(content: Any) -> str:
@@ -132,6 +139,29 @@ class Handler(BaseHTTPRequestHandler):
                     first = False
                 self._sse(self._chunk(delta))
                 time.sleep(delay)
+            self._sse(self._chunk({}, "stop"))
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _stream_reasoning(self) -> None:
+        """Reasoning chunks (delta.reasoning_content) followed by visible text."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            first = True
+            for thought in ("Think about the question. ", "Answer is simple. "):
+                delta: dict[str, Any] = {"reasoning_content": thought}
+                if first:
+                    delta["role"] = "assistant"
+                    first = False
+                self._sse(self._chunk(delta))
+                time.sleep(0.2)
+            self._sse(self._chunk({"content": "Reasoned reply from the mock backend."}))
             self._sse(self._chunk({}, "stop"))
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
@@ -249,6 +279,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_text((_final_text(scenario),), 0.1)
             elif scenario == "stream":
                 self._stream_text(STREAM_CHUNKS, 0.7)
+            elif scenario == "reasoning":
+                self._stream_reasoning()
             elif scenario == "slow":
                 self._stream_text(SLOW_CHUNKS, 1.2)
             else:

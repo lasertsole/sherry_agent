@@ -58,9 +58,13 @@ async function main() {
     }
     return 0;
   }
-  const selected = options.feature
-    ? FEATURES.filter(feature => feature.id.toLowerCase() === options.feature.toLowerCase())
-    : FEATURES;
+  const wantedIds = options.feature
+    ? options.feature
+        .split(',')
+        .map(id => id.trim().toLowerCase())
+        .filter(Boolean)
+    : null;
+  const selected = wantedIds ? FEATURES.filter(feature => wantedIds.includes(feature.id.toLowerCase())) : FEATURES;
   if (!selected.length) {
     throw new Error(`unknown feature: ${options.feature}`);
   }
@@ -130,10 +134,33 @@ async function main() {
       return summary.failed ? 1 : 0;
     }
 
-    const sid = await ensureSession(ui);
+    let sid = await ensureSession(ui);
     console.log(`session: ${sid}`);
     const ctx = { ui, sid, state: {}, reportDir, appHome: seeded.appHome };
     for (const feature of selected) {
+      // A frozen WebView makes every later command hang forever; probe with a
+      // hard deadline and rebuild the app session when it does not answer.
+      const alive = await Promise.race([
+        ui
+          .execute('return 1')
+          .then(() => true)
+          .catch(() => false),
+        new Promise(resolve => setTimeout(() => resolve(false), 15_000))
+      ]);
+      if (!alive) {
+        console.log(`[${feature.id}] app frozen before the feature; restarting the session`);
+        try {
+          await quitApp(cleanup.driver);
+        } catch {
+          /* already gone */
+        }
+        killOrphans(seeded.appHome, appPath);
+        cleanup.driver = await createSession(appPath);
+        ctx.ui = new Ui(cleanup.driver, reportDir);
+        sid = await ensureSession(ctx.ui);
+        console.log(`session restarted: ${sid}`);
+        ctx.sid = sid;
+      }
       if (feature.status !== 'implemented') {
         report.record(feature, {
           status: 'SKIP',

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { closeMenu, ensureSession, openMenu } from '../lib/app.mjs';
+import { ensureSession, openMenu, closeMenu } from '../lib/app.mjs';
 
 export default {
   id: 'F11',

@@ -1,4 +1,4 @@
-import { newSession, sendMessage, setAccessMode } from '../lib/app.mjs';
+import { newSession, setAccessMode, sendMessage } from '../lib/app.mjs';
 
 export default {
   id: 'F05',

@@ -7,6 +7,8 @@
  * call the local mock model and resolve tool paths against a fixture workspace.
  */
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { APP_HOME_DIR } from './env.mjs';
 
@@ -16,11 +18,26 @@ import { APP_HOME_DIR } from './env.mjs';
 export function seedApp(options) {
   const xdgDataHome = path.join(options.tempRoot, 'XDG_DATA_HOME');
   const appHome = path.join(xdgDataHome, APP_HOME_DIR);
-  const workspace = path.join(options.tempRoot, 'workspace');
+  // The project directory sits at a FIXED host path so the UI's folder picker
+  // (which starts at Home) can reach it; the app-data tree stays isolated.
+  const workspace = path.join(os.homedir(), 'sherry-e2e-workspace');
+  fs.rmSync(workspace, { recursive: true, force: true });
   fs.mkdirSync(appHome, { recursive: true });
   fs.mkdirSync(workspace, { recursive: true });
   const fixture = path.join(workspace, 'e2e-fixture.txt');
   fs.writeFileSync(fixture, 'SHERRY_E2E_FIXTURE\n', 'utf8');
+  fs.writeFileSync(path.join(workspace, 'notes.md'), '# E2E Notes\n\nA markdown fixture with **bold** text.\n', 'utf8');
+  fs.writeFileSync(path.join(workspace, 'script.py'), 'def greet(name):\n    return f"hello {name}"\n', 'utf8');
+  // A real git repo so the Git Graph panel has a branch/commits to render.
+  try {
+    const run = (args, cwd) => execFileSync('git', args, { cwd });
+    run(['init', '-q', '-b', 'main'], workspace);
+    run(['-c', 'user.email=e2e@local', '-c', 'user.name=e2e', 'add', '-A'], workspace);
+    run(['-c', 'user.email=e2e@local', '-c', 'user.name=e2e', 'commit', '-q', '-m', 'e2e seed'], workspace);
+    fs.appendFileSync(path.join(workspace, 'notes.md'), 'dirty line\n', 'utf8');
+  } catch {
+    // No git on the host: the graph panel exercises its not-a-repo state instead.
+  }
 
   const base = `http://127.0.0.1:${options.mockPort}/v1`;
   const models = {
