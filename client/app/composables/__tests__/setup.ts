@@ -11,6 +11,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { config } from '@vue/test-utils';
 import { vDebounce } from '~/directives/debounce';
 import { vSafeHtml } from '~/directives/safeHtml';
+import { useSystemNotices } from '~/composables/use-system-notice';
 
 // Pinia: the real stores (chat-background / todo / subagent / connection) are
 // consumed by components; Nuxt installs Pinia as a plugin, while bare Vitest
@@ -175,6 +176,11 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   nextImage: vi.fn(),
   prevImage: vi.fn()
 }));
+
+// Nuxt auto-import consumed by `SystemNoticeStrip.vue` (transient system.notice
+// cards). The REAL composable: its module-scope state is process-global, so the
+// strip and its tests observe the same list.
+(globalThis as any).useSystemNotices = () => useSystemNotices();
 
 // Nuxt auto-imports consumed at setup top-level by `home/index.vue` (:246-247)
 // and `SessionSidebar.vue` (:290-292). No vue-router is installed in bare

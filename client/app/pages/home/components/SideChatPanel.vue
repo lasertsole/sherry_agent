@@ -22,6 +22,8 @@
         :selection-enabled="!hitlRequest"
         :allow-side-chat="false"
         @selection-add="onSelectionAdd" />
+      <!-- Transient system.notice cards for this fork's session (never persisted) -->
+      <SystemNoticeStrip :session-id="sessionId" />
       <!-- The approval card and the composer share the same slot: a pending
            approval owns the input, exactly like the main chat. -->
       <div class="flex h-40 shrink-0 flex-col border-t border-solid border-gray-light dark:border-gray-dark">
@@ -230,6 +232,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatBox from './ChatBox.vue';
+import SystemNoticeStrip from '~/components/chat/SystemNoticeStrip.vue';
 import { ChatInputBox } from '#components';
 import type { MessageItem } from '../type';
 import type { ChatController } from '~/composables/messages';

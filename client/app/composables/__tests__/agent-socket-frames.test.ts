@@ -94,9 +94,7 @@ describe('routeAgentFrame: resumable + ack frames', () => {
     fire(ctx, { event: 'edit_message_ack', session_id: 'sess', content: { ok: false, reason: 'compacted' } });
     seen.stop();
 
-    expect(seen.events).toEqual([
-      { sessionId: 'sess', ok: false, reason: 'compacted', rollbackSkipped: false }
-    ]);
+    expect(seen.events).toEqual([{ sessionId: 'sess', ok: false, reason: 'compacted', rollbackSkipped: false }]);
   });
 
   it('edit_message_ack carries the skipped-rollback flag of a success warning', () => {
@@ -109,9 +107,7 @@ describe('routeAgentFrame: resumable + ack frames', () => {
     });
     seen.stop();
 
-    expect(seen.events).toEqual([
-      { sessionId: 'sess', ok: true, reason: null, rollbackSkipped: true }
-    ]);
+    expect(seen.events).toEqual([{ sessionId: 'sess', ok: true, reason: null, rollbackSkipped: true }]);
   });
 });
 
@@ -361,5 +357,37 @@ describe('routeAgentFrame — stream_resume (snapshot reply)', () => {
     } finally {
       off('stream:resumed', listener);
     }
+  });
+});
+
+describe('routeAgentFrame: system_notice', () => {
+  /**
+   * Collect one mitt channel for the duration of one frame.
+   * @param channel
+   */
+  function capture(channel: string): { events: unknown[]; stop: () => void } {
+    const events: unknown[] = [];
+    const handler = (payload: unknown) => events.push(payload);
+    on(channel, handler);
+    return { events, stop: () => off(channel, handler) };
+  }
+
+  it('a system_notice frame re-emits the FULL frame on ws:system_notice', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:system_notice');
+    fire(ctx, {
+      event: 'system_notice',
+      session_id: 's1',
+      content: { title: 'bg exited', content: '$ sleep 5', level: 'success', source: 'tool:terminal' }
+    });
+    seen.stop();
+
+    expect(seen.events).toEqual([
+      {
+        event: 'system_notice',
+        session_id: 's1',
+        content: { title: 'bg exited', content: '$ sleep 5', level: 'success', source: 'tool:terminal' }
+      }
+    ]);
   });
 });

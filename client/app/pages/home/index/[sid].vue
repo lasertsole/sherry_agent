@@ -78,6 +78,8 @@
           @fork-turn="onForkTurn"
           :load-older-history="loadOlderHistory"
           :reset-exhausted="resetExhausted" />
+        <!-- Transient system.notice cards (never persisted; see use-system-notice.ts) -->
+        <SystemNoticeStrip :session-id="mySid" />
         <!-- Composer dock = EVERYTHING below the transcript: attachment previews,
              the reconnect banner / HITL card / edit banner and the input box. The
              floating conversation measures this block so dragging its lower bound
@@ -284,6 +286,7 @@ useErrorCaptured();
 
 // components
 import ChatBox from '../components/ChatBox.vue';
+import SystemNoticeStrip from '~/components/chat/SystemNoticeStrip.vue';
 import { ChatInputBox } from '#components';
 // function
 import { computed, onMounted, onUnmounted, ref } from 'vue';

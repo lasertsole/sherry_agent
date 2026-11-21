@@ -318,6 +318,28 @@ class BackgroundTaskRegistry:
         except Exception as exc:  # noqa: BLE001 - a dead socket must not matter
             logger.debug("background task {}: WS push failed: {}", task.task_id, exc)
 
+        # The panel badge + notification center carry the structured row; the
+        # in-chat system.notice is what makes the completion visible in the
+        # CONVERSATION (between turns, where the user is actually looking)
+        # without persisting anything. First consumer of the protocol (plan
+        # §1.3 internal-push path).
+        try:
+            from runtime.session.system_notice import push_system_notice
+
+            exit_code = task.exit_code
+            failed = task.status == "killed" or (exit_code is not None and exit_code != 0)
+            command = (task.command or "").split()[0] if task.command else "command"
+            await push_system_notice(
+                task.session_id,
+                title=f"Background {command} "
+                + ("was stopped" if task.status == "killed" else f"exited (code {exit_code})"),
+                content=f"$ {task.command}",
+                level="warning" if failed else "success",
+                source="tool:terminal",
+            )
+        except Exception as exc:  # noqa: BLE001 - a notice must never matter
+            logger.debug("background task {}: notice push failed: {}", task.task_id, exc)
+
     async def _trigger_auto_turn(self, task: BackgroundTask) -> None:
         """Wake the agent with the exit report (same path the enforcer uses)."""
         try:
