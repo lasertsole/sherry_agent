@@ -123,3 +123,9 @@ htmlcov/
 # never committed (the tracked doc lives in packaging/README.md).
 /client/src-tauri/sherry-backend/
 /build/
+
+# Third-party reference repos cloned into the project root for local inspection
+/Netor.Madorin/
+/Netor.Madorin.Runtime/
+/agentskills-runtime/
+/LinkSense/
