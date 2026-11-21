@@ -63,6 +63,11 @@ BASELINE_PATH = Path(__file__).with_name("baseline.json")
 _DEFAULT_TIMEOUT_S = 3600.0
 _MAX_TIMEOUT_S = 7200.0
 _NETWORK = "no-network"
+#: Task-image pull robustness: a transient registry failure (public ECR resets
+#: a layer fetch mid-burst) retries with a growing pause before the whole sweep
+#: is declared a harness failure.
+_PULL_RETRIES = 3
+_PULL_RETRY_PAUSE_S = 20.0
 
 _PROMPT = """{instruction}
 
@@ -541,11 +546,26 @@ def _preflight(
     prepared: list[tuple[Task, str]] = []
     for task in selected:
         if not external_bench.image_exists(task.image):
-            pulled = external_bench.pull_image(task.image)
-            if not pulled.ok:
+            # A long run meets transient registry hiccups (public ECR layer
+            # fetches reset mid-burst); one failed pull must not abort a
+            # 100+-task sweep, so retry with a growing pause first.
+            pulled: external_bench.CommandResult | None = None
+            for attempt in range(1, _PULL_RETRIES + 1):
+                pulled = external_bench.pull_image(task.image)
+                if pulled.ok:
+                    break
+                print(
+                    f"[evals] pull attempt {attempt}/{_PULL_RETRIES} failed for "
+                    f"{task.task_id}: {pulled.output[-500:]}",
+                    flush=True,
+                )
+                if attempt < _PULL_RETRIES:
+                    time.sleep(_PULL_RETRY_PAUSE_S * attempt)
+            if pulled is None or not pulled.ok:
                 print(
                     f"[evals] HARNESS FAILURE: could not pull {task.image} for "
-                    f"{task.task_id}: {pulled.output[-1500:]}",
+                    f"{task.task_id} after {_PULL_RETRIES} attempts: "
+                    f"{(pulled.output if pulled else '')[-1500:]}",
                     flush=True,
                 )
                 return None
