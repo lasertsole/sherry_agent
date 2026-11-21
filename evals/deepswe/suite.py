@@ -68,6 +68,9 @@ _NETWORK = "no-network"
 #: is declared a harness failure.
 _PULL_RETRIES = 3
 _PULL_RETRY_PAUSE_S = 20.0
+#: Per-child wall clock for orchestration step spawns (the spawn default is
+#: 600 s; a DeepSWE step needs the room — see the set_config block in _run).
+_EVAL_CHILD_RUN_TIMEOUT_S = 1800.0
 
 _PROMPT = """{instruction}
 
@@ -428,6 +431,27 @@ async def _run(
         harness._seed_persona(eval_workspace)
         _append_agents_note(eval_workspace)
         harness.init_agent()
+        # DeepSWE steps (read the task's code, implement, run the task's tests)
+        # blow the 600 s spawn default: the step child burns to TIMEOUT, the
+        # step fails, and the orchestration retry loop eats the task's whole
+        # wall clock — the observed "every task hits --timeout" pattern. The
+        # CONCURRENCY itself works (step children demonstrably overlap); the
+        # per-child BUDGET was the weak spot. The model can still raise a step
+        # further via step_timeout_seconds (clamped at 7200 s).
+        from agent.tools.subagent.config import get_config, set_config
+        from dataclasses import replace as _dc_replace
+
+        _cfg = get_config()
+        if _cfg.run_timeout_seconds < _EVAL_CHILD_RUN_TIMEOUT_S:
+            set_config(
+                _dc_replace(
+                    _cfg,
+                    run_timeout_seconds=_EVAL_CHILD_RUN_TIMEOUT_S,
+                    run_timeout_min_seconds=min(
+                        _cfg.run_timeout_min_seconds, _EVAL_CHILD_RUN_TIMEOUT_S
+                    ),
+                )
+            )
         external_bench.trim_tools()
         # Bind the LIVE dict: .update() copied install-time zeros, so the
         # report never saw later counts.
