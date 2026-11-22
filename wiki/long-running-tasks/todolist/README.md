@@ -188,14 +188,24 @@ class TodoService:
 
 ```python
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
-    from runtime import relation_register
-    ws = relation_register.get_websocket_by_session_id(session_id)
-    if ws:
-        await ws.send_text(json.dumps({
+    _sync_intent_anchor(session_id, todos)   # plan ended -> clear the anchor
+    try:
+        await broadcast_to_session(session_id, {
             "event": "todo_updated", "session_id": session_id,
             "content": {"todos": todos}
-        }))
+        }, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Failed to push todo_updated for session {}: {}", session_id, e)
 ```
+
+`_push_todo_update` is the single choke point for EVERY todo write
+(update/add/patch/remove/complete/cancel/reattach). It now also owns the
+**anchor lifecycle**: `_sync_intent_anchor` clears `StateKey.PLAN_INTENT_ANCHOR`
+when the list is empty or every todo is terminal (`completed`/`cancelled`), so
+a finished plan's intent cannot leak into the next task. While any todo —
+including the verify todo — is still active, the anchor is retained; the verify
+drift gate (`plan_drifted`, see [E4](enforcement/README.md#e4-transition-barrier--dual-insurance))
+runs before this write, so cleanup never disarms it.
 
 ---
 
@@ -329,9 +339,9 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 
 ### Injection Content
 
-| Block                      | Data source       | Context cost | Description                                                 |
-| -------------------------- | ----------------- | ------------ | ----------------------------------------------------------- |
-| `_build_todo_block()`      | registry.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
+| Block                      | Data source       | Context cost | Description                                                                  |
+| -------------------------- | ----------------- | ------------ | ---------------------------------------------------------------------------- |
+| `_build_todo_block()`      | registry.db + `StateKey.PLAN_INTENT_ANCHOR` | ~10 lines | Intent Anchor (if approved) + current todo list + status + TaskFlow flow/step association |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 lines     | Active work state                                           |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
@@ -339,27 +349,55 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 
 ```python
 def _build_todo_block(session_id: str) -> str:
-    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-    todos = get_todos_sync(session_id)
+    todos = _read_todos_sync(session_id)
     if not todos:
         return ""
+    # The approved plan's INTENT rides with the working plan; guarded so a
+    # broken anchor can never drop the todo list itself.
+    anchor_text = ""
+    try:
+        anchor = read_intent_anchor(session_id)   # workspace.intent_anchor_view
+        if anchor:
+            anchor_text = format_intent_anchor(anchor)
+    except Exception as error:
+        logger.debug("prompt builder: intent anchor read failed ({})", error)
     lines = ["## Current Todo List"]
-    for t in todos:
-        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
-        tag_parts = [t.get("category", "quick")]
-        if t.get("delegation", "self") != "self":
-            tag_parts.append(t["delegation"])
-        if t.get("flow_id"):
-            tag_parts.append(f"flow:{t['flow_id']}")
-        if t.get("step_id"):
-            tag_parts.append(t["step_id"])
-        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("Prefer todowrite local actions (patch/add/remove); use replace only for a full rewrite.")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
-    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
-    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    if anchor_text:
+        lines.append(anchor_text)                  # Goal / Must-have / Must-NOT-have / Accept
+        lines.append("")
+    for todo in todos:
+        icon = _TODO_ICONS.get(todo.get("status", ""), "○")
+        tag_parts = [todo.get("category") or "quick"]
+        delegation = todo.get("delegation")
+        if delegation and delegation != "self":
+            tag_parts.append(delegation)
+        if todo.get("flow_id"):
+            tag_parts.append(f"flow:{todo['flow_id']}")
+        if todo.get("step_id"):
+            tag_parts.append(todo["step_id"])
+        tag = f"({', '.join(tag_parts)})"
+        todo_id = todo.get("todo_id")
+        id_prefix = f"#{todo_id} " if todo_id else ""
+        lines.append(f"- [{icon}] {id_prefix}{tag} {todo['content']} ({todo.get('priority') or 'medium'})")
+        notes = str(todo.get("notes") or "").strip()
+        if notes:
+            lines.append(f"  notes: {notes[:300]}")
+    lines.append(
+        "Your todo list is tracked by the continuation system. "
+        "Incomplete todos will trigger automatic continuation."
+    )
+    lines.append(
+        "Completion is verified by the Sisyphus contract — unverified claims will be rejected."
+    )
     return "\n".join(lines)
 ```
+
+The Intent Anchor is rendered as one block (hash-deduplicated as a whole, not
+per todo), is absent from the system prompt (prefix-cache safe), and is
+re-injected after compression because the catalog's hash state is reset. See
+[Plan mode §Intent anchor](../../../plan-mode/README.md#intent-anchor--the-approved-plans-intent-not-just-its-file)
+and [E4](enforcement/README.md#e4-transition-barrier--dual-insurance) for the
+verify gate that checks it.
 
 ### Why This Is Lighter Than omo's 5-Layer Defense
 

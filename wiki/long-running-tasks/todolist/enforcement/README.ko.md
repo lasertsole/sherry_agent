@@ -122,6 +122,10 @@ for todo in validated:
         )
 ```
 
+**verify todo 계약 + 인텐트 드리프트 게이트**(시스템 소유 `[VERIFY]` todo, MAIN 에이전트 전용). 비어 있지 않은 모든 계획에는 꼬리에 verify todo가 하나만 붙습니다. 완료는 연결된 reviewer가 종료되었고 모든 work todo가 종료 상태여야 통과합니다. reviewer의 구조화된 보고서(`{"verified": bool, "results": [...]}`)는 실패한 todo를 근거와 수정 제안과 함께 다시 엽니다. brief에 승인된 계획의 **인텐트 앵커**가 있으면 reviewer는 추가로 `intent_match` / `intent_deviations`를 보고합니다 — 원래 스키마에 추가된 것이므로 기존 reviewer도 호환됩니다.
+
+`_assert_transition_allowed`의 머신 게이트는 verify todo 완료 **전에** `plan_drifted()`를 실행합니다. 계획 파일이 앵커 기록 시점의 리비전으로 해싱되지 않으면 완료를 거부하고 replan을 요구합니다. 앵커 자체는 매 턴 todo 리마인더에 실리고(시스템 프롬프트에는 없음), todo 목록이 사라지면 `_push_todo_update`가 삭제하므로 오래된 의도가 다음 작업으로 새지 않습니다. [플랜 모드 §인텐트 앵커](../../../plan-mode/README.ko.md#인텐트-앵커--승인된-계획의-파일이-아닌-의도를-보관)를 참조하세요.
+
 ### E5: Sisyphus 완료 계약 ★★
 
 3단계 완료 검증으로 "가짜 완료"에 대한 최종 방어선:

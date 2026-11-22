@@ -122,6 +122,10 @@ for todo in validated:
         )
 ```
 
+**verify todo 契約 + インテントドリフトゲート**（システム所有の `[VERIFY]` todo、MAIN エージェントのみ）。空でない計画には末尾に 1 つの verify todo だけが付与されます。完了は、結び付いた reviewer が終了済みであることと、すべての work todo が終端であることが条件です。reviewer の構造化レポート（`{"verified": bool, "results": [...]}`）は、失敗した todo を証拠と修正提案付きで再オープンします。brief に承認済み計画の**インテントアンカー**が含まれる場合、reviewer は追加で `intent_match` / `intent_deviations` を報告します——元スキーマへの追加であり、旧 reviewer も互換です。
+
+`_assert_transition_allowed` のマシンゲートは verify todo 完了**前**に `plan_drifted()` を走らせます。計画ファイルがアンカー書き込み時のリビジョンにハッシュ一致していなければ完了を拒否し、replan を要求します。アンカー自体は毎ターンの todo リマインダーに搭載され（システムプロンプトにはない）、todo リストが消えると `_push_todo_update` が消去するため、古い意図が次のタスクに漏れません。[計画モード §インテントアンカー](../../../plan-mode/README.ja.md#インテントアンカー--承認された計画の意図をファイルではなく保持する) を参照。
+
 ### E5: Sisyphus 完了契約 ★★
 
 三段階完了検証で「虚偽完了」に対する最終防線：

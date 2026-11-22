@@ -136,6 +136,24 @@ for todo in validated:
         )
 ```
 
+**Verify todo contract + intent drift gate** (system-owned `[VERIFY]` todo,
+MAIN-agent-only). Every non-empty plan gets exactly one verify todo, pinned to
+the tail; its completion is gated by a linked, finished reviewer and by every
+work todo already being terminal. The reviewer's structured report
+(`{"verified": bool, "results": [...]}`) drives failed todos back open with
+evidence and a suggested fix. When the brief carries the approved plan's
+**Intent Anchor**, the reviewer additionally reports `intent_match` /
+`intent_deviations` — additive to the original schema, so legacy reviewers stay
+compatible.
+
+The machine gate in `_assert_transition_allowed` runs `plan_drifted()` BEFORE
+the verify todo may complete: the plan file must still hash to the revision the
+anchor was written for, otherwise completion is refused and the agent must
+replan. The anchor itself rides the per-turn todo reminder (not the system
+prompt) and is cleared by `_push_todo_update` once the todo list is gone, so no
+stale intent leaks into the next task. See
+[Plan mode §Intent anchor](../../../plan-mode/README.md#intent-anchor--the-approved-plans-intent-not-just-its-file).
+
 ### E5: Sisyphus Completion Contract ★★
 
 Three-stage completion verification against "fake completion":

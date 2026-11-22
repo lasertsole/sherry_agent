@@ -136,6 +136,10 @@ for todo in validated:
         )
 ```
 
+**Verify todo 契约 + 意图漂移门禁**（系统自有的 `[VERIFY]` todo，仅 MAIN agent）。每个非空计划恰好获得一个置于末尾的 verify todo；它的完成以已绑定且已结束的 reviewer、以及所有 work todo 已终态为门禁。reviewer 的结构化报告（`{"verified": bool, "results": [...]}`）驱动失败的 todo 带着证据与修复建议重新打开。当 brief 携带已批准计划的**意图锚点**时，reviewer 额外报告 `intent_match` / `intent_deviations`——这是对原 schema 的追加，旧 reviewer 依然兼容。
+
+`_assert_transition_allowed` 中的机器门禁在 verify todo 完成**之前**运行 `plan_drifted()`：计划文件必须仍哈希到锚点写入时的修订号，否则拒绝完成并要求 replan。锚点本身随每轮 todo reminder 注入（不在系统提示词中），并在 todo 列表消失时由 `_push_todo_update` 清除，因此旧意图不会泄漏到下一个任务。见 [计划模式 §意图锚点](../../../plan-mode/README.zh.md#意图锚点被批准计划的意图而不只是它的文件)。
+
 ### E5: Sisyphus 完成契约 ★★
 
 三阶段完成验证，对"虚假完成"的最终防线：
