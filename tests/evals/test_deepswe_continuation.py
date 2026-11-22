@@ -108,3 +108,41 @@ def test_path_denial_markers_cover_the_three_guards():
     assert external_bench._is_path_denial("PathGuard: rejected terminal(commands='cd /app')")
     assert not external_bench._is_path_denial("all tests passed")
     assert not external_bench._is_path_denial("")
+
+
+@pytest.mark.asyncio
+async def test_run_task_clears_session_timer_on_setup_failure(tmp_path, monkeypatch):
+    """An aborted task must not leave the heartbeat timer firing forever."""
+    from types import SimpleNamespace
+
+    from evals import external_bench
+    from runtime import timer_call_register
+
+    cleared: list[str] = []
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("extract failed on purpose")
+
+    monkeypatch.setattr(external_bench, "extract_workdir", _boom)
+    monkeypatch.setattr(timer_call_register, "clear_session", cleared.append)
+
+    task = SimpleNamespace(
+        task_id="timer-leak-demo",
+        repo="example/repo",
+        base_commit="a" * 40,
+        language="typescript",
+        image="task:tag",
+        instruction="Fix the bug.",
+    )
+    result, _payload = await suite._run_task(
+        task,
+        "verifier:tag",
+        tmp_path,
+        timeout=1.0,
+        keep_workdirs=True,
+        gold_checked=False,
+    )
+
+    assert result["failure_kind"] == "harness"
+    assert len(cleared) == 1
+    assert cleared[0].startswith("evals-deepswe-timer-leak-demo-")

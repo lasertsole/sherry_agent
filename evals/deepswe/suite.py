@@ -903,6 +903,15 @@ async def _run_task(
         result["duration_s"] = round(time.monotonic() - started, 1)
         print(f"[evals] {task.task_id}: HARNESS ERROR: {result['error']}", flush=True)
     finally:
+        # HeartbeatStaleness arms a repeating 1-min timer in before_agent and
+        # normally clears it in after_agent. A turn aborted by the provider
+        # circuit-breaker (or by cancellation) can skip after_agent, leaving
+        # the timer firing forever — the eval process then stays alive long
+        # after eval_report.json has been written. Eval sessions are owned by
+        # the harness: always release their timers here.
+        from runtime import timer_call_register
+
+        timer_call_register.clear_session(session_id)
         if container:
             external_bench.remove_container(container)
         if not keep_workdirs:

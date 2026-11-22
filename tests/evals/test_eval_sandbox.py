@@ -39,3 +39,17 @@ def test_opt_in_child_isolation_filters_to_the_allowlist(
     finally:
         sandbox.restore()
     assert names == set(SAFE_TOOL_NAMES)
+
+
+@pytest.mark.asyncio
+async def test_close_aiosqlite_connections_inside_a_running_loop(tmp_path: Path) -> None:
+    """Async suites must still close connections (and their worker threads)."""
+    import aiosqlite
+
+    conn = await aiosqlite.connect(tmp_path / "sandbox.db")
+    sandbox = EvalSandbox.__new__(EvalSandbox)
+    sandbox._opened_connections = [conn]
+
+    assert sandbox.close_aiosqlite_connections() == 1
+    assert conn._connection is None
+    assert sandbox._opened_connections == []

@@ -154,6 +154,12 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
                     current_tool or "<none>",
                 )
                 state_register_mem.set_state(session_id, _STATE_KEY_KILLED, True)
+                # Nothing left to monitor once the session is killed. An
+                # aborted turn (provider circuit-breaker, cancellation) can
+                # skip after_agent, so the repeating timer would otherwise
+                # fire forever and keep the host process alive. Self-release
+                # makes the timer one-shot-on-kill for every caller.
+                self._stop_heartbeat(session_id)
             else:
                 logger.debug(
                     "[HeartbeatStaleness] session={} stale count={}/{} (tool={})",
