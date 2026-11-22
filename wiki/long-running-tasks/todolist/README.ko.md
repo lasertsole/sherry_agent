@@ -379,7 +379,7 @@ def _build_todo_block(session_id: str) -> str:
     return "\n".join(lines)
 ```
 
-인텐트 앵커는 **하나의 블록**으로 렌더링되며(블록 전체 해시 중복 제거, todo 단위 아님), 시스템 프롬프트에 없어(프리픽스 캐시 안전) 압축 후 다시 주입됩니다(reminder catalog의 해시 상태가 초기화되기 때문). 이를 검사하는 verify 게이트는 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance), 플랜 모드 측은 [플랜 모드 §인텐트 앵커](../../../plan-mode/README.ko.md#인텐트-앵커--승인된-계획의-파일이-아닌-의도를-보관)를 참조하세요.
+인텐트 앵커는 **하나의 블록**으로 렌더링되며(블록 전체 해시 중복 제거, todo 단위 아님), 시스템 프롬프트에 없어(프리픽스 캐시 안전) 압축 후 다시 주입됩니다(reminder catalog의 해시 상태가 초기화되기 때문). 이를 검사하는 verify 게이트는 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance), 플랜 모드 측은 [플랜 모드 §인텐트 앵커](../../plan-mode/README.ko.md#인텐트-앵커--승인된-계획의-파일이-아닌-의도를-보관)를 참조하세요.
 
 ### omo의 5층 방어보다 경량인 이유
 

@@ -395,7 +395,7 @@ def _build_todo_block(session_id: str) -> str:
 The Intent Anchor is rendered as one block (hash-deduplicated as a whole, not
 per todo), is absent from the system prompt (prefix-cache safe), and is
 re-injected after compression because the catalog's hash state is reset. See
-[Plan mode §Intent anchor](../../../plan-mode/README.md#intent-anchor--the-approved-plans-intent-not-just-its-file)
+[Plan mode §Intent anchor](../../plan-mode/README.md#intent-anchor--the-approved-plans-intent-not-just-its-file)
 and [E4](enforcement/README.md#e4-transition-barrier--dual-insurance) for the
 verify gate that checks it.
 

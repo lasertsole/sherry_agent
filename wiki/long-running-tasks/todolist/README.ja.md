@@ -379,7 +379,7 @@ def _build_todo_block(session_id: str) -> str:
     return "\n".join(lines)
 ```
 
-インテントアンカーは**1 ブロック**として描画され（ブロック全体でハッシュ重複排除、todo 単位ではない）、システムプロンプトには含まれず（プレフィックスキャッシュ安全）、圧縮後に再注入されます（reminder catalog のハッシュ状態がリセットされるため）。これを検査する verify ゲートは [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)、計画モード側は [計画モード §インテントアンカー](../../../plan-mode/README.ja.md#インテントアンカー--承認された計画の意図をファイルではなく保持する) を参照してください。
+インテントアンカーは**1 ブロック**として描画され（ブロック全体でハッシュ重複排除、todo 単位ではない）、システムプロンプトには含まれず（プレフィックスキャッシュ安全）、圧縮後に再注入されます（reminder catalog のハッシュ状態がリセットされるため）。これを検査する verify ゲートは [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)、計画モード側は [計画モード §インテントアンカー](../../plan-mode/README.ja.md#インテントアンカー--承認された計画の意図をファイルではなく保持する) を参照してください。
 
 ### omo の5層防御より軽量な理由
 

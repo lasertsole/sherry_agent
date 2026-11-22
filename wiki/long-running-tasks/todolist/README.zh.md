@@ -381,7 +381,7 @@ def _build_todo_block(session_id: str) -> str:
     return "\n".join(lines)
 ```
 
-意图锚点作为**一个块**渲染（整块哈希去重，不逐条 todo），不在系统提示词中（前缀缓存安全），压缩后会重新注入——因为 reminder catalog 的哈希状态被重置。检查它的 verify 门禁见 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)，计划模式侧见 [计划模式 §意图锚点](../../../plan-mode/README.zh.md#意图锚点被批准计划的意图而不只是它的文件)。
+意图锚点作为**一个块**渲染（整块哈希去重，不逐条 todo），不在系统提示词中（前缀缓存安全），压缩后会重新注入——因为 reminder catalog 的哈希状态被重置。检查它的 verify 门禁见 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)，计划模式侧见 [计划模式 §意图锚点](../../plan-mode/README.zh.md#意图锚点被批准计划的意图而不只是它的文件)。
 
 ### 为什么比 omo 的 5 层防御更轻量
 

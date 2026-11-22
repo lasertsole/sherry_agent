@@ -36,7 +36,6 @@
 uv run --no-sync python evals/deepswe/suite.py --preflight-only  # 拉镜像 + 构建 verifier + GOLD 自检，不调用模型
 SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py --timeout 1800
 
-# DeepSWE 默认切片，无 Docker 宿主机模式：
 ```
 
 `SHERRY_EVAL_CONTAINER_BIN` 指定引擎（`docker` / `podman`；默认先找 docker，再退回 podman）。
@@ -68,6 +67,47 @@ DeepSWE 驱动的是真实主 agent，因此 harness 把规则说出来并**核�
 
 已知缺口：容器模式用 `asyncio.wait_for` 约束每个回合，对进行中的 provider 调用没有
 硬杀，可能超过截止时间（已删除的 `--local` 模式的 worker 进程硬杀是修复的参考）。
+
+## 前 14 题实测
+
+按目录顺序的前 14 题在 2026-11-22 的容器跑批中实测（`20261122_044351` …
+`20261122_191618`）。「最佳」是该题最强的一次运行；`F2P` 是 benchmark 的
+fail-to-pass 集合，`P2P` 是必须保持全绿的 pass-to-pass 回归集；编排表示
+`todowrite` 与 TaskFlow flow 都用了。
+
+| # | 任务 | 语言 | 最佳 F2P | P2P | 墙钟 | 编排 |
+|---|---|---|---|---|---|---|
+| 1 | abs-module-cache-flags | Go | **20/20 — resolved** | 3/3 | 3243 s | ok |
+| 2 | abs-stepped-slices | Go | 5/6 | 6/6 | 1859 s | ok |
+| 3 | actionlint-action-pinning-lint | Go | **55/55 — resolved** | 145/145 | 446 s | VIOLATED（无 flow）|
+| 4 | adaptix-name-mapping-aliases | Python | 38/44 | 2738/2738 | 1608 s | ok |
+| 5 | aiomonitor-task-snapshots-diff | Python | 51/53 | 8/8 | 2241 s | ok |
+| 6 | anko-default-function-arguments | Go | 0/2 | 119/119 | 1468 s | VIOLATED（无 flow）|
+| 7 | anko-typed-variable-bindings | Go | 7/9 | 94/94 | 787 s | ok |
+| 8 | arcane-drift-detection-baselines | Go | **82/82 — resolved** | 2/2 | 2072 s | ok（todo 66）|
+| 9 | arktype-json-schema-refs-dependencies | TypeScript | 23/25 | 1679/1679 | 2147 s | ok |
+| 10 | awilix-async-container-initialization | TypeScript | 19/24 | 162/162 | 870 s | ok |
+| 11 | bandit-incremental-cache-control | Python | 79/88 | 275/275 | 1989 s | ok |
+| 12 | bandit-interprocedural-taint-checks | Python | 65/66 | 293/293 | 949 s | ok |
+| 13 | bandit-structured-nosec-directives | Python | 65/69 | 281/282 | 1238 s | ok |
+| 14 | boa-hierarchical-evaluation-cancellation | Rust | 0/17 | 7/7 | 2196 s | ok |
+
+这张表说明什么：
+
+- **14 题里 3 题 resolved**（21%），另有 5 题只差几项（12: 65/66、13: 65/69、
+  5: 51/53、9: 23/25、11: 79/88）。
+- **F2P 是梯度，不是二值**：部分分把「功能实现了大半」和「什么都没做」区分开，
+  单一 resolved 位会把两者混为一谈。
+- **预算比任何单点修复都关键**：同一模型下，第 1 题在 1800 s 回合预算里只拿到
+  9/20，在 7200 s 里拿到 20/20——时间耗尽时它仍在推进。
+- **两行 VIOLATED 是真实记录**：第 3、6 题完全靠 `terminal` 干活，那时编排门还
+  没覆盖 shell 工具。
+- **一个回归信号**：第 13 题丢了 1 个 P2P（281/282）——隐藏测试集抓到了它改动
+  的行为。
+- 第 10–13 题的首次尝试根本没跑起来：provider 返回 HTTP 402（余额不足），每题
+  ~20 秒、零工具调用就失败；那是 provider 故障，不是模型结果。
+- 第 14 题首次尝试是 harness 失败（16.9 秒），重跑正常。现在单次镜像拉取失败会
+  重试，不再中止整场跑批。
 
 ## 结果
 

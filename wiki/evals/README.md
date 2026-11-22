@@ -48,7 +48,6 @@ dataset, container runtime or key SKIPS loudly (exit 3), never a silent pass.
 uv run --no-sync python evals/deepswe/suite.py --preflight-only  # pull + verifier build + GOLD check, no model
 SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py --timeout 1800
 
-# DeepSWE default slice in the Docker-free host mode:
 ```
 
 `SHERRY_EVAL_CONTAINER_BIN` pins the engine (`docker` / `podman`; the default
@@ -90,6 +89,52 @@ then verifies them instead of trusting the prompt:
 Known gap: the container arm bounds each driven turn with `asyncio.wait_for`; it
 has no hard kill for an in-flight provider call, which can outlive the deadline
 (the retired `--local` mode's worker-process kill is the sketch for fixing this).
+
+## Task results (tasks 1-14)
+
+The first 14 tasks in sweep order were measured across the container runs of
+2026-11-22 (`20261122_044351` … `20261122_191618`). "Best" is that task's
+strongest run; `F2P` is the benchmark's fail-to-pass set, `P2P` the
+pass-to-pass regression set that must stay green, and orchestration means both
+`todowrite` and a TaskFlow flow were used.
+
+| # | Task | Lang | Best F2P | P2P | Wall clock | Orchestration |
+|---|---|---|---|---|---|---|
+| 1 | abs-module-cache-flags | Go | **20/20 - resolved** | 3/3 | 3243 s | ok |
+| 2 | abs-stepped-slices | Go | 5/6 | 6/6 | 1859 s | ok |
+| 3 | actionlint-action-pinning-lint | Go | **55/55 - resolved** | 145/145 | 446 s | VIOLATED (no flow) |
+| 4 | adaptix-name-mapping-aliases | Python | 38/44 | 2738/2738 | 1608 s | ok |
+| 5 | aiomonitor-task-snapshots-diff | Python | 51/53 | 8/8 | 2241 s | ok |
+| 6 | anko-default-function-arguments | Go | 0/2 | 119/119 | 1468 s | VIOLATED (no flow) |
+| 7 | anko-typed-variable-bindings | Go | 7/9 | 94/94 | 787 s | ok |
+| 8 | arcane-drift-detection-baselines | Go | **82/82 - resolved** | 2/2 | 2072 s | ok (todo 66) |
+| 9 | arktype-json-schema-refs-dependencies | TypeScript | 23/25 | 1679/1679 | 2147 s | ok |
+| 10 | awilix-async-container-initialization | TypeScript | 19/24 | 162/162 | 870 s | ok |
+| 11 | bandit-incremental-cache-control | Python | 79/88 | 275/275 | 1989 s | ok |
+| 12 | bandit-interprocedural-taint-checks | Python | 65/66 | 293/293 | 949 s | ok |
+| 13 | bandit-structured-nosec-directives | Python | 65/69 | 281/282 | 1238 s | ok |
+| 14 | boa-hierarchical-evaluation-cancellation | Rust | 0/17 | 7/7 | 2196 s | ok |
+
+What these rows say:
+
+- **3 of 14 resolved** (21%), with five more within a handful of tests
+  (12: 65/66, 13: 65/69, 5: 51/53, 9: 23/25, 11: 79/88).
+- **F2P is a gradient, not a binary.** Partial credit separates "implemented
+  most of the feature" from "did nothing", which is what a single resolved
+  bit would hide.
+- **Budget matters more than any single fix.** Task 1 scored 9/20 under a
+  1800 s turn budget and 20/20 under 7200 s with the same model — the run was
+  still making progress when the clock ran out.
+- **The two VIOLATED rows are real**: tasks 3 and 6 were worked through
+  `terminal` alone, before the orchestration gate covered the shell tools.
+- **One regression signal**: task 13 lost 1 P2P test (281/282) — a changed
+  behaviour the hidden suite caught.
+- Tasks 10-13's first attempts never ran: the provider returned HTTP 402
+  (insufficient balance) and each task failed in about 20 s with zero tool
+  calls. Those attempts are provider failures, not model results.
+- Task 14's first attempt was a harness failure (16.9 s); the rerun completed
+  normally. A transient task-image pull now retries instead of aborting the
+  sweep.
 
 ## Results
 
