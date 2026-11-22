@@ -824,11 +824,22 @@ def trim_tools() -> None:
 
 
 #: Tools the orchestration gate withholds until the agent has planned.
-_ORCHESTRATION_GATED = frozenset({"write_file", "patch_file", "sessions_spawn"})
+#: ``terminal`` / ``python_repl`` / ``execute_code`` are included because the
+#: task container makes ``terminal`` the PRIMARY editing path — leaving it
+#: ungated let a measured run do all its work through 295 shell calls with no
+#: TaskFlow at all (the file tools were never touched, so the gate never
+#: fired). Ungated investigation still has ``read_file`` / ``search_files`` /
+#: ``ast_grep``; once ``todowrite`` + ``taskflow_flow(plan)`` exist every tool
+#: unlocks for the rest of the run.
+_ORCHESTRATION_GATED = frozenset(
+    {"write_file", "patch_file", "sessions_spawn", "terminal", "python_repl", "execute_code"}
+)
 _ORCHESTRATION_UNLOCK = (
-    "HARNESS RULE (enforced): before editing files or spawning a child you MUST "
-    'call `todowrite` to plan the work and `taskflow_flow(action="plan")` to '
-    "open the TaskFlow flow. Do that now, then retry this call."
+    "HARNESS RULE (enforced): before running commands, editing files or spawning "
+    "a child you MUST call `todowrite` to plan the work and "
+    '`taskflow_flow(action="plan")` to open the TaskFlow flow, then dispatch its '
+    "steps with `taskflow_step` (independent steps as parallel branches). Do that "
+    "now, then retry this call."
 )
 _GATE_INSTALLED = False
 
