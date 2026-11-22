@@ -34,6 +34,7 @@ self-check) without a model key, so a broken engine fails before tokens.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import sqlite3
@@ -155,6 +156,11 @@ Decompose the flow so it RUNS in parallel, not as one serial chain:
 #: One extra driven turn per unfinished plan item, bounded like the production
 #: continuation ceiling (the harness owns the auto-turn the server would fire).
 _MAX_PLAN_CONTINUATIONS = 3
+
+#: How long grading may be deferred for step children still in flight. The
+#: graded patch is the whole score, so a just-finished child's edits must land
+#: before it is captured; past this window the run grades what exists.
+_FLOW_SETTLE_WAIT_S = 180.0
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
 
 Your plan is NOT finished. Open items:
@@ -166,6 +172,20 @@ Finish them now — including the system [VERIFY] acceptance checks — close th
 TaskFlow flow with taskflow_flow(action="finish"), then summarize. The [VERIFY]
 reviewer must answer EVERY acceptance item above with PASS/FAIL and evidence.
 Do not ask questions."""
+
+#: Injected instead when the flow still has DISPATCHED/READY steps: the work is
+#: in flight, so the agent's job this turn is to WAIT for the results, resume
+#: the steps, and only then close the flow. A generic "finish now" directive
+#: here made an agent declare completion while four children were mid-flight.
+_WAIT_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
+
+Your plan is NOT finished — step children are still running. Open items:
+{items}
+
+Call `taskflow_step(action="wait_all")` now to wait for the in-flight steps,
+then resume each settled step and continue closing the flow with
+`taskflow_flow(action="finish")` when every step is terminal. Do not declare
+completion while steps are running. Do not ask questions."""
 
 
 def _open_plan_items(results_dir: Path) -> list[str]:
@@ -201,6 +221,42 @@ def _open_plan_items(results_dir: Path) -> list[str]:
     except sqlite3.Error:
         return items
     return items
+
+
+def _flow_in_flight(results_dir: Path) -> bool:
+    """True when any non-terminal flow still has READY/DISPATCHED steps.
+
+    Reads the same sandbox registry as ``_open_plan_items``; a read failure is
+    reported as False (the generic continuation then applies).
+    """
+    candidates = (
+        results_dir / "sandbox" / "stores" / "registry.db",
+        results_dir / "stores" / "registry.db",
+    )
+    database = next((path for path in candidates if path.is_file()), None)
+    if database is None:
+        return False
+    try:
+        with sqlite3.connect(database, timeout=5) as connection:
+            rows = list(
+                connection.execute(
+                    "SELECT state_json FROM task_flows "
+                    "WHERE status NOT IN ('done', 'failed', 'cancelled')"
+                )
+            )
+    except sqlite3.Error:
+        return False
+    for (raw,) in rows:
+        try:
+            steps = (json.loads(raw) or {}).get("steps") or []
+        except (TypeError, ValueError):
+            continue
+        if any(
+            isinstance(step, dict) and str(step.get("status") or "") in {"ready", "dispatched"}
+            for step in steps
+        ):
+            return True
+    return False
 
 
 def _work_root(results_dir: Path) -> Path:
@@ -765,18 +821,27 @@ async def _run_task(
                 break
             if attempt >= _MAX_PLAN_CONTINUATIONS:
                 break
+            in_flight = _flow_in_flight(results_dir)
             # No-progress stop: a continuation turn that changed NOTHING is
             # churn (measured: repeated "closure flow" passes). Stop and let
             # the result record the unfinished plan instead of burning turns.
+            # A flow with DISPATCHED/READY steps is NOT churn: the main agent is
+            # waiting for step children that are still working, so its turn
+            # legitimately produces no diff (measured: an empty patch graded
+            # while four step children were mid-flight).
             current_patch = _agent_patch(host_workdir, task.base_commit)
-            if attempt > 0 and current_patch == last_patch:
+            if attempt > 0 and current_patch == last_patch and not in_flight:
                 result["no_progress_stop"] = True
                 break
             last_patch = current_patch
             continuations += 1
-            prompt = _CONTINUATION_PROMPT.format(
-                items="\n".join(f"- {item}" for item in open_items[:12]),
-                checklist=checklist,
+            prompt = (
+                _WAIT_PROMPT.format(items="\n".join(f"- {item}" for item in open_items[:12]))
+                if in_flight
+                else _CONTINUATION_PROMPT.format(
+                    items="\n".join(f"- {item}" for item in open_items[:12]),
+                    checklist=checklist,
+                )
             )
         result["continuations"] = continuations
         gate_after = external_bench.orchestration_state()
@@ -803,6 +868,13 @@ async def _run_task(
         result["error"] = drive["error"]
         result["reply"] = drive["text"][:2000]
         result["tokens"] = await harness._session_tokens(session_id)
+
+        # A step child that finished just as the last turn ended may still be
+        # writing its edits; wait (bounded) for in-flight steps to settle so the
+        # graded patch contains their work instead of racing it.
+        settle_deadline = time.monotonic() + _FLOW_SETTLE_WAIT_S
+        while _flow_in_flight(results_dir) and time.monotonic() < settle_deadline:
+            await asyncio.sleep(5.0)
 
         patch = _agent_patch(host_workdir, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"
