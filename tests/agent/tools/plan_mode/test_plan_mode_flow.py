@@ -44,11 +44,16 @@ class _FakeRegister:
 def registers(monkeypatch):
     """Both tiers replaced by doubles, + a tmp plans dir, + a canned interrupt."""
     mem, db = _FakeRegister(), _FakeRegister()
+    import agent.tools.plan_mode.intent_anchor as anchor_mod
     import agent.tools.plan_mode.state as state_mod
 
     monkeypatch.setattr(state_mod, "state_register_mem", mem)
     monkeypatch.setattr(state_mod, "state_register_db", db)
-    return {"mem": mem, "db": db, "state_mod": state_mod}
+    # exit_plan_mode also binds the approved intent anchor; keep it in the
+    # double so no test writes into the real session state register.
+    monkeypatch.setattr(anchor_mod, "state_register_mem", mem)
+    monkeypatch.setattr(anchor_mod, "state_register_db", db)
+    return {"mem": mem, "db": db, "state_mod": state_mod, "anchor_mod": anchor_mod}
 
 
 @pytest.fixture()
@@ -126,6 +131,13 @@ class TestExitPlanMode:
         assert action["name"] == "exit_plan_mode"
         assert action["args"]["plan"] == plan.strip()
         assert action["args"]["revision"] == files[0].stem.removeprefix("plan-")
+        # The approved INTENT is anchored alongside the revision, from the
+        # plan's Goal/Scope — the todo reminder and verify gate read this.
+        anchor = registers["anchor_mod"].read_intent_anchor(SESSION)
+        assert anchor is not None
+        assert anchor["goal"] == "do the thing"
+        assert anchor["revision"] == files[0].stem.removeprefix("plan-")
+        assert anchor["source_ref"] == str(files[0])
 
     def test_reject_with_feedback_returns_to_planning_and_counts(
         self, registers, plans_dir, monkeypatch

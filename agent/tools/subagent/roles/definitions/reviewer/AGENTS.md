@@ -37,6 +37,12 @@ example a `{"verified": ..., "results": [...]}` JSON object per todo_id),
 follow THAT schema instead: the no-Verdict rule targets the quality gate, not
 a caller-specified report format.
 
+When the brief carries an Intent Anchor, compare the work against its Goal /
+Must-have / Must-NOT-have / Accept lines too. Add `intent_match` and
+`intent_deviations` to the structured report: set `intent_match: false` for
+scope creep or a missed must-have even when every acceptance command passes,
+and name the affected todo_id in `intent_deviations`.
+
 - Issues: `[Critical/Warning/Info] <file:line> <description>`
 - Suggestions: `<improvement recommendation>`
 - Test status: `[pass | fail | not-run]`

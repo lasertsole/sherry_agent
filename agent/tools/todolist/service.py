@@ -66,24 +66,30 @@ _VERIFY_BASE_BY_LANG: dict[str, str] = {
         "[VERIFY] Run the plan's acceptance checks with a reviewer subagent: spawn "
         'sessions_spawn(functional_role="reviewer"), patch this todo\'s subagent_id '
         "with the returned child_session_key, then re-open only the todos it reports "
-        "as failed."
+        "as failed. Also check the Intent Anchor (goal / must-have / must-NOT-have): "
+        "require intent_match + intent_deviations in the report and re-open any "
+        "deviating todo."
     ),
     "zh": (
         "[VERIFY] 用 reviewer 子代理对整套计划跑验收：spawn "
         'sessions_spawn(functional_role="reviewer")，把返回的 child_session_key '
         "写进本 todo 的 subagent_id，然后只把报告为失败的 todo 回退重开。"
+        "同时对照 Intent Anchor（目标 / 必须 / 禁止）检查：要求报告给出 "
+        "intent_match + intent_deviations，并回退重开所有偏离意图的 todo。"
     ),
     "ja": (
         "[VERIFY] reviewer サブエージェントで計画全体の受け入れ検証を行う："
         'sessions_spawn(functional_role="reviewer") を実行し、返された '
         "child_session_key をこの todo の subagent_id に書き、失敗と報告された "
-        "todo だけを再オープンする。"
+        "todo だけを再オープンする。Intent Anchor（目標/必須/禁止）との照合も行い、"
+        "intent_match と intent_deviations の報告を要求し、逸脱した todo を再オープンする。"
     ),
     "ko": (
         "[VERIFY] reviewer 서브에이전트로 계획 전체의 인수 검증을 실행한다: "
         'sessions_spawn(functional_role="reviewer")를 호출하고 반환된 '
         "child_session_key를 이 todo의 subagent_id에 기록한 뒤, 실패로 보고된 "
-        "todo만 다시 연다."
+        "todo만 다시 연다. Intent Anchor(목표/필수/금지)와도 대조하여 "
+        "intent_match 및 intent_deviations 보고를 요구하고, 이탈한 todo를 다시 연다."
     ),
 }
 #: The parallel-taskflow supplement: appended only for plans where the verify
@@ -476,6 +482,17 @@ async def _assert_transition_allowed(
                 raise TodoStoreError(
                     f"Cannot complete the verify todo: reviewer {subagent_id} is still "
                     "running. Wait for it to finish first."
+                )
+            # Machine check for intent drift: the approved plan file must still
+            # hash to the revision the anchor was written for. A model can edit
+            # notes, but it cannot silently redefine the approved intent.
+            from agent.tools.plan_mode.intent_anchor import plan_drifted
+
+            if plan_drifted(session_id):
+                raise TodoStoreError(
+                    "Cannot complete the verify todo: the approved plan changed since "
+                    "its intent was anchored. Call enter_plan_mode(replan=True), get the "
+                    "new plan approved, then verify again."
                 )
             open_work = [t for t in work if t.get("status") not in _TERMINAL_STATUSES]
             if open_work:

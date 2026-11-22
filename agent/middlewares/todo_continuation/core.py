@@ -163,6 +163,11 @@ failure is marking work done when it is not.
 Verify it yourself now:
 - Read what you changed (`git diff` / the edited files): confirm it matches the
   request, with no stubs, TODOs, placeholders or unrequested scope creep.
+- Check it against the Intent Anchor at the top of your todo reminder: every
+  Must-have covered, every Must-NOT-have respected, every Accept criterion
+  proven. A ticked checkbox is not intent alignment. If the work no longer
+  fits the approved intent, call enter_plan_mode(replan=True) instead of
+  silently redefining the goal.
 - Actually run the checks (tests / typecheck / lint) through the terminal tool.
   "It should pass" is not evidence; a real command output is.
 - For user-facing changes, launch it and exercise it — UI, CLI or API — and read
@@ -179,18 +184,26 @@ Only when you can point at the proof may you finish and summarize.
 _VERIFY_DIRECTIVE = """
 [VERIFY TODO]
 The only remaining item is the system [VERIFY] todo. Acceptance is independent:
-- If no reviewer is linked yet: read every work todo's acceptance criteria, then
-  spawn sessions_spawn(functional_role="reviewer") with a brief that lists each
-  todo_id + its criteria + the exact command(s). Require this JSON report:
-  {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
-  Patch the returned child_session_key into this todo's subagent_id.
+- If no reviewer is linked yet: read every work todo's acceptance criteria AND
+  the Intent Anchor at the top of your todo reminder, then spawn
+  sessions_spawn(functional_role="reviewer") with a brief that lists each
+  todo_id + its criteria + the exact command(s) + the anchor's Goal, Must-have,
+  Must-NOT-have and Accept lines. Require this JSON report:
+  {"verified": bool, "intent_match": bool, "intent_deviations": [{"todo_id": N, "detail": "..."}], "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  intent_match must be false if the work drifted from the approved intent even
+  when every acceptance command passed. Patch the returned child_session_key
+  into this todo's subagent_id.
 - If a reviewer finished: read its report (the completion notice / sessions_messages).
   For every passed=false todo_id, patch that todo back to pending and put the
-  evidence in its notes. Do not rewrite the whole list; passed todos stay completed.
+  evidence in its notes. For every intent_deviations entry, re-open that todo
+  (or the whole plan when intent_match is false with no entries) and put the
+  deviation in its notes. Do not rewrite the whole list; passed, in-intent todos
+  stay completed.
   If the report is unreadable, spawn a new reviewer (the gate allows a bounded number
   of re-spawns before the exhausted escape).
-- Only a {"verified": true} report may complete this todo; the transition barrier
-  requires a linked, finished reviewer.
+- Only a {"verified": true, "intent_match": true} report may complete this todo;
+  the transition barrier requires a linked, finished reviewer and an unchanged
+  plan file. If the intent no longer fits, call enter_plan_mode(replan=True) first.
 """
 
 #: Injected once when the reviewer link was re-spawned past its budget. The main

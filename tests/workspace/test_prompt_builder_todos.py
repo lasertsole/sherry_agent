@@ -213,6 +213,44 @@ class TestTodoBlock:
         assert "Sisyphus contract" in prompt
 
 
+class TestIntentAnchor:
+    def test_anchor_rides_into_the_todo_reminder(self, prompt_env, monkeypatch):
+        """The approved intent enters context WITH the working plan, not on demand."""
+        import workspace.prompt_builder as builder
+
+        monkeypatch.setattr(
+            builder,
+            "read_intent_anchor",
+            lambda _sid: {
+                "goal": "Make judge outage fail closed",
+                "must_have": ["UNKNOWN on provider error"],
+                "must_not_have": ["no fail-open by default"],
+                "acceptance": ["blocked status asserted"],
+                "revision": "r1",
+            },
+        )
+        _seed_todos(prompt_env, [_todo("Patch step_judge")])
+
+        prompt = _reminder("sess-anchor", "todo_block")
+
+        assert "Intent Anchor" in prompt
+        assert prompt.index("Intent Anchor") < prompt.index("Patch step_judge")
+        assert "Make judge outage fail closed" in prompt
+        assert "Must-NOT-have: no fail-open by default" in prompt
+        assert "Accept: blocked status asserted" in prompt
+
+    def test_no_anchor_keeps_the_plain_todo_block(self, prompt_env, monkeypatch):
+        import workspace.prompt_builder as builder
+
+        monkeypatch.setattr(builder, "read_intent_anchor", lambda _sid: None)
+        _seed_todos(prompt_env, [_todo("Tracked work")])
+
+        prompt = _reminder("sess-no-anchor", "todo_block")
+
+        assert "## Current Todo List" in prompt
+        assert "Intent Anchor" not in prompt
+
+
 class TestBoulderBlock:
     def test_active_boulder_renders_plan_and_remaining_count(self, prompt_env):
         _write_boulder(

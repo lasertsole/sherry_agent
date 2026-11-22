@@ -199,6 +199,11 @@ class StateKey(StrEnum):
     PLAN_MUTATION_COUNT = "plan_mutation_count"
     #: The approved (or pending) plan file under the session's plans dir.
     PLAN_FILE_PATH = "plan_file_path"
+    #: System-owned compact intent record parsed from the approved plan's
+    #: Goal / Scope / accept: items. Bound to PLAN_REVISION; rides the todo
+    #: reminder into the model context and is checked by the verify gate.
+    #: The model cannot write it (todowrite has no metadata field).
+    PLAN_INTENT_ANCHOR = "plan_intent_anchor"
 
     HITL_PERMANENT = "hitl:permanent"
     HITL_SESSION_APPROVED = "hitl:session_approved"
