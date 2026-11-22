@@ -63,7 +63,9 @@ _VERIFY_TODO_CONTENT = (
     "[VERIFY] Run the plan's acceptance checks with a reviewer subagent: spawn "
     'sessions_spawn(functional_role="reviewer"), patch this todo\'s subagent_id '
     "with the returned child_session_key, then re-open only the todos it reports "
-    "as failed."
+    "as failed. Run the verification itself with parallel TaskFlow whenever "
+    "possible: independent acceptance items are sibling branches verified "
+    "concurrently."
 )
 _VERIFY_CONTENT_BY_LANG: dict[str, str] = {
     "en": _VERIFY_TODO_CONTENT,
@@ -71,18 +73,23 @@ _VERIFY_CONTENT_BY_LANG: dict[str, str] = {
         "[VERIFY] 用 reviewer 子代理对整套计划跑验收：spawn "
         'sessions_spawn(functional_role="reviewer")，把返回的 child_session_key '
         "写进本 todo 的 subagent_id，然后只把报告为失败的 todo 回退重开。"
+        "尽量用并行 taskflow 测：验收项之间无依赖时写成并列分支并行跑验收。"
     ),
     "ja": (
         "[VERIFY] reviewer サブエージェントで計画全体の受け入れ検証を行う："
         'sessions_spawn(functional_role="reviewer") を実行し、返された '
         "child_session_key をこの todo の subagent_id に書き、失敗と報告された "
         "todo だけを再オープンする。"
+        "可能な限り並列 TaskFlow で検証する：依存のない検証項目は並列な兄弟"
+        "ブランチにして並行で検証する。"
     ),
     "ko": (
         "[VERIFY] reviewer 서브에이전트로 계획 전체의 인수 검증을 실행한다: "
         'sessions_spawn(functional_role="reviewer")를 호출하고 반환된 '
         "child_session_key를 이 todo의 subagent_id에 기록한 뒤, 실패로 보고된 "
         "todo만 다시 연다."
+        "가능한 한 병렬 TaskFlow로 검증한다: 의존이 없는 검증 항목은 병렬 형제 "
+        "브랜치로 만들어 동시에 검증한다."
     ),
 }
 _VERIFY_CONTENT_VARIANTS = frozenset(_VERIFY_CONTENT_BY_LANG.values())
