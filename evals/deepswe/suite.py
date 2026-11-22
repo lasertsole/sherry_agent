@@ -110,7 +110,7 @@ side. Use both to build and run the project's checks.
 - Do not modify test files and do not run `git commit`.
 - Complete the task; do not ask questions.
 - The project directory is `{project_dir}` and is the ONLY valid root for file tools. Never use `/app`, `C:\app`, or any path outside it — the terminal translates project paths for you.
-- Edge cases are part of the contract: empty input, whitespace-only input, partial/truncated input, and calls made after the stream has ended must behave predictably — an empty result, not an exception, unless the task says otherwise.
+- Edge cases are part of the contract: empty input, whitespace-only input, partial/truncated input, and calls made after the stream has ended must behave predictably — an empty result, not an exception, unless the task says otherwise. Recursive or cyclic inputs (self-referencing schemas, linked structures) must terminate with a clear error or a well-defined result — never by overflowing the call stack.
 
 {checklist}
 
