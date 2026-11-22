@@ -47,7 +47,7 @@ def read_intent_anchor(
     return None
 
 
-def format_intent_anchor(anchor: dict[str, Any], *, max_chars: int = 560) -> str:
+def format_intent_anchor(anchor: dict[str, Any], *, max_chars: int = 640) -> str:
     """Render the compact per-turn reminder view of the anchor.
 
     Kept short on purpose: the ``todo_block`` reminder has a 1500-char budget
@@ -69,9 +69,12 @@ def format_intent_anchor(anchor: dict[str, Any], *, max_chars: int = 560) -> str
     if isinstance(acceptance, list) and acceptance:
         joined = "; ".join(_one_line(str(v), 90) for v in acceptance[:4])
         lines.append(f"  Accept: {joined}")
+    amendments = anchor.get("amendments")
+    if isinstance(amendments, list) and amendments:
+        lines.append(f"  (amended {len(amendments)}x — audit trail lives in the anchor)")
     lines.append(
-        "  Work only within this intent; if it no longer fits, call "
-        "enter_plan_mode(replan=True) — do not drift silently."
+        "  If this intent is wrong, call amend_intent(goal, reason) to correct it "
+        "(audited). If the scope changed: enter_plan_mode(replan=True)."
     )
     text = "\n".join(lines)
     if len(text) > max_chars:
