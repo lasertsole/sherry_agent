@@ -34,12 +34,17 @@ the dispatch keeps bwrap (or degrades as before).
 from __future__ import annotations
 
 import json
+import os
 import platform
+import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
 from loguru import logger
+
+from config.features import TOOLS_TIMEOUTS
 
 from agent.tools.pub_base.sandbox import SandboxBackend, normalize_writable_roots
 
@@ -165,16 +170,25 @@ def _syscall(number, *args):
 
 try:
     attr = RulesetAttr(handled)
-    ruleset_fd = _syscall(
-        numbers[0], ctypes.byref(attr), ctypes.sizeof(attr), _LL_CREATE_VERSION
-    )
+    # landlock_create_ruleset(attr, size, flags): flags MUST be 0 to create a
+    # ruleset. LANDLOCK_CREATE_RULESET_VERSION (=1) is only valid for the ABI
+    # probe (attr=NULL, size=0); passing it with a real attr makes the kernel
+    # reject the call with EINVAL, which used to fail-close every landlock run.
+    ruleset_fd = _syscall(numbers[0], ctypes.byref(attr), ctypes.sizeof(attr), 0)
     if ruleset_fd <= 0:
         _fail("empty ruleset fd")
     # landlock rules never apply to a process that can gain privileges.
     libc.prctl(_LL_NO_NEW_PRIVS, 1, 0, 0, 0)
 
     def _add(path, access):
-        fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+        try:
+            fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+        except FileNotFoundError:
+            # A fixed system path (e.g. /lib64) is absent on this distro's
+            # layout (usrmerge). Skipping an allow-list rule for a nonexistent
+            # path cannot widen access — there is nothing there to open — so
+            # this stays fail-closed for every real path.
+            return
         try:
             rule = PathBeneathAttr(access & handled, fd, 0)
             _syscall(numbers[1], ruleset_fd, _LL_RULE_PATH_BENEATH, ctypes.byref(rule), 0)
@@ -191,11 +205,10 @@ os.execvp(spec["argv"][0], spec["argv"])
 """
 
 # The loader is a plain string (it cannot reference the module's constants
-# because it runs with -I), so its four numeric holes are substituted here.
-_LOADER_SRC = (
-    _LOADER_SRC.replace("_LL_CREATE_VERSION", str(_LANDLOCK_CREATE_RULESET_VERSION))
-    .replace("_LL_NO_NEW_PRIVS", str(_PR_SET_NO_NEW_PRIVS))
-    .replace("_LL_RULE_PATH_BENEATH", str(_LANDLOCK_RULE_PATH_BENEATH))
+# because it runs with -I), so its two numeric holes are substituted here.
+# (The create-ruleset flags argument is now the literal 0 — see the loader.)
+_LOADER_SRC = _LOADER_SRC.replace("_LL_NO_NEW_PRIVS", str(_PR_SET_NO_NEW_PRIVS)).replace(
+    "_LL_RULE_PATH_BENEATH", str(_LANDLOCK_RULE_PATH_BENEATH)
 )
 
 #: The ABI probe is process-stable (the kernel does not change under us);
@@ -251,9 +264,35 @@ def _handled_for_abi(abi: int) -> int:
 class LandlockBackend(SandboxBackend):
     """The landlock backend: kernel-level, allow-list rules, no external binary."""
 
+    # A kernel exposing the landlock ABI is necessary but not sufficient: a
+    # nested/containerised host can allow create+ruleset+restrict_self yet deny
+    # execve under the resulting restriction (seccomp/no_new_privs interaction).
+    # bwrap's probe already smoke-tests a real command; landlock must too, or
+    # it reports "usable" and fail-closes every call with exit 126. Cached at
+    # class level like the bwrap probe.
+    _probe_cache: bool | None = None
+
     def probe(self) -> bool:
-        """True when the kernel exposes landlock (ABI >= 1) on a supported arch."""
-        return _probe_abi() >= 1
+        """True only when a real command runs under the landlock launcher."""
+        if LandlockBackend._probe_cache is not None:
+            return LandlockBackend._probe_cache
+        ok = False
+        if _probe_abi() >= 1:
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    argv, env = self.wrap(["/bin/true"], dict(os.environ), [Path(tmp)])
+                    result = subprocess.run(
+                        argv,
+                        env=env,
+                        capture_output=True,
+                        timeout=TOOLS_TIMEOUTS["sandbox_bwrap_probe_timeout_seconds"],
+                        check=False,
+                    )
+                    ok = result.returncode == 0
+            except Exception:  # noqa: BLE001 - any probe failure means unavailable
+                ok = False
+        LandlockBackend._probe_cache = ok
+        return ok
 
     def wrap(
         self,

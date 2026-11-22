@@ -276,6 +276,9 @@ def test_get_backend_bwrap_fail_falls_back_to_landlock(monkeypatch):
     import agent.tools.pub_base.sandbox_landlock as landlock_module
 
     monkeypatch.setattr(landlock_module, "_probe_abi", lambda: 3)
+    # probe() now smoke-tests a real exec; stub it so this test stays about
+    # the factory's fallback choice, not the host's sandbox capability.
+    monkeypatch.setattr(landlock_module.LandlockBackend, "_probe_cache", True)
     backend = get_backend(SandboxPolicy.AUTO)
     assert isinstance(backend, landlock_module.LandlockBackend)
 

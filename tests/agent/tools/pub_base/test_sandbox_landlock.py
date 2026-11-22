@@ -33,8 +33,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 @pytest.fixture(autouse=True)
 def _reset_abi_cache():
     landlock._ABI_CACHE = None
+    landlock.LandlockBackend._probe_cache = None
     yield
     landlock._ABI_CACHE = None
+    landlock.LandlockBackend._probe_cache = None
 
 
 class TestProbe:
@@ -53,6 +55,43 @@ class TestProbe:
     def test_the_abi_answer_is_cached(self):
         landlock._ABI_CACHE = 2
         assert landlock._probe_abi() == 2
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="landlock is Linux-only")
+    def test_probe_smoke_tests_a_real_command_and_caches(self, monkeypatch):
+        """An ABI is not enough: the launcher must actually exec. See the
+        nested-container case where restrict_self succeeds but execve is denied.
+        """
+        monkeypatch.setattr(landlock, "_probe_abi", lambda: 6)
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen["argv"] = argv
+            seen["kwargs"] = kwargs
+
+            class Result:
+                returncode = 0
+
+            return Result()
+
+        monkeypatch.setattr(landlock.subprocess, "run", fake_run)
+        backend = landlock.LandlockBackend()
+        assert backend.probe() is True
+        assert seen["argv"][seen["argv"].index("--") + 1 :] == ["/bin/true"]
+        # Cached: a second probe must not re-run the smoke test.
+        seen.clear()
+        assert backend.probe() is True
+        assert seen == {}
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="landlock is Linux-only")
+    def test_probe_returns_false_when_exec_is_denied(self, monkeypatch):
+        """The nested-container case: ABI present, but execve returns 126."""
+        monkeypatch.setattr(landlock, "_probe_abi", lambda: 6)
+
+        class Result:
+            returncode = 126
+
+        monkeypatch.setattr(landlock.subprocess, "run", lambda *a, **k: Result())
+        assert landlock.LandlockBackend().probe() is False
 
 
 class TestWrap:
