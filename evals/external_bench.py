@@ -775,23 +775,83 @@ def install_terminal_bridge(bridge: DockerBridge) -> None:
             del run_manager, sandbox, session_id, kwargs
             return await self.bridge.aexec(self._command(commands), timeout=self._timeout(timeout))
 
-    tools = agent_core.get_agent_tools()
-    replaced = False
-    for index, tool in enumerate(tools):
-        if getattr(tool, "name", "") == "terminal":
-            tools[index] = DockerTerminalTool(
-                bridge=bridge,
-                metadata={"idempotent": False, "side_effect_scope": "system"},
-            )
-            replaced = True
-            break
-    if not replaced:
-        tools.append(
+    global _BRIDGE_HOLDER
+    _BRIDGE_HOLDER["bridge"] = bridge
+    _BRIDGE_HOLDER["terminal_cls"] = DockerTerminalTool
+
+    def _swap(tool_list: list) -> list:
+        """Replace the entry named ``terminal`` (append when absent)."""
+        for index, tool in enumerate(tool_list):
+            if getattr(tool, "name", "") == "terminal":
+                tool_list[index] = DockerTerminalTool(
+                    bridge=_BRIDGE_HOLDER["bridge"],
+                    metadata={"idempotent": False, "side_effect_scope": "system"},
+                )
+                return tool_list
+        tool_list.append(
             DockerTerminalTool(
-                bridge=bridge,
+                bridge=_BRIDGE_HOLDER["bridge"],
                 metadata={"idempotent": False, "side_effect_scope": "system"},
             )
         )
+        return tool_list
+
+    _swap(agent_core.get_agent_tools())
+    _install_child_terminal_bridge(_swap)
+
+
+def _make_bridged_terminal(bridge: Any) -> Any:
+    """One bridged ``terminal`` tool bound to ``bridge`` (class from the install)."""
+    cls = _BRIDGE_HOLDER.get("terminal_cls")
+    if cls is None:
+        raise RuntimeError("the container terminal bridge was never installed")
+    return cls(
+        bridge=bridge,
+        metadata={"idempotent": False, "side_effect_scope": "system"},
+    )
+
+
+def _install_child_terminal_bridge(swap: Any) -> None:
+    """Make every LATER ``build_main_tools()`` return the bridged terminal.
+
+    Step children build their own tool list at spawn time, so replacing only
+    the main agent's list left a child with the HOST terminal: wrong working
+    directory (it searched ``/`` for the repo), no task toolchain, and — after
+    repeating identical failing commands — a ToolGuardrails HALT.
+
+    Each build gets its OWN ``DockerBridge`` (same container, fresh state-file
+    namespace): the bridge persists cwd/env per ``_state_env``/``_state_cwd``
+    files, and parallel step children sharing one instance would clobber each
+    other's working directory mid-wave. The builder is wrapped ONCE (a module
+    flag guards double wrapping); each call reads the CURRENT bridge from
+    ``_BRIDGE_HOLDER``, so consecutive task containers in one process stay
+    correct.
+    """
+    import agent.tools as agent_tools
+
+    builder = agent_tools.build_main_tools
+    if getattr(builder, "_terminal_bridge_patched", False):
+        return
+
+    def _bridged_build(*args: Any, **kwargs: Any) -> list:
+        parent = _BRIDGE_HOLDER["bridge"]
+        built = list(builder(*args, **kwargs))
+        if parent is None:
+            return built
+        child_bridge = DockerBridge(
+            parent.container,
+            host_workdir=Path(parent.host_workdir),
+            container_workdir=parent.container_workdir,
+        )
+        for index, tool in enumerate(built):
+            if getattr(tool, "name", "") == "terminal":
+                built[index] = _make_bridged_terminal(child_bridge)
+                return built
+        built.append(_make_bridged_terminal(child_bridge))
+        return built
+
+    _bridged_build._terminal_bridge_patched = True  # type: ignore[attr-defined]
+    agent_tools.build_main_tools = _bridged_build  # type: ignore[assignment]
 
 
 def localize_instruction(text: str, host_workdir: Path, workdir: str) -> str:
@@ -842,6 +902,10 @@ _ORCHESTRATION_UNLOCK = (
     "now, then retry this call."
 )
 _GATE_INSTALLED = False
+
+#: The CURRENT task container's bridge, read by the wrapped child tool builder
+#: (one process may run several tasks back to back, each with its own container).
+_BRIDGE_HOLDER: dict[str, Any] = {"bridge": None}
 
 
 #: Acceptance clauses every reviewer spawn must answer (set per eval run).
