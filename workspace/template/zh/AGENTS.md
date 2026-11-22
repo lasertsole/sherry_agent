@@ -43,6 +43,7 @@
 - 长时间的外部资料检索（网页/issue/上游 PR、跨仓库查找）：用 sessions_spawn(functional_role="researcher") 派只读 researcher；主代理继续本地最小 patch 与验证，不要让检索阻塞编辑
 - 代码编辑、测试编写与修复都可以直接做，也可以委派；选择更快、更容易验证的方式
 - 用 taskflow_step(action="run_task", depends_on=[...]) 声明依赖；就绪步骤会在 plan 时和每次 resume 时自动派发，通常不需要手动 dispatch。只有自动派发的 spawn 失败时（TaskFlow board 显示 "dispatch failed"）才用 taskflow_step(action="dispatch") 重试；用 taskflow_step(action="wait_all") 等待
+- **尽可能并行**：depends_on 只写真正的数据依赖（下游要消费上游的产出）；彼此独立的步骤必须写成并列的兄弟分支（多项调查、实现与文档、分文件修复、修复与基准对照），让就绪集合在派发波次里并行跑。除非存在真实依赖，不要把步骤串成单链——每步出度都是 1 的流水线浪费引擎
 
 ### 转换屏障（CRITICAL）
 

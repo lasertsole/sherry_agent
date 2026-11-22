@@ -86,10 +86,12 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     # past that, and a session that reaches it is accumulating plans instead of
     # closing them.
     "max_flows_per_session": 20,
-    # A wave spawns as one asyncio.gather, bounded here. Two is the graduated
-    # default (the lane cap is 8): a wave of N steps costs ceil(N / this) spawn
-    # rounds instead of N, and a slow spawn no longer serializes the wave.
-    "max_parallel_dispatch": 2,
+    # A wave spawns as one asyncio.gather, bounded here. Four matches the
+    # parallel-decomposition guidance (fan-out plans of 3-4 sibling branches
+    # spawn in ONE round; the lane cap is 8): a wave of N steps costs
+    # ceil(N / this) spawn rounds instead of N, and a slow spawn no longer
+    # serializes the wave.
+    "max_parallel_dispatch": 4,
     # The plan's ready set starts immediately: a sibling branch that is ready
     # but never explicitly named used to be forgotten until finish's Gate A.
     "auto_dispatch_initial_ready": True,

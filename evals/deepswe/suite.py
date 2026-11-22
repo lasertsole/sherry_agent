@@ -131,6 +131,23 @@ the harness records tool usage and reports a run that skips them:
    with `taskflow_flow(action="finish")` when the flow's criteria are met.
 3. Keep the todolist and the flow board consistent: an item or step is DONE
    only when its verification command passed.
+
+## Parallelism (harness requirement, not advice)
+
+Decompose the flow so it RUNS in parallel, not as one serial chain:
+
+- Write `depends_on` ONLY for real data dependencies (a step consumes another
+  step's output). Independent steps MUST be sibling branches: two
+  investigations, the implementation and its documentation, per-file fixes, a
+  fix and its benchmark — all without an edge between them.
+- Never chain steps that could run together. A flow whose every step has
+  out-degree 1 wastes the engine: READY siblings are dispatched in waves and
+  run as concurrent children.
+- After every result lands, the resume re-scans the whole flow and dispatches
+  every newly READY step — do not serialize on your own; let the board's
+  ready set drive the wave.
+- While step children run, do one `taskflow_step(action="wait_all")` (it
+  wakes as results land) instead of polling with terminal commands.
 """
 
 
