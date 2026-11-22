@@ -59,40 +59,53 @@ _PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 #: The auto-inserted acceptance todo. Its content is a system-owned template:
 #: a `replace` carrying the exact string is stripped so the list can only ever
 #: hold the one real verify row (which carries ``metadata.kind="verify"``).
-_VERIFY_TODO_CONTENT = (
-    "[VERIFY] Run the plan's acceptance checks with a reviewer subagent: spawn "
-    'sessions_spawn(functional_role="reviewer"), patch this todo\'s subagent_id '
-    "with the returned child_session_key, then re-open only the todos it reports "
-    "as failed. Run the verification itself with parallel TaskFlow whenever "
-    "possible: independent acceptance items are sibling branches verified "
-    "concurrently."
-)
-_VERIFY_CONTENT_BY_LANG: dict[str, str] = {
-    "en": _VERIFY_TODO_CONTENT,
+#: Two variants per language — the parallel-taskflow supplement rides only
+#: when the plan has room for it (see ``_verify_content``).
+_VERIFY_BASE_BY_LANG: dict[str, str] = {
+    "en": (
+        "[VERIFY] Run the plan's acceptance checks with a reviewer subagent: spawn "
+        'sessions_spawn(functional_role="reviewer"), patch this todo\'s subagent_id '
+        "with the returned child_session_key, then re-open only the todos it reports "
+        "as failed."
+    ),
     "zh": (
         "[VERIFY] 用 reviewer 子代理对整套计划跑验收：spawn "
         'sessions_spawn(functional_role="reviewer")，把返回的 child_session_key '
         "写进本 todo 的 subagent_id，然后只把报告为失败的 todo 回退重开。"
-        "尽量用并行 taskflow 测：验收项之间无依赖时写成并列分支并行跑验收。"
     ),
     "ja": (
         "[VERIFY] reviewer サブエージェントで計画全体の受け入れ検証を行う："
         'sessions_spawn(functional_role="reviewer") を実行し、返された '
         "child_session_key をこの todo の subagent_id に書き、失敗と報告された "
         "todo だけを再オープンする。"
-        "可能な限り並列 TaskFlow で検証する：依存のない検証項目は並列な兄弟"
-        "ブランチにして並行で検証する。"
     ),
     "ko": (
         "[VERIFY] reviewer 서브에이전트로 계획 전체의 인수 검증을 실행한다: "
         'sessions_spawn(functional_role="reviewer")를 호출하고 반환된 '
         "child_session_key를 이 todo의 subagent_id에 기록한 뒤, 실패로 보고된 "
         "todo만 다시 연다."
-        "가능한 한 병렬 TaskFlow로 검증한다: 의존이 없는 검증 항목은 병렬 형제 "
-        "브랜치로 만들어 동시에 검증한다."
     ),
 }
-_VERIFY_CONTENT_VARIANTS = frozenset(_VERIFY_CONTENT_BY_LANG.values())
+#: The parallel-taskflow supplement: appended only for plans where the verify
+#: actually has multiple fronts to cover (a TaskFlow link on some todo, or
+#: ≥ 2 work items). A single unlinked step's verify is not told to fan out.
+_VERIFY_PARALLEL_SUFFIX_BY_LANG: dict[str, str] = {
+    "en": (
+        " Run the verification itself with parallel TaskFlow whenever possible: "
+        "independent acceptance items are sibling branches verified concurrently."
+    ),
+    "zh": "尽量用并行 taskflow 测：验收项之间无依赖时写成并列分支并行跑验收。",
+    "ja": "可能な限り並列 TaskFlow で検証する：依存のない検証項目は並列な兄弟ブランチにして並行で検証する。",
+    "ko": "가능한 한 병렬 TaskFlow로 검증한다: 의존이 없는 검증 항목은 병렬 형제 브랜치로 만들어 동시에 검증한다.",
+}
+_VERIFY_TODO_CONTENT = _VERIFY_BASE_BY_LANG["en"] + _VERIFY_PARALLEL_SUFFIX_BY_LANG["en"]
+_VERIFY_CONTENT_BY_LANG: dict[str, str] = {
+    lang: base + _VERIFY_PARALLEL_SUFFIX_BY_LANG[lang]
+    for lang, base in _VERIFY_BASE_BY_LANG.items()
+}
+_VERIFY_CONTENT_VARIANTS = frozenset(_VERIFY_CONTENT_BY_LANG.values()) | frozenset(
+    _VERIFY_BASE_BY_LANG.values()
+)
 _VERIFY_METADATA: dict = {"kind": "verify", "auto_inserted": True}
 _ACTIVE_STATUSES = frozenset({"pending", "in_progress"})
 _TERMINAL_STATUSES = frozenset({"completed", "cancelled"})
@@ -120,14 +133,39 @@ class TodoIdNotFoundError(Exception):
         super().__init__(f"{field} {todo_id} not found")
 
 
-def _verify_content() -> str:
-    """The verify todo's text in the workspace's language (English fallback)."""
+def _verify_parallel_warranted(todos: list[dict]) -> bool:
+    """Whether the verify earns the parallel-taskflow supplement.
+
+    Either condition qualifies: a todo OTHER than the verify row itself carries
+    a TaskFlow link (``flow_id``/``step_id``), or the plan minus the verify row
+    has at least two items. A single unlinked step has nothing to fan out.
+    """
+    work = _work_todos(todos)
+    if len(work) >= 2:
+        return True
+    return any(
+        str(t.get("flow_id") or "").strip() or str(t.get("step_id") or "").strip() for t in work
+    )
+
+
+def _verify_content(todos: list[dict] | None = None) -> str:
+    """The verify todo's text in the workspace's language (English fallback).
+
+    The parallel-taskflow supplement rides only when the plan warrants it
+    (``_verify_parallel_warranted``); a bare single-step plan gets the plain
+    acceptance text.
+    """
     try:
         from config.path import resolve_workspace_template_lang
 
-        return _VERIFY_CONTENT_BY_LANG.get(resolve_workspace_template_lang(), _VERIFY_TODO_CONTENT)
+        lang = resolve_workspace_template_lang()
     except Exception:  # noqa: BLE001 - the content must never block a mutation
-        return _VERIFY_TODO_CONTENT
+        lang = "en"
+    base = _VERIFY_BASE_BY_LANG.get(lang, _VERIFY_BASE_BY_LANG["en"])
+    suffix = _VERIFY_PARALLEL_SUFFIX_BY_LANG.get(lang, _VERIFY_PARALLEL_SUFFIX_BY_LANG["en"])
+    if todos is not None and not _verify_parallel_warranted(todos):
+        return base
+    return base + suffix
 
 
 def is_verify_todo(todo: dict) -> bool:
@@ -276,7 +314,7 @@ async def _normalize_verify(
         if skipped or not (has_active_work or not has_any_verify):
             return todos
         payload = {
-            "content": _verify_content(),
+            "content": _verify_content(todos),
             "status": "pending",
             "priority": "high",
             "category": "deep",
@@ -305,6 +343,16 @@ async def _normalize_verify(
         active = [keep]
 
     verify = active[0]
+    # Keep the verify's wording in step with the plan: the parallel-taskflow
+    # supplement is conditional (warranted when another todo carries a TaskFlow
+    # link or the plan has ≥ 2 work items), and that condition can flip AFTER
+    # the row was first inserted — a plan that grows from one item to three
+    # must start telling the reviewer to fan out. Only system-owned wording is
+    # ever rewritten (both variants are ours to pick between).
+    desired = _verify_content(todos)
+    current = str(verify.get("content") or "")
+    if current != desired and current in _VERIFY_CONTENT_VARIANTS:
+        await store.patch_todo_by_id(session_id, int(verify["todo_id"]), content=desired)
     latest = await store.get_todos(session_id)
     max_position = max(int(t.get("position") or 0) for t in latest)
     if int(verify.get("position") or 0) != max_position:

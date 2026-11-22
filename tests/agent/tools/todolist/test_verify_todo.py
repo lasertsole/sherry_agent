@@ -90,9 +90,12 @@ def _verify_row(rows: list[dict]) -> dict:
 
 @pytest.mark.asyncio
 async def test_adds_one_verify_after_the_first_work_todo_and_keeps_it_last():
+    # The first insertion sees ONE unlinked work todo → the PLAIN text. Once
+    # the plan grows to two items the re-armed verify earns the parallel
+    # supplement (condition 2 of the conditional wording).
     await _call(action="add", content="a")
     rows = await _rows()
-    assert [t["content"] for t in rows] == ["a", _VERIFY]
+    assert [t["content"] for t in rows] == ["a", todo_service._VERIFY_BASE_BY_LANG["en"]]
 
     await _call(action="add", content="b")
     rows = await _rows()
@@ -118,10 +121,11 @@ async def test_replace_is_idempotent_and_a_single_todo_plan_still_gets_verify():
     await _call(todos=[{"content": "a"}, {"content": "b"}])
     assert len(await _rows()) == 3
 
-    # A ONE-item plan is the case that used to skip the mandatory check.
+    # A ONE-item plan is the case that used to skip the mandatory check. Its
+    # verify is the PLAIN text: one unlinked step has nothing to fan out.
     await _call(todos=[{"content": "solo"}])
     rows = await _rows()
-    assert [t["content"] for t in rows] == ["solo", _VERIFY]
+    assert [t["content"] for t in rows] == ["solo", todo_service._VERIFY_BASE_BY_LANG["en"]]
 
 
 @pytest.mark.asyncio
@@ -212,9 +216,11 @@ async def test_shrinking_to_zero_work_todos_removes_the_verify():
     monkeypatch.setattr(todo_service, "_kill_verify_subagent", _kill)
     try:
         # ONE work todo left still needs the acceptance check (threshold is 1).
+        # With a single unlinked item the verify's wording drops the parallel
+        # supplement (the conditional wording follows the shrinking plan).
         await _call(action="remove", todo_id=rows[0]["todo_id"])
         rows = await _rows()
-        assert [t["content"] for t in rows] == ["b", _VERIFY]
+        assert [t["content"] for t in rows] == ["b", todo_service._VERIFY_BASE_BY_LANG["en"]]
         assert killed == []
 
         survivor = next(t for t in rows if t["content"] == "b")
@@ -390,3 +396,38 @@ async def test_failure_rollback_reopens_only_the_named_todo_and_keeps_notes(
 
     block = _build_status_block(rows)
     assert "notes: test_b failed" in block
+
+
+# ── conditional parallel wording (plan shape) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_single_unlinked_item_gets_the_plain_verify_wording():
+    await _call(todos=[{"content": "solo"}])
+    rows = await _rows()
+    assert rows[-1]["content"] == todo_service._VERIFY_BASE_BY_LANG["en"]
+
+
+@pytest.mark.asyncio
+async def test_two_work_items_earn_the_parallel_supplement():
+    await _call(todos=[{"content": "a"}, {"content": "b"}])
+    rows = await _rows()
+    assert rows[-1]["content"] == _VERIFY
+
+
+@pytest.mark.asyncio
+async def test_one_item_with_a_taskflow_link_earns_the_parallel_supplement():
+    await _call(todos=[{"content": "solo", "flow_id": "flow-1", "step_id": "step-1"}])
+    rows = await _rows()
+    # The verify row itself has no flow link; the WORK row's link is what counts.
+    assert rows[-1]["content"] == _VERIFY
+
+
+@pytest.mark.asyncio
+async def test_the_wording_follows_a_growing_plan():
+    await _call(todos=[{"content": "solo"}])
+    assert (await _rows())[-1]["content"] == todo_service._VERIFY_BASE_BY_LANG["en"]
+
+    # Same plan grows to two items: the re-armed verify gains the supplement.
+    await _call(todos=[{"content": "solo"}, {"content": "second"}])
+    assert (await _rows())[-1]["content"] == _VERIFY
