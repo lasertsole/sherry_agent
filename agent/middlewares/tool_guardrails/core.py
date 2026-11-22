@@ -57,6 +57,7 @@ class ToolCallGuardrailConfig:
     streak_max_warnings_per_turn: int = TOOL_GUARDRAILS["streak_max_warnings_per_turn"]
     recovery_mode_enabled: bool = TOOL_GUARDRAILS["recovery_mode_enabled"]
     recovery_max_violations: int = TOOL_GUARDRAILS["recovery_max_violations"]
+    blocked_tool_halt_after: int = TOOL_GUARDRAILS["blocked_tool_halt_after"]
 
 
 @dataclass
@@ -77,6 +78,10 @@ class _TurnGuardrailState:
     same_tool_failure_counts: dict[str, int] = field(default_factory=dict)
     no_progress_counts: dict[str, int] = field(default_factory=dict)
     blocked_tools: set[str] = field(default_factory=set)
+    #: How many times the model re-called an already-blocked tool this turn;
+    #: crossing ``blocked_tool_halt_after`` ends the turn instead of answering
+    #: BLOCK forever.
+    blocked_tool_repeats: dict[str, int] = field(default_factory=dict)
     halt_decision: GuardrailAction | None = None
     ping_pong_counts: dict[str, int] = field(default_factory=dict)
     arg_churn_variants: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -223,6 +228,7 @@ class ToolGuardrails(AgentMiddleware):
         gs.arg_churn_variants.clear()
         gs.blocked_tools.clear()
         gs.blocked_signatures.clear()
+        gs.blocked_tool_repeats.clear()
         gs.last_result_hash_by_tool.clear()
         gs.result_repetition_streaks.clear()
         gs.result_repetition_warned.clear()
@@ -1041,6 +1047,21 @@ class ToolGuardrails(AgentMiddleware):
             return None
 
         if tool_name in gs.blocked_tools:
+            # A model that ignores the block keeps re-emitting the SAME call;
+            # each retry is a full model round-trip (measured: 46 blocked calls
+            # in one turn while the main agent re-ran one grep). Escalate to
+            # HALT after a few ignored blocks so the circuit breaker actually
+            # ends the turn instead of answer-blocking forever.
+            repeats = gs.blocked_tool_repeats.get(tool_name, 0) + 1
+            gs.blocked_tool_repeats[tool_name] = repeats
+            if repeats >= self.config.blocked_tool_halt_after:
+                gs.halt_decision = GuardrailAction.HALT
+                return ToolMessage(
+                    content=self._halt_message(tool_name, "repeated calls to a blocked tool"),
+                    tool_call_id=request.tool_call.get("id", ""),
+                    name=tool_name,
+                    status="error",
+                )
             return ToolMessage(
                 content=self._block_message(tool_name, "previously blocked", 0, 0),
                 tool_call_id=request.tool_call.get("id", ""),

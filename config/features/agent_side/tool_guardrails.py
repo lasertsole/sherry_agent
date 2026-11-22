@@ -38,6 +38,10 @@ class ToolGuardrailsConfig(TypedDict):
     streak_max_warnings_per_turn: int
     recovery_mode_enabled: bool
     recovery_max_violations: int
+    #: How many times the model may re-call an ALREADY-blocked tool in one turn
+    #: before the circuit breaker halts the turn. Each ignored block is a full
+    #: model round-trip, so answering BLOCK forever burns the budget.
+    blocked_tool_halt_after: int
 
 
 TOOL_GUARDRAILS: ToolGuardrailsConfig = {
@@ -60,4 +64,5 @@ TOOL_GUARDRAILS: ToolGuardrailsConfig = {
     "streak_max_warnings_per_turn": 3,
     "recovery_mode_enabled": True,
     "recovery_max_violations": 1,
+    "blocked_tool_halt_after": 3,
 }

@@ -916,3 +916,51 @@ def test_an_unhalted_turn_still_calls_the_model():
 
     assert result is marker
     assert len(called) == 1
+
+
+# ------------------------------------------------- blocked-tool repeat → HALT
+def precheck(mw, sess, name, args, call_id):
+    request = ToolCallRequest(
+        tool_call={"name": name, "args": args, "id": call_id},
+        tool=IDEMPOTENT_TOOL,
+        state={"session_id": sess},
+        runtime=None,
+    )
+    return mw._wrap_tool_call_precheck(request)
+
+
+def test_repeated_calls_to_a_blocked_tool_halt_the_turn():
+    """The model ignoring a BLOCK must not cost a model round-trip forever.
+
+    Measured: one turn re-emitted the same blocked ``terminal`` call 46 times;
+    each retry is a full model call. After ``blocked_tool_halt_after`` ignored
+    blocks the breaker halts the turn (the AIMessage that ends the graph loop).
+    """
+    mw = make_mw()
+    sess = "sess-blocked-halt"
+    mw._before_agent_impl({"session_id": sess})
+    gs = mw._get_state(sess)
+    gs.blocked_tools.add("T")
+
+    out1 = precheck(mw, sess, "T", {"a": 1}, "c1")
+    assert "blocked" in str(out1.content).lower()
+    assert gs.halt_decision is None  # first ignored block still answers BLOCK
+
+    out2 = precheck(mw, sess, "T", {"a": 2}, "c2")
+    assert "blocked" in str(out2.content).lower()
+    assert gs.halt_decision is None  # second ignored block still answers BLOCK
+
+    out3 = precheck(mw, sess, "T", {"a": 3}, "c3")
+    assert "halted" in str(out3.content).lower()  # 3rd ignored block halts
+    assert gs.halt_decision == HALT
+
+
+def test_the_halt_threshold_comes_from_config():
+    mw = make_mw(blocked_tool_halt_after=1)
+    sess = "sess-blocked-halt-1"
+    mw._before_agent_impl({"session_id": sess})
+    gs = mw._get_state(sess)
+    gs.blocked_tools.add("T")
+    out = precheck(mw, sess, "T", {"a": 1}, "c1")
+    assert "halted" in str(out.content).lower()
+    assert gs.halt_decision == HALT
