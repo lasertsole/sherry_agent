@@ -41,6 +41,35 @@ class SubagentPromptContext:
     child_session_key: str = ""
     requester_session_key: str = ""
     can_spawn: bool = False
+    #: Task-level facts from the owning TaskFlow's ``environment`` (WorkMode
+    #: stage 5). Distinct from session-level project_dir/AGENTS.md. Stored as a
+    #: dict with plain values or ``credential_ref: keychain://...`` references
+    #: (never resolved secrets). None/empty -> no section.
+    environment: dict[str, Any] | None = None
+
+
+def _render_environment_section(environment: dict[str, Any] | None) -> str:
+    """Render a task-level environment block, keeping credential refs as refs."""
+    if not isinstance(environment, dict) or not environment:
+        return ""
+    import json
+
+    lines = ["## Task Environment"]
+    lines.append(
+        "The following task-level facts were fixed when this TaskFlow was created. "
+        "Use them as the ground truth for paths, stack and constraints."
+    )
+    for key, value in environment.items():
+        rendered = (
+            value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        )
+        lines.append(f"- {key}: {rendered}")
+    if any("credential_ref" in str(v) for v in environment.values()):
+        lines.append(
+            "Credential values are REFERENCES (e.g. keychain://...), not secrets; "
+            "resolve them through the approved credential tool when actually needed."
+        )
+    return "\n".join(lines)
 
 
 def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str:
@@ -99,6 +128,12 @@ def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str
 
     if role_prompt_body:
         sections.append(f"## Role Instructions\n{role_prompt_body}")
+
+    # Task-level environment (TaskFlow). Injected AFTER role instructions so it
+    # grounds the task without overriding the role, and BEFORE the rules.
+    environment_section = _render_environment_section(ctx.environment)
+    if environment_section:
+        sections.append(environment_section)
 
     # Section 2: Rules
     rules = [

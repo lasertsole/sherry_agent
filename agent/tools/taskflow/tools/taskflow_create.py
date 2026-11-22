@@ -30,6 +30,7 @@ async def taskflow_create(
     todo_content: str = "",
     todo_category: str = "quick",
     ack_dup: bool = False,
+    environment: dict | None = None,
 ) -> str:
     """Create a durable task flow and return its initial revision.
 
@@ -81,6 +82,14 @@ async def taskflow_create(
             return duplicate_flow_message(duplicate)
 
     creator_key = requester_session_key(session_id)
+    # Task-level environment (WorkMode stage 5): stored on the flow, injected
+    # into every step child's system prompt at dispatch. Only written when
+    # non-empty so existing flows stay byte-identical. Credential references
+    # are stored verbatim (keychain://...), never resolved here.
+    if isinstance(environment, dict) and environment:
+        merged_initial = dict(initial_state or {})
+        merged_initial["environment"] = environment
+        initial_state = merged_initial
     state = default_state(description, initial_state, creator_session_key=creator_key)
 
     # Resource ceilings live at the tool layer (the store's contract is data

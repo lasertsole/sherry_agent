@@ -22,7 +22,7 @@ from agent.tools.subagent.swarm.collector import validate_structured_output
 from ..config import StepOutcome, StepStatus, TaskFlowStatus
 from ..evidence_collector import collect_evidence_summary
 from ..registry import store_sqlite
-from ..step_judge import StepVerdict, judge_step_result
+from ..step_judge import StepVerdict, judge_step_result, judge_step_self_eval
 from ..step_state import set_step_status
 from ._retry import (
     apply_redispatch,
@@ -56,6 +56,31 @@ from ._shared import (
 
 
 _STATUS_ORDER = tuple(status.value for status in StepStatus)
+
+_SELF_EVAL_DEFAULT_MIN_SCORE = 7
+_SELF_EVAL_DEFAULT_MAX_RETRIES = 5
+
+
+def _self_eval_min_score(step: dict) -> int:
+    """Read a step's passing score, clamped to 1..10 (default 7)."""
+    raw = step.get("self_eval_min_score")
+    if raw is None:
+        return _SELF_EVAL_DEFAULT_MIN_SCORE
+    try:
+        return min(10, max(1, int(raw)))
+    except (TypeError, ValueError):
+        return _SELF_EVAL_DEFAULT_MIN_SCORE
+
+
+def _self_eval_max_retries(step: dict) -> int:
+    """Read a step's score-retry cap, clamped to 0..20 (default 5)."""
+    raw = step.get("self_eval_max_retries")
+    if raw is None:
+        return _SELF_EVAL_DEFAULT_MAX_RETRIES
+    try:
+        return min(20, max(0, int(raw)))
+    except (TypeError, ValueError):
+        return _SELF_EVAL_DEFAULT_MAX_RETRIES
 
 
 async def _approve_and_redispatch(
@@ -414,6 +439,83 @@ async def taskflow_resume(
         elif declared_outcome == StepOutcome.SKIPPED.value:
             set_step_status(step, StepStatus.SKIPPED, skip_reason="step_outcome=skipped")
             outcome_text = "\n  outcome: skipped (declared by the caller)"
+        elif step.get("self_evaluate") and (judge_criteria_text or stored_criteria):
+            # Opt-in scored self-evaluation (WorkMode stage 3). This branch is
+            # isolated from the default three-value judge below so the existing
+            # verdict contract is untouched for every other step.
+            min_score = _self_eval_min_score(step)
+            max_retries = _self_eval_max_retries(step)
+            self_eval = await judge_step_self_eval(
+                step_task=str(step.get("task") or ""),
+                criteria=judge_criteria_text or stored_criteria,
+                result_text=result,
+                evidence_summary=collect_evidence_summary(
+                    session_key=str(step.get("child_session_key") or "")
+                ),
+                structured_result=parsed_result if schema_validated else None,
+            )
+            step["self_eval_score"] = self_eval.score
+            if self_eval.score is None:
+                # An outage is never a passing score — treat like judge UNKNOWN.
+                if str(STEP_JUDGE.get("on_judge_error", "block")).lower() == "pass":
+                    set_step_status(step, StepStatus.DONE)
+                    judge_text = (
+                        f"\n  judge: PASS (fail-open, self-eval unavailable): {self_eval.reason}"
+                    )
+                else:
+                    set_step_status(
+                        step,
+                        StepStatus.BLOCKED,
+                        block_reason=f"self-eval unavailable (unverified): {self_eval.reason}",
+                    )
+                    judge_text = f"\n  judge: BLOCKED (self-eval outage): {self_eval.reason}"
+            elif self_eval.score >= min_score:
+                set_step_status(step, StepStatus.DONE)
+                judge_text = f"\n  judge: self-eval PASS score={self_eval.score}/{min_score}"
+            elif step_retry_count(step) < max_retries:
+                requester_key = requester_key_for_retry(state, session_id)
+                feedback = (
+                    f"Self-eval score {self_eval.score}/10 (need {min_score}): "
+                    f"{self_eval.reason} {self_eval.feedback}".strip()
+                )
+                try:
+                    redispatched_key = await spawn_replacement(
+                        with_judge_feedback(
+                            build_task_with_bindings(
+                                build_task_with_dep_results(step, steps, results),
+                                step,
+                                steps,
+                                results,
+                            ),
+                            feedback,
+                        ),
+                        requester_key,
+                        **step_spawn_kwargs(step, flow_id=flow_id),
+                    )
+                except Exception as exc:  # tool boundary: block instead of raising
+                    set_step_status(
+                        step,
+                        StepStatus.BLOCKED,
+                        block_reason=f"self-eval RETRY re-dispatch failed: {exc}",
+                    )
+                    judge_text = f"\n  judge: self-eval re-dispatch failed: {exc}"
+                else:
+                    retry_count_after = step_retry_count(step) + 1
+                    apply_redispatch(step, redispatched_key, retry_count_after)
+                    step["judge_feedback"] = feedback
+                    judge_text = (
+                        f"\n  judge: self-eval RETRY score={self_eval.score}/{min_score} "
+                        f"({retry_count_after}/{max_retries})"
+                    )
+            else:
+                # Retry budget exhausted: FORCE a pass with an audit marker so
+                # a self-critical model cannot deadlock the flow forever.
+                step["self_eval_forced_pass"] = True
+                set_step_status(step, StepStatus.DONE)
+                judge_text = (
+                    f"\n  judge: self-eval FORCED PASS score={self_eval.score}/{min_score} "
+                    f"after {step_retry_count(step)} retries (max_retries={max_retries})"
+                )
         elif judge_criteria_text or stored_criteria:
             judge_result = await judge_step_result(
                 step_task=str(step.get("task") or ""),

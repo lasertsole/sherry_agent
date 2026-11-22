@@ -44,6 +44,7 @@ from .taskflow_set_waiting import taskflow_set_waiting
 from .taskflow_summary import taskflow_summary
 from .taskflow_update_steps import taskflow_update_steps
 from .taskflow_wait_all import taskflow_wait_all
+from .taskflow_template import taskflow_load_template, taskflow_save_template
 
 FLOW_ACTIONS = (
     "create",
@@ -54,6 +55,8 @@ FLOW_ACTIONS = (
     "replan",
     "set_waiting",
     "budget",
+    "save_as_template",
+    "load_from_template",
 )
 STEP_ACTIONS = ("run_task", "update_steps", "dispatch", "resume", "wait_all")
 INSPECT_ACTIONS = ("summary", "progress", "list")
@@ -67,6 +70,8 @@ _FLOW_TOOLS: dict[str, BaseTool] = {
     "replan": taskflow_replan,
     "set_waiting": taskflow_set_waiting,
     "budget": taskflow_budget,
+    "save_as_template": taskflow_save_template,
+    "load_from_template": taskflow_load_template,
 }
 _STEP_TOOLS: dict[str, BaseTool] = {
     "run_task": taskflow_run_task,
@@ -102,9 +107,10 @@ class TaskflowFlowInput(BaseModel):
 
     action: str = Field(
         description=(
-            "One of: create, plan, finish, fail, cancel, replan, set_waiting, budget. "
-            "Required fields by action: create→flow_id; plan→goal; "
-            "finish/fail/cancel/set_waiting/replan→flow_id; budget→flow_id."
+            "One of: create, plan, finish, fail, cancel, replan, set_waiting, budget, "
+            "save_as_template, load_from_template. Required fields by action: create→flow_id; "
+            "plan→goal; finish/fail/cancel/set_waiting/replan→flow_id; budget→flow_id; "
+            "save_as_template→flow_id,name; load_from_template→name,flow_id."
         ),
         json_schema_extra={
             "enum": [
@@ -116,6 +122,8 @@ class TaskflowFlowInput(BaseModel):
                 "replan",
                 "set_waiting",
                 "budget",
+                "save_as_template",
+                "load_from_template",
             ]
         },
     )
@@ -137,6 +145,14 @@ class TaskflowFlowInput(BaseModel):
     initial_state: dict | None = Field(
         default=None, description="Initial state object stored on the flow (create)."
     )
+    environment: dict | None = Field(
+        default=None,
+        description=(
+            "Task-level facts stored on the flow and injected into every step child's "
+            "system prompt (create). Values may be credential REFERENCES (keychain://...) "
+            "— secrets are never stored or resolved here."
+        ),
+    )
     deadline_hours: float | None = Field(
         default=None,
         description="Overall deadline in hours; an expired flow is failed by the sweeper (create).",
@@ -151,6 +167,10 @@ class TaskflowFlowInput(BaseModel):
     )
     todo_category: str | None = Field(
         default=None, description="Category of the root todo; default quick (create)."
+    )
+    name: str | None = Field(
+        default=None,
+        description="Template name (save_as_template/load_from_template); 1-64 safe filename chars.",
     )
     context: str | None = Field(default=None, description="Extra planning context (plan).")
     max_steps: int | None = Field(
@@ -235,6 +255,20 @@ class TaskflowStepInput(BaseModel):
     )
     judge_criteria: str | None = Field(
         default=None, description="Semantic acceptance criteria for the step judge (Tier 2)."
+    )
+    self_evaluate: bool | None = Field(
+        default=None,
+        description=(
+            "Opt into scored self-evaluation (1-10) instead of the binary judge; "
+            "requires judge_criteria. score >= min_score passes (run_task)."
+        ),
+    )
+    self_eval_min_score: int | None = Field(
+        default=None, description="Passing score for self_evaluate, 1-10 (default 7, run_task)."
+    )
+    self_eval_max_retries: int | None = Field(
+        default=None,
+        description="Score-retry cap before a forced pass for self_evaluate (default 5, run_task).",
     )
     judge_model: str | None = Field(
         default=None, description="Optional judge model override (run_task/resume)."
@@ -442,6 +476,8 @@ class TaskflowFlowTool(_MergedTaskflowTool):
         "TaskFlow lifecycle and budget. Choose action, then pass that action's fields. "
         "Required: create→flow_id; plan→goal; finish/fail/cancel/set_waiting/replan→flow_id; "
         "budget→flow_id (use budget_action=query|set, plus token_budget when set). "
+        "save_as_template→flow_id,name saves a flow's step structure for reuse; "
+        "load_from_template→name,flow_id creates a fresh flow from that structure. "
         "plan registers the steps AND auto-dispatches its initial ready set; dependents stay blocked. "
         "Pass expected_revision on mutations to fail fast; a conflict returns the latest revision to inspect. "
         "create/plan warn about a similar ACTIVE flow in this session: reuse it, or re-call with ack_dup=true "

@@ -30,6 +30,7 @@
 - [判定ゲート](gates/README.ja.md)
 - [エビデンス台帳](gates/evidence-ledger/README.ja.md)
 - [並行レーン](lanes/README.ja.md)
+- [WorkMode サブメカニズム](workmode/README.ja.md)
 - [未参照フロー孤児 GC](#-未参照フロー孤児-gc)
 - [ディスパッチ直列化と冪等プランニング](#-dispatch-serialization--idempotent-planning)
 - [設定レジストリ](#-設定レジストリ)

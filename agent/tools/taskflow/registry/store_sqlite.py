@@ -711,6 +711,31 @@ def get_flow_sync(flow_id: str, session_id: str) -> dict | None:
     return None
 
 
+def get_flow_environment_sync(flow_id: str) -> dict | None:
+    """Read a flow's task-level ``environment`` by flow_id alone (no session).
+
+    flow_id is globally unique (a uuid), so no session filter is needed. Used by
+    the spawn path to inject the Task Environment block into a step child. A
+    missing flow / malformed environment returns None; failures are swallowed
+    (best-effort injection, must never block a spawn).
+    """
+    try:
+        _ensure_tables_sync()
+        conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
+        try:
+            row = conn.execute(_SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        state = _row_to_flow(row).get("state")
+        if isinstance(state, dict) and isinstance(state.get("environment"), dict):
+            return state["environment"]
+    except Exception as e:
+        logger.warning("Failed to sync-read taskflow environment {}: {}", flow_id, e)
+    return None
+
+
 def get_active_flows_sync(session_id: str) -> list[dict]:
     """Synchronously read one session's non-terminal flows (stdlib sqlite3).
 

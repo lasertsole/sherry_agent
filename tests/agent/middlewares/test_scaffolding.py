@@ -342,6 +342,9 @@ class TestRoleAgnosticDesign:
             # working-directory notice to inject and no media intake of its own.
             "WorkspaceNoticeMiddleware",
             "MultimodalProcessor",
+            # A child cannot manage shared TaskFlow state (taskflow tools are
+            # main_only), so inbound-intent routing lives on the main agent only.
+            "TaskIntentRouterMiddleware",
         }
         main_only = MAIN_REQUIRED_CLASSES - SUBAGENT_REQUIRED_CLASSES
         assert {cls.__name__ for cls in main_only} == expected_main_only

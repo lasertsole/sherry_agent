@@ -51,6 +51,7 @@ EXPECTED_ORDER = [
     "OutputSafetyFilter",
     "Summarization",
     "InvalidToolCallRepairMiddleware",
+    "TaskIntentRouterMiddleware",
     "DelegationPressureGate",
 ]
 

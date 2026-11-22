@@ -253,6 +253,18 @@ async def _do_sweep() -> None:
     if stale_waiting > 0:
         logger.warning("Sweeper: {} TaskFlow(s) in stale WAITING state", stale_waiting)
 
+    # Task-level watchdog: NOTICE-only detection of stale heartbeats and retry
+    # deadlocks. Unlike the liveness pass above it never fails a flow — it only
+    # raises a warning notice so the agent/user can decide to cancel or continue.
+    try:
+        from agent.tools.taskflow.watchdog import sweep_and_notify
+
+        watchdog = await sweep_and_notify()
+        if watchdog.get("alerts"):
+            logger.info("Sweeper: TaskFlow watchdog {}", watchdog)
+    except Exception:  # noqa: BLE001 - watchdog is best-effort, never blocks a sweep
+        logger.debug("TaskFlow watchdog sweep skipped", exc_info=True)
+
     await run_with_work_admission(_persist_async(), label="sweeper-persist")
 
     # Isolated workspaces are not registry rows: a crash between their creation

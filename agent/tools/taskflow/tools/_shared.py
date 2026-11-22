@@ -243,6 +243,11 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "persona_prompt",  # resolved expert persona injected into the child prompt
     "skills_whitelist",  # resolved expert skills merged into the step skills
     "goal_max_turns",  # per-step child goal-turn override (1 = single-step expert)
+    # Optional scored self-evaluation (WorkMode stage 3). Opt-in; absent means
+    # the default three-value PASS/RETRY/BLOCK judge.
+    "self_evaluate",  # bool: enable 1-10 scoring instead of a binary verdict
+    "self_eval_min_score",  # int: score >= this passes (default 7)
+    "self_eval_max_retries",  # int: score-retry cap before forced pass (default 5)
 )
 
 

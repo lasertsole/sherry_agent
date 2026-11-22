@@ -61,6 +61,7 @@ from .summarization import Summarization
 from .summarization.thresholds import resolve_compression_threshold
 from .system_prompt import system_prompt_injection
 from .task_intent import TaskIntentMiddleware
+from .task_intent_router import TaskIntentRouterMiddleware
 from .thinking_control import ThinkingControlMiddleware
 from .todo_continuation import PlanContinuationEnforcer
 from .token_budget import ChildTokenBudget, TokenBudget
@@ -522,11 +523,21 @@ MIDDLEWARE_SPECS: tuple[MiddlewareSpec, ...] = (
     ),
     # Main-agent-only soft delegation pressure, appended when its feature flag
     # (or the eval override) is on. Children never receive it.
+    # Interruption routing for long tasks. before_agent: only acts when the
+    # session has an active TaskFlow; short turns are a strict no-op. Placed
+    # before the optional DelegationPressureGate so the gate remains the last
+    # (conditionally appended) entry (ORDER IS A CONTRACT).
+    MiddlewareSpec(
+        name="TaskIntentRouterMiddleware",
+        cls=TaskIntentRouterMiddleware,
+        main=ProfileBinding(30, lambda _ctx: TaskIntentRouterMiddleware()),
+        required_in=frozenset({MAIN}),
+    ),
     MiddlewareSpec(
         name="DelegationPressureGate",
         cls=DelegationPressureGate,
         main=ProfileBinding(
-            30, lambda _ctx: DelegationPressureGate(), _delegation_pressure_enabled
+            31, lambda _ctx: DelegationPressureGate(), _delegation_pressure_enabled
         ),
     ),
 )
