@@ -11,7 +11,7 @@ from typing import Any
 from loguru import logger
 
 from config.features import LDW
-from config.path import PLAN_KNOWLEDGE_DIR, ROOT_DIR
+from config.path import PLAN_KNOWLEDGE_DIR, SRC_DIR
 from agent.tools.subagent.ldw_shim import InMemoryJournalStore, SqliteWorkflowStore, run_workflow
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.todolist.knowledge.identity import (
@@ -24,6 +24,18 @@ from .leaf import register_roster
 from .scripts import load_ldw_script, write_ldw_script
 
 _REPLAY_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def resolve_journal_path(configured: str) -> Path:
+    """Resolve the LDW journal against SRC_DIR (APP_HOME/src), never ROOT_DIR.
+
+    A relative journal path is runtime DATA: in a packaged or multi-tenant
+    deployment ``APP_HOME != ROOT_DIR``, so anchoring it at the code directory
+    either loses the journal on container rebuild or lets tenants share one
+    file. Absolute paths stay untouched.
+    """
+    path = Path(configured)
+    return path if path.is_absolute() else Path(SRC_DIR) / path
 
 
 def _lock(plan_key: str) -> asyncio.Lock:
@@ -160,9 +172,7 @@ async def _run_ldw(
     store = None
     try:
         if LDW["journal_path"] and SqliteWorkflowStore is not None:
-            path = Path(LDW["journal_path"])
-            if not path.is_absolute():
-                path = Path(ROOT_DIR) / path
+            path = resolve_journal_path(str(LDW["journal_path"]))
             path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 store = await SqliteWorkflowStore.open(path)

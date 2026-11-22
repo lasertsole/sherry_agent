@@ -10,6 +10,7 @@
 import type {
   AgentChunkType,
   ChatRequest,
+  HitlInterruptData,
   OnChunkCallback,
   OnDoneCallback,
   OnHitlCallback,
@@ -46,6 +47,11 @@ interface AgentStreamError {
   code: string;
   message: string;
 }
+interface AgentStreamHitl {
+  session_id: string;
+  message_id: string;
+  content: HitlInterruptData;
+}
 interface ChatChunk {
   id: string;
   role: string;
@@ -72,11 +78,13 @@ export async function sendChatMessage(request: ChatRequest, onChunk: OnChunkCall
  * @param request
  * @param onChunk
  * @param onDone
+ * @param onHitl
  */
 async function sendChatMessageTauri(
   request: ChatRequest,
   onChunk: OnChunkCallback,
-  onDone?: OnDoneCallback
+  onDone?: OnDoneCallback,
+  onHitl?: OnHitlCallback
 ): Promise<void> {
   const invoke = await getInvoke();
   const listen = await getListen();
@@ -86,12 +94,14 @@ async function sendChatMessageTauri(
     let unlistenEnd: (() => void) | null = null;
     let unlistenErr: (() => void) | null = null;
     let unlistenStart: (() => void) | null = null;
+    let unlistenHitl: (() => void) | null = null;
 
     const cleanup = () => {
       unlistenChunk?.();
       unlistenEnd?.();
       unlistenErr?.();
       unlistenStart?.();
+      unlistenHitl?.();
     };
 
     // Listen for stream start
@@ -121,6 +131,15 @@ async function sendChatMessageTauri(
       resolve();
     }).then(fn => {
       unlistenEnd = fn;
+    });
+
+    // Listen for HITL pauses: the Rust bridge forwards the interrupt payload
+    // from the backend WebSocket; the decision itself travels over the session
+    // agent socket.
+    listen<AgentStreamHitl>('agent:stream:hitl', event => {
+      onHitl?.(event.payload.content);
+    }).then(fn => {
+      unlistenHitl = fn;
     });
 
     // Listen for stream error
@@ -171,7 +190,7 @@ export class TauriTransport implements TransportStrategy {
     controller: StreamController;
     promise: Promise<void>;
   } {
-    const promise = sendChatMessageTauri(request, callbacks.onChunk, callbacks.onDone);
+    const promise = sendChatMessageTauri(request, callbacks.onChunk, callbacks.onDone, callbacks.onHitl);
     return {
       controller: { closed: false, abort: () => void stopChatMessage(request.session_id || 'default') },
       promise

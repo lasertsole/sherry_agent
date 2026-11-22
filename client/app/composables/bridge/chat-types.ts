@@ -78,6 +78,12 @@ export type AgentWsEventType =
    */
   | 'load_warning'
   /**
+   * A transient in-chat system notice (`system.notice` protocol): not
+   * persisted anywhere, rendered as a dismissible card in the conversation.
+   * Best-effort like every other session push.
+   */
+  | 'system_notice'
+  /**
    * A background command (`terminal(run_in_background=True)`) started / ended,
    * and the acknowledgement of a user-issued kill. Command-level: these frames
    * never touch the turn.

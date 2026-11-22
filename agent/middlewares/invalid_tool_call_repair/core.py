@@ -1,6 +1,6 @@
 """InvalidToolCallRepairMiddleware — salvage tool calls whose JSON args don't parse.
 
-Why this exists (SWE-bench run ``20261017_003529``): the model emitted a
+Why this exists (an eval run, ``20261017_003529``): the model emitted a
 ``terminal`` call whose ``arguments`` string was not valid JSON
 (``{"commands": cd $(pwd) && git log --oneline -3}`` — the shell command was
 never quoted). ``langchain_core``'s ``default_tool_parser`` filed the call into
@@ -61,9 +61,16 @@ _RESEND_NOTE = (
     "[Invalid tool call] Your previous tool call did not reach the tools because "
     "its arguments were not valid JSON ({detail}). Re-issue the call now with "
     "correctly escaped JSON arguments: every string value must be wrapped in "
-    'double quotes and any inner quote must be escaped as \\". If no tool is '
-    "needed, answer in plain text instead."
+    'double quotes and any inner quote must be escaped as \\". An object member '
+    'is written `"key": value` — a bare string where a key belongs (for example '
+    '`{{"step-2", "task": …}}` instead of `{{"step_id": "step-2", "task": …}}`) '
+    "is invalid. If no tool is needed, answer in plain text instead."
 )
+
+#: How much of the offending ``arguments`` text the resend note quotes back.
+_RESEND_ARGS_PREVIEW_CHARS = 400
+
+_RESEND_ARGS_SUFFIX = "\n\nYour arguments began (verbatim):\n{preview}"
 
 
 class InvalidToolCallRepairMiddleware(AgentMiddleware):
@@ -220,12 +227,27 @@ class InvalidToolCallRepairMiddleware(AgentMiddleware):
 
     def _build_note(self, ai: AIMessage) -> HumanMessage:
         detail = "the arguments string failed to parse as JSON"
+        preview = ""
         for call in getattr(ai, "invalid_tool_calls", None) or []:
-            error = call.get("error") if isinstance(call, dict) else None
+            if not isinstance(call, dict):
+                continue
+            raw = call.get("args")
+            if not preview and isinstance(raw, str) and raw.strip():
+                preview = raw.strip()[:_RESEND_ARGS_PREVIEW_CHARS]
+            error = call.get("error")
             if isinstance(error, str) and error:
                 detail = error
                 break
-        return HumanMessage(content=_RESEND_NOTE.format(detail=detail))
+        content = _RESEND_NOTE.format(detail=detail)
+        if preview:
+            # The raw text is the model's OWN output, quoted back verbatim: a
+            # vague "invalid JSON" note let a measured run repeat the SAME
+            # malformed shape until the resend budget ran out and the turn died
+            # mid-plan (`{"step-2", "task": …}` — an object member that never
+            # got its `step_id:` key). Showing the text plus the shape hint is
+            # what lets the retry actually fix it.
+            content += _RESEND_ARGS_SUFFIX.format(preview=preview)
+        return HumanMessage(content=content)
 
     def _needs_resend(self, ai: AIMessage) -> bool:
         return not (getattr(ai, "tool_calls", None)) and bool(

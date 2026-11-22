@@ -18,12 +18,15 @@ import { fetchApiRaw } from '../requestApi';
 /**
  * The signed-in account as the backend reports it.
  *
- * Password-only login and a single account: there is no name to carry, so the
- * client knows an id and when the password was set.
+ * A standalone cell exposes only the single local account; the Ingress adds the
+ * username, global role and the account's default tenant.
  */
 export interface AuthUser {
   id: number;
   created_at?: number;
+  username?: string;
+  role?: string;
+  tenant_id?: string;
 }
 
 /** `GET /auth/status`. */
@@ -34,6 +37,22 @@ export interface AuthStatus {
   authEnabled: boolean;
   /** An account exists. */
   hasAccount: boolean;
+  /** The backend identifies accounts by username too (multi-tenant Ingress). */
+  usernameRequired: boolean;
+}
+
+/** One member cell of the signed-in account (`GET /auth/tenants`). */
+export interface TenantInfo {
+  tenant_id: string;
+  role: string;
+  cell_status: string;
+  is_default: boolean;
+}
+
+/** The account's member cells and the browser's selected one. */
+export interface TenantsPayload {
+  active: string;
+  tenants: TenantInfo[];
 }
 
 /** A refusal from an auth endpoint, carrying the backend's code. */
@@ -91,17 +110,28 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
   return {
     authRequired: payload.auth_required === true,
     authEnabled: payload.auth_enabled === true,
-    hasAccount: payload.has_account === true
+    hasAccount: payload.has_account === true,
+    usernameRequired: payload.username_required === true
   };
 }
 
 /**
  * Sign in with the password; the cookies ride the response, so only the user
  * comes back.
+ *
+ * A multi-tenant Ingress (`username_required`) additionally identifies the
+ * account by username; the single-account cell omits it.
  * @param password
+ * @param username Optional account name for a multi-tenant Ingress.
  */
-export async function loginRequest(password: string): Promise<{ user: AuthUser; expiresIn: number }> {
-  const payload = await authRequest('/auth/login', 'post', { password });
+export async function loginRequest(
+  password: string,
+  username?: string
+): Promise<{ user: AuthUser; expiresIn: number }> {
+  const payload = await authRequest('/auth/login', 'post', {
+    password,
+    ...(username ? { username } : {})
+  });
   return { user: payload.user as AuthUser, expiresIn: Number(payload.expires_in ?? 0) };
 }
 
@@ -170,4 +200,22 @@ export async function disableAuthRequest(password: string): Promise<void> {
 export async function fetchWsTicket(): Promise<string> {
   const payload = await authRequest('/auth/ws-ticket', 'get');
   return String(payload.ticket ?? '');
+}
+
+/** The signed-in account's member cells plus the currently selected one. */
+export async function fetchTenants(): Promise<TenantsPayload> {
+  const payload = await authRequest('/auth/tenants', 'get');
+  const rows = Array.isArray(payload.tenants) ? payload.tenants : [];
+  return {
+    active: String(payload.active ?? ''),
+    tenants: rows as TenantInfo[]
+  };
+}
+
+/**
+ * Select the member cell this browser uses (sets the Ingress cookie).
+ * @param tenantId
+ */
+export async function switchTenantRequest(tenantId: string): Promise<void> {
+  await authRequest('/auth/tenant', 'post', { tenant_id: tenantId });
 }

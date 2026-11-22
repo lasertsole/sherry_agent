@@ -249,7 +249,9 @@ def test_include_globs_precede_the_exclusions(fake_rg, tree):
     set_mode, argv_log = fake_rg
     set_mode("ok")
 
-    rg_backend.rg_search(SearchQuery("hit", tree, file_glob="*.py"), _state(), binary=_binary())
+    rg_backend.rg_search(
+        SearchQuery("hit", tree, include_globs=("*.py",)), _state(), binary=_binary()
+    )
 
     argv = json.loads(argv_log.read_text(encoding="utf-8").splitlines()[0])
     include_at = argv.index("--glob=*.py")

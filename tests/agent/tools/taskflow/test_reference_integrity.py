@@ -54,6 +54,11 @@ async def _replace(session_id: str, todos: list[dict]) -> list[dict]:
     return await TodoService.update_todos(session_id, todos)
 
 
+def _work(rows: list[dict]) -> list[str]:
+    """Content of the WORK items — the system [VERIFY] todo rides along last."""
+    return [todo["content"] for todo in rows if not todo_service.is_verify_todo(todo)]
+
+
 def _age(db_path: Path, flow_id: str, seconds_ago: float) -> None:
     conn = sqlite3.connect(db_path)
     try:
@@ -76,7 +81,10 @@ def _consume(session_id: str = SESSION) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_replace_dropping_root_cancels_flow_and_warns(isolated_db: Path):
+async def test_replace_dropping_root_cancels_flow_and_warns(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     await _create_flow("flow-p1-cancel")
 
     await _replace(SESSION, [{"content": "a completely different plan"}])
@@ -137,7 +145,10 @@ async def test_sweep_only_mode_skips_immediate_compensation(
 
 
 @pytest.mark.asyncio
-async def test_terminal_flow_is_skipped_by_compensation(isolated_db: Path):
+async def test_terminal_flow_is_skipped_by_compensation(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     await _create_flow("flow-p1-terminal")
     assert "status=failed" in await taskflow_fail.coroutine(
         session_id=SESSION, flow_id="flow-p1-terminal", reason="already broken"
@@ -155,6 +166,7 @@ async def test_terminal_flow_is_skipped_by_compensation(isolated_db: Path):
 async def test_compensation_failure_does_not_block_the_replacement(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     await _create_flow("flow-p1-boom")
 
     async def _boom(*_args: object, **_kwargs: object) -> object:
@@ -164,19 +176,20 @@ async def test_compensation_failure_does_not_block_the_replacement(
 
     result = await _replace(SESSION, [{"content": "replacement"}])
 
-    assert [todo["content"] for todo in result] == ["replacement"]
+    assert _work(result) == ["replacement"]
     assert _consume() == []
 
 
 @pytest.mark.asyncio
-async def test_missing_flow_is_skipped(isolated_db: Path):
+async def test_missing_flow_is_skipped(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     await todo_store.replace_all(
         SESSION, [{"content": "ghost root", "status": "pending", "flow_id": "flow-ghost"}]
     )
 
     result = await _replace(SESSION, [{"content": "replacement"}])
 
-    assert [todo["content"] for todo in result] == ["replacement"]
+    assert _work(result) == ["replacement"]
     assert _consume() == []
 
 
@@ -226,7 +239,7 @@ async def test_post_replace_sweep_failure_is_fail_open(
 
     result = await _replace(SESSION, [{"content": "replacement"}])
 
-    assert [todo["content"] for todo in result] == ["replacement"]
+    assert _work(result) == ["replacement"]
 
 
 @pytest.mark.asyncio
@@ -411,13 +424,16 @@ async def test_fail_survives_a_notification_failure(
 
 
 @pytest.mark.asyncio
-async def test_replace_dropping_all_roots_still_returns_the_new_list(isolated_db: Path):
+async def test_replace_dropping_all_roots_still_returns_the_new_list(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     await _create_flow("flow-p4-r1")
     await _create_flow("flow-p4-r2")
 
     result = await _replace(SESSION, [{"content": "one"}] * 1)
 
-    assert [todo["content"] for todo in result] == ["one"]
+    assert _work(result) == ["one"]
     assert sorted(_consume()) == ["flow-p4-r1", "flow-p4-r2"]
     for flow_id in ("flow-p4-r1", "flow-p4-r2"):
         flow = await flow_store.get_flow(flow_id, SESSION)
@@ -428,6 +444,7 @@ async def test_replace_dropping_all_roots_still_returns_the_new_list(isolated_db
 async def test_dropping_a_root_kills_the_flow_live_children(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     from types import SimpleNamespace
 
     from agent.tools.subagent.types.registry import ExecutionStatus
@@ -479,6 +496,7 @@ async def test_dropping_a_root_kills_the_flow_live_children(
 async def test_child_cleanup_skips_a_terminal_run(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     from types import SimpleNamespace
 
     from agent.tools.subagent.types.registry import ExecutionStatus
@@ -531,6 +549,7 @@ async def test_child_cleanup_skips_a_terminal_run(
 async def test_child_cleanup_failure_does_not_block_the_replacement(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setitem(TODOLIST_INFRA, "orphan_flow_on_drop", "cancel")
     from types import SimpleNamespace
 
     from agent.tools.subagent.types.registry import ExecutionStatus
@@ -574,4 +593,4 @@ async def test_child_cleanup_failure_does_not_block_the_replacement(
 
     result = await _replace(SESSION, [{"content": "replacement"}])
 
-    assert [todo["content"] for todo in result] == ["replacement"]
+    assert _work(result) == ["replacement"]

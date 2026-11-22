@@ -62,7 +62,7 @@ The LDW script stores `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, and `WORKFLOW_META` as
 - Leaves reuse the real child contract: `_assemble_child_tools` applies the role allow-list and injects code intelligence, ast-grep, and executor-only PTC. The session id travels through the runnable config; it is never baked into a shared graph.
 - The leaf's model follows the role tier and `step_model` override. A schema-bound leaf forces thinking off, matching the child agent's structured-output last resort.
 - On a journal miss an executor leaf may run the step's PTC script through `run_ptc` first. PTC failure appends `[PTC Pre-run Progress]` and continues with ReAct; a PTC schema miss is a failure, never success.
-- `SqliteWorkflowStore` at `src/data/workflow_runs.db` backs cross-process resume. A repeat replay with the same prompt / agent_type / model / schema returns the journaled result with zero leaf calls. The per-run result reports `journal_hits` and `leaf_calls`.
+- `SqliteWorkflowStore` at `SRC_DIR/data/workflow_runs.db` backs cross-process resume. A repeat replay with the same prompt / agent_type / model / schema returns the journaled result with zero leaf calls. The per-run result reports `journal_hits` and `leaf_calls`.
 - Per-plan locks serialize concurrent replay. `LDW["real_replay_timeout_s"]` bounds one LDW run; a timeout is a failed run and therefore a fallback candidate, not a hang.
 
 ## 🪜 Automatic TaskFlow Fallback
@@ -86,7 +86,7 @@ When steps failed, `repair_extraction` reads the replay flow's child handoffs, m
 | `LDW["min_replays"]` | `3` | Replays before a plan stops using TaskFlow and compiles an LDW script |
 | `extraction.flow_extraction_enabled` (Presets & Role → Advanced) | `True` | User-facing compile switch, global-only: `action=compile`, compile-on-miss and the repair recompile refuse while it is off. An EXISTING script still replays |
 | `LDW["script_max_bytes"]` | `65536` | Cap for one `ldw__<plan_key>.py` |
-| `LDW["journal_path"]` | `src/data/workflow_runs.db` | Cross-process journal location |
+| `LDW["journal_path"]` | `data/workflow_runs.db` | Cross-process journal location |
 | `LDW["auto_degrade_enabled"]` | `True` | Create and drive a TaskFlow replay flow after an LDW failure |
 | `LDW["repair_enabled"]` | `True` | Run repair extraction / recompile after a fallback failure |
 | `LDW["real_replay_timeout_s"]` | `900.0` | Wall-clock ceiling for one LDW run |

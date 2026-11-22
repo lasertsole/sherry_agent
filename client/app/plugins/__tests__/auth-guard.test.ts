@@ -20,6 +20,8 @@ const bridge = vi.hoisted(() => ({
   updateAccountRequest: vi.fn(),
   disableAuthRequest: vi.fn(),
   enableAuthRequest: vi.fn(),
+  fetchTenants: vi.fn(),
+  switchTenantRequest: vi.fn(),
   fetchWsTicket: vi.fn()
 }));
 vi.mock('~/composables/bridge/auth', () => bridge);
@@ -142,6 +144,29 @@ describe('auth guard plugin', () => {
     const guard = await loadMiddleware();
 
     expect(await guard({ path: '/login' })).toBeUndefined();
+  });
+
+  it('guards a meeting route like any other page (UI upgrade S4)', async () => {
+    bridge.fetchAuthStatus.mockResolvedValue({
+      authRequired: true,
+      authEnabled: true,
+      hasAccount: true
+    });
+    const guard = await loadMiddleware();
+
+    expect(await guard({ path: '/meeting/abc' })).toBe('navigated:/login');
+  });
+
+  it('lets a cookie session into a meeting route', async () => {
+    bridge.fetchAuthStatus.mockResolvedValue({
+      authRequired: true,
+      authEnabled: true,
+      hasAccount: true
+    });
+    bridge.fetchMe.mockResolvedValue({ id: 1, username: 'admin' });
+    const guard = await loadMiddleware();
+
+    expect(await guard({ path: '/meeting/abc' })).toBeUndefined();
   });
 
   it('registers itself as a GLOBAL route middleware', async () => {

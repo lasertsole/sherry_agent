@@ -135,7 +135,7 @@ def test_bridge_tool_replaces_terminal(monkeypatch: pytest.MonkeyPatch):
         assert tool.name == "terminal"
         assert tool.args_schema.__name__ == "SafeShellInput"
         assert tool.metadata == {"idempotent": False, "side_effect_scope": "system"}
-        assert tool.invoke({"commands": ["echo hi", "pwd"]}) == "exec:echo hi && pwd:30"
+        assert tool.invoke({"commands": ["echo hi", "pwd"]}) == "exec:echo hi && pwd:120"
     finally:
         core._tools = original
 

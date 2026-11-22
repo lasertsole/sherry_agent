@@ -43,6 +43,10 @@ from .delegation_pressure import (
     DelegationPressureConfig as DelegationPressureConfig,
     DELEGATION_PRESSURE as DELEGATION_PRESSURE,
 )
+from .high_risk_guard import (
+    HighRiskGuardConfig as HighRiskGuardConfig,
+    HIGH_RISK_GUARD as HIGH_RISK_GUARD,
+)
 from .heartbeat_staleness import (
     HeartbeatStalenessConfig as HeartbeatStalenessConfig,
     HEARTBEAT_STALENESS as HEARTBEAT_STALENESS,

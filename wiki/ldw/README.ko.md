@@ -62,7 +62,7 @@ LDW 스크립트는 `PLAN_KEY`, `REQUIRED_AGENT_TYPES`, `WORKFLOW_META`를 Pytho
 - leaf는 실제 child 계약을 재사용합니다. `_assemble_child_tools`가 역할 allow-list를 적용하고 code intelligence, ast-grep, executor 전용 PTC를 주입합니다. session id는 runnable config를 통해 전달되며 공유 그래프에 구워지지 않습니다.
 - leaf 모델은 역할 tier와 `step_model` 재정의를 따릅니다. schema가 있는 leaf는 thinking을 강제로 끄며, child agent의 구조화 출력 마지막 단계와 맞춥니다.
 - journal miss에서 executor leaf는 먼저 `run_ptc`로 해당 step의 PTC 스크립트를 실행할 수 있습니다. PTC 실패는 `[PTC Pre-run Progress]`를 덧붙이고 ReAct로 계속합니다. PTC의 schema miss는 실패이며 성공이 아닙니다.
-- `src/data/workflow_runs.db`의 `SqliteWorkflowStore`가 프로세스 간 재개를 지원합니다. 같은 prompt / agent_type / model / schema의 반복 리플레이는 journal 결과를 반환하고 leaf 호출은 0입니다. 각 결과는 `journal_hits`와 `leaf_calls`를 보고합니다.
+- `SRC_DIR/data/workflow_runs.db`의 `SqliteWorkflowStore`가 프로세스 간 재개를 지원합니다. 같은 prompt / agent_type / model / schema의 반복 리플레이는 journal 결과를 반환하고 leaf 호출은 0입니다. 각 결과는 `journal_hits`와 `leaf_calls`를 보고합니다.
 - 계획별 잠금이 동시 리플레이를 직렬화합니다. `LDW["real_replay_timeout_s"]`는 한 번의 LDW 실행을 제한하며, 타임아웃은 멈춤이 아니라 실패이자 강등 후보입니다.
 
 ## 🪜 자동 TaskFlow 강등
@@ -86,7 +86,7 @@ step이 실패하면 `repair_extraction`이 replay flow의 child handoff를 읽�
 | `LDW["min_replays"]` | `3` | 계획이 TaskFlow를 떠나 LDW 스크립트를 컴파일하기 전 리플레이 횟수 |
 | `extraction.flow_extraction_enabled`(프리셋 캐릭터 → 고급) | `True` | 사용자 대상 컴파일 스위치(전역 전용). 꺼져 있으면 `action=compile`, 누락 스크립트 컴파일, 수리 재컴파일을 거부. 기존 스크립트 재생은 가능 |
 | `LDW["script_max_bytes"]` | `65536` | `ldw__<plan_key>.py` 하나의 상한 |
-| `LDW["journal_path"]` | `src/data/workflow_runs.db` | 프로세스 간 journal 위치 |
+| `LDW["journal_path"]` | `data/workflow_runs.db` | 프로세스 간 journal 위치 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 실패 후 TaskFlow replay flow를 만들고 구동 |
 | `LDW["repair_enabled"]` | `True` | 강등 실패 후 repair 추출 / 재컴파일 실행 |
 | `LDW["real_replay_timeout_s"]` | `900.0` | 한 번의 LDW 실행 실시간 상한 |

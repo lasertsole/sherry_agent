@@ -102,7 +102,7 @@ SKIP_PATHS = (
     "build",
     "client/src-tauri/sherry-backend",
     "client/src-tauri/target",
-    # Eval run artifacts (gitignored): SWE-bench / DeepSWE checkouts and their
+    # Eval run artifacts (gitignored): DeepSWE checkouts and their
     # per-task trees can hold hundreds of thousands of files, which made the
     # walk take over a minute locally while a clean checkout is instant.
     "evals/results",

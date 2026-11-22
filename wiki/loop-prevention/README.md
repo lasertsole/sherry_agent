@@ -72,7 +72,7 @@ Counts **model calls** per turn, one unit each. A tool-call pair costs exactly o
 
 ### Turn level: `DelegationPressureGate` (main agent only)
 
-Installed on the MAIN agent and never on a subagent (the child builder does not add it, and `_active` rejects `:subagent:`/`:swarm:` sessions). It counts READ/exploration tool calls cumulatively within one turn: at **7** it injects one `<system-reminder source="delegation_pressure">` warning through its own mid-turn `abefore_model` path; at **12** it injects the escalated system-reminder with stronger language. Tools remain available at both levels — the gate advises, never blocks (browser debugging tools are excluded from counting). A successful accepted/pending `sessions_spawn` resets the counter so the main agent can inspect/verify and a later 7/12 cycle re-arms; a failed spawn does not reset. Writes alone do not reset it, and every graph invocation inside the turn accumulates until the spawn or `after_agent` resets. The env `SHERRY_EVAL_DELEGATION_PRESSURE=1` remains the explicit eval-arm selector; the product main chain always includes the gate.
+Installed on the MAIN agent and never on a subagent (the child builder does not add it, and `_active` rejects `:subagent:`/`:swarm:` sessions). It counts READ/exploration tool calls cumulatively within one turn and advises at three levels, never blocking (browser debugging tools are excluded from counting): at **5** (`plan_nudge_after`) one **PLANNING NUDGE** names the planning tools that are actually registered — `todowrite` for simple tasks, `taskflow_flow(action="plan")` for multi-step ones — and fires only when the turn has neither called `todowrite` nor created a flow; at **7** it injects one `<system-reminder source="delegation_pressure">` warning through its own mid-turn `abefore_model` path; at **12** the escalated system-reminder with stronger language. When the turn already dispatched TaskFlow steps, the 7/12 messages switch to the TaskFlow variant ("`wait_all` / `dispatch`, stop reading" instead of "call `sessions_spawn`"), because a dispatch IS delegation. A successful accepted/pending `sessions_spawn` or a successful TaskFlow dispatch wave (`taskflow_step(action="dispatch")`, or the plan's auto-dispatch) resets the counter so the main agent can inspect/verify and a later cycle re-arms; a failed spawn/dispatch does not reset. Writes alone do not reset it, and every graph invocation inside the turn accumulates until that hand-off or `after_agent`, which clears everything — including the plan-tracking flags — so a NEW turn is nudged to plan again. The env `SHERRY_EVAL_DELEGATION_PRESSURE=1` remains the explicit eval-arm selector; the product main chain always includes the gate.
 
 ### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
 
@@ -291,11 +291,12 @@ as messages the user wrote.
 
 ### Plan level: the SYSTEM verify todo
 
-A plan with 2+ work todos ends with one SYSTEM `[VERIFY]` todo
+Every non-empty plan ends with one SYSTEM `[VERIFY]` todo — there is NO
+minimum work-item count, so a one-item plan is verified too
 (`metadata.kind="verify"`, last position, priority high). The todolist service
 inserts it after every mutation (`replace`/`add`/`patch`/`remove`), keeps it
-last, removes it (and kills its reviewer) when the plan shrinks below two work
-todos, and never inserts one for a `:subagent:`/`:swarm:` session. The model
+last, removes it (and kills its reviewer) only when the plan has no work item
+left, and never inserts one for a `:subagent:`/`:swarm:` session. The model
 cannot forge it — the tool schema has no `metadata` field, the store only writes
 that column through a system-only argument, and a copied template line is
 stripped from `replace`. Evidence travels in the model-writable `notes` field.

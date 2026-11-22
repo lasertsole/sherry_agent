@@ -194,6 +194,8 @@ def _isolated_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
         step_timeout_seconds=None,
         flow_id=None,
         step_id=None,
+        approval_context=None,
+        **_expert_kwargs,
     ) -> str:
         spawned.append(
             {
@@ -202,6 +204,7 @@ def _isolated_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
                 "label": label,
                 "flow_id": flow_id,
                 "step_id": step_id,
+                "approval_context": approval_context,
             }
         )
         return f"agent:auto:subagent:{len(spawned)}"

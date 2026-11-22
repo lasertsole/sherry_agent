@@ -95,6 +95,14 @@ async def sessions_spawn_runtime_tool(
             "machine-readable data; omit for free-form text."
         ),
     ] = None,
+    approval_context: Annotated[
+        dict | None,
+        Field(
+            description="Only after the user approves a child's [NEEDS_APPROVAL] "
+            "bubble: {keyword, tool} (optionally args_hash) lets THIS spawn run "
+            "that keyword once. Never a permanent allow."
+        ),
+    ] = None,
 ) -> str:
     """Spawn a subagent to execute a task in the background.
 
@@ -128,6 +136,7 @@ async def sessions_spawn_runtime_tool(
         functional_role_hint=functional_role,
         isolation=isolation,
         output_schema=output_schema,
+        approval_context=approval_context,
     )
 
     parts = [f"Subagent spawned: status={result.status}"]

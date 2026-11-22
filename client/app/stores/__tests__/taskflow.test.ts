@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import type { FlowProgress } from '../taskflow';
@@ -131,5 +131,60 @@ describe('stores/taskflow', () => {
 
     expect(store.flows).toEqual([]);
     expect(store.hasProgress).toBe(false);
+  });
+});
+
+/** UI upgrade S3: the global cross-session board (task-board nav panel). */
+describe('stores/taskflow — global board (S3)', () => {
+  const globalFlow = (overrides: Partial<FlowProgress> = {}): FlowProgress =>
+    makeFlow({ flow_id: 'g-1', status: 'running', session_id: 'sess-a', description: 'global flow', ...overrides });
+
+  beforeEach(() => {
+    setActivePinia(createTestingPinia({ stubActions: false }));
+    store = useTaskflowStore();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('loadAllFlows() loads the global list and derives the running badge count', async () => {
+    vi.stubGlobal(
+      '$fetch',
+      vi.fn().mockResolvedValue({
+        flows: [globalFlow(), globalFlow({ flow_id: 'g-2', status: 'done' })]
+      })
+    );
+
+    await store.loadAllFlows();
+
+    expect(store.globalFlows).toHaveLength(2);
+    expect(store.runningCount).toBe(1);
+    expect(store.globalLoading).toBe(false);
+  });
+
+  it('filteredGlobalFlows filters by status and returns all for "all"', async () => {
+    vi.stubGlobal(
+      '$fetch',
+      vi.fn().mockResolvedValue({
+        flows: [globalFlow({ status: 'running' }), globalFlow({ flow_id: 'g-2', status: 'failed' })]
+      })
+    );
+    await store.loadAllFlows();
+
+    expect(store.filteredGlobalFlows).toHaveLength(2);
+    store.globalFilter = 'failed';
+    expect(store.filteredGlobalFlows.map(f => f.flow_id)).toEqual(['g-2']);
+    store.globalFilter = 'all';
+    expect(store.filteredGlobalFlows).toHaveLength(2);
+  });
+
+  it('fails open to an empty list when the endpoint is missing', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(new Error('404')));
+
+    await store.loadAllFlows();
+
+    expect(store.globalFlows).toEqual([]);
+    expect(store.globalLoading).toBe(false);
   });
 });

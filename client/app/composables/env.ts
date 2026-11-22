@@ -1,8 +1,20 @@
-/** Backend HTTP base URL (REST): `VITE_API_BACK_URL`, falling back to the local backend address so requests never degrade into relative paths that hit the Nuxt dev server. */
-export const API_BASE_URL: string = import.meta.env.VITE_API_BACK_URL || 'http://localhost:8080';
+/**
+ * Backend HTTP base URL (REST).
+ *
+ * `VITE_API_BACK_URL` normally names the backend (the local address is the
+ * fallback so requests never degrade into relative paths that hit the Nuxt dev
+ * server). A reverse-proxied deployment sets it to `same-origin`: the SPA then
+ * calls relative URLs and the WebSocket base is derived from the page origin.
+ */
+const CONFIGURED_API_BASE: string = (import.meta.env.VITE_API_BACK_URL || '').trim();
+const SAME_ORIGIN: boolean = CONFIGURED_API_BASE === 'same-origin';
 
-/** Backend WebSocket base URL: `API_BASE_URL` with `http(s)://` rewritten to `ws(s)://` and trailing slashes stripped. */
-export const WS_BASE_URL: string = resolveWsBaseUrl(API_BASE_URL);
+export const API_BASE_URL: string = SAME_ORIGIN ? '' : CONFIGURED_API_BASE || 'http://localhost:8080';
+
+/** Backend WebSocket base URL: the API base (or the page origin for same-origin), with http(s) rewritten to ws(s). */
+export const WS_BASE_URL: string = SAME_ORIGIN
+  ? resolveWsBaseUrl(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080')
+  : resolveWsBaseUrl(API_BASE_URL);
 
 /**
  * Resolve the WebSocket base URL from an HTTP API base URL.

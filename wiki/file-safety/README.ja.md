@@ -15,6 +15,8 @@
   - [3. パス単位ロック](#3-パス単位ロック)
   - [4. 残留ファイルの掃除](#4-残留ファイルの掃除)
 - [読み取り先行ライセンス](#-読み取り先行ライセンス)
+- [マルチファイル patch モード](#-マルチファイル-patch-モード)
+- [行セレクター、検索モード、書き込み時フォーマット](#-行セレクター検索モード書き込み時フォーマット)
 - [Shadow git チェックポイント](#-shadow-git-チェックポイント旧-git-準備ゲートは廃止)
 - [隔離サブエージェントワークスペース（git worktree）](#-隔離サブエージェントワークスペースgit-worktree)
 - [代替案と実測](#%EF%B8%8F-代替案と実測)
@@ -65,6 +67,26 @@
 ### 4. 残留ファイルの掃除
 
 一時ファイルの作成から replace の間にハードキルされた場合だけ、`.sherry-tmp-*.swp` が残り得ます。他のすべての失敗経路はそれを unlink します。同じディレクトリへの次の書き込みが 1 時間を超えた残留を掃除します（`sweep_stale_temp_files`）：生きた書き手の一時ファイルは数秒の寿命しかなく、年齢しきい値はまさにそれと距離を取るためのものです。掃除は決して例外を投げません——ディレクトリを読めない走査が、それが先行する書き込みを失敗させてはならないからです。
+
+## 🧩 マルチファイル patch モード
+
+`patch_file` は `file_path`/`old_string`/`new_string` の代わりに `patch` ドキュメントを受け取れます(Codex 形式: `*** Begin Patch` … `*** End Patch`、`*** Add File`、`*** Update File` + `@@` hunk、`*** Delete File`、`*** Move to`)。同じ 1 つのツールであり、patch モードも同じ HITL / 並行安全 / plan-mode / PTC ゲートと同じ metadata を通ります。
+
+3 段階。最初の 2 段階のいずれかで拒否された場合、ディスクは**一切変更されません**:
+
+1. **パース**(`file_tools/patch_parser.py`) — ヘッダー、hunk、パス検証(相対パスのみ: 絶対パス、ドライブレター、`..` は拒否)、上限(1 MB patch、100 操作、1 ファイル 100 hunk、2 万追加行)。
+2. **プリフライト**(`file_tools/patch_apply.py`) — すべてのパスを `resolve_tool_path`(外部 / self-path ゲート)で解決し、patch 全体をメモリ上で**シミュレーション**します: ファイルの存在、バイナリ拒否、移動先の衝突、各 hunk を同じ 11 段階のファジーマッチャーで照合。不一致時は最も近いセクションで "Did you mean?" を出します。
+3. **コミット** — 操作ごとに `file_write_lock` + `atomic_write_bytes_no_follow`(作成は revision=`absent`)、`.py` は `_format_py_code`、`note_edit`、`sync_edited_file`、`claim_notice_for`、パスごとの evidence stale マーク。`ensure_checkpoint` は patch 全体で 1 回だけ。コミット失敗で停止し、完了済みは残り、残りは `skipped` — ロールバックなし。
+
+str_replace モードは不変(`patch` が空なら従来の経路、フィールドも `_core` も同じ)。patch モードは読み取りライセンスを**要求しません** — str_replace と同じく二層 CAS が契約です。同じ patch 内で先に作成/削除したパスも対象にでき(add → update、delete → add)、move は hunk を伴えます。`tests/agent/tools/file_tools/test_patch_parser.py` と `test_patch_file_patch_mode.py` がパーサー、プリフライト拒否、コミット順、CAS、操作ごとのフック、「拒否時は書き込みなし」を固定します。
+
+## 🧾 行セレクター、検索モード、書き込み時フォーマット
+
+ファイルツールへの 3 つのモデル向け改良。すべて両エンジン/両経路でテスト済みです:
+
+- **`read_file` の GJC 行セレクター**(`file_tools/line_selector.py`): `path:50-200` は範囲、`:50-200,960-973` は複数、`:42` は 1 行、`:conflicts` は git コンフリクト块、`:raw` は行番号なし全文。セレクターは offset/limit より優先されます。単一範囲は既存のページング機構に変換され(トークン予算・ストリーミングはそのまま、完結した単一範囲の読み取りは書き込みライセンスを維持)、複数範囲/コンフリクト表示は不連続(`...` で結合、`selected: true`)、最大ページの 2 倍を上限に EOF 越過はクランプ+ヒント、**書き込みライセンスは付与されません**。セレクターは最後のコロンのみ、しかも後継が文法に一致するときだけ — `C:\file.py` はパスのまま、`C:\file.py:50-200` は正しく分割 — スキーマのバイナリ検査はセレクターを先に剥がすので `archive.zip:10-20` も拒否されます。
+- **`search_files` 出力モード**: `output_mode="count"` はファイルごとに 1 件の `{"path", "count"}`(ページはファイル単位)、`multiline=true` はパターンの跨行一致を許し(rg `-U`。walk は `newline=""` で読み、両エンジンが同じバイトを見て開始行を報告)、`type=<言語>` は言語名を両エンジンが同じように適用するファイル名 glob に変換します(21 言語。`file_glob` と `type` は併用可。未知の言語は候補一覧付きエラー)。count 集約は通常の `--json` match フレーム上で走り、両エンジンのパス表記も同じ方式なので答えが一致します。
+- **`write_file` の書き込み時 LSP フォーマット**: 非 `.py` の上書きは**取得済み**の言語サーバーに `textDocument/formatting` を依頼し編集を適用します(コールドスタートはしません — 書き込みがサーバー起動のコストを払わないため)。サーバーなし/非対応メソッド/超大ファイル/転送失敗ではファイルは書いたまま、書き込みライセンスのリビジョンはパスの**後**に取られ、フォーマット後のバイトを指します。`.py` は autopep8 のまま。
 
 ## 🔒 Shadow git チェックポイント（旧 git 準備ゲートは廃止）
 
@@ -209,6 +231,10 @@
 
 ## 🧪 テスト
 
+セレクター/検索/フォーマットのカバレッジ: `test_line_selector.py`(パーサー+ツール統合、Windows ドライブレター、ライセンス)、`test_search_modes.py`(両エンジンの count/multiline/type)、`test_lsp_write_format.py`(フェイルオープン行列+ライセンス順序)、`test_terminal_timeout_behavior.py` と `test_terminal_persistent_cwd.py`(タイムアウト収容+cwd/env 永続化)。
+
+patch モード: `test_patch_parser.py`(ヘッダー、hunk、パス/上限の拒否)と `test_patch_file_patch_mode.py`(add/update/delete/move、複数 hunk、拒否時に無変更、部分コミット停止、UTF-16、フック)。
+
 `tests/agent/tools/file_tools/` が書き込み経路を固定します：`test_atomic_write.py`（原子性、シンボリックリンク拒否、二層 CAS、残留掃除）、`test_file_write_concurrency.py`（並行パッチ、破れ読みの不在）、`test_file_lock_cross_process.py`（実プロセス 2 つ、`kill -9` での解放）、`test_read_before_write.py`（ライセンスのマトリクス）、`tests/agent/middlewares/test_license_invalidation.py`（圧縮が捨てた読み取りのライセンスを破棄すること）。`tests/agent/tools/subagent/test_workspace_isolation.py` はダーティなベースライン、auto-init の拒否リスト、物化（リンク・コピー・未追跡ファイル）、外部パス免除、マージ CAS、衝突、シンボリックリンクのスキップ、インターフェース変更の報告、親ルート単位の直列化を固定します；`tests/agent/tools/code_intel/test_symbol_diff.py` はシンボル比較器（改名の対応付け、グループ規則、作成/削除、エラー経路）を固定します。
 
 ## 🗺️ ファイルマップ
@@ -216,6 +242,9 @@
 | パス | 役割 |
 | --- | --- |
 | `agent/tools/pub_base/atomic_write.py` | アトミック書き込み、revision 識別子、残留掃除 |
+| `agent/tools/file_tools/patch_parser.py` | マルチファイル patch パーサー: パス、hunk、上限 |
+| `agent/tools/file_tools/line_selector.py` | GJC 行セレクターパーサー: 範囲/コンフリクト/raw、Windows 対応 |
+| `agent/tools/file_tools/patch_apply.py` | プリフライト模擬 + 操作ごとのコミット(CAS、ロック、フック) |
 | `agent/tools/pub_base/path_lock.py` | プロセス内パス単位ロックのレジストリ |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 読み取り先行ライセンスのレジストリ |

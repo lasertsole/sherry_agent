@@ -875,3 +875,92 @@ def test_wrap_message_names_the_signature_streak_pathology():
 
     assert "repeated identical call" in outputs[-1].content
     assert outputs[-1].status == "success"
+
+
+# ---------------------------------------------------------------------------
+# HALT must actually end the turn (measured live: 161 halt ToolMessages in one
+# turn because nothing stopped the model from re-calling the tool).
+# ---------------------------------------------------------------------------
+
+
+def test_a_halted_turn_returns_a_terminal_message_instead_of_calling_the_model():
+    mw = make_mw()
+    session = "sess-halted"
+    gs = mod._TurnGuardrailState()
+    gs.halt_decision = HALT
+    mod.state_register_mem.set_state(session, mod._GUARDRAIL_STATE_KEY, gs)
+    called: list[object] = []
+
+    def handler(request):
+        called.append(request)
+        raise AssertionError("the model must not be called after a halt")
+
+    result = mw.wrap_model_call(SimpleNamespace(state={"session_id": session}), handler)
+
+    assert isinstance(result, mod.AIMessage)
+    assert "circuit breaker" in str(result.content)
+    assert called == []
+
+
+def test_an_unhalted_turn_still_calls_the_model():
+    mw = make_mw()
+    session = "sess-not-halted"
+    marker = object()
+    called: list[object] = []
+
+    def handler(request):
+        called.append(request)
+        return marker
+
+    result = mw.wrap_model_call(SimpleNamespace(state={"session_id": session}), handler)
+
+    assert result is marker
+    assert len(called) == 1
+
+
+# ------------------------------------------------- blocked-tool repeat → HALT
+def precheck(mw, sess, name, args, call_id):
+    request = ToolCallRequest(
+        tool_call={"name": name, "args": args, "id": call_id},
+        tool=IDEMPOTENT_TOOL,
+        state={"session_id": sess},
+        runtime=None,
+    )
+    return mw._wrap_tool_call_precheck(request)
+
+
+def test_repeated_calls_to_a_blocked_tool_halt_the_turn():
+    """The model ignoring a BLOCK must not cost a model round-trip forever.
+
+    Measured: one turn re-emitted the same blocked ``terminal`` call 46 times;
+    each retry is a full model call. After ``blocked_tool_halt_after`` ignored
+    blocks the breaker halts the turn (the AIMessage that ends the graph loop).
+    """
+    mw = make_mw()
+    sess = "sess-blocked-halt"
+    mw._before_agent_impl({"session_id": sess})
+    gs = mw._get_state(sess)
+    gs.blocked_tools.add("T")
+
+    out1 = precheck(mw, sess, "T", {"a": 1}, "c1")
+    assert "blocked" in str(out1.content).lower()
+    assert gs.halt_decision is None  # first ignored block still answers BLOCK
+
+    out2 = precheck(mw, sess, "T", {"a": 2}, "c2")
+    assert "blocked" in str(out2.content).lower()
+    assert gs.halt_decision is None  # second ignored block still answers BLOCK
+
+    out3 = precheck(mw, sess, "T", {"a": 3}, "c3")
+    assert "halted" in str(out3.content).lower()  # 3rd ignored block halts
+    assert gs.halt_decision == HALT
+
+
+def test_the_halt_threshold_comes_from_config():
+    mw = make_mw(blocked_tool_halt_after=1)
+    sess = "sess-blocked-halt-1"
+    mw._before_agent_impl({"session_id": sess})
+    gs = mw._get_state(sess)
+    gs.blocked_tools.add("T")
+    out = precheck(mw, sess, "T", {"a": 1}, "c1")
+    assert "halted" in str(out.content).lower()
+    assert gs.halt_decision == HALT

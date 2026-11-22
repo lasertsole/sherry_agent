@@ -305,6 +305,7 @@ def _assemble_child_prompts(
     attachment_prompt_suffix: str,
     isolated: bool,
     output_schema: dict | None,
+    persona_prompt: str | None = None,
 ) -> tuple[str, str]:
     """Phase 10: the child's system prompt and initial user message."""
     system_prompt = build_subagent_system_prompt_from_context(
@@ -322,6 +323,11 @@ def _assemble_child_prompts(
             can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
         )
     )
+
+    # An expert persona rides BEHIND the role prompt (the registry-defined
+    # domain identity for expert-panel / meeting participants).
+    if persona_prompt:
+        system_prompt = f"{system_prompt}\n\n## Expert Persona\n\n{persona_prompt.strip()}"
 
     # Append attachment-aware and schema-constraint suffixes to the system prompt
     if attachment_prompt_suffix:
@@ -392,6 +398,32 @@ def _stamp_taskflow_context(
         state_register_mem.set_state(child_session_key, StateKey.STEP_ID, step_id)
 
 
+def _stamp_approval_context(child_session_key: str, approval_context: dict | None) -> None:
+    """Give one child the approval a human granted for a high-risk keyword.
+
+    The entry lives in the child's own register (never the parent's), so it
+    authorizes THIS spawn only; a later unrelated spawn has to ask again.
+    """
+    if not isinstance(approval_context, dict):
+        return
+    keyword = str(approval_context.get("keyword") or "").strip()
+    if not keyword:
+        return
+    from runtime import StateKey, state_register_mem
+
+    state_register_mem.set_state(
+        child_session_key,
+        StateKey.KEYWORD_APPROVALS,
+        [
+            {
+                "keyword": keyword,
+                "tool": str(approval_context.get("tool") or "").strip(),
+                "args_hash": str(approval_context.get("args_hash") or "").strip(),
+            }
+        ],
+    )
+
+
 async def spawn_subagent_direct(
     request: SpawnRequest | None = None,
     **legacy: Any,
@@ -433,9 +465,11 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
     goal_max_turns = request.goal_max_turns
     functional_role_hint = request.functional_role_hint
     extra_tools = request.extra_tools
+    persona_prompt = request.persona_prompt
     isolation = request.isolation
     flow_id = request.flow_id
     step_id = request.step_id
+    approval_context = request.approval_context
 
     # --- Phases 1–2: input validation and the admission gate ---
     config = get_config()
@@ -491,6 +525,11 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
     # Build a globally-unique session key for the child
     child_session_key = f"agent:{agent_id}:subagent:{uuid.uuid4()}"
     role, _ = resolve_subagent_capabilities(child_depth)
+
+    # A human-approved high-risk keyword rides into THIS spawn only: the child's
+    # guardrails read the approval from its own register, so the next unrelated
+    # spawn asks again.
+    _stamp_approval_context(child_session_key, approval_context)
 
     # --- Phase 4.1: Workspace isolation (opt-in) ---
     cwd, isolated_workspace, refusal = _create_isolated_child_workspace(
@@ -676,6 +715,7 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
         attachment_prompt_suffix=attachment_prompt_suffix,
         isolated=isolated_workspace is not None,
         output_schema=output_schema,
+        persona_prompt=persona_prompt,
     )
     # Warn if the run already looks orphaned at creation time (e.g. parent disconnected)
     orphan_reason = resolve_run_orphan_reason(run)

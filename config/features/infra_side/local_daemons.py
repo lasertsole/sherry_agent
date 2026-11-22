@@ -75,6 +75,12 @@ def _float_env(env: Mapping[str, str], key: str, default: float, *, minimum: flo
     return value if value >= minimum else default
 
 
+def _str_env(env: Mapping[str, str], key: str, default: str) -> str:
+    """Read a non-empty string override; blank values keep the default."""
+    raw = str(env.get(key, "")).strip()
+    return raw or default
+
+
 def _bool_env(env: Mapping[str, str], key: str, default: bool) -> bool:
     raw = str(env.get(key, "")).strip().lower()
     if not raw:
@@ -86,7 +92,10 @@ def build_local_daemons(env: Mapping[str, str] | None = None) -> LocalDaemonsCon
     """Resolve the daemon configuration from *env* (process env by default)."""
     source: Mapping[str, str] = os.environ if env is None else env
     return {
-        "host": "127.0.0.1",
+        # Loopback by default; a multi-tenant host sets 0.0.0.0 so cell
+        # processes can reach one shared daemon (the bind is unchanged for
+        # single-user deployments).
+        "host": _str_env(source, "LOCAL_DAEMON_HOST", "127.0.0.1"),
         "embed_port": _int_env(source, "EMBEDDING_DAEMON_PORT", 9012, minimum=1),
         "reranker_port": _int_env(source, "RERANKER_DAEMON_PORT", 9013, minimum=1),
         "auxiliary_port": _int_env(source, "AUXILIARY_LLM_DAEMON_PORT", 9014, minimum=1),

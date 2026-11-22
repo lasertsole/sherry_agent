@@ -270,9 +270,10 @@ async def todowrite(
     Notes (optional): patch field carrying evidence for this todo.
     Subagent_id (optional): patch field linking a subagent child_session_key.
 
-    A plan with 2+ work todos ends with a SYSTEM [VERIFY] todo. Do not create or
-    copy one yourself: reach it, spawn a reviewer, patch the reviewer's child key
-    into its subagent_id, then re-open only the todos the reviewer marks failed.
+    EVERY non-empty plan ends with a SYSTEM [VERIFY] todo (no minimum work-item
+    count — a one-item plan is verified too). Do not create or copy one yourself:
+    reach it, spawn a reviewer, patch the reviewer's child key into its
+    subagent_id, then re-open only the todos the reviewer marks failed.
 
     DAG scheduling is NOT done here. Declare dependencies with
     taskflow_step(action='run_task', flow_id=..., task=..., depends_on=[...]); the blocked/ready/

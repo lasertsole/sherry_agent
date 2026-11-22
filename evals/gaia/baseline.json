@@ -1,0 +1,9 @@
+{
+  "captured_run": null,
+  "threshold_resolve_rate": 0.0,
+  "model": {},
+  "aggregate": {
+    "note": "no measured run yet; DevBench needs Docker, the pre-built sweb.eval task images and a configured MAIN_LLM"
+  },
+  "tasks": []
+}

@@ -1,10 +1,11 @@
 """Task 2 tests: sandbox policy parsing, backend contract and platform dispatch.
 
-Everything here is mocked -- no real sandbox probing (no bwrap / sandbox-exec run)
-is ever executed on this Windows development machine. Platform identity is faked
-via monkeypatched ``platform.system``; backends are stubbed by installing fake
-modules into ``sys.modules`` (this also exercises the lazy-import contract of
-``get_backend``, whose real backend modules are created by Tasks 3/4).
+Everything here is mocked -- no real sandbox probing (no bwrap / sandbox-exec /
+restricted-token creation) is executed by THIS module. Platform identity is
+faked via monkeypatched ``platform.system``; backends are stubbed by installing
+fake modules into ``sys.modules`` (this also exercises the lazy-import contract
+of ``get_backend``). The real Windows backend has its own end-to-end suite in
+``test_sandbox_win.py``.
 """
 
 import platform
@@ -178,7 +179,10 @@ def test_get_backend_linux_returns_bwrap_backend(monkeypatch):
     )
     backend = get_backend(SandboxPolicy.AUTO)
     assert isinstance(backend, stub_cls)
-    assert recorder.count == 1
+    # TWO probes by contract now: the composite Linux factory probes bwrap to
+    # decide bwrap-vs-landlock, then get_backend probes the returned backend
+    # (the real backend caches its probe, so the runtime cost is one subprocess).
+    assert recorder.count == 2
 
 
 def test_get_backend_darwin_returns_seatbelt_backend(monkeypatch):
@@ -191,14 +195,33 @@ def test_get_backend_darwin_returns_seatbelt_backend(monkeypatch):
     assert recorder.count == 1
 
 
-def test_get_backend_windows_returns_none_for_auto(monkeypatch):
+def test_get_backend_windows_returns_win_backend(monkeypatch):
     _mock_platform(monkeypatch, "Windows")
+    stub_cls, recorder = _install_stub_backend(
+        monkeypatch, "agent.tools.pub_base.sandbox_win", "WinSandboxBackend"
+    )
+    backend = get_backend(SandboxPolicy.AUTO)
+    assert isinstance(backend, stub_cls)
+    assert recorder.count == 1
+
+
+def test_get_backend_windows_probe_fail_degrades_and_required_raises(monkeypatch):
+    _mock_platform(monkeypatch, "Windows")
+    _install_stub_backend(
+        monkeypatch,
+        "agent.tools.pub_base.sandbox_win",
+        "WinSandboxBackend",
+        probe_result=False,
+    )
     assert get_backend(SandboxPolicy.AUTO) is None
-
-
-def test_get_backend_windows_required_raises_runtimeerror(monkeypatch):
-    _mock_platform(monkeypatch, "Windows")
     with pytest.raises(RuntimeError, match="Required sandbox unavailable on Windows"):
+        get_backend(SandboxPolicy.REQUIRED)
+
+
+def test_get_backend_unregistered_platform_returns_none_for_auto(monkeypatch):
+    _mock_platform(monkeypatch, "FreeBSD")
+    assert get_backend(SandboxPolicy.AUTO) is None
+    with pytest.raises(RuntimeError, match="Required sandbox unavailable on FreeBSD"):
         get_backend(SandboxPolicy.REQUIRED)
 
 
@@ -207,8 +230,17 @@ def test_get_backend_windows_required_raises_runtimeerror(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def _disable_landlock(monkeypatch) -> None:
+    """The composite Linux factory falls back to landlock; the degrade tests
+    must simulate a host where NEITHER backend is usable."""
+    import agent.tools.pub_base.sandbox_landlock as landlock_module
+
+    monkeypatch.setattr(landlock_module, "_probe_abi", lambda: 0)
+
+
 def test_get_backend_required_probe_fail_raises(monkeypatch):
     _mock_platform(monkeypatch, "Linux")
+    _disable_landlock(monkeypatch)
     _install_stub_backend(
         monkeypatch,
         "agent.tools.pub_base.sandbox_bwrap",
@@ -221,6 +253,7 @@ def test_get_backend_required_probe_fail_raises(monkeypatch):
 
 def test_get_backend_auto_probe_fail_degrades_to_none(monkeypatch):
     _mock_platform(monkeypatch, "Linux")
+    _disable_landlock(monkeypatch)
     _install_stub_backend(
         monkeypatch,
         "agent.tools.pub_base.sandbox_bwrap",
@@ -228,6 +261,23 @@ def test_get_backend_auto_probe_fail_degrades_to_none(monkeypatch):
         probe_result=False,
     )
     assert get_backend(SandboxPolicy.AUTO) is None  # degrade, no exception
+
+
+def test_get_backend_bwrap_fail_falls_back_to_landlock(monkeypatch):
+    """The composite Linux factory: a bwrap whose probe fails hands the call
+    to the landlock backend when the kernel supports it (CI kernels do)."""
+    _mock_platform(monkeypatch, "Linux")
+    _install_stub_backend(
+        monkeypatch,
+        "agent.tools.pub_base.sandbox_bwrap",
+        "BwrapBackend",
+        probe_result=False,
+    )
+    import agent.tools.pub_base.sandbox_landlock as landlock_module
+
+    monkeypatch.setattr(landlock_module, "_probe_abi", lambda: 3)
+    backend = get_backend(SandboxPolicy.AUTO)
+    assert isinstance(backend, landlock_module.LandlockBackend)
 
 
 def test_get_backend_off_skips_probe_entirely(monkeypatch):
@@ -259,12 +309,14 @@ def test_get_backend_import_error_treated_as_unavailable_auto(monkeypatch):
     """sysmodules entry None => 'from x import y' raises ImportError; AUTO must
     degrade to None instead of crashing."""
     _mock_platform(monkeypatch, "Linux")
+    _disable_landlock(monkeypatch)
     monkeypatch.setitem(sys.modules, "agent.tools.pub_base.sandbox_bwrap", None)
     assert get_backend(SandboxPolicy.AUTO) is None
 
 
 def test_get_backend_import_error_required_raises(monkeypatch):
     _mock_platform(monkeypatch, "Linux")
+    _disable_landlock(monkeypatch)
     monkeypatch.setitem(sys.modules, "agent.tools.pub_base.sandbox_bwrap", None)
     with pytest.raises(RuntimeError, match="Required sandbox unavailable on Linux"):
         get_backend(SandboxPolicy.REQUIRED)
@@ -304,9 +356,10 @@ def test_env_contains_sandbox_policy_line():
     matching = [line for line in content.splitlines() if line.strip().startswith("SANDBOX_POLICY")]
     assert matching, "SANDBOX_POLICY missing from .env"
     line = matching[-1].strip()
-    # Shipped default is `auto`: the packaged desktop app runs on macOS/Windows,
-    # which have no OS sandbox backend, where `required` would refuse every command.
-    # `required` stays the fail-closed setting for a server deployment.
+    # Shipped default is `auto`: a host whose backend probe fails (no bwrap
+    # package, a hardened macOS profile, a Windows account that cannot create a
+    # restricted token) degrades to unsandboxed instead of refusing every
+    # command. `required` stays the fail-closed setting for a server deployment.
     assert line.replace(" ", "") == "SANDBOX_POLICY=auto"
     # semantics documented in the comment block, including the auto warning
     lowered = content.lower()

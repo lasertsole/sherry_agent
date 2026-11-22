@@ -9,6 +9,7 @@ their results, and each live grandchild holds a SUBAGENT lane slot.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -92,6 +93,79 @@ class TestSubtreeBudget:
 
         assert remaining_parent_run_budget(PARENT_KEY) is None
         assert resolve_run_timeout_for_requester(PARENT_KEY, 1800) == 1800.0
+
+
+class TestDepthLadder:
+    """Leaves get the configured default; every level above triples; main excluded."""
+
+    def test_a_main_requesters_child_gets_one_triple_of_the_leaf_budget(self, monkeypatch):
+        # Main requester (no run record) → the child is depth 1 of max 2 → one
+        # level above the leaf: 600 × 3.
+        _bind_parent(monkeypatch, None)
+        monkeypatch.setattr(
+            "agent.tools.subagent.spawn.plan.get_config",
+            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=2),
+        )
+
+        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 1800.0
+
+    def test_a_child_requesters_grandchild_is_the_leaf_and_gets_the_default(self, monkeypatch):
+        # The requester IS a depth-1 run → its child is depth 2 = the leaf →
+        # the configured default unchanged.
+        _bind_parent(monkeypatch, _run("r-parent", PARENT_KEY, timeout=5400.0))
+        monkeypatch.setattr(
+            "agent.tools.subagent.spawn.plan.get_config",
+            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=2),
+        )
+        # The bound parent doubles as the requester's own run (depth defaults
+        # to 1) and as the subtree cap: the leaf's 600 s fits its remaining.
+        remaining = remaining_parent_run_budget(PARENT_KEY)
+        assert remaining is not None and remaining > 4000
+
+        assert resolve_run_timeout_for_requester(PARENT_KEY) == 600.0
+
+    def test_the_eval_knob_raises_the_whole_ladder(self, monkeypatch):
+        # Leaf budget 1800 (the eval's 3× knob) → a depth-1 child gets 5400.
+        _bind_parent(monkeypatch, None)
+        monkeypatch.setattr(
+            "agent.tools.subagent.spawn.plan.get_config",
+            lambda: SimpleNamespace(run_timeout_seconds=1800.0, max_spawn_depth=2),
+        )
+
+        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 5400.0
+
+    def test_a_depth1_max_depth1_config_makes_the_child_the_leaf(self, monkeypatch):
+        # max_spawn_depth 1: the child IS the leaf — no triple.
+        _bind_parent(monkeypatch, None)
+        monkeypatch.setattr(
+            "agent.tools.subagent.spawn.plan.get_config",
+            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=1),
+        )
+
+        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 600.0
+
+    def test_an_explicit_timeout_beats_the_ladder(self, monkeypatch):
+        _bind_parent(monkeypatch, None)
+        monkeypatch.setattr(
+            "agent.tools.subagent.spawn.plan.get_config",
+            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=2),
+        )
+
+        assert resolve_run_timeout_for_requester("agent:main:session:s1", 900) == 900.0
+
+    def test_the_parent_cap_still_applies_after_the_ladder(self, monkeypatch):
+        # A grandchild whose ladder value exceeds the parent's remaining budget
+        # is capped by it (the subtree rule reads the FROZEN parent timeout):
+        # leaf ladder 700 > the parent's ~550 remaining → the cap binds.
+        _bind_parent(monkeypatch, _run("r-parent", PARENT_KEY, timeout=600.0, started_offset=-50.0))
+        monkeypatch.setattr(
+            "agent.tools.subagent.spawn.plan.get_config",
+            lambda: SimpleNamespace(run_timeout_seconds=700.0, max_spawn_depth=2),
+        )
+        remaining = remaining_parent_run_budget(PARENT_KEY)
+        assert remaining is not None and remaining < 700
+
+        assert resolve_run_timeout_for_requester(PARENT_KEY) == pytest.approx(remaining, abs=1.0)
 
 
 class TestCascadeKill:

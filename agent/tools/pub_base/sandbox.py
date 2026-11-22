@@ -6,7 +6,8 @@ python_repl tools. It defines:
 - ``SandboxPolicy``: the three-state ``SANDBOX_POLICY`` configuration enum.
 - ``parse_policy`` / ``read_policy``: strict env parsing (no silent fallback).
 - ``SandboxBackend``: the ABC that the platform backends (bwrap on Linux,
-  seatbelt on macOS) must satisfy.
+  seatbelt on macOS, AppContainer + restricted token + Job Object on Windows)
+  must satisfy.
 - ``get_backend``: platform dispatch + probe + degrade semantics.
 
 Backends are imported *lazily* inside ``get_backend`` so this module works even
@@ -145,7 +146,7 @@ def read_policy() -> SandboxPolicy:
 
 
 class SandboxBackend(ABC):
-    """Contract for OS-native sandbox backends (bwrap on Linux, seatbelt on macOS)."""
+    """Contract for OS-native sandbox backends (bwrap / seatbelt / Windows)."""
 
     @abstractmethod
     def probe(self) -> bool:
@@ -185,6 +186,17 @@ class SandboxBackend(ABC):
         (list form, no shell).
         """
         ...
+
+    def sandbox_shell(self, cmd: str) -> list[str]:
+        """The shell argv a sandboxed terminal command runs through.
+
+        POSIX hosts use ``/bin/sh -c`` (semantically identical to
+        ``shell=True``). The Windows backend overrides this: Git Bash cannot
+        initialise inside an AppContainer (the MSYS2 runtime needs global
+        named objects an AppContainer cannot open), so the AppContainer shell
+        is ``cmd.exe``; with AppContainer disabled the override keeps Git Bash.
+        """
+        return ["/bin/sh", "-c", cmd]
 
 
 def with_own_session_root(writable_roots: Sequence[Path], session_id: str) -> list[Path]:
@@ -293,11 +305,33 @@ def register_sandbox_backend(
     _BACKEND_FACTORIES[name] = factory
 
 
-register_sandbox_backend(
-    "Linux", _lazy_backend("agent.tools.pub_base.sandbox_bwrap", "BwrapBackend")
-)
+def _linux_backend_factory() -> SandboxBackend:
+    """bwrap when the binary exists, landlock (kernel LSM) when it does not.
+
+    The eval harness's slim containers ship no bwrap and used to fall all the
+    way back to unsandboxed; landlock needs only a 5.13+ kernel. The composite
+    keeps bwrap first (it can also mask the credential directories an
+    allow-list LSM cannot carve out).
+    """
+    try:
+        from agent.tools.pub_base.sandbox_bwrap import BwrapBackend
+
+        backend = BwrapBackend()
+        if backend.probe():
+            return backend
+    except ImportError:
+        pass  # a broken bwrap module degrades to the landlock probe
+    from agent.tools.pub_base.sandbox_landlock import LandlockBackend
+
+    return LandlockBackend()
+
+
+register_sandbox_backend("Linux", _linux_backend_factory)
 register_sandbox_backend(
     "Darwin", _lazy_backend("agent.tools.pub_base.sandbox_seatbelt", "SeatbeltBackend")
+)
+register_sandbox_backend(
+    "Windows", _lazy_backend("agent.tools.pub_base.sandbox_win", "WinSandboxBackend")
 )
 
 
@@ -307,7 +341,8 @@ def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:
     Semantics:
     - ``OFF``: skip probe entirely (no import, no subprocess) -> ``None``.
     - The registered factory for ``platform.system()`` builds the backend
-      (Linux -> bwrap, Darwin -> seatbelt, anything else -> no factory).
+      (Linux -> bwrap, Darwin -> seatbelt, Windows -> restricted token + Job
+      Object, anything else -> no factory).
     - Backend imports are lazy and failures degrade: a missing/broken backend
       module is treated as "sandbox unavailable".
     - If the backend exists but ``probe()`` fails, or there is no backend for

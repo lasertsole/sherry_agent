@@ -40,10 +40,13 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     StepStatus.BLOCKED.value: frozenset({status.value for status in _LIVE | _TERMINAL}),
     StepStatus.READY.value: frozenset({status.value for status in _LIVE | _TERMINAL}),
     StepStatus.DISPATCHED.value: frozenset({status.value for status in _LIVE | _TERMINAL}),
-    # Terminal steps have no outgoing non-idempotent edge.
+    # Terminal steps have no outgoing non-idempotent edge, EXCEPT the explicit
+    # reopen: a skipped step was never attempted, so requiring a whole new step
+    # to retry it stranded the agent (measured: step-1 skipped -> every
+    # update_steps(done) refused -> the model looped until the breaker).
     StepStatus.DONE.value: frozenset(),
     StepStatus.FAILED.value: frozenset(),
-    StepStatus.SKIPPED.value: frozenset(),
+    StepStatus.SKIPPED.value: frozenset({StepStatus.READY.value}),
     StepStatus.CANCELLED.value: frozenset(),
 }
 

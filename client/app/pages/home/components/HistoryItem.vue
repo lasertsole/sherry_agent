@@ -1,5 +1,6 @@
 <template>
   <div
+    :data-session-id="props.historyRecord.id"
     :class="[
       'p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white',
       'dark:bg-[#2a2a36]/[0.6] dark:border-[#555] md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]',
@@ -13,6 +14,25 @@
     @keydown.space.prevent="emits('chooseSession', props.historyRecord.id)">
     <!-- Title -->
     <div class="flex gap-1 items-center">
+      <!-- Session type icon (S5): chat default, team, meeting. -->
+      <i
+        :class="typeIcon"
+        class="shrink-0 text-[10px] text-gray-400"
+        :title="typeLabel"
+        :aria-label="typeLabel"
+        data-test="session-type-icon" />
+      <span
+        v-if="sessionType === 'team' && (historyRecord.teamName || teamNameFromMeta)"
+        class="px-1 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 shrink-0"
+        data-test="session-team-badge"
+        >{{ historyRecord.teamName || teamNameFromMeta }}</span
+      >
+      <span
+        v-if="sessionType === 'meeting' && (historyRecord.meetingTopic || meetingIdFromMeta)"
+        class="px-1 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0"
+        data-test="session-meeting-badge"
+        >{{ historyRecord.meetingTopic || meetingIdFromMeta }}</span
+      >
       <Checkbox
         size="small"
         v-model="modelList"
@@ -114,6 +134,28 @@ const props = defineProps<Props>();
 
 /** The parent's display name for the branch tooltip (id when the row is gone). */
 const parentTitle = computed(() => props.historyRecord.parentTitle || props.historyRecord.parentSessionId || '');
+
+/** Session type (S5): absent defaults to chat; metadata inference as fallback. */
+const sessionType = computed<'chat' | 'team' | 'meeting'>(() => {
+  if (props.historyRecord.type) return props.historyRecord.type;
+  const meta = props.historyRecord as SessionRecord & { metadata?: Record<string, unknown> };
+  if (meta.metadata?.team_name || meta.metadata?.meeting_id) {
+    return meta.metadata.meeting_id ? 'meeting' : 'team';
+  }
+  return 'chat';
+});
+const typeIcon = computed(
+  () => ({ chat: 'pi pi-comments', team: 'pi pi-users', meeting: 'pi pi-video' })[sessionType.value]
+);
+const typeLabel = computed(() => t(`session.type.${sessionType.value}`));
+const teamNameFromMeta = computed(() => {
+  const meta = props.historyRecord as SessionRecord & { metadata?: Record<string, unknown> };
+  return typeof meta.metadata?.team_name === 'string' ? meta.metadata.team_name : '';
+});
+const meetingIdFromMeta = computed(() => {
+  const meta = props.historyRecord as SessionRecord & { metadata?: Record<string, unknown> };
+  return typeof meta.metadata?.meeting_id === 'string' ? meta.metadata.meeting_id : '';
+});
 
 const emits = defineEmits<{
   chooseSession: [id: string];

@@ -43,6 +43,11 @@ class BackgroundTask:
     status: str = "running"  # running | completed | failed | killed
     exit_code: int | None = None
     live: bool = False  # whether a watcher still holds the process handle
+    #: Set for an ADOPTED task (timeout → background): the task's output lives
+    #: in a ``.sherry-tmp-stdout-*`` file the adopted child still holds an fd to,
+    #: and this is the retained ``evicted/`` path the file is moved to once the
+    #: child exits (a rename mid-run would fail on Windows and diverge on POSIX).
+    retained_path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The JSON shape the query tools and the WS frame share."""
@@ -226,6 +231,7 @@ class BackgroundTaskRegistry:
         task = self._tasks.get(task_id)
         if task is None:
             return
+        self._retain_adopted_output(task)
         if task.status == "killed":
             # A killed process exits non-zero, but "failed" is the wrong story:
             # the user/agent stopped it. Keep the status, record only the code.
@@ -248,6 +254,25 @@ class BackgroundTaskRegistry:
             return
         await self._push_exit_notification(task)
         await self._trigger_auto_turn(task)
+
+    def _retain_adopted_output(self, task: BackgroundTask) -> None:
+        """Move an adopted task's temp output into its retained evicted/ path.
+
+        The child is dead by now, so the rename that was impossible mid-run
+        (Windows locks a file with an open child handle) succeeds. Fail-open:
+        a failed move leaves the task pointing at the temp file, which the next
+        write into that session directory sweeps anyway.
+        """
+        source, dest = task.output_path, task.retained_path
+        if source is None or dest is None or not source.exists():
+            return
+        try:
+            import shutil
+
+            shutil.move(str(source), str(dest))
+            task.output_path = dest
+        except OSError:
+            logger.debug("background task {}: adopted output retention move failed", task.task_id)
 
     async def push_started(self, task: BackgroundTask) -> None:
         """Best-effort ``terminal_bg_started`` frame (the UI's "a task exists" edge).
@@ -292,6 +317,28 @@ class BackgroundTaskRegistry:
             await broadcast_to_session(task.session_id, payload, ensure_ascii=False)
         except Exception as exc:  # noqa: BLE001 - a dead socket must not matter
             logger.debug("background task {}: WS push failed: {}", task.task_id, exc)
+
+        # The panel badge + notification center carry the structured row; the
+        # in-chat system.notice is what makes the completion visible in the
+        # CONVERSATION (between turns, where the user is actually looking)
+        # without persisting anything. First consumer of the protocol (plan
+        # §1.3 internal-push path).
+        try:
+            from runtime.session.system_notice import push_system_notice
+
+            exit_code = task.exit_code
+            failed = task.status == "killed" or (exit_code is not None and exit_code != 0)
+            command = (task.command or "").split()[0] if task.command else "command"
+            await push_system_notice(
+                task.session_id,
+                title=f"Background {command} "
+                + ("was stopped" if task.status == "killed" else f"exited (code {exit_code})"),
+                content=f"$ {task.command}",
+                level="warning" if failed else "success",
+                source="tool:terminal",
+            )
+        except Exception as exc:  # noqa: BLE001 - a notice must never matter
+            logger.debug("background task {}: notice push failed: {}", task.task_id, exc)
 
     async def _trigger_auto_turn(self, task: BackgroundTask) -> None:
         """Wake the agent with the exit report (same path the enforcer uses)."""

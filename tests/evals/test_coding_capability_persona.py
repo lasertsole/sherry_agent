@@ -1,7 +1,7 @@
-"""The persona arms of the coding/swebench harness.
+"""The persona arms of the coding harness.
 
 The capability baseline seeds a NEUTRAL rules file on purpose (the shipped
-templates carry the persona and its task-management guidance). The SWE-bench arm
+templates carry the persona and its task-management guidance). The coding arm
 can instead be run with that shipped 编码助手 preset system prompt (``--persona
 coding``) to measure what the production persona does to the benchmark —
 recorded, never silently mixed into the neutral baseline.

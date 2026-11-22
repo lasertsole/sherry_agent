@@ -20,6 +20,7 @@ import server.trigger.http.access_mode
 import server.trigger.http.env
 import server.trigger.http.sherry_config
 import server.trigger.http.safety_filter  # noqa: F401  (side-effect route registration)
+import server.trigger.http.high_risk_guard  # noqa: F401  (side-effect route registration)
 import server.trigger.http.models_config
 import server.trigger.http.code_embedder  # noqa: F401  (side-effect route registration)
 import server.trigger.http.model_downloads  # noqa: F401  (side-effect route registration)
@@ -33,6 +34,8 @@ import server.trigger.http.model_config  # noqa: F401  (side-effect route regist
 import server.trigger.http.lane  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_settings  # noqa: F401  (side-effect route registration)
 import server.trigger.http.side_chat  # noqa: F401  (side-effect route registration)
+import server.trigger.http.meetings  # noqa: F401  (side-effect route registration)
+import server.trigger.http.system_notice  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_project  # noqa: F401  (side-effect route registration)
 import server.trigger.http.agent_config  # noqa: F401  (side-effect route registration)
 import server.trigger.http.extraction  # noqa: F401  (side-effect route registration)

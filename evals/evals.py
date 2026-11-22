@@ -28,24 +28,51 @@ SUITES: dict[str, str] = {
     # External benchmarks: each runs in its own process (they repoint
     # SHERRY_WORKSPACE_DIR); the container suites need Docker, the tool/agent
     # benchmarks need their own official keys — without them they skip loudly.
-    "swebench": "evals.swebench.suite",
     "deepswe": "evals.deepswe.suite",
     "terminal_bench": "evals.terminal_bench.suite",
     "agentbench": "evals.agentbench.suite",
     "toolbench": "evals.toolbench.suite",
+    # The 7-benchmark round (plan 2026-11-17): every suite is dataset-optional
+    # — a missing dataset / container runtime / key SKIPS loudly (exit 3).
+    "devbench": "evals.devbench.suite",
+    "multi_swe_bench": "evals.multi_swe_bench.suite",
+    "tau_bench": "evals.tau_bench.suite",
+    "gaia": "evals.gaia.suite",
+    "cybersec": "evals.cybersec.suite",
+    "webarena": "evals.webarena.suite",
+    "visualwebarena": "evals.visualwebarena.suite",
+    "osworld": "evals.osworld.suite",
 }
 
 
 def main() -> None:
-    """Dispatch to the selected eval suites (all of them when none is named)."""
-    names = sys.argv[1:]
+    """Dispatch to the selected eval suites (all of them when none is named).
+
+    One named suite may carry FLAGS — everything after the suite name is
+    forwarded verbatim as that suite's argv (``evals.py devbench --dry-run``
+    is the documented form); several names must stay flagless (each suite
+    owns its own flag parsing and they disagree on nothing by design).
+    """
+    argv = sys.argv[1:]
+    names: list[str] = []
+    flags: list[str] = []
+    for index, arg in enumerate(argv):
+        if arg.startswith("-"):
+            flags = argv[index:]
+            break
+        names.append(arg)
     unknown = [n for n in names if n not in SUITES]
     if unknown:
         raise SystemExit(f"unknown suite(s): {unknown}; registered: {sorted(SUITES)}")
+    if flags and len(names) != 1:
+        raise SystemExit("flags need exactly one named suite (flags: " + ", ".join(flags) + ")")
 
-    for name in names or list(SUITES):
+    selected = names or list(SUITES)
+    for name in selected:
         module = __import__(SUITES[name], fromlist=["main"])
         print(f"[evals] === suite: {name} ===")
+        if flags and name == names[0]:
+            sys.argv = [sys.argv[0], name, *flags]
         module.main()
 
 

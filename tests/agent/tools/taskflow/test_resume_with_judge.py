@@ -359,3 +359,67 @@ async def test_dispatch_injects_and_clears_judge_feedback(
     step = (await _flow("flow-1"))["state"]["steps"][0]
     assert step["status"] == StepStatus.DISPATCHED
     assert "judge_feedback" not in step
+
+
+# ---------------------------------------------------------------------------
+# UNKNOWN (judge outage) must not masquerade as PASS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unknown_judge_blocks_step_and_keeps_dependents_locked(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Default: judge outage -> BLOCKED, never DONE -> no dependent unlock."""
+    monkeypatch.setattr(
+        dispatch_module,
+        "dispatch_child",
+        _key_dispatch(["agent:main:subagent:child-1"]),
+    )
+    _patch_judge(monkeypatch, StepVerdict.UNKNOWN, reason="judge error (outage): timeout")
+    tools = _tools()
+    await _create_dispatched(tools, "flow-1")
+    await tools["taskflow_run_task"].coroutine(
+        flow_id="flow-1", task="dependent", depends_on=["step-1"], session_id=_SESSION
+    )
+
+    out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="agent:main:subagent:child-1",
+        result="unverified result",
+    )
+
+    assert "judge: BLOCKED (unverified, judge outage)" in out, out
+    assert "unlocked=[]" in out, out  # no dependent was unlocked
+    flow = await _flow("flow-1")
+    assert flow["state"]["steps"][0]["status"] == StepStatus.BLOCKED
+    assert "unverified" in flow["state"]["steps"][0].get("block_reason", "")
+    assert flow["state"]["steps"][1]["status"] == StepStatus.BLOCKED
+
+
+@pytest.mark.asyncio
+async def test_unknown_judge_fails_open_when_configured(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Legacy fail-open is preserved when explicitly opted in via config."""
+    monkeypatch.setattr(
+        dispatch_module,
+        "dispatch_child",
+        _key_dispatch(["agent:main:subagent:child-1"]),
+    )
+    _patch_judge(monkeypatch, StepVerdict.UNKNOWN, reason="judge error (outage): timeout")
+    monkeypatch.setitem(resume_module.STEP_JUDGE, "on_judge_error", "pass")
+    tools = _tools()
+    await _create_dispatched(tools, "flow-1")
+
+    out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="agent:main:subagent:child-1",
+        result="unverified result",
+    )
+
+    assert "judge: PASS (fail-open, judge unavailable)" in out, out
+    step = (await _flow("flow-1"))["state"]["steps"][0]
+    assert step["status"] == StepStatus.DONE

@@ -62,7 +62,7 @@ LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Pyt
 - leaf 复用真实 child 契约：`_assemble_child_tools` 应用角色 allow-list，并注入 code intelligence、ast-grep 和仅 executor 的 PTC。session id 通过 runnable config 传递，绝不烘进共享图。
 - leaf 的模型遵循角色 tier 和 `step_model` 覆盖。带 schema 的 leaf 强制关闭 thinking，与 child agent 结构化输出的最后一级一致。
 - journal miss 时，executor leaf 可能先用 `run_ptc` 执行该 step 的 PTC 脚本。PTC 失败会追加 `[PTC Pre-run Progress]` 并继续 ReAct；PTC 的 schema miss 是失败，绝不当作成功。
-- `src/data/workflow_runs.db` 上的 `SqliteWorkflowStore` 支持跨进程恢复。相同 prompt / agent_type / model / schema 的重复重放直接返回 journal 结果，leaf 调用为零。每次结果会报告 `journal_hits` 和 `leaf_calls`。
+- `SRC_DIR/data/workflow_runs.db` 上的 `SqliteWorkflowStore` 支持跨进程恢复。相同 prompt / agent_type / model / schema 的重复重放直接返回 journal 结果，leaf 调用为零。每次结果会报告 `journal_hits` 和 `leaf_calls`。
 - 每个计划的锁串行化并发重放。`LDW["real_replay_timeout_s"]` 限制单次 LDW 运行；超时算失败并成为降级候选，而不是挂起。
 
 ## 🪜 自动 TaskFlow 降级
@@ -86,7 +86,7 @@ LDW 运行失败且 `LDW["auto_degrade_enabled"]` 打开时，适配器会从**�
 | `LDW["min_replays"]` | `3` | 计划停止走 TaskFlow 并编译 LDW 脚本前的重放次数 |
 | `extraction.flow_extraction_enabled`（预设角色 → 高级） | `True` | 面向用户的编译开关，全局只读：关闭时 `action=compile`、编译缺失脚本与修复重编译都被拒绝。已存在的脚本仍可重放 |
 | `LDW["script_max_bytes"]` | `65536` | 单个 `ldw__<plan_key>.py` 的上限 |
-| `LDW["journal_path"]` | `src/data/workflow_runs.db` | 跨进程 journal 位置 |
+| `LDW["journal_path"]` | `data/workflow_runs.db` | 跨进程 journal 位置 |
 | `LDW["auto_degrade_enabled"]` | `True` | LDW 失败后创建并驱动 TaskFlow replay flow |
 | `LDW["repair_enabled"]` | `True` | 降级失败后执行 repair 抽取 / 重编译 |
 | `LDW["real_replay_timeout_s"]` | `900.0` | 单次 LDW 运行的墙钟上限 |

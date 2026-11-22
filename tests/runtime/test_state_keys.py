@@ -102,6 +102,8 @@ EXPECTED_VALUES: dict[str, str] = {
     "HITL_SESSION_CONFIRM_ALL": "hitl:session_confirm_all",
     "HITL_CONFIRMED_TOOLS": "hitl:confirmed_tools",
     "HITL_TURN_INTERRUPTED": "hitl:turn_interrupted",
+    "KEYWORD_APPROVALS": "hitl:keyword_approvals",
+    "APPROVAL_SCOPE_PARENT": "hitl:approval_scope_parent",
     "EXTERNAL_PATH_YOLO": "external_path_yolo",
     "EXTERNAL_PATH_ALLOWLIST": "external_path_allowlist",
     "ANSWERING": "answering",

@@ -1,6 +1,20 @@
 """Per-tool timeouts, retry budgets, and schema size limits."""
 
+import os
+from collections.abc import Mapping
 from typing import TypedDict
+
+
+def _int_env(env: Mapping[str, str], key: str, default: int, *, minimum: int = 1) -> int:
+    """One env override for a timeout value; blank/invalid keeps the default."""
+    raw = str(env.get(key, "")).strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
 
 
 class ToolsTimeoutsConfig(TypedDict):
@@ -96,8 +110,15 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "web_search_retry_backoff_min_s": 5,
     "web_search_retry_backoff_max_s": 45,
     "web_search_retry_max_attempts": 3,
-    "terminal_timeout_seconds": 30,
-    "terminal_max_timeout_seconds": 600,
+    # The terminal's foreground default. 30 s killed `npm test` / `pytest` /
+    # `cargo build` mid-run and threw the output away; 120 s lets the common
+    # test/build commands finish in the foreground, and a command that needs
+    # longer is auto-backgrounded on timeout (see terminal/core.py) instead of
+    # being killed. TERMINAL_DEFAULT_TIMEOUT_SECONDS / TERMINAL_MAX_TIMEOUT_
+    # SECONDS override both without a code change (the same pattern the local
+    # daemon config uses).
+    "terminal_timeout_seconds": _int_env(os.environ, "TERMINAL_DEFAULT_TIMEOUT_SECONDS", 120),
+    "terminal_max_timeout_seconds": _int_env(os.environ, "TERMINAL_MAX_TIMEOUT_SECONDS", 600),
     "fd_write_threshold_bytes": 100_000,
     "user_terminal_timeout_seconds": 120,
     "python_repl_timeout_seconds": 30,

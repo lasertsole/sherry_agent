@@ -34,8 +34,13 @@ class SearchQuery:
 
     pattern: str
     root: Path
-    file_glob: str | None = None
+    #: Filename include globs (``*.py`` …) resolved from ``file_glob`` and the
+    #: ``type`` filter; both engines treat them identically (any match admits).
+    include_globs: tuple[str, ...] = ()
     context: int = 0
+    #: ``True`` lets the pattern match ACROSS lines (rg ``-U``; the walk scans
+    #: the whole file text instead of line by line).
+    multiline: bool = False
 
 
 @dataclass(slots=True)

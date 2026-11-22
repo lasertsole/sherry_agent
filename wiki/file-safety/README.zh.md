@@ -15,6 +15,8 @@
   - [3. 按路径锁](#3-按路径锁)
   - [4. 残留清扫](#4-残留清扫)
 - [先读后写许可证](#-先读后写许可证)
+- [多文件 patch 模式](#-多文件-patch-模式)
+- [行选择器、搜索模式与写时格式化](#-行选择器搜索模式与写时格式化)
 - [Shadow git 快照](#-shadow-git-快照原-git-就绪门已移除)
 - [隔离子代理工作区（git worktree）](#-隔离子代理工作区git-worktree)
 - [备选方案与实测](#%EF%B8%8F-备选方案与实测)
@@ -65,6 +67,26 @@
 ### 4. 残留清扫
 
 只有在临时文件创建到 replace 之间被硬杀，才可能留下 `.sherry-tmp-*.swp`；其余每个失败路径都会 unlink 它。下一次写入同一目录时会清扫其中超过 1 小时的残留（`sweep_stale_temp_files`）：活着的写者的临时文件只有几秒寿命，年龄阈值正是用来与它保持距离的。清扫从不抛异常——一次读不动目录的扫描绝不能让它所服务的那次写入失败。
+
+## 🧩 多文件 patch 模式
+
+`patch_file` 可以传 `patch` 文档代替 `file_path`/`old_string`/`new_string`（Codex 格式：`*** Begin Patch` … `*** End Patch`，内含 `*** Add File`、`*** Update File` + `@@` hunk、`*** Delete File`、`*** Move to`）。它仍然是同一个工具：patch 模式沿用相同的 HITL / 并发安全 / plan-mode / PTC 门禁与 metadata。
+
+三个阶段；前两个阶段任一拒绝都**不会改动磁盘**：
+
+1. **解析**（`file_tools/patch_parser.py`）——头部、hunk、路径校验（只允许相对路径：绝对路径、盘符路径与 `..` 一律拒绝）与上限（1 MB patch、100 个操作、每文件 100 个 hunk、2 万行新增）。
+2. **预检**（`file_tools/patch_apply.py`）——每个路径都经 `resolve_tool_path`（外部 / self-path 门禁）解析，然后在内存中**模拟整个 patch**：文件存在性、二进制拒绝、目标冲突，以及每个 hunk 走同一套 11 级模糊匹配。不匹配时用最近段落给出 "Did you mean?"。
+3. **提交**——逐操作执行：`file_write_lock` + `atomic_write_bytes_no_follow`（创建时 revision=`absent`）、`.py` 目标走 `_format_py_code`、`note_edit`、`sync_edited_file`、`claim_notice_for`，并为每个路径标记 evidence 失效。整个 patch 只调一次 `ensure_checkpoint`。提交失败即停止：已完成的保留，其余标记 `skipped`——不回滚。
+
+str_replace 模式完全不变（`patch` 为空即旧路径，字段与 `_core` 相同）。patch 模式**不要求先读**——与 str_replace 一样，它的契约是两层 CAS。操作可以针对**同一个 patch 内**先前创建/删除的路径（add → update、delete → add），move 可以带 hunk。`tests/agent/tools/file_tools/test_patch_parser.py` 与 `test_patch_file_patch_mode.py` 钉住解析器、预检拒绝、提交顺序、CAS、逐操作 hook 以及"拒绝即零改动"。
+
+## 🧾 行选择器、搜索模式与写时格式化
+
+文件工具的三项面向模型的升级，全部在双引擎/双路径下测试：
+
+- **`read_file` 的 GJC 行选择器**（`file_tools/line_selector.py`）：`path:50-200` 读一个区间、`:50-200,960-973` 多个、`:42` 单行、`:conflicts` git 冲突块、`:raw` 无行号全文。选择器优先于 offset/limit。单区间翻译进既有分页机制（token 预算、流式读取照旧，完整的单区间读取仍然授予写许可）；多区间与冲突视图是不连续的（`...` 连接、`selected: true`），上限两倍最大页、越界钳制并给提示、**从不授予写许可**。选择器只认最后一个冒号且后缀必须匹配语法——`C:\file.py` 仍是路径、`C:\file.py:50-200` 正确拆分——schema 的二进制检查先剥离选择器，`archive.zip:10-20` 照样拒绝。
+- **`search_files` 输出模式**：`output_mode="count"` 返回每个文件一条 `{"path", "count"}`（分页按文件切），`multiline=true` 允许模式跨行（rg `-U`；walk 以 `newline=""` 读取，两引擎看到相同字节并报告起始行），`type=<语言>` 把语言名映射为两引擎同样应用的文件名 glob（21 种语言；`file_glob` 与 `type` 并集；未知语言报错并列出可选集合）。count 聚合跑在常规 `--json` match 帧上，两引擎以同样方式渲染路径，答案一致。
+- **`write_file` 的写时 LSP 格式化**：非 `.py` 覆盖写会向**已获取**的语言服务器请求 `textDocument/formatting` 并应用编辑（绝不冷启动——写不能为服务器启动买单）。无服务器/方法不支持/文件过大/传输失败都保持文件原样，写许可的版本号在格式化**之后**取，描述的是格式化后的字节。`.py` 仍走 autopep8。
 
 ## 🔒 Shadow git 快照（原 git 就绪门已移除）
 
@@ -200,6 +222,10 @@
 
 ## 🧪 测试
 
+选择器/搜索/格式化覆盖：`test_line_selector.py`（解析器+工具集成、Windows 盘符、写许可）、`test_search_modes.py`（双引擎的 count/multiline/type）、`test_lsp_write_format.py`（fail-open 矩阵+许可顺序）、`test_terminal_timeout_behavior.py` 与 `test_terminal_persistent_cwd.py`（超时领养+cwd/env 持久化）。
+
+patch 模式：`test_patch_parser.py`（头部、hunk、路径/上限拒绝）与 `test_patch_file_patch_mode.py`（add/update/delete/move、多 hunk、拒绝时零改动、部分提交停止、UTF-16、hooks）。
+
 `tests/agent/tools/file_tools/` 钉住写路径：`test_atomic_write.py`（原子性、软链拒绝、两层 CAS、残留清扫）、`test_file_write_concurrency.py`（并发补丁、无撕裂读）、`test_file_lock_cross_process.py`（两个真实进程、`kill -9` 释放）、`test_read_before_write.py`（许可证矩阵）、`tests/agent/middlewares/test_license_invalidation.py`（压缩会清掉它丢弃的那些读取的许可证）。`tests/agent/tools/subagent/test_workspace_isolation.py` 钉住脏基线、auto-init 的拒入清单、物化（软链、复制、未跟踪文件）、外部路径豁免、合并 CAS、冲突、软链跳过、接口变更报告与按父根串行化；`tests/agent/tools/code_intel/test_symbol_diff.py` 钉住符号比较器（改名配对、分组规则、创建/删除、错误路径）。
 
 ## 🗺️ 文件地图
@@ -207,6 +233,9 @@
 | 路径 | 职责 |
 | --- | --- |
 | `agent/tools/pub_base/atomic_write.py` | 原子写、revision 标识、残留清扫 |
+| `agent/tools/file_tools/patch_parser.py` | 多文件 patch 解析器：路径、hunk 与上限 |
+| `agent/tools/file_tools/line_selector.py` | GJC 行选择器解析器：区间/冲突/裸文本，Windows 安全 |
+| `agent/tools/file_tools/patch_apply.py` | 预检模拟 + 逐操作提交（CAS、锁、hooks） |
 | `agent/tools/pub_base/path_lock.py` | 进程内按路径锁注册表 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 先读后写许可证注册表 |

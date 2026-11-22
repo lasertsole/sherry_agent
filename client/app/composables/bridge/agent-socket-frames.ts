@@ -272,7 +272,10 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
     model_download_updated: data => emit('ws:model_download_updated', data),
     // Best-effort downgrade notice from `web_search` (the turn keeps streaming);
     // the store renders it as a dismissible banner.
-    search_backend_fallback: data => emit('ws:search_backend_fallback', data)
+    search_backend_fallback: data => emit('ws:search_backend_fallback', data),
+    // Transient in-chat card (never persisted; see use-system-notice.ts). The
+    // full frame rides along so each mounted strip can filter by its session.
+    system_notice: data => emit('ws:system_notice', data)
   });
   try {
     handler(event);

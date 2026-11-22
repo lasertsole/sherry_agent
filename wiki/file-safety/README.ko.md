@@ -15,6 +15,8 @@
   - [3. 경로별 잠금](#3-경로별-잠금)
   - [4. 잔여 파일 청소](#4-잔여-파일-청소)
 - [읽기 우선 라이선스](#-읽기-우선-라이선스)
+- [다중 파일 patch 모드](#-다중-파일-patch-모드)
+- [줄 선택자, 검색 모드, 쓰기 시 포맷](#-줄-선택자-검색-모드-쓰기-시-포맷)
 - [Shadow git 체크포인트](#-shadow-git-체크포인트-기존-git-준비-게이트-제거)
 - [격리 서브에이전트 워크스페이스 (git worktree)](#-격리-서브에이전트-워크스페이스-git-worktree)
 - [대안과 실측](#%EF%B8%8F-대안과-실측)
@@ -65,6 +67,26 @@
 ### 4. 잔여 파일 청소
 
 임시 파일 생성과 replace 사이에 하드 킬된 경우에만 `.sherry-tmp-*.swp`가 남을 수 있습니다. 나머지 모든 실패 경로는 그것을 unlink합니다. 같은 디렉터리에 대한 다음 쓰기가 1시간을 넘긴 잔여를 청소합니다(`sweep_stale_temp_files`): 살아 있는 쓰는 자의 임시 파일은 몇 초밖에 살지 않으며, 나이 임계값이 바로 그것과 거리를 두기 위한 장치입니다. 청소는 결코 예외를 던지지 않습니다——디렉터리를 읽지 못하는 스캔이, 그것이 앞서는 쓰기를 실패시켜서는 안 됩니다.
+
+## 🧩 다중 파일 patch 모드
+
+`patch_file`은 `file_path`/`old_string`/`new_string` 대신 `patch` 문서를 받을 수 있습니다(Codex 형식: `*** Begin Patch` … `*** End Patch`, `*** Add File`, `*** Update File` + `@@` hunk, `*** Delete File`, `*** Move to`). 같은 하나의 도구이며, patch 모드도 동일한 HITL / 병렬 안전 / plan-mode / PTC 게이트와 metadata를 통과합니다.
+
+세 단계. 처음 두 단계 중 하나라도 거부되면 디스크는 **전혀 변경되지 않습니다**:
+
+1. **파싱**(`file_tools/patch_parser.py`) — 헤더, hunk, 경로 검증(상대 경로만: 절대 경로, 드라이브 문자, `..`는 거부), 상한(1 MB patch, 100 작업, 파일당 100 hunk, 2만 추가 줄).
+2. **프리플라이트**(`file_tools/patch_apply.py`) — 모든 경로를 `resolve_tool_path`(외부 / self-path 게이트)로 해석한 뒤, patch 전체를 메모리에서 **시뮬레이션**합니다: 파일 존재, 바이너리 거부, 대상 충돌, 각 hunk를 동일한 11단계 퍼지 매처로 검사. 불일치 시 가장 가까운 섹션으로 "Did you mean?"을 제공합니다.
+3. **커밋** — 작업별로 `file_write_lock` + `atomic_write_bytes_no_follow`(생성은 revision=`absent`), `.py` 대상은 `_format_py_code`, `note_edit`, `sync_edited_file`, `claim_notice_for`, 경로별 evidence stale 표시. `ensure_checkpoint`는 patch 전체에서 한 번만 실행됩니다. 커밋 실패 시 중단되며 완료된 작업은 남고 나머지는 `skipped`로 보고됩니다 — 롤백 없음.
+
+str_replace 모드는 그대로입니다(`patch`가 비어 있으면 기존 경로, 필드와 `_core`도 동일). patch 모드는 읽기 라이선스를 **요구하지 않습니다** — str_replace와 마찬가지로 이중 CAS가 계약입니다. 같은 patch 안에서 앞서 생성/삭제한 경로도 대상으로 할 수 있고(add → update, delete → add), move는 hunk를 가질 수 있습니다. `tests/agent/tools/file_tools/test_patch_parser.py`와 `test_patch_file_patch_mode.py`가 파서, 프리플라이트 거부, 커밋 순서, CAS, 작업별 훅, "거부 시 쓰기 없음"을 고정합니다.
+
+## 🧾 줄 선택자, 검색 모드, 쓰기 시 포맷
+
+파일 도구에 대한 세 가지 모델 지향 개선. 모두 양쪽 엔진/양쪽 경로에서 테스트되었습니다:
+
+- **`read_file`의 GJC 줄 선택자**(`file_tools/line_selector.py`): `path:50-200`은 범위, `:50-200,960-973`은 여러 범위, `:42`은 한 줄, `:conflicts`는 git 충돌 블록, `:raw`는 줄 번호 없는 전체. 선택자는 offset/limit보다 우선합니다. 단일 범위는 기존 페이지 매기기로 변환되고(토큰 예산·스트리밍 유지, 완결된 단일 범위 읽기는 쓰기 라이선스 유지), 다중 범위/충돌 보기는 불연속(`...` 결합, `selected: true`), 최대 페이지의 2배를 상한으로 EOF 넘음은 클램프+힌트, **쓰기 라이선스는 절대 부여되지 않습니다**. 선택자는 마지막 콜론만, 그리고 접미사가 문법에 맞을 때만 인식됩니다 — `C:\file.py`는 경로 유지, `C:\file.py:50-200`은 정확히 분할 — 스키마의 바이너리 검사는 선택자를 먼저 떼므로 `archive.zip:10-20`도 거부됩니다.
+- **`search_files` 출력 모드**: `output_mode="count"`는 파일당 1개의 `{"path", "count"}`(페이지는 파일 단위 절단), `multiline=true`는 패턴의 다중 줄 일치를 허용하고(rg `-U`. walk는 `newline=""`으로 읽어 양쪽 엔진이 같은 바이트를 보고 시작 줄을 보고), `type=<언어>`는 언어 이름을 양쪽 엔진이 동일하게 적용하는 파일명 glob으로 바꿉니다(21개 언어. `file_glob`과 `type`은 합집합. 알 수 없는 언어는 목록과 함께 오류). count 집계는 평소의 `--json` match 프레임에서 수행되며 양쪽 엔진의 경로 표기도 같은 방식이라 답이 일치합니다.
+- **`write_file`의 쓰기 시 LSP 포맷**: `.py`가 아닌 덮어쓰기는 **이미 획득된** 언어 서버에 `textDocument/formatting`을 요청해 편집을 적용합니다(콜드 스타트 없음 — 쓰기가 서버 기동 비용을 지불하지 않도록). 서버 없음/미지원 메서드/초대형 파일/전송 실패 시 파일은 쓰인 그대로이며, 쓰기 라이선스 리비전은 패스 **이후**에 채택되어 포맷된 바이트를 가리킵니다. `.py`는 계속 autopep8.
 
 ## 🔒 Shadow git 체크포인트 (기존 git 준비 게이트 제거)
 
@@ -207,6 +229,10 @@
 
 ## 🧪 테스트
 
+선택자/검색/포맷 커버리지: `test_line_selector.py`(파서+도구 통합, Windows 드라이브 문자, 라이선스), `test_search_modes.py`(양 엔진의 count/multiline/type), `test_lsp_write_format.py`(페일 오픈 매트릭스+라이선스 순서), `test_terminal_timeout_behavior.py`와 `test_terminal_persistent_cwd.py`(타임아웃 입양+cwd/env 지속).
+
+patch 모드: `test_patch_parser.py`(헤더, hunk, 경로/상한 거부)와 `test_patch_file_patch_mode.py`(add/update/delete/move, 다중 hunk, 거부 시 무변경, 부분 커밋 중단, UTF-16, 훅).
+
 `tests/agent/tools/file_tools/`가 쓰기 경로를 고정합니다: `test_atomic_write.py`(원자성, 심볼릭 링크 거부, 두 CAS 계층, 잔여 청소), `test_file_write_concurrency.py`(병렬 패치, 찢어진 읽기 부재), `test_file_lock_cross_process.py`(실제 프로세스 둘, `kill -9` 해제), `test_read_before_write.py`(라이선스 매트릭스), `tests/agent/middlewares/test_license_invalidation.py`(압축이 버린 읽기의 라이선스를 삭제함). `tests/agent/tools/subagent/test_workspace_isolation.py`는 더러운 베이스라인, auto-init 거부 목록, 물질화(링크·복사·미추적 파일), 외부 경로 면제, 병합 CAS, 충돌, 심볼릭 링크 건너뛰기, 인터페이스 변경 보고, 부모 루트 단위 직렬화를 고정합니다; `tests/agent/tools/code_intel/test_symbol_diff.py`는 심볼 비교기(이름 변경 짝짓기, 그룹 규칙, 생성/삭제, 오류 경로)를 고정합니다.
 
 ## 🗺️ 파일 지도
@@ -214,6 +240,9 @@
 | 경로 | 역할 |
 | --- | --- |
 | `agent/tools/pub_base/atomic_write.py` | 원자적 쓰기, revision 식별자, 잔여 청소 |
+| `agent/tools/file_tools/patch_parser.py` | 다중 파일 patch 파서: 경로, hunk, 상한 |
+| `agent/tools/file_tools/line_selector.py` | GJC 줄 선택자 파서: 범위/충돌/raw, Windows 안전 |
+| `agent/tools/file_tools/patch_apply.py` | 프리플라이트 시뮬레이션 + 작업별 커밋(CAS, 잠금, 훅) |
 | `agent/tools/pub_base/path_lock.py` | 프로세스 내 경로별 잠금 레지스트리 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 읽기 우선 라이선스 레지스트리 |

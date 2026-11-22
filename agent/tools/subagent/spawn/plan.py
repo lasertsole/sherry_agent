@@ -4,12 +4,37 @@ import time
 
 from ..config import get_config
 
+#: The depth ladder's step: a run one level above the LEAF gets 3× the leaf
+#: budget. Leaves (depth == ``max_spawn_depth``) get the configured default
+#: (``run_timeout_seconds``); every level above triples; MAIN (depth 0) is
+#: excluded — its budget is the caller's own turn.
+_DEPTH_BUDGET_MULTIPLIER = 3.0
+
 
 def resolve_run_timeout_seconds(timeout: float | None = None) -> float:
     """Return the effective run timeout, falling back to the global config default."""
     if timeout is not None and timeout > 0:
         return timeout
     return get_config().run_timeout_seconds
+
+
+def _requester_run(requester_session_key: str):
+    """The requester's own run record, or ``None`` when the requester is MAIN.
+
+    A child session key resolves through the registry; a main session has no
+    run record (its children are depth 1 by definition). A registry failure is
+    treated as MAIN — the ladder then degrades one rung shallower, never
+    deeper.
+    """
+    key = (requester_session_key or "").strip()
+    if not key or ":subagent:" not in key:
+        return None
+    try:
+        from ..registry.queries import get_run_by_child_session_key
+
+        return get_run_by_child_session_key(key)
+    except Exception:
+        return None
 
 
 def remaining_parent_run_budget(requester_session_key: str) -> float | None:
@@ -21,15 +46,7 @@ def remaining_parent_run_budget(requester_session_key: str) -> float | None:
     main-agent requester), "no stored timeout" (a legacy/unbounded run), or a
     registry read failure — the caller then keeps the regular timeout.
     """
-    key = (requester_session_key or "").strip()
-    if not key:
-        return None
-    try:
-        from ..registry.queries import get_run_by_child_session_key
-
-        parent = get_run_by_child_session_key(key)
-    except Exception:
-        return None
+    parent = _requester_run(requester_session_key)
     if parent is None:
         return None
     timeout = parent.run_timeout_seconds
@@ -42,14 +59,28 @@ def remaining_parent_run_budget(requester_session_key: str) -> float | None:
 def resolve_run_timeout_for_requester(
     requester_session_key: str, timeout: float | None = None
 ) -> float:
-    """Effective timeout for a child spawn, capped by the parent's remaining budget.
+    """Effective timeout for a child spawn: the DEPTH LADDER, then the parent cap.
 
-    The subtree rule: a descendant may never outlive its parent (the root's
-    subtree budget). A spent budget still grants a 1 s floor so the child fails
-    fast instead of hanging; a main-agent requester keeps the regular resolver
-    result.
+    Depth ladder (leaves get the configured default, every level above triples,
+    main_agent excluded — its budget is the caller's own turn): a run at depth
+    ``d`` gets ``run_timeout_seconds * 3 ** (max_spawn_depth - d)``. With the
+    defaults (leaf 600 s, max depth 2) a depth-1 child gets 1800 s; with the
+    eval's leaf knob at 1800 s (``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S``) a depth-1
+    child gets 5400 s. An explicit ``timeout`` still wins — the ladder shapes
+    only the default. The subtree rule applies afterwards unchanged: a
+    descendant may never outlive its parent's remaining budget, with a 1 s
+    fail-fast floor.
     """
-    base = resolve_run_timeout_seconds(timeout)
+    cfg = get_config()
+    explicit = timeout is not None and timeout > 0
+    if explicit:
+        base = float(timeout)
+    else:
+        parent = _requester_run(requester_session_key)
+        requester_depth = parent.depth if parent is not None else 0
+        child_depth = requester_depth + 1
+        levels_above_leaf = max(cfg.max_spawn_depth - child_depth, 0)
+        base = cfg.run_timeout_seconds * (_DEPTH_BUDGET_MULTIPLIER**levels_above_leaf)
     remaining = remaining_parent_run_budget(requester_session_key)
     if remaining is None:
         return base

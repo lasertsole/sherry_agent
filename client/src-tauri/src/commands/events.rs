@@ -51,6 +51,9 @@ pub const AGENT_STREAM_END: &str = "agent:stream:end";
 /// Emitted when the agent encounters an error during processing.
 pub const AGENT_STREAM_ERROR: &str = "agent:stream:error";
 
+/// Emitted when the agent pauses for a human-in-the-loop decision.
+pub const AGENT_STREAM_HITL: &str = "agent:stream:hitl";
+
 // ── Event payload types ─────────────────────────────────────
 
 /// Payload for the `agent:stream:start` event.
@@ -242,4 +245,19 @@ mod tests {
         assert_eq!(deserialized.code, original.code);
         assert_eq!(deserialized.message, original.message);
     }
+}
+
+/// Payload for the `agent:stream:hitl` event.
+///
+/// The agent paused before a tool call; the frontend renders the approval card
+/// and sends the decision over the session agent socket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStreamHitl {
+    /// The session waiting for approval.
+    pub session_id: String,
+    /// The message turn that paused.
+    pub message_id: String,
+    /// Interrupt payload (`tool_name` / `tool_args` / `description` /
+    /// `allowed_decisions`).
+    pub content: serde_json::Value,
 }

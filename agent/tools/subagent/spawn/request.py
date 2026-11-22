@@ -45,9 +45,20 @@ class SpawnRequest:
     goal_max_turns: int | None = None
     functional_role_hint: str | None = None
     extra_tools: list[str] | None = None
+    #: Per-expert domain persona appended to the child system prompt (expert
+    #: panel / meeting modes carry it from the expert registry).
+    persona_prompt: str | None = None
+    #: Expert's skill whitelist — the dispatch path merges it into the step's
+    #: ``skills`` (SKILL.md prepend); carried here for spawn diagnostics.
+    skills_whitelist: list[str] | None = None
     isolation: bool = False
     flow_id: str | None = None
     step_id: str | None = None
+    #: High-risk keyword approval carried into the child: after a human approves
+    #: a child's ``[NEEDS_APPROVAL]`` bubble, the replacement spawn receives
+    #: ``{"keyword": ..., "tool": ..., "args_hash"?: ...}`` and its ToolGuardrails
+    #: lets that keyword through (per-spawn, never a permanent allow).
+    approval_context: dict | None = None
 
     @classmethod
     def from_legacy(cls, **kwargs: Any) -> SpawnRequest:

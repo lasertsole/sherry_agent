@@ -397,5 +397,11 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
 def build_python_repl_tool() -> TimedPythonREPLTool:
     tool = TimedPythonREPLTool()
     tool.handle_tool_error = True
-    tool.metadata = {"idempotent": False, "side_effect_scope": "system"}
+    tool.metadata = {
+        "idempotent": False,
+        "side_effect_scope": "system",
+        # Not high-risk itself; the code text is keyword-scanned.
+        "high_risk": False,
+        "scan_keywords": True,
+    }
     return tool

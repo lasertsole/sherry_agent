@@ -36,6 +36,10 @@ export interface FlowProgress {
   by_status: Record<string, number>;
   /** The flow's steps, in the plan's own order (no DAG level projection). */
   steps: FlowStep[];
+  /** Owning session; present on the global board (S3), absent on per-session frames. */
+  session_id?: string;
+  /** Epoch seconds of the last flow change (global board). */
+  updated_at?: number;
 }
 
 /** The aggregate the collapsed pill shows. */
@@ -125,6 +129,34 @@ export const useTaskflowStore = defineStore('taskflow', () => {
     totals.value = { ...EMPTY_TOTALS };
   }
 
+  // ── Global cross-session board (UI upgrade S3) ──────────────────────────
+  /** The backend has no global list endpoint yet; mock flows keep the UI real. */
+  const globalFlows = ref<FlowProgress[]>([]);
+  const globalFilter = ref<'all' | string>('all');
+  const globalLoading = ref(false);
+
+  const filteredGlobalFlows = computed(() =>
+    globalFilter.value === 'all' ? globalFlows.value : globalFlows.value.filter(f => f.status === globalFilter.value)
+  );
+  /** Running-flow count for the nav badge. */
+  const runningCount = computed(() => globalFlows.value.filter(f => f.status === 'running').length);
+
+  /**
+   * Load all sessions' flows. Falls back to an empty list when the endpoint is
+   * absent, so the board never errors (S3 acceptance #8).
+   */
+  async function loadAllFlows(): Promise<void> {
+    globalLoading.value = true;
+    try {
+      const res = await $fetch<{ flows: FlowProgress[] }>('/api/taskflow/flows');
+      globalFlows.value = Array.isArray(res?.flows) ? res.flows : [];
+    } catch {
+      globalFlows.value = [];
+    } finally {
+      globalLoading.value = false;
+    }
+  }
+
   /** Whether there is anything to show (no flows, no panel). */
   const hasProgress = computed(() => flows.value.length > 0);
 
@@ -154,6 +186,12 @@ export const useTaskflowStore = defineStore('taskflow', () => {
     inFlight,
     started,
     percent,
+    globalFlows,
+    globalFilter,
+    globalLoading,
+    filteredGlobalFlows,
+    runningCount,
+    loadAllFlows,
     clear,
     init,
     refresh,

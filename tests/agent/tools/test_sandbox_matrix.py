@@ -85,6 +85,7 @@ import agent.tools.python_repl as python_repl_mod
 import agent.tools.terminal.core as terminal_mod
 from agent.middlewares.humanInTheLoop import HITLConfig, HumanInTheLoop
 from agent.tools.pub_base.env_scrub import SHERRY_SECRET_NAMES
+from agent.tools.pub_base.sandbox import SandboxBackend
 from agent.tools.python_repl import build_python_repl_tool
 from agent.tools.terminal import build_terminal_tool
 from config import ROOT_DIR
@@ -98,7 +99,7 @@ pytestmark = [  # The upstream ShellInput validator warns on every validation; k
 # ─────────────────────────────────────────────────────────────────────────────
 # Backend stand-ins
 # ─────────────────────────────────────────────────────────────────────────────
-class _RecordingBackend:
+class _RecordingBackend(SandboxBackend):
     """SandboxBackend stand-in: probe()=True, wrap() records + marks the env."""
 
     def __init__(self, wrapper: str = "fakewrap"):
@@ -307,6 +308,10 @@ class TestCell1RequiredSandboxTrueBackendAvailable:
 
     def test_terminal_exec_via_backend_wrap(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("SANDBOX_POLICY", "required")  # real read_policy path
+        # Pin the POSIX shell: on a Windows host the same path deliberately uses
+        # Git Bash / COMSPEC instead (pinned in test_terminal_tool's
+        # TestSandboxShell). This test is about the wrap/exec structure.
+        monkeypatch.setattr(platform, "system", lambda: "Linux")
         backend = _RecordingBackend()
         monkeypatch.setattr(terminal_mod, "get_backend", lambda policy: backend)
         _seed_fake_secrets(monkeypatch)
@@ -516,6 +521,9 @@ class TestCell5AutoSandboxTrueUnavailableDegradedOneInfoLine:
     ):
         monkeypatch.setenv("SANDBOX_POLICY", "auto")
         monkeypatch.setattr(terminal_mod, "get_backend", lambda policy: None)  # Windows path
+        # No Git Bash: pin the historical platform-shell branch (the Git Bash
+        # variant of the same degrade path is pinned in TestSandboxShell).
+        monkeypatch.setattr(terminal_mod, "resolve_windows_bash", lambda: None)
         _seed_fake_secrets(monkeypatch)
         calls = _install_fake_popen(monkeypatch, _FakeShellProc)
 
@@ -569,6 +577,7 @@ class TestCell6OffNeverSandboxNeverApproved:
     def test_off_terminal_sandbox_false_executes_directly(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("SANDBOX_POLICY", "off")
         monkeypatch.setattr(terminal_mod, "get_backend", _forbidden_get_backend)
+        monkeypatch.setattr(terminal_mod, "resolve_windows_bash", lambda: None)
         calls = _install_fake_popen(monkeypatch, _FakeShellProc)
 
         term = build_terminal_tool()
@@ -602,6 +611,7 @@ class TestCell6OffNeverSandboxNeverApproved:
     ):
         monkeypatch.setenv("SANDBOX_POLICY", "off")
         monkeypatch.setattr(terminal_mod, "get_backend", _forbidden_get_backend)
+        monkeypatch.setattr(terminal_mod, "resolve_windows_bash", lambda: None)
         calls = _install_fake_popen(monkeypatch, _FakeShellProc)
 
         with _loguru_warnings() as records:

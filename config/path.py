@@ -30,6 +30,13 @@ _ENV_TEMPLATE_ROOT = resolve_code_root(ROOT_DIR)
 #: ``sherry.jsonc`` / ``.models`` / ``.network`` (config/_home.py).
 APP_HOME = resolve_app_home(ROOT_DIR)
 
+#: Where the local model daemons keep their pid files. The default follows the
+#: cell's ``APP_HOME``; a multi-tenant host points every cell at one shared
+#: directory owned by Fleet so no cell registers an atexit kill for the shared
+#: daemon it happened to spawn.
+_DAEMON_HOME_RAW = os.environ.get("SHERRY_DAEMON_HOME", "").strip()
+DAEMON_HOME = Path(_DAEMON_HOME_RAW).expanduser().resolve() if _DAEMON_HOME_RAW else APP_HOME
+
 #: Whether this process serves the packaged desktop app (the shell passes the
 #: bare ``--sherry-desktop`` flag; the environment variable is the transitional
 #: fallback, read the same way as the home above). The boot gate reads this
@@ -208,6 +215,10 @@ SKILLS_DIR = ROOT_DIR / "skills"
 USER_SKILLS_DIR = APP_HOME / "skills"
 AUTO_SKILLS_DIR = USER_SKILLS_DIR / "auto/"
 PLUGIN_SKILLS_DIR = USER_SKILLS_DIR / "plugins"
+#: Persisted expert definitions for the expert-panel / meeting modes
+#: (``APP_HOME/experts/<name>.json``) — one JSON file per expert, shared by
+#: every team and meeting that references it by name.
+EXPERTS_DIR = APP_HOME / "experts"
 SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
 #: Loader cache (written on every scan) — writable by definition.
 SKILLS_SNAPSHOT_FILE = USER_SKILLS_DIR / "skills_snapshot.json"
@@ -559,6 +570,20 @@ def resolve_approval_store_path() -> Path:
     if override:
         return Path(override).expanduser()
     return SRC_DIR / "data" / "approvals.json"
+
+
+def resolve_high_risk_guard_path() -> Path:
+    """Return the absolute high-risk guard SQLite path.
+
+    ``SRC_DIR/data/high_risk_guard.db`` holds both the keyword table and the
+    executed-operation ledger. It is Sherry-owned runtime state (same tree as
+    the boulder pointer and the evidence ledger), read at call time so tests can
+    repoint ``SRC_DIR``; ``SHERRY_HIGH_RISK_GUARD_PATH`` overrides it outright.
+    """
+    override = os.environ.get("SHERRY_HIGH_RISK_GUARD_PATH", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return SRC_DIR / "data" / "high_risk_guard.db"
 
 
 def file_locks_dir() -> Path:

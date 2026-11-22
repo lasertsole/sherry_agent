@@ -15,6 +15,7 @@ from typing import Any
 from langchain_core.messages import ToolCall
 from loguru import logger
 from langgraph.errors import GraphInterrupt
+from runtime import StateKey, state_register_mem
 from runtime.session.state_keys import TypedState
 
 from .types import (
@@ -353,12 +354,16 @@ class HumanInTheLoop(AgentMiddleware):
                 status="error",
             )
         try:
+            from .interrupts import freeze_heartbeat, unfreeze_heartbeat
+
+            freeze_heartbeat(session_id)
             hitl_response = interrupt(
                 HITLRequest(
                     action_requests=[action_request],
                     review_configs=[review_config],
                 )
             )
+            unfreeze_heartbeat(session_id)
             decisions = hitl_response.get("decisions", [])
             decision_type = decisions[0]["type"] if decisions else ""
             if decision_type == "yolo" and session_id:
@@ -413,6 +418,14 @@ class HumanInTheLoop(AgentMiddleware):
         with operator_scope(self._turn_operator(state)):
             for tool_call in last_ai_msg.tool_calls:
                 self._approval_registry.dispatch(tool_call, ctx)
+
+        # A completed pass means no card is parked: clear the heartbeat freeze.
+        # (On a real interrupt the dispatch raises GraphInterrupt and this line
+        # is not reached until the resumed pass.)
+        try:
+            state_register_mem.delete_state(ctx.session_id, StateKey.HEARTBEAT_SKIP)
+        except Exception:  # noqa: BLE001 - best-effort cleanup
+            logger.debug("HITL: could not clear heartbeat_skip after after_model")
 
         approved = len(outcome.revised_tool_calls)
         denied = len(outcome.artificial_tool_messages)

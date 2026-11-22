@@ -167,6 +167,28 @@ def _build_session_model(session_id: str) -> Any:
     temperature = config.get("temperature")
     thinking_kwargs = dict(config.get("thinking_kwargs") or {})
     custom_mapping = config.get("custom_mapping") or None
+    # The learned model-cap label's THINKING aspect applies to background
+    # reviews too: a review is a MULTI-TURN call (prefix + instruction), and on
+    # a reasoning-mode model that rejects exactly that (deepseek-flash: "The
+    # `reasoning_content` in the thinking mode must be passed back") every
+    # review dies 400 — fail-open, so each compaction silently skips its
+    # review. A session whose turn config was never recorded (a child session)
+    # would otherwise rebuild the env default with thinking ON; the persisted
+    # degradation label overrides that for its model.
+    from agent.tools.subagent import model_caps
+
+    if override:
+        cap_provider = str(override.get("provider") or "")
+        cap_model = str(override.get("model") or "")
+    else:
+        from models.LLMs.main_llm import api_name as _main_model, model_provider as _main_provider
+
+        cap_provider, cap_model = str(_main_provider or ""), str(_main_model or "")
+    if (
+        cap_model
+        and model_caps.strategy_for(model_caps.get_level(cap_provider, cap_model)).thinking_off
+    ):
+        thinking_kwargs["thinking"] = False
     if override:
         return build_main_llm_for_profile(
             provider=override.get("provider"),

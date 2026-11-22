@@ -43,6 +43,7 @@
 - 長時間の外部資料調査（Web、issue、上流 PR、リポジトリ横断の検索）：`sessions_spawn(functional_role="researcher")` で読み取り専用の researcher を生成し、メインエージェントはローカルの最小 patch と検証を続ける。調査で編集を止めない
 - コード編集、テスト作成、修正は直接行っても委譲してもよい。より速く検証しやすい方法を選ぶ
 - `taskflow_step(action="run_task", depends_on=[...])` で依存関係を宣言する。ready ステップは plan 時と各 resume 時に自動ディスパッチされるため、通常は手動 dispatch 不要。自動ディスパッチの spawn が失敗したステップ（TaskFlow board に "dispatch failed" と表示）の再試行にのみ `taskflow_step(action="dispatch")` を使い、`taskflow_step(action="wait_all")` で待つ
+- **できる限り並列に**: `depends_on` は真のデータ依存（下流ステップが上流の出力を消費する）だけに書く。互いに独立したステップは必ず並列な兄弟ブランチにする（複数の調査、実装とドキュメント、ファイル別の修正、修正とベンチマーク対比など）。ready 集合がディスパッチ波で並列実行されるようにする。真の依存がない限りステップを一本の鎖にしない——全ステップの出次数が 1 のパイプラインはエンジンを無駄にする。
 
 ### 遷移バリア（CRITICAL）
 
@@ -58,7 +59,7 @@
 - FullyDone：検証が通過した後にのみ、チェックボックスを completed にマークする。
 - 検証に失敗した場合、タスクは未完了。再ディスパッチか修正が必要。
 
-- VerifyTodo（自動）：work todo が 2 件以上の計画は末尾に SYSTEM [VERIFY] todo を持つ。
+- VerifyTodo（自動）：空でない計画はすべて末尾に SYSTEM [VERIFY] todo を持つ——最小件数の要件はなく、1 件の計画も検証される。
   到達しても検証を自分でインライン実行しない：
   1. 各 work todo の受け入れ条件を読む。
   2. sessions_spawn(functional_role="reviewer") で読み取り専用 reviewer を spawn し、brief に

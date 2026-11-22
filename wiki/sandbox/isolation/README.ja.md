@@ -46,7 +46,7 @@ bwrap
 
 `--clearenv` がすべての `--setenv` より先に来ることと組み合わせて、洗浄済みディクショナリが本当の環境変数ホワイトリストになります。ルートファイルシステムは読み取り専用で、書き込みはプロジェクトルートと一時ディレクトリにしか落ちません。
 
-**リードシールド。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで両バックエンドは既定の機密パスリスト `DEFAULT_DENY_READ_PATHS` — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、呼び出しごとに `_sensitive_read_paths()` が解決し、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開、空項目はスキップ、順序は保持、重複は除去)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
+**リードシールド。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで Linux と macOS のバックエンドは既定の機密パスリスト `DEFAULT_DENY_READ_PATHS` — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、呼び出しごとに `_sensitive_read_paths()` が解決し、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開、空項目はスキップ、順序は保持、重複は除去)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
 
 **macOS: Seatbelt(`sandbox-exec`)**。コマンドは `sandbox-exec -p <profile> -- <cmd...>` として実行され、profile は次のとおりです:
 
@@ -65,10 +65,19 @@ bwrap
 
 順序こそが仕様です: `(allow default)` の下の `(deny file-write*)` は「ファイル書き込み以外はすべて許可」を意味し、その後の明示的 allow が2つの書き込み可能パスと `/dev/null`、`/dev/tty` のリテラルを再び開きます。リードシールドの `deny file-read*` ルールは `(deny file-write*)` の直後に置かれます: 機密パスごとに1つの `subpath` ルール(既定リストと `SHERRY_DENY_READ_PATHS` 拡張は bwrap と共通)と、任意の場所の `.env` / `.env.*` を覆う2つの正規表現ルールです。存在しないパスも拒否されます — 存在しないパスへの拒否は無害です。パスは `json.dumps` で埋め込まれ、パス中の引用符やバックスラッシュが sbpl 注入コードとして脱出することはできません。
 
-**プローブ(可用性確認)**。両バックエンドともクラスレベルキャッシュ付きの `probe() -> bool` を実装します(プロセスにつき1回プローブ、失敗結果もキャッシュ):
+**Windows: AppContainer + 制限トークン + Job Object(`WinSandboxBackend`)**。Windows には `bwrap` も `sandbox-exec` もなく、`wrap()` はプロセス作成属性を変えられません。そこでバックエンドは小さな launcher(`python -c` で zlib 圧縮・base64 のソースを実行)を返し、カーネルレベルの処理をそこで行います:
+
+1. **AppContainer** —— ユーザーごとの profile(`CreateAppContainerProfile`、既存なら `DeriveAppContainerSidFromAppContainerName`)がパッケージ SID を与えます。launcher はその SID に `writable_roots` の継承可能な読み書き/実行/削除 ACE を付与し、コマンド自身の実行ファイル、venv のベースインタープリタ(`pyvenv.cfg` の `home`、`Lib`/`DLLs`/`python*.dll`)、launcher 自身のインタープリタに読み取り+実行を付与します。`UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES)` + `EXTENDED_STARTUPINFO_PRESENT` でプロセスを**コンテナ内**に作成します: 書き込みは許可ルートのみ、読み取りはパッケージ SID が許された範囲のみ。設定がネットワーク遮断を要求した場合は `internetClient` 能力を付けず、外向き socket は connect 時に拒否されます。システムツリー(`%SystemRoot%`、`%ProgramFiles%`)は既に `ALL APPLICATION PACKAGES` の読み取り+実行を持つためスキップします。`%TEMP%`/`%TMP%` は Windows が profile の `AC\Temp`(書き込み可)へリダイレクトします。AppContainer 無効時は launcher が許可ルートを指します。
+2. **制限トークン** —— 呼び出し元自身のトークンに `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`。子は全特権を失います(他プロセスのデバッグ、ドライバのロード、所有権の奪取が不可)。管理者権限は不要です。`DISABLE_MAX_PRIVILEGE` は `SeChangeNotifyPrivilege` を残すため、祖先ディレクトリごとに ACE を付けなくても許可済みパスを通過できます。
+3. **Job Object** —— `ActiveProcessLimit`(`SHERRY_WIN_SANDBOX_MAX_PROCESSES`、既定 50)、`JobMemoryLimit`(`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`、既定 4096)、`KILL_ON_JOB_CLOSE`。fork bomb や OOM を封じ込め、launcher を殺す(ツールのタイムアウト経路)とコマンドと全子孫が死にます。子は**中断状態**で作成して job に割り当ててから再開するため、割り当ての隙間で逃亡プロセスを spawn できません。
+4. **stdout/stderr 伝播** —— ツールは子の stdout を FILE ハンドルに向け、launcher は継承可能な複製を渡します(`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`)。これが無いとサンドボックス出力はどこにも届きません。
+
+各層は独立に fail-open します——AppContainer profile/作成失敗は制限トークン経路へ、`CreateProcessAsUserW` は `CreateProcessW` へ、トークン失敗なら特権はそのまま、job 失敗ならトークンのみ——失敗は必ず Win32 エラーコード付きで stderr に出るので、ある層を禁じるホストポリシーは実行拒否ではなく明示的な降格になります。`SHERRY_WIN_SANDBOX_APPCONTAINER=0` で第 2 層を無効化できます(サンドボックス shell は Git Bash に戻る)。Windows の意図的な制限が 2 つあります: **MSYS2/Git Bash は AppContainer 内で初期化できない**(ランタイムがグローバル名前付きオブジェクトを必要とする)ため、サンドボックス shell は `cmd.exe` です。また DACL 付与と profile は永続するため、コマンド終了後も許可ルートに `S-1-15-2-…` ACE と AppContainer profile が残ります。
+**プローブ(可用性確認)**。すべてのバックエンドがクラスレベルキャッシュ付きの `probe() -> bool` を実装します(プロセスにつき1回プローブ、失敗結果もキャッシュ):
 
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true` を3秒のタイムアウトでスモーク実行。バイナリの存在だけでは不十分です。Ubuntu 24.04+ の AppArmor 非特権 user namespace 制限は uid-map 段階ですべての bwrap を殺せます。だからこそ実際のスモーク実行だけが誠実な確認です。
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")` のみ。sbpl には終了コードベースのスモークプローブがありません。
+- `WinSandboxBackend.probe()`: `OpenProcessToken` + `CreateRestrictedToken` + `CreateJobObject` がこのホストで成功すること。どれか失敗すれば、`bwrap` バイナリが無い場合とまったく同じく `auto` は降格し(`required` は拒否する)。
 
 **PTC はこのバックエンドを再利用します。** `execute_code`(プログラム的ツール呼び出し)は `sandbox` フラグを持たないため、どのポリシーでも `sandbox=True` 呼び出しと同様に振る舞います: 使えるバックエンドは `[sys.executable, script_path]` を包み、`SANDBOX_POLICY=required` でバックエンドが無い場合は spawn せずに `status: "sandbox_unavailable"` エンベロープを返し、`SANDBOX_POLICY=auto` でバックエンドが無い場合も spawn せず `status: "sandbox_unavailable"` を返します(PTC には HITL 経路がないため降格しません)。`off` のときだけサンドボックスなしで実行します。PTC は `allow_network=True` を渡すため、bwrap は `--unshare-all` の隣に `--share-net` を追加します：子は親の loopback RPC リスナーに到達する必要があり、書き込み/読み取りのサンドボックスは変わりません。[PTC ページ](../../ptc/README.ja.md)を参照してください。
 

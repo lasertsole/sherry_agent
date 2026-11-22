@@ -76,7 +76,8 @@ def _state(gate: DelegationPressureGate):
     return gate._get(_SESSION)
 
 
-def test_defaults_are_seven_and_twelve_without_a_blocked_set():
+def test_defaults_are_five_seven_twelve_without_a_blocked_set():
+    assert DELEGATION_PRESSURE["plan_nudge_after"] == 5
     assert DELEGATION_PRESSURE["warn_after"] == 7
     assert DELEGATION_PRESSURE["block_after"] == 12
     assert "read_file" in DELEGATION_PRESSURE["pressure_tools"]

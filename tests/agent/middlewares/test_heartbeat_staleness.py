@@ -11,6 +11,7 @@ from agent.middlewares.heartbeat_staleness.core import (
     _STATE_KEY_SKIP,
     _STATE_KEY_STALE,
     _STATE_KEY_TOOL,
+    _TIMER_NAME,
     HeartbeatStaleness,
     HeartbeatTimeoutError,
 )
@@ -110,6 +111,24 @@ class TestCheckProgress:
             mw._check_progress(sess)
 
         assert state_register_mem.get_state(sess, _STATE_KEY_KILLED, False) is True
+
+    def test_stale_kill_unregisters_the_repeating_timer(self, monkeypatch):
+        from runtime import timer_call_register
+
+        mw = _tight_mw()
+        sess = "s-progress-stale-timer"
+        stopped: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            timer_call_register,
+            "unregister",
+            lambda sid, name: stopped.append((sid, name)) or True,
+        )
+
+        for _ in range(3):
+            mw._check_progress(sess)
+
+        assert state_register_mem.get_state(sess, _STATE_KEY_KILLED, False) is True
+        assert stopped == [(sess, _TIMER_NAME)]
 
     def test_progress_check_counts_again_after_skip_cleared(self):
         mw = _tight_mw()

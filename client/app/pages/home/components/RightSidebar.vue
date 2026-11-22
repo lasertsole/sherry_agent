@@ -78,6 +78,59 @@
             :class="store.maximized ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
             class="text-xs"></i>
         </button>
+        <!-- Functional panel groups (S6): 26 flat kinds are hard to scan, so they
+             are browsed three at a time. Icon + short label stay legible in the
+             narrow sidebar; search below reaches every panel across all groups. -->
+        <div
+          class="flex shrink-0 items-center gap-0.5"
+          data-test="panel-groups">
+          <button
+            v-for="[key, def] in GROUP_ENTRIES"
+            :key="key"
+            type="button"
+            class="flex h-6 items-center gap-1 rounded-md px-1.5 text-xs transition-colors"
+            :class="
+              key === store.activeGroup
+                ? 'bg-theme-main/10 font-medium text-theme-main'
+                : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+            "
+            :data-test="`group-${key}`"
+            :title="t(`rightSidebar.group.${key}`)"
+            @click="setGroup(key)">
+            <i
+              :class="def.icon"
+              class="text-xs" />
+            <span>{{ t(`rightSidebar.group.${key}`) }}</span>
+          </button>
+        </div>
+        <!-- Panel search (S6): matches localized labels across every group; a
+             pick opens that panel, which also switches to its functional group. -->
+        <div
+          class="relative shrink-0"
+          data-test="panel-search-wrap">
+          <input
+            v-model="searchQuery"
+            type="text"
+            class="h-6 w-20 rounded-md border border-solid border-gray-200 bg-transparent px-2 text-xs outline-none focus:border-theme-main dark:border-gray-700"
+            :placeholder="t('rightSidebar.searchPanel')"
+            data-test="panel-search" />
+          <div
+            v-if="searchResults.length > 0"
+            class="absolute left-0 top-7 z-20 w-40 rounded-md border border-solid border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-[#2a2a36]">
+            <button
+              v-for="result in searchResults"
+              :key="result.kind"
+              type="button"
+              class="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-xs hover:bg-gray-100 dark:hover:bg-gray-700"
+              :data-test="`search-result-${result.kind}`"
+              @click="selectPanel(result.kind)">
+              <i
+                :class="PANEL_GROUPS[result.group].icon"
+                class="text-gray-400" />
+              <span class="truncate">{{ result.label }}</span>
+            </button>
+          </div>
+        </div>
         <div
           class="flex shrink-0 items-center gap-0.5 rounded-full border border-solid border-gray-200/80 bg-gray-100/80 p-0.5 dark:border-gray-700/80 dark:bg-gray-800/80"
           data-test="scope-tabs">
@@ -109,7 +162,7 @@
             :data-overflowing="isOverflowing ? 'true' : 'false'"
             data-test="tabs-viewport">
             <button
-              v-for="tab in store.tabsInScope(store.activeScope)"
+              v-for="tab in stripTabs"
               :key="tab.id"
               type="button"
               class="group flex h-7 min-w-15 max-w-39 flex-[1_1_9.75rem] items-center gap-1 overflow-hidden whitespace-nowrap rounded-md px-1.5 pr-2 text-xs transition-colors"
@@ -143,7 +196,7 @@
                 @click.stop="emit('close-tab', tab)"></i>
             </button>
             <span
-              v-if="store.tabsInScope(store.activeScope).length === 0"
+              v-if="stripTabs.length === 0"
               class="text-xs text-gray-400 dark:text-gray-500"
               data-test="scope-empty">
               {{ t('rightSidebar.scopeEmpty') }}
@@ -193,8 +246,10 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, useTem
 import type { Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
+  PANEL_GROUPS,
   RIGHT_SIDEBAR_PANEL_MIN_HEIGHT,
   RIGHT_SIDEBAR_PANEL_MIN_WIDTH,
+  type PanelGroup,
   type RightSidebarPanelKind,
   type RightSidebarScope,
   type RightSidebarTab
@@ -255,6 +310,49 @@ const tabLabel = (tab: RightSidebarTab): string => {
 /** The group tabs, in display order (session first, then the global tools). */
 const SCOPES: ReadonlyArray<RightSidebarScope> = ['session', 'global'];
 
+/** Functional-group definitions for the group pill row (S6). */
+const GROUP_ENTRIES = Object.entries(PANEL_GROUPS) as Array<
+  [PanelGroup, { labelKey: string; icon: string; kinds: RightSidebarPanelKind[] }]
+>;
+
+/**
+ * Tabs the strip renders (S6): the active functional group's tabs when the store
+ * exposes the grouping API, otherwise the legacy scope list. The fallback keeps
+ * older store doubles (unit tests mounting this component with a fake store)
+ * working unchanged — the group feature is additive.
+ */
+const stripTabs = computed<RightSidebarTab[]>(() => store.groupTabs ?? store.tabsInScope(store.activeScope));
+
+/**
+ * Switch the visible functional group (no-op against doubles without the API).
+ * @param group
+ */
+function setGroup(group: PanelGroup): void {
+  if (store.activeGroup !== undefined) store.activeGroup = group;
+}
+
+/** A search hit: the panel kind, its localized label, and its functional group. */
+interface PanelSearchResult {
+  kind: RightSidebarPanelKind;
+  label: string;
+  group: PanelGroup;
+}
+/** Current search box text. */
+const searchQuery = ref('');
+/** Cross-group matches for the current query; empty while the box is blank. */
+const searchResults = computed<PanelSearchResult[]>(() => {
+  if (!searchQuery.value.trim()) return [];
+  return store.searchPanels?.(searchQuery.value, key => t(key)) ?? [];
+});
+/**
+ * Open a searched panel (openTab reveals its group) and clear the box.
+ * @param kind
+ */
+function selectPanel(kind: RightSidebarPanelKind): void {
+  store.openTab(kind);
+  searchQuery.value = '';
+}
+
 /**
  * Fade the title's last few pixels instead of truncating it with an ellipsis.
  *
@@ -271,7 +369,7 @@ const TAB_TITLE_MASK: Record<string, string> = {
 /** The tab row's scroller (overflow amount + fade sides). */
 const tabsViewport = useTemplateRef<HTMLElement>('tabsViewport');
 /** Tabs currently on screen: the active group's list. */
-const visibleTabCount = computed(() => store.tabsInScope(store.activeScope).length);
+const visibleTabCount = computed(() => stripTabs.value.length);
 const { isOverflowing, showLeftMask, showRightMask } = useTabsOverflow(tabsViewport, visibleTabCount);
 
 /** Lazy panel components: the chunk loads when a tab of that kind first mounts. */
@@ -301,7 +399,9 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
   terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
   whiteboard: defineAsyncComponent(() => import('./WhiteboardPanel.vue')),
-  sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue'))
+  sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue')),
+  expertEdit: defineAsyncComponent(() => import('./ExpertEditPanel.vue')),
+  highRiskGuard: defineAsyncComponent(() => import('./HighRiskGuardPanel.vue'))
 };
 
 /**
@@ -495,6 +595,17 @@ onBeforeUnmount(() => {
       "trajectory": "轨迹",
       "browser": "浏览器",
       "terminal": "终端",
+      "whiteboard": "白板",
+      "sideChat": "侧聊",
+      "tokenBudget": "Token 预算",
+      "expertEdit": "专家编辑",
+      "highRiskGuard": "高危防护",
+      "group": {
+        "session": "会话",
+        "tools": "工具",
+        "config": "配置"
+      },
+      "searchPanel": "搜索面板...",
       "scopes": {
         "session": "当前会话",
         "global": "全局"
@@ -532,6 +643,17 @@ onBeforeUnmount(() => {
       "trajectory": "Trajectory",
       "browser": "Browser",
       "terminal": "Terminal",
+      "whiteboard": "Whiteboard",
+      "sideChat": "Side chat",
+      "tokenBudget": "Token budget",
+      "expertEdit": "Expert editor",
+      "highRiskGuard": "High-risk guard",
+      "group": {
+        "session": "Session",
+        "tools": "Tools",
+        "config": "Config"
+      },
+      "searchPanel": "Search panels...",
       "scopes": {
         "session": "This session",
         "global": "Global"
@@ -569,6 +691,17 @@ onBeforeUnmount(() => {
       "trajectory": "軌跡",
       "browser": "ブラウザ",
       "terminal": "ターミナル",
+      "whiteboard": "ホワイトボード",
+      "sideChat": "サイドチャット",
+      "tokenBudget": "Token 予算",
+      "expertEdit": "エキスパート編集",
+      "highRiskGuard": "高リスク保護",
+      "group": {
+        "session": "セッション",
+        "tools": "ツール",
+        "config": "設定"
+      },
+      "searchPanel": "パネルを検索...",
       "scopes": {
         "session": "現在のセッション",
         "global": "グローバル"
@@ -606,6 +739,17 @@ onBeforeUnmount(() => {
       "trajectory": "궤적",
       "browser": "브라우저",
       "terminal": "터미널",
+      "whiteboard": "화이트보드",
+      "sideChat": "사이드 채팅",
+      "tokenBudget": "Token 예산",
+      "expertEdit": "전문가 편집",
+      "highRiskGuard": "고위험 보호",
+      "group": {
+        "session": "세션",
+        "tools": "도구",
+        "config": "설정"
+      },
+      "searchPanel": "패널 검색...",
       "scopes": {
         "session": "현재 세션",
         "global": "전역"

@@ -1,5 +1,9 @@
 # DeepSWE 本地模式运行记录
 
+> **历史存档（2026-11-22）**：`--local` 模式（`evals/deepswe/local.py`）已随容器
+> 路径在 podman 下的打通而删除；本文件保留其历史测量，不再更新。现行容器模式的
+> 运行结果记录在各自的 `evals/results/deepswe/<run_id>/`。
+
 本文件记录 `--local` 模式的真实运行结果。报告和补丁在 gitignored 的
 `evals/results/deepswe-local/<run_id>/`；任务 checkout 在
 `~/.cache/sherry_evals/deepswe-local-work/<run_id>/`。本地模式不替代官方
@@ -151,10 +155,3 @@ JSON 读取入口；不是 harness 错误也不是 P2P 回归。
 
 ---
 
-## 2026-11-03 — 未运行
-
-- 按“SWE-bench HARD 全通过才跑 DeepSWE”的约定跳过。
-- 2026-11-03 的 SWE-bench HARD 重跑结果为 **0/2**（见
-  `evals/swebench/RESULTS.md` 的 `20261103_010944`）：Django 只放宽了
-  `on_conflict` 条件，未真正生成 `DO UPDATE` 路径；Sympy 在 90 次模型调用预算内
-  没有产出 diff。

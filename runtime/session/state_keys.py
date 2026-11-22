@@ -209,6 +209,14 @@ class StateKey(StrEnum):
     HITL_TURN_INTERRUPTED = "hitl:turn_interrupted"
     #: Tools a human already confirmed once in this session (first-call gate).
     HITL_CONFIRMED_TOOLS = "hitl:confirmed_tools"
+    #: High-risk keyword approvals for THIS session: a list of
+    #: ``{"keyword", "tool", "args_hash"}`` entries. The HITL approval handler
+    #: appends one after a human approves; a re-spawned TaskFlow step receives
+    #: its own entry from ``approval_context``.
+    KEYWORD_APPROVALS = "hitl:keyword_approvals"
+    #: The session whose keyword approvals a child shares with its parent (the
+    #: ROOT main session). Absent on a main session.
+    APPROVAL_SCOPE_PARENT = "hitl:approval_scope_parent"
 
     EXTERNAL_PATH_YOLO = "external_path_yolo"
     EXTERNAL_PATH_ALLOWLIST = "external_path_allowlist"

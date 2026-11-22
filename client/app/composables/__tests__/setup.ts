@@ -11,6 +11,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { config } from '@vue/test-utils';
 import { vDebounce } from '~/directives/debounce';
 import { vSafeHtml } from '~/directives/safeHtml';
+import { useSystemNotices } from '~/composables/use-system-notice';
 
 // Pinia: the real stores (chat-background / todo / subagent / connection) are
 // consumed by components; Nuxt installs Pinia as a plugin, while bare Vitest
@@ -89,6 +90,9 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   authRequired: false,
   authEnabled: false,
   hasAccount: false,
+  usernameRequired: false,
+  tenants: [],
+  activeTenant: '',
   checked: false,
   busy: false,
   errorCode: null,
@@ -98,9 +102,11 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   disableAuth: vi.fn(async () => true),
   enableAuth: vi.fn(async () => true),
   fetchUser: vi.fn(async () => null),
+  loadTenants: vi.fn(async () => {}),
   login: vi.fn(async () => true),
   logout: vi.fn(async () => {}),
   setupAccount: vi.fn(async () => true),
+  switchTenant: vi.fn(async () => true),
   updateAccount: vi.fn(async () => true)
 }));
 
@@ -170,6 +176,11 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   nextImage: vi.fn(),
   prevImage: vi.fn()
 }));
+
+// Nuxt auto-import consumed by `SystemNoticeStrip.vue` (transient system.notice
+// cards). The REAL composable: its module-scope state is process-global, so the
+// strip and its tests observe the same list.
+(globalThis as any).useSystemNotices = () => useSystemNotices();
 
 // Nuxt auto-imports consumed at setup top-level by `home/index.vue` (:246-247)
 // and `SessionSidebar.vue` (:290-292). No vue-router is installed in bare
@@ -485,6 +496,9 @@ vi.stubGlobal('useRightSidebarStore', () =>
     tabs: [],
     activeTabId: null,
     activeScope: 'global',
+    activeGroup: 'session',
+    groupTabs: [],
+    searchPanels: () => [],
     width: 420,
     toggle: () => {},
     expand: () => {},

@@ -10,8 +10,13 @@
  * Both delegate here so the reserved-segment set stays single-sourced.
  */
 
-/** Route segments that are never a session id (the shell route). */
-export const RESERVED_SESSION_SEGMENTS = ['home'] as const;
+/**
+ * Route segments that are never a session id. `home` is the shell route;
+ * `meeting` is the S4 conference route (`/meeting/:id`), whose trailing segment
+ * is a MEETING id — parsing it as a session id would pollute session-scoped
+ * taskflow / todo state with a meeting id.
+ */
+export const RESERVED_SESSION_SEGMENTS = ['home', 'meeting'] as const;
 
 /**
  * Resolve the session id from a URL pathname: its last non-empty segment,

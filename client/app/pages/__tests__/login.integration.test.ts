@@ -21,6 +21,8 @@ const bridge = vi.hoisted(() => ({
   updateAccountRequest: vi.fn(),
   disableAuthRequest: vi.fn(),
   enableAuthRequest: vi.fn(),
+  fetchTenants: vi.fn(),
+  switchTenantRequest: vi.fn(),
   fetchWsTicket: vi.fn()
 }));
 vi.mock('~/composables/bridge/auth', () => bridge);
@@ -97,6 +99,15 @@ describe('login page', () => {
     await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('try again in 5s'));
   });
 
+  it('explains an account that has no cell assigned', async () => {
+    bridge.loginRequest.mockRejectedValue(Object.assign(new Error('no cell'), { code: 'no_tenant' }));
+    const wrapper = await mountLogin();
+
+    await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
+    await wrapper.get('form').trigger('submit');
+    await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('尚未分配'));
+  });
+
   it('renders a uniform failure and stays put', async () => {
     bridge.loginRequest.mockRejectedValue(
       Object.assign(new Error('incorrect password'), { code: 'invalid_credentials' })
@@ -108,5 +119,23 @@ describe('login page', () => {
     await vi.waitFor(() => expect(wrapper.get('[data-test="login-error"]').text()).toContain('密码错误'));
 
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('requires a username when the Ingress identifies accounts by name', async () => {
+    const auth = useAuthStore();
+    auth.usernameRequired = true;
+    bridge.loginRequest.mockResolvedValue({ user: { id: 1 }, expiresIn: 43200 });
+    const wrapper = await mountLogin();
+
+    await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
+    await flushPromises();
+    expect(wrapper.get('[data-test="login-submit"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.get('[data-test="login-username"]').setValue('alice');
+    await flushPromises();
+    expect(wrapper.get('[data-test="login-submit"]').attributes('disabled')).toBeUndefined();
+
+    await wrapper.get('form').trigger('submit');
+    await vi.waitFor(() => expect(bridge.loginRequest).toHaveBeenCalledWith('hunter2-long', 'alice'));
   });
 });

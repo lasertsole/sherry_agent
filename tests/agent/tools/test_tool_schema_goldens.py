@@ -74,7 +74,7 @@ TERMINAL_SCHEMA = {
             "anyOf": [{"type": "integer"}, {"type": "null"}],
             "default": None,
             "description": (
-                "Optional max execution time in seconds. Defaults to 30s, max 600s. "
+                "Optional max execution time in seconds. Defaults to 120s, max 600s. "
                 "Use a longer value for compilation, installation, or long builds."
             ),
             "title": "Timeout",

@@ -2,12 +2,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import {
+  PANEL_GROUPS,
   RECENT_CLOSED_LIMIT,
   RIGHT_SIDEBAR_DEFAULT_WIDTH,
   RIGHT_SIDEBAR_MAX_WIDTH_RATIO,
   RIGHT_SIDEBAR_MIN_WIDTH,
   RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
   clampSidebarWidth,
+  groupOfKind,
+  type PanelGroup,
   type RightSidebarPanelKind,
   type RightSidebarTab,
   useRightSidebarStore
@@ -455,7 +458,8 @@ describe('stores/right-sidebar', () => {
       'cron',
       'extend',
       'webSearch',
-      'account'
+      'account',
+      'expertEdit'
     ];
     globalKinds.forEach((kind, index) => {
       store.rememberClosed({ id: `global-${index}`, kind, scope: 'global' }, 'parent');
@@ -465,5 +469,70 @@ describe('stores/right-sidebar', () => {
     expect(globalEntries).toHaveLength(RECENT_CLOSED_LIMIT);
     expect(globalEntries[0].kind).toBe(globalKinds.at(-1));
     expect(globalEntries.map(entry => entry.kind)).not.toContain('logs');
+  });
+});
+
+/** UI upgrade S6: functional panel groups + cross-group search. */
+describe('stores/right-sidebar: panel groups (S6)', () => {
+  beforeEach(() => {
+    setActivePinia(createTestingPinia({ stubActions: false }));
+  });
+
+  it('PANEL_GROUPS covers every panel kind exactly once', () => {
+    const allKinds = Object.values(PANEL_GROUPS).flatMap(def => def.kinds);
+    const unique = new Set(allKinds);
+    expect(unique.size).toBe(allKinds.length);
+    // The S2 editor plus every pre-existing kind must be classified.
+    expect(unique).toContain('expertEdit');
+    expect(unique).toContain('sideChat');
+    expect(unique).toContain('systemConfig');
+  });
+
+  it('groupOfKind maps known kinds and falls back to config', () => {
+    expect(groupOfKind('sideChat')).toBe('session');
+    expect(groupOfKind('browser')).toBe('tools');
+    expect(groupOfKind('systemConfig')).toBe('config');
+    // An unclassified kind degrades to config instead of throwing (kill criteria).
+    expect(groupOfKind('unknown-kind' as RightSidebarPanelKind)).toBe('config');
+  });
+
+  it('openTab auto-switches to the panel functional group', () => {
+    const store = useRightSidebarStore();
+    store.openTab('browser'); // tools
+    expect(store.activeGroup).toBe('tools');
+    store.openTab('systemConfig'); // config
+    expect(store.activeGroup).toBe('config');
+    store.openTab('sideChat'); // session
+    expect(store.activeGroup).toBe('session');
+  });
+
+  it('groupTabs only returns tabs of the active group', () => {
+    const store = useRightSidebarStore();
+    store.openTab('sideChat'); // session group
+    store.openTab('browser'); // tools group
+    store.openTab('logs'); // config group
+
+    store.activeGroup = 'session';
+    expect(store.groupTabs.every(tab => groupOfKind(tab.kind) === 'session')).toBe(true);
+    expect(store.groupTabs.map(tab => tab.kind)).toContain('sideChat');
+
+    store.activeGroup = 'tools' as PanelGroup;
+    expect(store.groupTabs.map(tab => tab.kind)).toEqual(['browser']);
+    // Other groups' tabs are hidden, not lost.
+    expect(store.tabs).toHaveLength(3);
+  });
+
+  it('searchPanels matches localized labels across all groups', () => {
+    const store = useRightSidebarStore();
+    const labels: Record<string, string> = {
+      'rightSidebar.browser': '浏览器 / Browser',
+      'rightSidebar.logs': '日志查看 / Logs',
+      'rightSidebar.systemConfig': '系统配置 / Config'
+    };
+    const t = (key: string) => labels[key] ?? 'zzz';
+    expect(store.searchPanels('browser', t).some(r => r.kind === 'browser' && r.group === 'tools')).toBe(true);
+    expect(store.searchPanels('日志', t).some(r => r.kind === 'logs' && r.group === 'config')).toBe(true);
+    expect(store.searchPanels('zzzz', t)).toEqual([]);
+    expect(store.searchPanels('', t)).toEqual([]);
   });
 });

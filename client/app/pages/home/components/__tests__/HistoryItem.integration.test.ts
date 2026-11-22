@@ -127,3 +127,46 @@ describe('HistoryItem.vue: the branch mark', () => {
     expect(wrapper.find('[data-test="session-fork-badge"]').exists()).toBe(false);
   });
 });
+
+/** UI upgrade S5: each session type gets its own icon + metadata badge. */
+describe('HistoryItem.vue — session type markers (S5)', () => {
+  it('defaults to the chat icon when no type is present', () => {
+    const wrapper = mountItem({ historyRecord: record, isActive: false });
+    expect(wrapper.get('[data-test="session-type-icon"]').classes()).toContain('pi-comments');
+    expect(wrapper.find('[data-test="session-team-badge"]').exists()).toBe(false);
+  });
+
+  it('shows the team icon + team name badge', () => {
+    const wrapper = mountItem({
+      historyRecord: { ...record, type: 'team', teamName: 'web-team' },
+      isActive: false
+    });
+    expect(wrapper.get('[data-test="session-type-icon"]').classes()).toContain('pi-users');
+    expect(wrapper.get('[data-test="session-team-badge"]').text()).toBe('web-team');
+  });
+
+  it('shows the meeting icon + topic badge', () => {
+    const wrapper = mountItem({
+      historyRecord: { ...record, type: 'meeting', meetingTopic: '架构评审' },
+      isActive: false
+    });
+    expect(wrapper.get('[data-test="session-type-icon"]').classes()).toContain('pi-video');
+    expect(wrapper.get('[data-test="session-meeting-badge"]').text()).toBe('架构评审');
+  });
+
+  it('infers type from backend metadata when the type field is absent', () => {
+    const meta = record as SessionRecord & { metadata: Record<string, string> };
+    const team = mountItem({
+      historyRecord: { ...meta, metadata: { team_name: 'legacy-team' } },
+      isActive: false
+    });
+    expect(team.get('[data-test="session-type-icon"]').classes()).toContain('pi-users');
+    expect(team.get('[data-test="session-team-badge"]').text()).toBe('legacy-team');
+
+    const meeting = mountItem({
+      historyRecord: { ...meta, metadata: { meeting_id: 'm-9' } },
+      isActive: false
+    });
+    expect(meeting.get('[data-test="session-type-icon"]').classes()).toContain('pi-video');
+  });
+});

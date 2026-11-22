@@ -178,9 +178,50 @@ async def _taskflow_dispatch_locked(
     records: list[dict] = []
     failures: list[tuple[str, Exception]] = []
 
+    def _resolve_expert(step: dict) -> None:
+        """Merge a named expert's registry config into the step (in place).
+
+        Expert-panel spike: a step carrying ``expert: <name>`` loads the
+        definition at dispatch time and applies the spawn overrides the step did
+        NOT set itself (step-level values win). The persona and the skill
+        whitelist ride step_spawn_kwargs → dispatch_child → SpawnRequest; the
+        whitelist also merges into the step's ``skills`` so the SKILL.md
+        prepend carries the expert's bound skills. A missing expert is a
+        dispatch failure (returned through the normal failure channel).
+        """
+        expert_name = str(step.get("expert") or "").strip()
+        if not expert_name:
+            return
+        from agent.tools.expert_registry import load_expert
+
+        expert = load_expert(expert_name)  # ExpertRegistryError → dispatch failure
+        if not step.get("persona_prompt"):
+            step["persona_prompt"] = expert.persona_prompt
+        whitelist = list(expert.skills)
+        for skill in step.get("skills_whitelist") or []:
+            if skill not in whitelist:
+                whitelist.append(skill)
+        if whitelist:
+            step["skills_whitelist"] = whitelist
+            merged = [sk for sk in step.get("skills") or []]
+            for skill in whitelist:
+                if skill not in merged:
+                    merged.append(skill)
+            step["skills"] = merged
+        if not step.get("step_model") and expert.model:
+            step["step_model"] = expert.model
+        if not step.get("step_timeout_seconds") and expert.step_timeout_seconds:
+            step["step_timeout_seconds"] = expert.step_timeout_seconds
+        if step.get("goal_max_turns") is None and expert.goal_max_turns is not None:
+            step["goal_max_turns"] = expert.goal_max_turns
+
     async def _spawn_one(sid: str) -> tuple[str, str | None, Exception | None]:
         """Spawn one step's child; never raises — a failure is returned."""
         step = by_id[sid]
+        try:
+            _resolve_expert(step)
+        except Exception as exc:
+            return sid, None, exc
         feedback = str(step.get("judge_feedback") or "").strip()
         task_text = with_judge_feedback(
             build_task_with_bindings(

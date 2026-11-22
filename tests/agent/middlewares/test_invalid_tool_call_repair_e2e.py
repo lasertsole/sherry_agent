@@ -1,7 +1,7 @@
 """Hermetic end-to-end: an invalid tool call no longer ends the turn.
 
 Drives a REAL ``create_agent`` graph (model → tool routing included) with a
-scripted fake model, on the exact failure shape from SWE-bench run
+scripted fake model, on the exact failure shape from an eval run
 20261017_003529: the model's only call has unquoted, unparseable JSON
 arguments. Without the middleware the turn ends with a narration-only answer
 and the tool never runs (the pre-fix behavior); with

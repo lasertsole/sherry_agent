@@ -23,11 +23,13 @@ import json
 import difflib
 from pathlib import Path
 from typing import override
-from difflib import SequenceMatcher
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from loguru import logger
 
-from langchain_core.callbacks import CallbackManagerForToolRun
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForToolRun,
+    CallbackManagerForToolRun,
+)
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import SessionId
 from agent.tools.pub_base.shadow_git import ensure_checkpoint
@@ -52,6 +54,8 @@ from agent.tools.pub_base import (
 )
 from agent.tools.pub_base.evidence_recorder import invalidates_evidence
 
+from .patch_apply import apply_multi_file_patch, closest_lines
+
 
 # ── Diff helper ──────────────────────────────────────────────────────────
 
@@ -72,55 +76,57 @@ def _unified_diff(old: str, new: str, path: str) -> str:
 def _find_closest_lines(
     old_string: str, content: str, context: int = 2, max_results: int = 3
 ) -> str:
-    if not old_string or not content:
-        return ""
-    old_lines = old_string.splitlines()
-    content_lines = content.splitlines()
-    if not old_lines or not content_lines:
-        return ""
-    anchor = next((ln.strip() for ln in old_lines if ln.strip()), "")
-    if not anchor:
-        return ""
-    scored = []
-    for i, line in enumerate(content_lines):
-        s = line.strip()
-        if not s:
-            continue
-        r = SequenceMatcher(None, anchor, s).ratio()
-        if r > 0.3:
-            scored.append((r, i))
-    if not scored:
-        return ""
-    scored.sort(key=lambda x: -x[0])
-    parts, seen = [], set()
-    for _, idx in scored[:max_results]:
-        start = max(0, idx - context)
-        end = min(len(content_lines), idx + len(old_lines) + context)
-        key = (start, end)
-        if key in seen:
-            continue
-        seen.add(key)
-        snippet = "\n".join(
-            f"{start + j + 1:4d}| {content_lines[start + j]}" for j in range(end - start)
-        )
-        parts.append(snippet)
-    return "\n---\n".join(parts) if parts else ""
+    """Backward-compatible alias for the shared hint helper (patch_apply)."""
+    return closest_lines(old_string, content, context=context, max_results=max_results)
 
 
 # ── LangChain tool ───────────────────────────────────────────────────────
 
 
 class PatchFileInput(BaseModel):
-    file_path: str = Field(description="Path to the file to patch")
-    old_string: str = Field(
-        description="Text to find in the file (must be unique unless replace_all=True)"
+    """Two modes: str_replace (default) and a multi-file patch document.
+
+    ``patch`` non-empty selects the multi-file mode and the three single-file
+    arguments are ignored; otherwise all three are required.
+    """
+
+    file_path: str | None = Field(
+        default=None, description="Path to the file to patch (str_replace mode)"
     )
-    new_string: str = Field(description="Replacement text")
+    old_string: str | None = Field(
+        default=None,
+        description="Text to find in the file (must be unique unless replace_all=True)",
+    )
+    new_string: str | None = Field(default=None, description="Replacement text")
     replace_all: bool = Field(
         default=False,
         description="If True, replace all occurrences of old_string; otherwise require uniqueness",
     )
+    patch: str | None = Field(
+        default=None,
+        description=(
+            "Multi-file patch document starting with '*** Begin Patch' and ending with "
+            "'*** End Patch'. Supports *** Add File / *** Update File / *** Delete File / "
+            "*** Move to, with '@@' hunks inside an Update. When set, file_path/old_string/"
+            "new_string are ignored."
+        ),
+    )
     session_id: SessionId = ""
+
+    @model_validator(mode="after")
+    def _require_one_mode(self) -> "PatchFileInput":
+        if (self.patch or "").strip():
+            return self
+        missing = [
+            name
+            for name in ("file_path", "old_string", "new_string")
+            if getattr(self, name) is None
+        ]
+        if missing:
+            raise ValueError(
+                "str_replace mode requires " + ", ".join(missing) + " (or pass `patch`)"
+            )
+        return self
 
 
 class PatchFileTool(BaseTool):
@@ -129,7 +135,13 @@ class PatchFileTool(BaseTool):
     description: str = (
         "Patch a file by replacing old_string with new_string. "
         "Uses fuzzy matching to handle minor whitespace/indentation differences. "
-        "Prefer this over write_file for targeted edits."
+        "Prefer this over write_file for targeted edits. "
+        "For multi-file changes, pass `patch` instead: a document starting with "
+        "'*** Begin Patch' and ending with '*** End Patch', supporting "
+        "'*** Add File', '*** Update File' (with '@@' hunks of context/+/- lines), "
+        "'*** Delete File' and '*** Move to'. The whole patch is preflight-checked "
+        "(paths, file existence, hunk matching) before any file is written; a "
+        "rejected patch changes nothing."
     )
     metadata: dict = {
         "idempotent": False,
@@ -145,12 +157,22 @@ class PatchFileTool(BaseTool):
     @invalidates_evidence()
     def _core(
         self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
+        file_path: str | None,
+        old_string: str | None,
+        new_string: str | None,
         replace_all: bool = False,
         session_id: str = "",
+        patch: str | None = None,
     ) -> str:
+        if (patch or "").strip():
+            # Multi-file mode: parse → preflight → commit (see patch_apply).
+            # The single-file arguments are ignored when a patch is present.
+            return apply_multi_file_patch(str(patch), session_id)
+        if file_path is None or old_string is None or new_string is None:
+            return tool_error(
+                "str_replace mode requires file_path, old_string and new_string (or pass `patch`)"
+            )
+
         root, resolved, error = resolve_tool_path(file_path, session_id, "patch file", mode="write")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
@@ -316,31 +338,33 @@ class PatchFileTool(BaseTool):
     @override
     def _run(
         self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
+        file_path: str | None = None,
+        old_string: str | None = None,
+        new_string: str | None = None,
         replace_all: bool = False,
         session_id: str = "",
+        patch: str | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = resolve_tool_session_id(session_id, run_manager)
-        return self._core(file_path, old_string, new_string, replace_all, session_id)
+        return self._core(file_path, old_string, new_string, replace_all, session_id, patch)
 
     @override
     async def _arun(
         self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
+        file_path: str | None = None,
+        old_string: str | None = None,
+        new_string: str | None = None,
         replace_all: bool = False,
         session_id: str = "",
-        run_manager: CallbackManagerForToolRun | None = None,
+        patch: str | None = None,
+        run_manager: AsyncCallbackManagerForToolRun | None = None,
     ) -> str:
         import asyncio
 
         session_id = resolve_tool_session_id(session_id, run_manager)
         return await asyncio.to_thread(
-            self._core, file_path, old_string, new_string, replace_all, session_id
+            self._core, file_path, old_string, new_string, replace_all, session_id, patch
         )
 
 

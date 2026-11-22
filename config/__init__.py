@@ -1,3 +1,6 @@
+import os
+from collections.abc import Mapping
+
 from .path import (
     ROOT_DIR as ROOT_DIR,
     ENV_PATH as ENV_PATH,
@@ -16,7 +19,9 @@ from .path import (
     SKILLS_SNAPSHOT_FILE as SKILLS_SNAPSHOT_FILE,
     SKILL_DISCOVERY_ROOTS as SKILL_DISCOVERY_ROOTS,
     USER_SKILLS_DIR as USER_SKILLS_DIR,
+    EXPERTS_DIR as EXPERTS_DIR,
     APP_HOME as APP_HOME,
+    DAEMON_HOME as DAEMON_HOME,
     LOG_DIR as LOG_DIR,
     MCP_SERVERS_DIR as MCP_SERVERS_DIR,
     is_allowed_skill_path as is_allowed_skill_path,
@@ -44,3 +49,18 @@ from .features import GATEWAY as GATEWAY
 # defaults keep loopback for local development.
 API_HOST: str = GATEWAY["api_host"]
 API_PORT: int = GATEWAY["api_port"]
+
+
+def resolve_public_base_url(source: Mapping[str, str] | None = None) -> str:
+    """The origin clients use to reach this deployment.
+
+    ``PUBLIC_BASE_URL`` wins (an Ingress/reverse-proxy origin); unset keeps the
+    historical ``http://API_HOST:API_PORT`` so a checkout is unchanged. Media
+    URLs must never expose the loopback bind address to a remote client.
+    """
+    env = os.environ if source is None else source
+    configured = str(env.get("PUBLIC_BASE_URL", "")).strip().rstrip("/")
+    return configured or f"http://{API_HOST}:{API_PORT}"
+
+
+PUBLIC_BASE_URL: str = resolve_public_base_url()

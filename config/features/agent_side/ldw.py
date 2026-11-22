@@ -29,7 +29,7 @@ LDW: LdwConfig = {
     "enabled": True,
     "min_replays": 3,
     "script_max_bytes": 65_536,
-    "journal_path": "src/data/workflow_runs.db",
+    "journal_path": "data/workflow_runs.db",
     "auto_degrade_enabled": True,
     "repair_enabled": True,
     "real_replay_timeout_s": 900.0,

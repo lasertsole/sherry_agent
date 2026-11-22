@@ -131,10 +131,14 @@ def _merge_steps(
             old_deps = sorted(str(dep).strip() for dep in old.get("depends_on") or [])
             if sorted(new["depends_on"]) != old_deps:
                 return None, f"Error: step '{sid}' is done; its depends_on cannot be changed"
+        elif old_status == StepStatus.SKIPPED.value and new_status == StepStatus.READY.value:
+            # Explicit reopen: a skipped step was never attempted.
+            pass
         elif new_status not in _STRUCTURAL_STATUSES:
             return None, (
-                f"Error: step '{sid}' (status={old_status}) cannot become status={new_status}; "
-                "use taskflow_step(action='dispatch') or taskflow_step(action='resume')"
+                f"Error: step '{sid}' (status={old_status}) cannot become status={new_status}. "
+                "A skipped step is reopened with status=ready; a dispatched step is "
+                "completed through taskflow_step(action='resume'); a done step is final"
             )
         if old_status in (StepStatus.DISPATCHED.value, StepStatus.DONE.value):
             old_key = str(old.get("child_session_key") or "").strip()

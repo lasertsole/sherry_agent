@@ -77,8 +77,7 @@ def upload_root(tmp_path, monkeypatch):
     temp = tmp_path / "temp"
     monkeypatch.setattr(upload_chunked, "SRC_DIR", source)
     monkeypatch.setattr(upload_chunked, "TEMP_DIR", temp)
-    monkeypatch.setattr(upload_chunked, "API_HOST", "127.0.0.1")
-    monkeypatch.setattr(upload_chunked, "API_PORT", 8080)
+    monkeypatch.setattr(upload_chunked, "PUBLIC_BASE_URL", "http://127.0.0.1:8080")
     return source, temp
 
 

@@ -22,6 +22,7 @@ from .web import build_web_search_tool as build_web_search_tool
 from .image_gen import build_image_gen_tool as build_image_gen_tool
 from .python_repl import build_python_repl_tool
 from .question import build_question_tool
+from .high_risk_guard import build_high_risk_guard_tool
 from .compact_now import build_compact_now_tool
 from .plan_mode import build_plan_mode_tools
 from .memory import build_memory_tool, memory_store as memory_store
@@ -68,6 +69,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_taskflow_tools,
     build_todolist_tools,
     build_question_tool,
+    build_high_risk_guard_tool,
     build_plan_mode_tools,
     build_compact_now_tool,
     build_workflow_replay_tool,

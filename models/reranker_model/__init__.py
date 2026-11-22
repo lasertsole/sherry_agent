@@ -16,7 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from config import APP_HOME, LOG_DIR
+from config import DAEMON_HOME, LOG_DIR
 from config.features import LOCAL_DAEMONS
 from models.daemon.base import (
     DaemonError,
@@ -45,7 +45,7 @@ _RERANKER_DAEMON = DaemonSpec(
     name="reranker",
     host=LOCAL_DAEMONS["host"],
     port=LOCAL_DAEMONS["reranker_port"],
-    pid_path=APP_HOME / ".reranker_daemon.pid",
+    pid_path=DAEMON_HOME / ".reranker_daemon.pid",
     import_fn="models.reranker_model.daemon",
     ready_wait_s=LOCAL_DAEMONS["reranker_ready_wait_s"],
     liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],

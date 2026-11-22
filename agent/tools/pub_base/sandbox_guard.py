@@ -43,7 +43,8 @@ class SandboxGuardMixin:
         for a MAIN turn, and headless main turns auto-deny it. A subagent or
         background caller has no such middleware, so it must refuse instead of
         silently falling back to the regex blacklist (the fail-closed half of
-        the Windows/no-bwrap gap). ``OFF`` is an explicit operator choice and
+        the no-usable-backend gap — an unregistered platform, a missing
+        binary, or a failing probe). ``OFF`` is an explicit operator choice and
         ``REQUIRED`` already raises from ``get_backend``.
         """
         if not sandbox or read_policy() is not SandboxPolicy.AUTO:

@@ -25,11 +25,13 @@ __all__ = ["sandbox_status", "check_sandbox_at_boot", "STRICT_BOOT_ENV"]
 #: Opt-in: refuse to start when REQUIRED is unmet (default: warn only).
 STRICT_BOOT_ENV = "SANDBOX_STRICT_BOOT"
 
-#: How to make a backend usable (Linux first, then macOS).
+#: How to make a backend usable (Linux first, then macOS, then Windows).
 _FIX_HINTS = (
     "(Linux) install bubblewrap and allow user namespaces — "
     "`sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` on Ubuntu 24.04+, or "
-    "`sudo chmod u+s $(command -v bwrap)`; (macOS) ensure /usr/bin/sandbox-exec exists"
+    "`sudo chmod u+s $(command -v bwrap)`; (macOS) ensure /usr/bin/sandbox-exec exists; "
+    "(Windows) if a host policy blocks CreateRestrictedToken or CreateJobObject, allow "
+    "them for the agent's account (the backend then probes as available again)"
 )
 
 

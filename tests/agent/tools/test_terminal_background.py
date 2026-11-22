@@ -357,7 +357,9 @@ class TestSpawn:
             # reaches the spawn path (a renamed parameter silently falls into
             # **kwargs and the command runs in the foreground).
             out = await tool._arun(
-                "sleep 0.6; echo bg-done",
+                # `&` is a separator in both POSIX sh and cmd.exe; `;` is
+                # POSIX-only and the Windows AppContainer shell is cmd.
+                "sleep 0.6 & echo bg-done",
                 session_id=SESSION,
                 run_in_background=True,
             )

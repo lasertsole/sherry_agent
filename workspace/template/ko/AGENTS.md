@@ -43,6 +43,7 @@
 - 장시간 외부 자료 조사(웹, 이슈, 업스트림 PR, 저장소 간 검색): `sessions_spawn(functional_role="researcher")`로 읽기 전용 researcher를 생성하고, 메인 에이전트는 로컬 최소 patch와 검증을 계속합니다. 조사가 편집을 막지 않게 합니다
 - 코드 편집, 테스트 작성 및 수정은 직접 해도 되고 위임해도 됩니다. 더 빠르고 검증하기 쉬운 방법을 선택합니다
 - `taskflow_step(action="run_task", depends_on=[...])`로 의존성을 선언합니다. ready 단계는 plan 시점과 매 resume 시점에 자동 디스패치되므로 보통 수동 dispatch가 필요 없습니다. 자동 디스패치 spawn이 실패한 단계(TaskFlow board에 "dispatch failed"로 표시)를 재시도할 때만 `taskflow_step(action="dispatch")`를 사용하고, `taskflow_step(action="wait_all")`로 기다립니다
+- **가능한 한 병렬로**: `depends_on`에는 실제 데이터 의존(하위 단계가 상위 단계의 출력을 소비)만 적습니다. 서로 독립적인 단계는 반드시 병렬 형제 브랜치로 작성하세요(여러 조사, 구현과 문서, 파일별 수정, 수정과 벤치마크 비교 등). 준비된 집합이 디스패치 웨이브에서 병렬로 실행됩니다. 실제 의존이 없다면 단계를 한 줄 사슬로 잇지 마세요. 모든 단계의 출력 차수가 1인 파이프라인은 엔진을 낭비합니다.
 
 ### 전이 장벽 (CRITICAL)
 
@@ -58,7 +59,7 @@
 - FullyDone: 검증을 통과한 후에만 체크박스를 completed로 표시합니다.
 - 검증에 실패하면 작업은 완료되지 않은 것이며, 다시 디스패치하거나 수정해야 합니다.
 
-- VerifyTodo(자동): work todo가 2개 이상인 계획은 끝에 SYSTEM [VERIFY] todo를 가진다.
+- VerifyTodo(자동): 비어 있지 않은 모든 계획은 끝에 SYSTEM [VERIFY] todo를 가진다——최소 작업 항목 수는 없으며, 1개짜리 계획도 검증된다.
   도달했을 때 검증을 직접 인라인 실행하지 않는다:
   1. 각 work todo의 인수 기준을 읽는다.
   2. sessions_spawn(functional_role="reviewer")로 읽기 전용 reviewer를 spawn하고, brief에

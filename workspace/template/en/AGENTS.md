@@ -43,6 +43,7 @@ Complete the work directly by default; decompose and delegate only when the task
 - Long external research (web pages, issues, upstream PRs, cross-repository lookups): spawn a read-only researcher with `sessions_spawn(functional_role="researcher")`; keep implementing and verifying a minimal local patch — do not let the research block the edit
 - Code edits, test writes and fixes may be done directly or delegated; choose the faster, more verifiable path
 - Declare dependencies with `taskflow_step(action="run_task", depends_on=[...])`; ready steps are auto-dispatched at plan time and on every resume, so you normally do not need to call dispatch manually. Only use `taskflow_step(action="dispatch")` to retry steps whose auto-dispatch spawn failed (shown as "dispatch failed" in the TaskFlow board); wait with `taskflow_step(action="wait_all")`
+- **Parallelize whenever possible**: write `depends_on` ONLY for real data dependencies (a downstream step consumes an upstream step's output); independent steps MUST be sibling branches (several investigations, implementation and docs, per-file fixes, a fix and its benchmark) so the ready set runs in parallel dispatch waves. Do not chain steps into a single line unless a real dependency exists — a pipeline whose every step has out-degree 1 wastes the engine.
 
 ### Transition Barrier (CRITICAL)
 
@@ -59,7 +60,7 @@ Complete the work directly by default; decompose and delegate only when the task
 - AdversarialVerify: Run the acceptance criteria. Probe for stale state, dirty worktree, leftover resources.
 - FullyDone: Only after verification passes, mark the checkbox completed.
 - If verification fails, the task is NOT done, re-dispatch or fix.
-- VerifyTodo (auto): a plan with 2+ work todos ends with a SYSTEM [VERIFY] todo.
+- VerifyTodo (auto): every non-empty plan ends with a SYSTEM [VERIFY] todo — no minimum work-item count, a one-item plan is verified too.
   When you reach it, do NOT run the acceptance tests inline:
   1. Read every work todo's acceptance criteria.
   2. spawn sessions_spawn(functional_role="reviewer") with a brief listing each todo_id +

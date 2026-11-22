@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import type { AuthUser } from '~/composables/bridge/auth';
+import type { AuthUser, TenantInfo } from '~/composables/bridge/auth';
 // The store needs a stable module specifier so tests can vi.mock the bridge;
 // the unimport injection is compile-time and leaves bare symbols unmockable.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -8,9 +8,11 @@ import {
   enableAuthRequest,
   fetchAuthStatus,
   fetchMe,
+  fetchTenants,
   loginRequest,
   logoutRequest,
   setupAccountRequest,
+  switchTenantRequest,
   updateAccountRequest
 } from '~/composables/bridge/auth';
 // `scheduleSessionRefresh` / `clearSessionRefresh` are consumed as bare
@@ -34,6 +36,12 @@ export const useAuthStore = defineStore('auth', () => {
   const authEnabled = ref(false);
   /** An account exists on the backend. */
   const hasAccount = ref(false);
+  /** Accounts are identified by username too (multi-tenant Ingress). */
+  const usernameRequired = ref(false);
+  /** Every cell this account may use (empty for a standalone cell). */
+  const tenants = ref<TenantInfo[]>([]);
+  /** The cell this browser currently uses; the Ingress cookie is authoritative. */
+  const activeTenant = ref('');
   /** A status probe has completed at least once. */
   const checked = ref(false);
   /** A login/account request is in flight (forms disable their buttons). */
@@ -52,10 +60,16 @@ export const useAuthStore = defineStore('auth', () => {
     _setError(null, null);
   }
 
-  function _applyStatus(status: { authRequired: boolean; authEnabled: boolean; hasAccount: boolean }): void {
+  function _applyStatus(status: {
+    authRequired: boolean;
+    authEnabled: boolean;
+    hasAccount: boolean;
+    usernameRequired?: boolean;
+  }): void {
     authRequired.value = status.authRequired;
     authEnabled.value = status.authEnabled;
     hasAccount.value = status.hasAccount;
+    usernameRequired.value = status.usernameRequired === true;
     checked.value = true;
   }
 
@@ -84,19 +98,23 @@ export const useAuthStore = defineStore('auth', () => {
   function markSessionLost(): void {
     user.value = null;
     authRequired.value = true;
+    tenants.value = [];
+    activeTenant.value = '';
     clearSessionRefresh();
   }
 
   /**
    * Sign in with the password and start the refresh timer.
    * @param password
+   * @param username Account name when the backend requires one (Ingress).
    */
-  async function login(password: string): Promise<boolean> {
+  async function login(password: string, username?: string): Promise<boolean> {
     busy.value = true;
     clearError();
     try {
-      const result = await loginRequest(password);
+      const result = username === undefined ? await loginRequest(password) : await loginRequest(password, username);
       user.value = result.user;
+      activeTenant.value = String(result.user.tenant_id ?? '');
       authRequired.value = false;
       authEnabled.value = true;
       hasAccount.value = true;
@@ -123,6 +141,8 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       user.value = null;
       authRequired.value = true;
+      tenants.value = [];
+      activeTenant.value = '';
       clearSessionRefresh();
       busy.value = false;
     }
@@ -132,6 +152,45 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchUser(): Promise<AuthUser | null> {
     user.value = await fetchMe();
     return user.value;
+  }
+
+  /** Load the member-cell list (the Ingress supplies it; a cell answers 404). */
+  async function loadTenants(): Promise<void> {
+    try {
+      const payload = await fetchTenants();
+      tenants.value = payload.tenants;
+      activeTenant.value = payload.active;
+    } catch {
+      // A standalone cell has no tenant switcher; leave it hidden.
+      tenants.value = [];
+      activeTenant.value = '';
+    }
+  }
+
+  /**
+   * Switch the browser to another member cell and reload the SPA.
+   *
+   * Every cached session, memory entry and WebSocket belongs to the previous
+   * cell, so a full reload is the supported reset. `reload` is false in unit
+   * tests only.
+   * @param tenantId Cell to select.
+   * @param reload Set false only in unit tests; production reloads the SPA.
+   */
+  async function switchTenant(tenantId: string, reload = true): Promise<boolean> {
+    if (!tenantId || tenantId === activeTenant.value) return true;
+    busy.value = true;
+    clearError();
+    try {
+      await switchTenantRequest(tenantId);
+      activeTenant.value = tenantId;
+      if (reload && typeof window !== 'undefined') window.location.reload();
+      return true;
+    } catch (e) {
+      _setError('tenant_switch_failed', e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      busy.value = false;
+    }
   }
 
   /**
@@ -224,6 +283,9 @@ export const useAuthStore = defineStore('auth', () => {
     authRequired,
     authEnabled,
     hasAccount,
+    usernameRequired,
+    tenants,
+    activeTenant,
     checked,
     busy,
     errorCode,
@@ -233,10 +295,12 @@ export const useAuthStore = defineStore('auth', () => {
     disableAuth,
     enableAuth,
     fetchUser,
+    loadTenants,
     login,
     logout,
     markSessionLost,
     setupAccount,
+    switchTenant,
     updateAccount
   };
 });

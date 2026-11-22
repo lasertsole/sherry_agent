@@ -186,4 +186,15 @@ def build_mcp_tools() -> list[BaseTool]:
             tools.extend(run_async(client.get_tools()))
         except Exception as exc:  # noqa: BLE001 — one dead server must not stop the rest
             logger.warning("MCP server {} failed to connect; its tools are skipped: {}", name, exc)
+    # An external tool's side effects are unknowable, so every MCP tool is
+    # high-risk and non-idempotent by default: executions go into the operation
+    # ledger (a re-run is refused with the first result) and its arguments are
+    # keyword-scanned. A server that exposes a genuinely safe read tool can
+    # declare ``high_risk: False`` / ``idempotent: True`` in its metadata.
+    for tool in tools:
+        if not isinstance(getattr(tool, "metadata", None), dict):
+            tool.metadata = {}
+        tool.metadata.setdefault("high_risk", True)
+        tool.metadata.setdefault("idempotent", False)
+        tool.metadata.setdefault("side_effect_scope", "system")
     return tools

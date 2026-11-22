@@ -78,6 +78,18 @@ def build_completion_message(
 
     name = _resolve_child_name(child_run_info)
     marker = f"[subagent:{name} {status}]"
+    if content and "[NEEDS_APPROVAL" in content:
+        # The child hit the high-risk keyword guard and bubbled the block in its
+        # result. The parent owns the human approval channel, so tell it how to
+        # turn that block into an approval instead of letting it retry blindly.
+        content = (
+            f"{content}\n\n[SYSTEM: The child was blocked by a high-risk keyword and "
+            "included a [NEEDS_APPROVAL: ...] block. Use the `question` tool to ask "
+            "the user whether to allow that operation. If approved, re-dispatch the "
+            "step with taskflow_step(action='resume', step_outcome='approved', "
+            "step_id=..., approval_context={keyword, tool}) — or re-run sessions_spawn "
+            "with approval_context — so the operation may proceed once.]"
+        )
     text = f"{marker}\n{content}" if content else marker
 
     return HumanMessage(

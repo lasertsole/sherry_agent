@@ -386,7 +386,7 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
     # inherit the half-edited tree or the poisoned transcript of the try before.
     repo = results_dir / "repos" / task.id
     base_sha = tasks.build_repo(task, repo)
-    from evals.swebench.instances import ensure_repo_excludes
+    from evals.repo_utils import ensure_repo_excludes
 
     ensure_repo_excludes(repo, ".sherry/")
     session_id = f"evals-coding-{task.id}-{uuid.uuid4().hex[:8]}"
@@ -394,7 +394,7 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
 
     from agent.tools.pub_base import shadow_git
     from config.features import SHADOW_GIT
-    from evals.swebench import teardown
+    from evals import teardown
 
     previous_store = SHADOW_GIT["store_dir"]
     SHADOW_GIT["store_dir"] = str(results_dir / "shadow")
@@ -554,6 +554,7 @@ async def _drive(
 
     state: dict[str, Any] = {
         "tool_calls": 0,
+        "tool_names": {},
         "text": "",
         "resumes": 0,
         "interrupted": 0,
@@ -576,6 +577,8 @@ async def _drive(
             kind = data.get("type") or data.get("event")
             if kind == "tool_start":
                 state["tool_calls"] += 1
+                name = str(data.get("content") or "unknown")
+                state["tool_names"][name] = state["tool_names"].get(name, 0) + 1
             elif kind == "text":
                 state["text"] += str(data.get("content") or "")
             _emit()

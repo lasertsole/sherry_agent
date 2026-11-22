@@ -43,6 +43,9 @@ def test_identity_metadata_and_scope() -> None:
         "idempotent": False,
         "scope": "subagent_only",
         "side_effect_scope": "system",
+        # Arbitrary code with real tool calls: ledgered + keyword-scanned.
+        "high_risk": True,
+        "scan_keywords": True,
     }
 
 

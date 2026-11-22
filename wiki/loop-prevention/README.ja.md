@@ -72,7 +72,7 @@
 
 ### ターンレベル: `DelegationPressureGate`（メインエージェント専用）
 
-メインエージェントに搭載され、サブエージェントには決して入りません（子ビルダーは追加せず、`_active` も `:subagent:`/`:swarm:` セッションを拒否します）。1 ターン内の**読み取り/探索**ツール呼び出しを累積し、**7** 回で独自の mid-turn `abefore_model` 経路から `<system-reminder source="delegation_pressure">` 警告を 1 回注入し、**12** 回でより強い escalated システムリマインダーを注入します。どちらの段階でもツールは利用可能なまま — ゲートは助言し、ブロックしません（ブラウザのデバッグツールは計数対象外）。accepted/pending の spawn が成功するとカウントをリセットし、メインエージェントは検査/検証でき、その後の 7/12 で再び作動します。失敗した spawn はリセットしません。書き込みだけではリセットされず、ターン内のすべてのグラフ呼び出しは spawn または `after_agent` まで累積します。`SHERRY_EVAL_DELEGATION_PRESSURE=1` は明示的な評価 arm の選択子として残り、製品のメインチェーンには常に含まれます。
+メインエージェントに搭載され、サブエージェントには決して入りません（子ビルダーは追加せず、`_active` も `:subagent:`/`:swarm:` セッションを拒否します）。1 ターン内の**読み取り/探索**ツール呼び出しを累積し、3 段階で助言しますがブロックはしません（ブラウザのデバッグツールは計数対象外）：**5** 回（`plan_nudge_after`）で **PLANNING NUDGE** を 1 回出し、実際に登録されている計画ツールだけを挙げます——単純なタスクは `todowrite`、多段のタスクは `taskflow_flow(action="plan")`。このターンで `todowrite` も flow 作成もしていない場合だけ発火します。**7** 回で独自の mid-turn `abefore_model` 経路から `<system-reminder source="delegation_pressure">` 警告を 1 回注入し、**12** 回でより強い escalated システムリマインダーを注入します。そのターンで既に TaskFlow の step を dispatch している場合、7/12 のメッセージは TaskFlow 版（「`wait_all` / `dispatch`、自分で読み続けない」）に切り替わります——dispatch 自体が委派だからです。accepted/pending の `sessions_spawn`、または TaskFlow の dispatch（`taskflow_step(action="dispatch")`、plan の auto-dispatch）が成功するとカウントをリセットし、メインエージェントは検査/検証でき、その後また作動します。失敗した spawn/dispatch はリセットしません。書き込みだけではリセットされず、ターン内のすべてのグラフ呼び出しはそのハンドオフまたは `after_agent` まで累積します。`after_agent` は計画追跡フラグを含めてすべてを消すため、新しいターンは再び計画を促されます。`SHERRY_EVAL_DELEGATION_PRESSURE=1` は明示的な評価 arm の選択子として残り、製品のメインチェーンには常に含まれます。
 
 ### ターンレベル: `MaxTokensBoostMiddleware`、ツール呼び出し切断からの復旧
 
@@ -254,11 +254,11 @@
 
 ### 計画レベル：SYSTEM verify todo
 
-work todo が 2 件以上の計画は末尾に 1 つの SYSTEM `[VERIFY]` todo
-（`metadata.kind="verify"`、常に最後、priority high）を持つ。todolist service が
-各変更（`replace`/`add`/`patch`/`remove`）後に維持する：末尾を保ち、work todo が
-2 件未満になると削除して reviewer を kill し、`:subagent:`/`:swarm:` セッションには
-挿入しない。モデルは偽造できない——ツール schema に `metadata` はなく、store は
+空でない計画はすべて末尾に 1 つの SYSTEM `[VERIFY]` todo を持つ——work todo の
+最小件数はなく、1 件だけの計画も検証される（`metadata.kind="verify"`、常に最後、
+priority high）。todolist service が各変更（`replace`/`add`/`patch`/`remove`）後に
+維持する：末尾を保ち、work todo が 1 件も残らないときだけ削除して reviewer を kill し、
+`:subagent:`/`:swarm:` セッションには挿入しない。モデルは偽造できない——ツール schema に `metadata` はなく、store は
 システム専用引数でのみその列を書き、`replace` にコピーされたテンプレート行は
 正確に剥がす。証拠はモデルが書ける `notes` フィールドに入る。
 

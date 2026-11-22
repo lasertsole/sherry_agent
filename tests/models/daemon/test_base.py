@@ -410,3 +410,32 @@ def test_send_json_writes_one_json_body():
     assert handler.status == 200
     assert json.loads(b"".join(written)) == {"ready": True, "text": "你好"}
     assert ("Content-Type", "application/json; charset=utf-8") in handler.headers
+
+
+class TestClientOnlyMode:
+    def test_without_a_live_daemon_it_does_not_spawn(self, tmp_path, monkeypatch):
+        spec = _spec(tmp_path)
+        monkeypatch.setenv("SHERRY_DAEMON_CLIENT_ONLY", "1")
+        monkeypatch.setattr(base, "is_ready", lambda _spec: False)
+        monkeypatch.setattr(base, "recorded_pid", lambda _spec: None)
+        monkeypatch.setattr(
+            base, "spawn", lambda *a, **k: pytest.fail("client-only must not spawn")
+        )
+
+        assert base.ensure_ready(spec) is base.ReadyState.UNAVAILABLE
+
+    def test_with_a_live_pid_it_waits_without_registering_a_killer(self, tmp_path, monkeypatch):
+        spec = _spec(tmp_path)
+        monkeypatch.setenv("SHERRY_DAEMON_CLIENT_ONLY", "1")
+        monkeypatch.setattr(base, "is_ready", lambda _spec: False)
+        monkeypatch.setattr(base, "recorded_pid", lambda _spec: 4242)
+        monkeypatch.setattr(base, "pid_alive", lambda _pid: True)
+        monkeypatch.setattr(base, "wait_until_ready", lambda *_a, **_k: True)
+        monkeypatch.setattr(
+            base, "spawn", lambda *a, **k: pytest.fail("client-only must not spawn")
+        )
+        monkeypatch.setattr(
+            base, "register_atexit_kill", lambda _spec: pytest.fail("must not own the daemon")
+        )
+
+        assert base.ensure_ready(spec) is base.ReadyState.READY

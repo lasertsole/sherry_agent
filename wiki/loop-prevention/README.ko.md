@@ -72,7 +72,7 @@
 
 ### 턴 수준: `DelegationPressureGate`(메인 에이전트 전용)
 
-메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **12**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/12에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
+메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 세 단계로 조언하며 차단하지는 않습니다(브라우저 디버깅 도구는 집계 제외): **5**회(`plan_nudge_after`)에 **PLANNING NUDGE**를 한 번 내보내며, 실제로 등록된 계획 도구만 언급합니다 — 단순 작업은 `todowrite`, 다단계 작업은 `taskflow_flow(action="plan")`. 이 턴에서 `todowrite`도 flow 생성도 없었을 때만 발동합니다. **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **12**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 그 턴에서 이미 TaskFlow step을 dispatch했다면 7/12 메시지가 TaskFlow 버전("`wait_all` / `dispatch`, 직접 읽지 말 것")으로 바뀝니다 — dispatch 자체가 위임이기 때문입니다. accepted/pending `sessions_spawn` 또는 TaskFlow dispatch(`taskflow_step(action="dispatch")`, plan의 auto-dispatch)가 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고 이후 다시 작동합니다. 실패한 spawn/dispatch는 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 그 핸드오프 또는 `after_agent`까지 누적됩니다. `after_agent`는 계획 추적 플래그까지 모두 지우므로 새 턴은 다시 계획을 재촉받습니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
 
 ### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
 
@@ -253,11 +253,11 @@
 
 ### 계획 수준: SYSTEM verify todo
 
-work todo가 2개 이상인 계획은 끝에 SYSTEM `[VERIFY]` todo
-(`metadata.kind="verify"`, 항상 마지막, priority high)를 가진다. todolist service가
-각 변경(`replace`/`add`/`patch`/`remove`) 후 유지한다: 마지막을 보장하고, work
-todo가 2개 미만이면 제거하며 reviewer를 kill하고, `:subagent:`/`:swarm:` 세션에는
-삽입하지 않는다. 모델은 위조할 수 없다——도구 schema에 `metadata`가 없고, store는
+비어 있지 않은 모든 계획은 끝에 SYSTEM `[VERIFY]` todo를 가진다——최소 작업 항목
+수는 없으며, 1개짜리 계획도 검증된다(`metadata.kind="verify"`, 항상 마지막,
+priority high). todolist service가 각 변경(`replace`/`add`/`patch`/`remove`) 후
+유지한다: 마지막을 보장하고, work todo가 하나도 남지 않았을 때만 제거하며 reviewer를
+kill하고, `:subagent:`/`:swarm:` 세션에는 삽입하지 않는다. 모델은 위조할 수 없다——도구 schema에 `metadata`가 없고, store는
 시스템 전용 인자로만 그 컬럼을 쓰며, `replace`에 복사된 템플릿 줄은 정확히
 제거한다. 증거는 모델이 쓸 수 있는 `notes` 필드에 들어간다.
 

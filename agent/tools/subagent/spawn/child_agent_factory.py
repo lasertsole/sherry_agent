@@ -117,6 +117,7 @@ def _bind_child_run_context(run: SubagentRunRecord) -> dict:
     # spawn tree always lands in one turn and a grandchild never re-roots at its
     # immediate parent.
     parent_key = normalize_session_key(run.requester_session_key)
+    scope_key = parent_key
     if parent_key:
         parent_attr = state_register_mem.get_state(parent_key, StateKey.TOKEN_BUDGET_PARENT, None)
         if isinstance(parent_attr, dict) and isinstance(parent_attr.get("session_id"), str):
@@ -126,6 +127,7 @@ def _bind_child_run_context(run: SubagentRunRecord) -> dict:
             root = parent_key
             turn_id = state_register_mem.get_state(root, StateKey.TOKEN_BUDGET_TURN_ID, None)
         if isinstance(root, str) and root:
+            scope_key = root
             # Write the attribution even without a turn id: the child still
             # counts toward the root's SESSION usage, and ChildTokenBudget adds
             # it to the current turn only when this id matches.
@@ -136,6 +138,22 @@ def _bind_child_run_context(run: SubagentRunRecord) -> dict:
                     "session_id": root,
                     "turn_id": turn_id if isinstance(turn_id, str) else "",
                 },
+            )
+
+    # High-risk approvals and the executed-operation ledger are ROOT-scoped: a
+    # re-spawned TaskFlow step shares the main session's approval table and
+    # ledger instead of starting blind. The access mode is inherited too —
+    # full_access children skip the keyword card, confirm_all children refuse
+    # anything that needs one (a child has no HITL channel).
+    if scope_key:
+        state_register_mem.set_state(
+            run.child_session_key, StateKey.APPROVAL_SCOPE_PARENT, scope_key
+        )
+        if state_register_mem.get_state(scope_key, StateKey.HITL_SESSION_YOLO, False):
+            state_register_mem.set_state(run.child_session_key, StateKey.HITL_SESSION_YOLO, True)
+        elif state_register_mem.get_state(scope_key, StateKey.HITL_SESSION_CONFIRM_ALL, False):
+            state_register_mem.set_state(
+                run.child_session_key, StateKey.HITL_SESSION_CONFIRM_ALL, True
             )
     return agent_config
 
@@ -664,7 +682,11 @@ async def _build_child_agent(
             prompt as the prompt-level fallback and Tier 1 re-validates on
             resume. Because some providers (DeepSeek) reject a forced
             ``tool_choice`` in thinking mode, a schema-bound child is built with
-            thinking OFF (``_select_child_llm(thinking_off=True)``).
+            thinking OFF when the learned cap says so
+            (``_select_child_llm(thinking_off=True)``); the same learned label
+            gates thinking for schema-FREE children too — their multi-turn
+            thinking calls die with ``reasoning_content must be passed back``
+            and no structured request to escalate on.
             ``None`` = free-form output.
         tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
         tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
@@ -702,8 +724,12 @@ async def _build_child_agent(
         model_tier,
         role,
         # The thinking-off rung exists because the provider rejected even the
-        # self-sent response_format while reasoning.
-        thinking_off=bool(output_schema) and strategy.thinking_off,
+        # self-sent response_format while reasoning — and, on reasoning-mode
+        # models, because the SECOND turn of a thinking conversation demands
+        # its reasoning_content back (a plain child dies with no schema in
+        # sight). The learned label therefore gates thinking for every child
+        # of the model; only sends_json_mode stays schema-bound (above).
+        thinking_off=strategy.thinking_off,
     )
     # Which model the child actually runs on, and which rung answered: the
     # spawn log plus one trajectory event make a configured role family (or a
@@ -739,7 +765,7 @@ async def _build_child_agent(
                 "provider": model_provider,
                 "model": model_name,
                 "structured": bool(output_schema),
-                "thinking_off": bool(output_schema) and strategy.thinking_off,
+                "thinking_off": strategy.thinking_off,
             },
         )
     # Levels 1/2: no framework-level structured output (no forced tool_choice);

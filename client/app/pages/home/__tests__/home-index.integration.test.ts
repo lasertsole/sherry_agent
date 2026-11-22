@@ -7,6 +7,7 @@ import HistoryItem from '@/pages/home/components/HistoryItem.vue';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 import { useSubagentStore } from '@/stores/subagent';
 import { useChatFloatStore } from '@/stores/chat-float';
+import { useNavStore } from '@/stores/nav';
 import { installGlobalShortcutListener } from '@/composables/use-shortcuts';
 import {
   resolveFloatingSize,
@@ -233,6 +234,13 @@ function pointer(target: Element, type: 'pointerdown' | 'pointermove' | 'pointer
   target.dispatchEvent(event);
 }
 
+// The nav registry is a shared singleton across this file's suites: reset the
+// active panel before every test so a files-mode click in one suite never leaks
+// into the next mount (S1 test sync).
+beforeEach(() => {
+  useNavStore().activate('chat');
+});
+
 describe('home/index.vue (integration, backend mocked)', () => {
   beforeEach(() => {
     seededFetchApi.mockClear();
@@ -377,18 +385,20 @@ describe('home/index.vue (integration, backend mocked)', () => {
 
   it('hides the project-files button while no session is open, and returns the sidebar to the list', () => {
     // The session list's landing page has no sid: there is no project tree
-    // behind the button, and the persisted body switch must not strand the
+    // behind the button, and a persisted files view must not strand the
     // sidebar on it either.
     const originalUi = (globalThis as any).useUiStore;
-    const uiState = reactive({ sidebarCollapsed: false, sidebarBody: 'files' });
+    const uiState = reactive({ sidebarCollapsed: false });
     vi.stubGlobal('useUiStore', () => uiState);
+    const nav = useNavStore();
+    nav.activate('files');
     try {
       const wrapper = mountHome();
 
       const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
       expect(titles).not.toContain('项目文件');
       expect(titles).not.toContain('会话列表');
-      expect(uiState.sidebarBody).toBe('sessions');
+      expect(nav.activeId).toBe('chat');
     } finally {
       // Restore ONLY the stub this test replaced: vi.unstubAllGlobals() would
       // also drop the suites' shared store stubs (they are installed the same
@@ -431,8 +441,10 @@ describe('home/index.vue (integration, backend mocked)', () => {
       params: { sid: 's1' },
       query: {}
     }));
-    const uiState = reactive({ sidebarCollapsed: false, sidebarBody: 'files' });
+    const uiState = reactive({ sidebarCollapsed: false });
     vi.stubGlobal('useUiStore', () => uiState);
+    const nav = useNavStore();
+    nav.activate('files');
     const dir = stubProjectDirectory(null);
     try {
       const wrapper = mountHome();
@@ -441,8 +453,8 @@ describe('home/index.vue (integration, backend mocked)', () => {
       expect(titles).not.toContain('项目文件');
       expect(titles).not.toContain('会话列表');
       expect(wrapper.findAll('.btn').filter(b => (b.attributes('title') ?? '').includes('项目'))).toHaveLength(0);
-      // A persisted "files" body would strand the sidebar: it falls back.
-      expect(uiState.sidebarBody).toBe('sessions');
+      // A persisted files view would strand the sidebar: it falls back to chat.
+      expect(nav.activeId).toBe('chat');
     } finally {
       dir.restore();
       vi.stubGlobal('useUiStore', originalUi);
@@ -493,29 +505,24 @@ describe('home/index.vue (integration, backend mocked)', () => {
       params: { sid: 's1' },
       query: {}
     }));
-    const uiState = reactive({
-      sidebarCollapsed: true,
-      sidebarBody: 'sessions' as 'sessions' | 'files',
-      // The real store's own toggle; a bare state stub would make the click a no-op.
-      toggleSidebarBody: () => {
-        uiState.sidebarBody = uiState.sidebarBody === 'sessions' ? 'files' : 'sessions';
-      }
-    });
+    const uiState = reactive({ sidebarCollapsed: true });
     vi.stubGlobal('useUiStore', () => uiState);
+    const nav = useNavStore();
+    nav.activate('chat');
     const dir = stubProjectDirectory('/proj');
     try {
       const wrapper = mountHome();
       // The folder switch shows the project files…
       await wrapper.get('button[title="项目文件"]').trigger('click');
 
-      expect(uiState.sidebarBody).toBe('files');
+      expect(nav.activeId).toBe('files');
       expect(uiState.sidebarCollapsed).toBe(false);
 
       // …and the way back reveals the session list the same way.
       uiState.sidebarCollapsed = true;
       await wrapper.get('button[title="会话列表"]').trigger('click');
 
-      expect(uiState.sidebarBody).toBe('sessions');
+      expect(nav.activeId).toBe('chat');
       expect(uiState.sidebarCollapsed).toBe(false);
     } finally {
       dir.restore();
@@ -527,8 +534,10 @@ describe('home/index.vue (integration, backend mocked)', () => {
   it('hides the button again when the last session closes, and flips the body back', async () => {
     const originalUi = (globalThis as any).useUiStore;
     const originalRoute = (globalThis as any).useRoute;
-    const uiState = reactive({ sidebarCollapsed: false, sidebarBody: 'files' });
+    const uiState = reactive({ sidebarCollapsed: false });
     vi.stubGlobal('useUiStore', () => uiState);
+    const nav = useNavStore();
+    nav.activate('files');
     const routeState = reactive({
       path: '/home/s1',
       fullPath: '/home/s1',
@@ -548,7 +557,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
 
       const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
       expect(titles).not.toContain('项目文件');
-      expect(uiState.sidebarBody).toBe('sessions');
+      expect(nav.activeId).toBe('chat');
     } finally {
       dir.restore();
       vi.stubGlobal('useUiStore', originalUi);

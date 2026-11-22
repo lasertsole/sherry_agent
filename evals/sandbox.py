@@ -4,7 +4,7 @@ Redirects every persistence backend of the agent runtime into a per-run
 directory, so eval runs never touch the real repo DBs or the real workspace.
 
 Spawned children keep the FULL tool surface by default: agentic coding evals
-must be able to delegate implementation to a child, and the official SWE-bench
+must be able to delegate implementation to a child, and the official external
 harness imposes no tool interface at all. ``restrict_child_tools=True`` is the
 opt-in isolation mode for suites that must not let a child mutate anything.
 
@@ -28,6 +28,7 @@ import asyncio
 import importlib
 import os
 import platform
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -225,16 +226,66 @@ class EvalSandbox:
         does not close (#26); each one parks a non-daemon worker thread that
         blocks interpreter shutdown — the reason the suites used os._exit().
         Recording at aiosqlite.connect catches every connection regardless of
-        origin (same technique as tests/conftest.py). Call after the suite's
-        asyncio.run() returned: close() only needs the ambient loop for its
-        completion future, which the connection's own worker thread resolves.
+        origin (same technique as tests/conftest.py).
+
+        ``conn.close()`` needs an event loop for its completion future, which
+        the connection's own worker thread resolves. Most suites call this
+        after ``asyncio.run()`` has returned, but several (DeepSWE, devbench,
+        …) call it from inside an async ``finally``, where ``asyncio.run()``
+        raises "cannot be called from a running event loop" for EVERY
+        connection — leaving all worker threads alive and the process hanging
+        in ``threading._shutdown`` long after the report is written. Detect
+        that case and run the closes on a short-lived helper thread with its
+        own loop; the future is created on that loop, so the worker threads
+        can still resolve it.
         """
-        closed = 0
-        for conn in self._opened_connections:
-            try:
-                asyncio.run(conn.close())
-                closed += 1
-            except Exception:  # noqa: BLE001 — teardown must never mask results
-                logger.debug("eval teardown: aiosqlite close skipped", exc_info=True)
+        conns = list(self._opened_connections)
         self._opened_connections.clear()
+        if not conns:
+            return 0
+
+        def _close_all() -> tuple[int, list[BaseException]]:
+            closed = 0
+            errors: list[BaseException] = []
+
+            async def _do() -> None:
+                nonlocal closed
+                for conn in conns:
+                    try:
+                        await conn.close()
+                        closed += 1
+                    except Exception as exc:  # noqa: BLE001 — teardown never masks results
+                        errors.append(exc)
+
+            try:
+                asyncio.run(_do())
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+            return closed, errors
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            closed, errors = _close_all()
+        else:
+            box: dict[str, tuple[int, list[BaseException]]] = {}
+
+            def _worker() -> None:
+                box["result"] = _close_all()
+
+            thread = threading.Thread(
+                target=_worker, daemon=True, name="eval-aiosqlite-close"
+            )
+            thread.start()
+            thread.join(timeout=30)
+            if "result" not in box:
+                logger.debug("eval teardown: aiosqlite close timed out")
+                return 0
+            closed, errors = box["result"]
+
+        for exc in errors:
+            logger.debug(
+                "eval teardown: aiosqlite close skipped",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
         return closed

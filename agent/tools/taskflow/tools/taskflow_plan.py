@@ -60,6 +60,13 @@ dispatched, so the task text itself should stay focused on the deliverable.
 list the project-relative source files its verification depends on. The \
 finish-time regression gate replays this step's verification first when one \
 of those files was written by another step.
+* PARALLELIZE: ``depends_on`` is for REAL data dependencies only (a step that \
+consumes another step's output). Steps that can be done independently MUST be \
+siblings with the same shallow dependency set — sibling branches are \
+dispatched together and run as concurrent children. A plan where every step \
+depends on the previous one throws away the engine: prefer one or two \
+recon/build steps, then a WIDE fan-out of independent work, then one \
+integration step that depends on all of them.
 * Prefer 3-8 steps. No prose, no markdown fence: the JSON array only.
 """
 

@@ -2,7 +2,7 @@ import uuid
 from loguru import logger
 from robyn import Response
 from server.trigger.core import app
-from config import SRC_DIR, API_HOST, API_PORT
+from config import SRC_DIR, PUBLIC_BASE_URL
 from config.features import HTTP_UPLOAD, SERVER_HTTP
 
 MAX_VIDEO_UPLOAD_BYTES = HTTP_UPLOAD["max_video_bytes"]
@@ -63,7 +63,7 @@ async def upload_video(request):
     file_path = video_dir / filename
     file_path.write_bytes(data)
 
-    url = f"http://{API_HOST}:{API_PORT}/video/{filename}"
+    url = f"{PUBLIC_BASE_URL}/video/{filename}"
     logger.info(f"Video uploaded: filename={filename}, size={len(data)}, url={url}")
 
     return Response(

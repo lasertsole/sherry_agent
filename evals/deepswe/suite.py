@@ -25,20 +25,21 @@ Usage::
     uv run python evals/deepswe/suite.py --dry-run
     uv run python evals/deepswe/suite.py httpx-streaming-json-iteration --timeout 1800
     uv run python evals/deepswe/suite.py --all --n-tasks 5 --keep-workdirs
-    uv run python evals/deepswe/suite.py --local
 
 ``--dry-run`` validates the dataset and task files without Docker or a model.
-``--local`` runs the Docker-free host mode in ``evals/deepswe/local.py``: a
-time-travelled checkout plus a task venv, graded by the same hidden tests and
-``grader.py``. It is a developer/CI convenience, NOT an official DeepSWE score,
-and it accepts Python tasks only.
+``--preflight-only`` runs the container path (pull / verifier build / GOLD
+self-check) without a model key, so a broken engine fails before tokens.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
+import sqlite3
 import shutil
+import tempfile
 import sys
 import time
 import traceback
@@ -58,6 +59,42 @@ BASELINE_PATH = Path(__file__).with_name("baseline.json")
 _DEFAULT_TIMEOUT_S = 3600.0
 _MAX_TIMEOUT_S = 7200.0
 _NETWORK = "no-network"
+#: Task-image pull robustness: a transient registry failure (public ECR resets
+#: a layer fetch mid-burst) retries with a growing pause before the whole sweep
+#: is declared a harness failure.
+_PULL_RETRIES = 3
+_PULL_RETRY_PAUSE_S = 20.0
+#: The LEAF budget of the spawn depth ladder (``resolve_run_timeout_for_requester``):
+#: 3× the configured spawn default (600 s), because a DeepSWE step (read +
+#: implement + run the task's tests) burns the default to TIMEOUT and the retry
+#: loop eats the task's whole wall clock. Under the ladder this value governs
+#: the LEAF; a depth-1 step child gets 3× IT (1800 → 5400).
+#: ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the value outright,
+#: clamped to the spawn bounds.
+_EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER = 3.0
+_EVAL_CHILD_RUN_TIMEOUT_ENV = "SHERRY_EVAL_CHILD_RUN_TIMEOUT_S"
+
+
+def _eval_child_run_timeout_s() -> float:
+    """The eval's step-child wall clock: 3× the configured spawn default.
+
+    ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the multiplier's
+    result outright; the value is clamped to the spawn bounds (a 60 s floor,
+    the configured 7200 s ceiling).
+    """
+    from agent.tools.subagent.config import get_config
+
+    cfg = get_config()
+    default = cfg.run_timeout_seconds * _EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER
+    raw = os.environ.get(_EVAL_CHILD_RUN_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(60.0, min(value, cfg.run_timeout_max_seconds))
+
 
 _PROMPT = """{instruction}
 
@@ -72,7 +109,224 @@ side. Use both to build and run the project's checks.
 - There is no internet access.
 - Do not modify test files and do not run `git commit`.
 - Complete the task; do not ask questions.
+- The project directory is `{project_dir}` and is the ONLY valid root for file tools. Never use `/app`, `C:\app`, or any path outside it — the terminal translates project paths for you.
+- Edge cases are part of the contract: empty input, whitespace-only input, partial/truncated input, and calls made after the stream has ended must behave predictably — an empty result, not an exception, unless the task says otherwise. Recursive or cyclic inputs (self-referencing schemas, linked structures) must terminate with a clear error or a well-defined result — never by overflowing the call stack.
+
+{checklist}
+
+## Orchestration mandate (harness requirement, not advice)
+
+Plan and execute this task THROUGH Sherry's planning and orchestration tools;
+the harness records tool usage and reports a run that skips them:
+
+1. First call `todowrite` to plan the work (investigation, fix, verification
+   items) and keep every item updated as you go; `todoread` shows the list.
+2. Create ONE TaskFlow flow for the task with `taskflow_flow(action="plan")`
+   (a short description is enough), dispatch and drive its steps through
+   `taskflow_step` (spawn a step child for the implementation), and close it
+   with `taskflow_flow(action="finish")` when the flow's criteria are met.
+3. Keep the todolist and the flow board consistent: an item or step is DONE
+   only when its verification command passed.
+
+## Parallelism (harness requirement, not advice)
+
+Decompose the flow so it RUNS in parallel, not as one serial chain:
+
+- Write `depends_on` ONLY for real data dependencies (a step consumes another
+  step's output). Independent steps MUST be sibling branches: two
+  investigations, the implementation and its documentation, per-file fixes, a
+  fix and its benchmark — all without an edge between them.
+- Never chain steps that could run together. A flow whose every step has
+  out-degree 1 wastes the engine: READY siblings are dispatched in waves and
+  run as concurrent children.
+- After every result lands, the resume re-scans the whole flow and dispatches
+  every newly READY step — do not serialize on your own; let the board's
+  ready set drive the wave.
+- While step children run, do one `taskflow_step(action="wait_all")` (it
+  wakes as results land) instead of polling with terminal commands.
+- Plan ONCE. After `taskflow_flow(action="plan")` returns, do NOT rewrite the
+  step list with `taskflow_step(action="update_steps")` — hand-writing a long
+  step array is the most common source of malformed tool arguments and kills
+  the turn. To correct course, dispatch a remaining ready step
+  (`action="dispatch"`) or wait; add follow-up work as ONE short step, never a
+  full-list rewrite.
 """
+
+
+#: One extra driven turn per unfinished plan item, bounded like the production
+#: continuation ceiling (the harness owns the auto-turn the server would fire).
+_MAX_PLAN_CONTINUATIONS = 3
+
+#: How long grading may be deferred for step children still in flight. The
+#: graded patch is the whole score, so a just-finished child's edits must land
+#: before it is captured; past this window the run grades what exists.
+_FLOW_SETTLE_WAIT_S = 180.0
+_CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
+
+Your plan is NOT finished. Open items:
+{items}
+
+{checklist}
+
+Finish them now — including the system [VERIFY] acceptance checks — close the
+TaskFlow flow with taskflow_flow(action="finish"), then summarize. The [VERIFY]
+reviewer must answer EVERY acceptance item above with PASS/FAIL and evidence.
+Do not ask questions."""
+
+#: Injected instead when the flow still has DISPATCHED/READY steps: the work is
+#: in flight, so the agent's job this turn is to WAIT for the results, resume
+#: the steps, and only then close the flow. A generic "finish now" directive
+#: here made an agent declare completion while four children were mid-flight.
+_WAIT_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
+
+Your plan is NOT finished — step children are still running. Open items:
+{items}
+
+Call `taskflow_step(action="wait_all")` now to wait for the in-flight steps,
+then resume each settled step and continue closing the flow with
+`taskflow_flow(action="finish")` when every step is terminal. Do not declare
+completion while steps are running. Do not ask questions."""
+
+
+def _open_plan_items(results_dir: Path) -> list[str]:
+    """Open todos + non-terminal flows from the sandbox's plan registry.
+
+    The production auto-turn trigger is a SERVER hook; the eval harness has no
+    server, so ``PlanContinuationEnforcer._inject`` silently returns False and
+    a mandatory [VERIFY] todo would never run. This reader is what lets the
+    harness drive the continuation itself.
+    """
+    # EvalSandbox redirects the plan registry under its own root; older runs
+    # may keep it at the results root.
+    candidates = (
+        results_dir / "sandbox" / "stores" / "registry.db",
+        results_dir / "stores" / "registry.db",
+    )
+    database = next((path for path in candidates if path.is_file()), None)
+    if database is None:
+        return []
+    items: list[str] = []
+    try:
+        with sqlite3.connect(database, timeout=5) as connection:
+            for content, status in connection.execute(
+                "SELECT content, status FROM todos "
+                "WHERE status NOT IN ('completed', 'cancelled') ORDER BY todo_id"
+            ):
+                items.append(f"todo: {str(content)[:100]} ({status})")
+            for flow_id, status in connection.execute(
+                "SELECT flow_id, status FROM task_flows "
+                "WHERE status NOT IN ('done', 'failed', 'cancelled')"
+            ):
+                items.append(f"flow: {flow_id} ({status})")
+    except sqlite3.Error:
+        return items
+    return items
+
+
+def _flow_in_flight(results_dir: Path) -> bool:
+    """True when any non-terminal flow still has READY/DISPATCHED steps.
+
+    Reads the same sandbox registry as ``_open_plan_items``; a read failure is
+    reported as False (the generic continuation then applies).
+    """
+    candidates = (
+        results_dir / "sandbox" / "stores" / "registry.db",
+        results_dir / "stores" / "registry.db",
+    )
+    database = next((path for path in candidates if path.is_file()), None)
+    if database is None:
+        return False
+    try:
+        with sqlite3.connect(database, timeout=5) as connection:
+            rows = list(
+                connection.execute(
+                    "SELECT state_json FROM task_flows "
+                    "WHERE status NOT IN ('done', 'failed', 'cancelled')"
+                )
+            )
+    except sqlite3.Error:
+        return False
+    for (raw,) in rows:
+        try:
+            steps = (json.loads(raw) or {}).get("steps") or []
+        except (TypeError, ValueError):
+            continue
+        if any(
+            isinstance(step, dict) and str(step.get("status") or "") in {"ready", "dispatched"}
+            for step in steps
+        ):
+            return True
+    return False
+
+
+def _work_root(results_dir: Path) -> Path:
+    """Where task checkouts live: OUTSIDE the sherry checkout.
+
+    The agent's self-path guard refuses writes inside the product checkout, so
+    a task tree under ``evals/results`` makes every real edit fail (measured:
+    three attempts produced an EMPTY patch while the agent believed it had
+    written the module). Local mode already stages its checkouts outside;
+    the container arm now does the same. ``SHERRY_EVAL_WORK_ROOT`` overrides.
+    """
+    override = os.environ.get("SHERRY_EVAL_WORK_ROOT", "").strip()
+    base = (
+        Path(override)
+        if override
+        else Path(tempfile.gettempdir()) / "sherry_evals" / "deepswe-work"
+    )
+    return base / results_dir.name
+
+
+#: Clauses worth verifying: normative language a reviewer can answer pass/fail.
+_CLAUSE_KEYWORDS = (
+    "must",
+    "raise",
+    "reject",
+    "only",
+    "return",
+    "yield",
+    "parse",
+    "decode",
+    "encode",
+    "support",
+    "require",
+    "case-insensitive",
+    "allow",
+    "ignore",
+)
+
+
+def _acceptance_checklist(instruction: str, *, limit: int = 8) -> list[str]:
+    """Turn the task text's decidable clauses into reviewer checklist items.
+
+    Deterministic sentence/semicolon split plus a normative-keyword filter:
+    the reviewer gets concrete, answerable lines instead of the whole essay
+    (a measured run passed its self-check while missing an explicitly stated
+    media-type rule).
+    """
+    text = re.sub(r"\s+", " ", instruction or "").strip()
+    if not text:
+        return []
+    chunks: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        chunks.extend(part.strip() for part in sentence.split(";") if part.strip())
+    items = [
+        chunk
+        for chunk in chunks
+        if len(chunk) >= 20 and any(word in chunk.lower() for word in _CLAUSE_KEYWORDS)
+    ]
+    return items[:limit]
+
+
+def _checklist_block(items: list[str]) -> str:
+    """The prompt block that makes the acceptance items explicit."""
+    if not items:
+        return ""
+    lines = "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
+    return (
+        "## Acceptance checklist (from the task text)\n\n"
+        "Every item is binary: the work is done only when each one is PROVEN.\n\n" + lines
+    )
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -111,10 +365,10 @@ def main() -> None:
         elif arg in {
             "--all",
             "--dry-run",
-            "--local",
             "--skip-self-check",
             "--keep-workdirs",
             "--update-baseline",
+            "--preflight-only",
         }:
             flags.add(arg)
         elif arg.startswith("--"):
@@ -127,7 +381,7 @@ def main() -> None:
         raise SystemExit("name task ids or use --all, not both")
     timeout = max(60.0, min(float(timeout), _MAX_TIMEOUT_S))
 
-    if "--dry-run" not in flags and "--local" not in flags:
+    if "--dry-run" not in flags:
         docker_ok, docker_detail = external_bench.docker_available()
         if not docker_ok:
             print(
@@ -162,26 +416,11 @@ def main() -> None:
                 flush=True,
             )
         print(
-            "[evals] dry-run only; a real run needs Docker and MAIN_LLM_API_KEY "
-            "(or --local for the Docker-free host mode); a skipped suite is not a pass",
+            "[evals] dry-run only; a real run needs Docker and MAIN_LLM_API_KEY; "
+            "a skipped suite is not a pass",
             flush=True,
         )
         return
-
-    if "--local" in flags:
-        from evals.deepswe import local
-
-        raise SystemExit(
-            asyncio.run(
-                local.run(
-                    selected,
-                    timeout=timeout,
-                    skip_self_check="--skip-self-check" in flags,
-                    keep_workdirs="--keep-workdirs" in flags,
-                    update_baseline="--update-baseline" in flags,
-                )
-            )
-        )
 
     raise SystemExit(
         asyncio.run(
@@ -191,6 +430,7 @@ def main() -> None:
                 skip_self_check="--skip-self-check" in flags,
                 keep_workdirs="--keep-workdirs" in flags,
                 update_baseline="--update-baseline" in flags,
+                preflight_only="--preflight-only" in flags,
             )
         )
     )
@@ -206,6 +446,7 @@ async def _run(
     skip_self_check: bool,
     keep_workdirs: bool,
     update_baseline: bool,
+    preflight_only: bool = False,
 ) -> int:
     run_id = external_bench.run_id_now()
     results_dir = REPO_ROOT / "evals" / "results" / "deepswe" / run_id
@@ -222,6 +463,29 @@ async def _run(
             flush=True,
         )
         return 3
+
+    if preflight_only:
+        # Validate the whole container path (pull, verifier build, GOLD grading)
+        # WITHOUT a model key: the expensive turn is gated on MAIN_LLM_API_KEY,
+        # but everything before it can and should be proven working first.
+        prepared = _preflight(
+            selected,
+            results_dir,
+            skip_self_check=skip_self_check,
+            docker_detail=docker_detail,
+        )
+        if prepared is None:
+            return 2
+        for task, verifier_image in prepared:
+            print(f"[evals] preflight ok: {task.task_id} (verifier {verifier_image})", flush=True)
+        print(
+            f"[evals] preflight-only: {len(prepared)} task(s) proven on "
+            f"{external_bench.container_bin()}; a scored run still needs MAIN_LLM_API_KEY",
+            flush=True,
+        )
+        if not keep_workdirs:
+            shutil.rmtree(_work_root(results_dir), ignore_errors=True)
+        return 0
 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401 — hydrates .env / .models / .network
@@ -247,12 +511,29 @@ async def _run(
     os.environ["SANDBOX_POLICY"] = "auto"
     started = time.monotonic()
     last_payload: dict[str, Any] = {}
+    gate_state: dict[str, int] = {}
     results: list[dict[str, Any]] = []
     try:
         harness._seed_persona(eval_workspace)
         _append_agents_note(eval_workspace)
         harness.init_agent()
+        # DeepSWE steps (read the task's code, implement, run the task's tests)
+        # blow the 600 s spawn default: the step child burns to TIMEOUT, the
+        # step fails, and the orchestration retry loop eats the task's whole
+        # wall clock — the observed "every task hits --timeout" pattern. The
+        # CONCURRENCY itself works (step children demonstrably overlap); the
+        # per-child BUDGET was the weak spot. The model can still raise a step
+        # further via step_timeout_seconds (clamped at 7200 s).
+        _child_timeout = _eval_child_run_timeout_s()
+        from agent.tools.subagent.config import get_config
+
+        _cfg = get_config()
+        if _cfg.run_timeout_seconds < _child_timeout:
+            _cfg.run_timeout_seconds = _child_timeout
         external_bench.trim_tools()
+        # Bind the LIVE dict: .update() copied install-time zeros, so the
+        # report never saw later counts.
+        gate_state = external_bench.install_orchestration_gate()
         missing = sorted(
             {"read_file", "write_file", "patch_file", "terminal"}
             - {getattr(tool, "name", "") for tool in _agent_tools()}
@@ -287,7 +568,9 @@ async def _run(
             print(
                 f"[evals] {task.task_id}: resolved={result['resolved']} "
                 f"reward={result['reward']} duration={result['duration_s']}s "
-                f"tool_calls={result['tool_calls']} tokens={result['tokens']}",
+                f"tool_calls={result['tool_calls']} tokens={result['tokens']} "
+                f"todolist={result['todolist_calls']} taskflow={result['taskflow_calls']} "
+                f"orchestration={'ok' if result['orchestration_compliant'] else 'VIOLATED'}",
                 flush=True,
             )
     except Exception:  # noqa: BLE001 — a setup bug is a harness failure, not a zero
@@ -297,7 +580,7 @@ async def _run(
         sandbox.restore()
         sandbox.close_aiosqlite_connections()
         if not keep_workdirs:
-            shutil.rmtree(results_dir / "tasks", ignore_errors=True)
+            shutil.rmtree(_work_root(results_dir), ignore_errors=True)
 
     report = {
         "run_id": run_id,
@@ -324,6 +607,23 @@ async def _run(
             task.task_id: result["gold_self_check"]
             for task, result in zip(selected, results, strict=False)
         },
+        "orchestration": {
+            "enforced": True,
+            "gate": gate_state,
+            "acceptance_checklist": results[0].get("acceptance_checklist") if results else [],
+            "reviewer_checklist_injections": int(gate_state.get("reviewer_checklist_injected", 0)),
+            "path_denials": int(gate_state.get("path_denials", 0)),
+            "blocked_writes": int(gate_state.get("blocked_writes", 0)),
+            "policy": (
+                "the prompt MANDATES planning through todowrite/todoread and execution through "
+                "one taskflow flow; usage is counted from tool_start frames and "
+                "reported per task (orchestration_compliant = both > 0)"
+            ),
+            "todolist_calls": sum(int(r.get("todolist_calls") or 0) for r in results),
+            "taskflow_calls": sum(int(r.get("taskflow_calls") or 0) for r in results),
+            "compliant_tasks": [r["id"] for r in results if r.get("orchestration_compliant")],
+            "violating_tasks": [r["id"] for r in results if not r.get("orchestration_compliant")],
+        },
         "aggregate": _aggregate(results, started),
         "tasks": results,
     }
@@ -348,11 +648,26 @@ def _preflight(
     prepared: list[tuple[Task, str]] = []
     for task in selected:
         if not external_bench.image_exists(task.image):
-            pulled = external_bench.pull_image(task.image)
-            if not pulled.ok:
+            # A long run meets transient registry hiccups (public ECR layer
+            # fetches reset mid-burst); one failed pull must not abort a
+            # 100+-task sweep, so retry with a growing pause first.
+            pulled: external_bench.CommandResult | None = None
+            for attempt in range(1, _PULL_RETRIES + 1):
+                pulled = external_bench.pull_image(task.image)
+                if pulled.ok:
+                    break
+                print(
+                    f"[evals] pull attempt {attempt}/{_PULL_RETRIES} failed for "
+                    f"{task.task_id}: {pulled.output[-500:]}",
+                    flush=True,
+                )
+                if attempt < _PULL_RETRIES:
+                    time.sleep(_PULL_RETRY_PAUSE_S * attempt)
+            if pulled is None or not pulled.ok:
                 print(
                     f"[evals] HARNESS FAILURE: could not pull {task.image} for "
-                    f"{task.task_id}: {pulled.output[-1500:]}",
+                    f"{task.task_id} after {_PULL_RETRIES} attempts: "
+                    f"{(pulled.output if pulled else '')[-1500:]}",
                     flush=True,
                 )
                 return None
@@ -360,7 +675,10 @@ def _preflight(
             "deepswe", task.task_id, f"{task.base_commit[:8]}-verifier"
         )
         built = external_bench.build_image(
-            verifier_image, task.task_dir / "tests", timeout=task.build_timeout_s
+            verifier_image,
+            task.task_dir / "tests",
+            timeout=task.build_timeout_s,
+            network="none",
         )
         if not built.ok:
             print(
@@ -401,7 +719,7 @@ async def _run_task(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from evals.coding_capability import suite as harness
 
-    task_root = results_dir / "tasks" / task.task_id
+    task_root = _work_root(results_dir) / task.task_id
     host_workdir = task_root / "workspace"
     container = ""
     payload: dict[str, Any] = {}
@@ -420,6 +738,10 @@ async def _run_task(
         "invalid_run": False,
         "duration_s": 0.0,
         "tool_calls": 0,
+        "tool_names": {},
+        "todolist_calls": 0,
+        "taskflow_calls": 0,
+        "orchestration_compliant": False,
         "resumes": 0,
         "timeout": False,
         "error": "",
@@ -444,36 +766,119 @@ async def _run_task(
             workdir="/app",
             network="none",
         )
-        bridge = external_bench.DockerBridge(container, host_workdir=host_workdir)
+        bridge = external_bench.DockerBridge(
+            container,
+            host_workdir=host_workdir,
+            # On Windows the container only sees the tree at /app; commands the
+            # agent builds with host paths are translated by the bridge.
+            container_workdir="/app" if os.name == "nt" else None,
+        )
         external_bench.install_terminal_bridge(bridge)
         payload = await external_bench.bind_external_session(session_id, host_workdir)
 
+        checklist_items = _acceptance_checklist(task.instruction)
+        external_bench.set_reviewer_checklist(checklist_items)
+        checklist = _checklist_block(checklist_items)
+        result["acceptance_checklist"] = checklist_items
         prompt = _PROMPT.format(
             instruction=external_bench.localize_instruction(task.instruction, host_workdir, "/app"),
             repo=task.repo,
             base=task.base_commit[:12],
+            project_dir=host_workdir,
+            checklist=checklist,
         )
-        try:
-            drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
-        except TimeoutError:
-            drive = {
-                "tool_calls": 0,
-                "text": "",
-                "resumes": 0,
-                "interrupted": 0,
-                "timeout": True,
-                "error": "",
-            }
+        drive: dict[str, Any] = {
+            "tool_calls": 0,
+            "tool_names": {},
+            "text": "",
+            "resumes": 0,
+            "interrupted": 0,
+            "timeout": False,
+            "error": "",
+        }
+        continuations = 0
+        result["no_progress_stop"] = False
+        gate_before = dict(external_bench.orchestration_state())
+        last_patch = _agent_patch(host_workdir, task.base_commit)
+        for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
+            try:
+                turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
+            except TimeoutError:
+                drive["timeout"] = True
+                break
+            drive["tool_calls"] += int(turn.get("tool_calls") or 0)
+            for name, count in (turn.get("tool_names") or {}).items():
+                drive["tool_names"][name] = drive["tool_names"].get(name, 0) + int(count)
+            drive["text"] += str(turn.get("text") or "")
+            drive["resumes"] += int(turn.get("resumes") or 0)
+            drive["interrupted"] += int(turn.get("interrupted") or 0)
+            drive["error"] = str(turn.get("error") or drive["error"])
+            if turn.get("timeout") or turn.get("error"):
+                drive["timeout"] = bool(turn.get("timeout"))
+                break
+            open_items = _open_plan_items(results_dir)
+            if not open_items:
+                break
+            if attempt >= _MAX_PLAN_CONTINUATIONS:
+                break
+            in_flight = _flow_in_flight(results_dir)
+            # No-progress stop: a continuation turn that changed NOTHING is
+            # churn (measured: repeated "closure flow" passes). Stop and let
+            # the result record the unfinished plan instead of burning turns.
+            # A flow with DISPATCHED/READY steps is NOT churn: the main agent is
+            # waiting for step children that are still working, so its turn
+            # legitimately produces no diff (measured: an empty patch graded
+            # while four step children were mid-flight).
+            current_patch = _agent_patch(host_workdir, task.base_commit)
+            if attempt > 0 and current_patch == last_patch and not in_flight:
+                result["no_progress_stop"] = True
+                break
+            last_patch = current_patch
+            continuations += 1
+            prompt = (
+                _WAIT_PROMPT.format(items="\n".join(f"- {item}" for item in open_items[:12]))
+                if in_flight
+                else _CONTINUATION_PROMPT.format(
+                    items="\n".join(f"- {item}" for item in open_items[:12]),
+                    checklist=checklist,
+                )
+            )
+        result["continuations"] = continuations
+        gate_after = external_bench.orchestration_state()
+        result["path_denials"] = int(gate_after.get("path_denials", 0)) - int(
+            gate_before.get("path_denials", 0)
+        )
+        result["blocked_writes"] = int(gate_after.get("blocked_writes", 0)) - int(
+            gate_before.get("blocked_writes", 0)
+        )
         result["tool_calls"] = drive["tool_calls"]
+        tool_names: dict[str, int] = dict(drive.get("tool_names") or {})
+        result["tool_names"] = tool_names
+        result["todolist_calls"] = sum(
+            count for name, count in tool_names.items() if name.startswith("todo")
+        )
+        result["taskflow_calls"] = sum(
+            count for name, count in tool_names.items() if name.startswith("taskflow")
+        )
+        result["orchestration_compliant"] = bool(
+            result["todolist_calls"] and result["taskflow_calls"]
+        )
         result["resumes"] = drive["resumes"]
         result["timeout"] = drive["timeout"]
         result["error"] = drive["error"]
         result["reply"] = drive["text"][:2000]
         result["tokens"] = await harness._session_tokens(session_id)
 
+        # A step child that finished just as the last turn ended may still be
+        # writing its edits; wait (bounded) for in-flight steps to settle so the
+        # graded patch contains their work instead of racing it.
+        settle_deadline = time.monotonic() + _FLOW_SETTLE_WAIT_S
+        while _flow_in_flight(results_dir) and time.monotonic() < settle_deadline:
+            await asyncio.sleep(5.0)
+
         patch = _agent_patch(host_workdir, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"
-        patch_path.write_text(patch, encoding="utf-8")
+        patch_path.write_text(patch, encoding="utf-8", newline="\n")
         result["patch_path"] = str(patch_path)
         result["changed_paths"] = _changed_paths(patch)
 
@@ -498,6 +903,15 @@ async def _run_task(
         result["duration_s"] = round(time.monotonic() - started, 1)
         print(f"[evals] {task.task_id}: HARNESS ERROR: {result['error']}", flush=True)
     finally:
+        # HeartbeatStaleness arms a repeating 1-min timer in before_agent and
+        # normally clears it in after_agent. A turn aborted by the provider
+        # circuit-breaker (or by cancellation) can skip after_agent, leaving
+        # the timer firing forever — the eval process then stays alive long
+        # after eval_report.json has been written. Eval sessions are owned by
+        # the harness: always release their timers here.
+        from runtime import timer_call_register
+
+        timer_call_register.clear_session(session_id)
         if container:
             external_bench.remove_container(container)
         if not keep_workdirs:
@@ -519,10 +933,13 @@ def _grade(
         shutil.rmtree(out_dir)
     artifacts = out_dir / "artifacts"
     artifacts.mkdir(parents=True)
-    (artifacts / "model.patch").write_text(patch, encoding="utf-8")
+    # newline=\nn: Path.write_text translates \nn to \r\nn on Windows,
+    # and git apply inside the Linux verifier rejects a CRLF patch.
+    # git apply inside the Linux verifier rejects a CRLF patch.
+    (artifacts / "model.patch").write_text(patch, encoding="utf-8", newline="\n")
     network = "none" if task.verifier_network in {"no-network", "none"} else None
     args = [
-        "docker",
+        external_bench.container_bin(),
         "run",
         "--rm",
         "--entrypoint",
@@ -530,6 +947,10 @@ def _grade(
     ]
     if network:
         args += ["--network", network]
+    if external_bench.container_bin() == "podman":
+        # see external_bench.create_container: a propagated dead proxy breaks
+        # the verifier's own localhost-based tests.
+        args += ["--http-proxy=false"]
     args += [
         "-v",
         f"{artifacts}:/logs/artifacts:ro",
@@ -569,7 +990,8 @@ def _append_agents_note(workspace: Path) -> None:
         "the same tree is bind-mounted at `/app` inside the container. The task "
         "text's container paths are rewritten to the project directory.\n"
         "- The `terminal` tool runs inside the task container, in a persistent shell; "
-        "file tools edit the same files from the host side.\n"
+        "file tools edit the same files from the host side. Host paths inside "
+        "terminal commands are translated to the container mount automatically.\n"
         "- The task image is the only toolchain. There is no internet access. "
         "Never modify tests or run `git commit`.\n"
     )

@@ -233,6 +233,16 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "retry_policy",  # existing: failure retry policy
     "skills",  # skill names whose SKILL.md is prepended at dispatch (see _skill_prepend)
     "file_deps",  # project-relative files this step's verification depends on
+    # High-risk keyword approval carried into this step's (re)dispatch. Written
+    # only by an explicit approval resume; cleared with the next plan write.
+    "approval_context",
+    # Expert-panel fields: the step names a registered EXPERT whose persona /
+    # skill whitelist / spawn overrides ride the dispatch (loaded from the
+    # expert registry at dispatch time by taskflow_dispatch).
+    "expert",  # registered expert name (expert_registry.load)
+    "persona_prompt",  # resolved expert persona injected into the child prompt
+    "skills_whitelist",  # resolved expert skills merged into the step skills
+    "goal_max_turns",  # per-step child goal-turn override (1 = single-step expert)
 )
 
 

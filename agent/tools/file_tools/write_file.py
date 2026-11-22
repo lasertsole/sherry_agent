@@ -369,6 +369,19 @@ class FormattedWriteFileTool(BaseTool):
             written,
             expected_revision=license.revision,
         )
+        if not is_py:
+            # Non-Python languages format through an ALREADY-RUNNING language
+            # server (autopep8 covers .py above; a server is never started
+            # here). The revision note below is taken AFTER the pass, so the
+            # write license describes the formatted bytes, not the pre-format
+            # ones. Fail-open: no server, a dead pipe or an unsupported method
+            # keeps the file exactly as written.
+            try:
+                from agent.tools.pub_base.lsp_sync import format_edited_file
+
+                format_edited_file(str(resolved), session_id)
+            except Exception:  # noqa: BLE001 - advisory formatting
+                logger.debug("LSP write-time format skipped", exc_info=True)
         # This session authored the whole file: it knows the revision
         # it produced, so the next overwrite is licensed against it
         # — and in the codec it was written in.

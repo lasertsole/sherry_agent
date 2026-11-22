@@ -21,9 +21,12 @@ Sandbox-hardening additions (see wiki/sandbox/README.md):
   ``SHERRY_SESSION_ID`` — the session tag a scripted skill uses to address the
   session-scoped artifact store (the background path inherits the same env).
 - OS sandbox wrap: ``sandbox=True`` + policy != OFF + usable backend → the
-  command is exec'd in list form via ``backend.wrap(["/bin/sh", "-c", ...])``
-  (semantically identical to POSIX ``shell=True``); backend ``None``
-  (Windows / unavailable) degrades to the byte-identical pre-existing path;
+  command is exec'd in list form via ``backend.wrap(backend.sandbox_shell(...))``.
+  The backend owns the shell choice: ``/bin/sh -c`` on POSIX, ``cmd.exe /c`` on
+  Windows while AppContainer is active (MSYS2/Git Bash cannot initialise inside
+  an AppContainer), Git Bash (``resolve_windows_bash``, ``COMSPEC`` when no bash
+  exists) when AppContainer is off. A backend ``None`` (platform without a
+  backend / probe failure) degrades to the historical unsandboxed path;
   on the HITL path the degradation is approved BEFORE the tool runs
   (str join + ``shell=True`` / ``create_subprocess_shell``) with ONLY
   ``env=`` added, plus one loguru warning line for the AUTO degrade.
@@ -148,16 +151,174 @@ def _process_group_kwargs() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
+def _terminal_state_files(session_id: str) -> tuple[Path, Path] | None:
+    """The per-session cwd/env state files, or ``None`` when recovery is off.
+
+    The pair lives in the session's own ``SESSIONS_DIR`` tree (the same private
+    surface the sandbox already allows a command to write), so a session's
+    persistent terminal state dies with the session. An unsafe/empty session
+    id turns the feature off entirely — nothing is ever written outside
+    ``SESSIONS_DIR``.
+    """
+    from config import SESSIONS_DIR
+    from config.path import is_safe_session_segment
+
+    if not session_id or not is_safe_session_segment(session_id):
+        return None
+    directory = Path(SESSIONS_DIR) / session_id / "terminal-state"
+    return directory / "env", directory / "cwd"
+
+
+def _wrap_persistent_shell(cmd_str: str, session_id: str) -> str:
+    """Restore the previous command's cwd + exported env around *cmd_str*.
+
+    The local terminal spawns a fresh shell per call, so ``cd``/``export``/
+    ``source .venv/bin/activate`` evaporated between calls (the eval harness's
+    DockerBridge already solves this inside containers with a state file; this
+    is the same mechanism for the local path). The wrapper restores, runs,
+    captures ``pwd`` + ``export -p``, and preserves the exit code. POSIX sh and
+    Git Bash only — a cmd.exe spawn (the Windows AppContainer shell) cannot run
+    it, so callers on Windows pass the flag accordingly. Failure to persist is
+    silent (``2>/dev/null`` everywhere): a broken state file degrades to the
+    historical fresh-shell behaviour, never to a failed command.
+    """
+    state = _terminal_state_files(session_id)
+    if state is None:
+        return cmd_str
+    import shlex
+
+    env_file, cwd_file = (shlex.quote(str(path)) for path in state)
+    mkdir = f"mkdir -p {shlex.quote(str(state[0].parent))} 2>/dev/null"
+    return (
+        "set +e\n"
+        f"{mkdir}\n"
+        f"if [ -f {env_file} ]; then . {env_file} >/dev/null 2>&1; fi\n"
+        f'__sherry_cwd="$(cat {cwd_file} 2>/dev/null || true)"\n'
+        f'if [ -n "$__sherry_cwd" ] && cd "$__sherry_cwd" 2>/dev/null; then :; '
+        f"else true; fi\n"
+        f"{cmd_str}\n"
+        "__sherry_rc=$?\n"
+        f"pwd > {cwd_file} 2>/dev/null\n"
+        f"export -p > {env_file} 2>/dev/null\n"
+        "exit $__sherry_rc\n"
+    )
+
+
 def _resolve_timeout(requested: int | None) -> int:
     """The effective per-call timeout: defaulted, clamped, never nonsense.
 
-    ``None``/0/negative falls back to ``TERMINAL_TIMEOUT`` (the historical 30 s);
+    ``None``/0/negative falls back to ``TERMINAL_TIMEOUT`` (120 s unless the
+    ``TERMINAL_DEFAULT_TIMEOUT_SECONDS`` env override says otherwise);
     anything larger is clamped to ``TERMINAL_MAX_TIMEOUT`` so a bad number can
     never park a turn for hours.
     """
     if requested is None or requested <= 0:
         return TERMINAL_TIMEOUT
     return min(int(requested), TERMINAL_MAX_TIMEOUT)
+
+
+#: Characters of a timed-out command's output that come back with the timeout
+#: report (head + tail around a truncation marker). The fd-direct-write design
+#: means the bytes are already on disk — reading a bounded slice of them costs
+#: nothing on the heap and is the difference between "the 28 seconds of test
+#: output are GONE" and the model seeing where the run stopped.
+_PARTIAL_OUTPUT_CHARS = 5000
+_PARTIAL_OUTPUT_HALF = 2500
+
+
+def _read_partial_stdout(tmp_path: Path | None) -> str:
+    """The head+tail slice a timed-out command already wrote to its tmp file.
+
+    Fail-open: a missing/unreadable file answers an empty string. The slice is
+    character-bounded (the decode is errors="replace"), so even a multi-gigabyte
+    log costs one bounded read.
+    """
+    if tmp_path is None:
+        return ""
+    try:
+        text = tmp_path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    if len(text) <= _PARTIAL_OUTPUT_CHARS:
+        return text
+    return text[:_PARTIAL_OUTPUT_HALF] + "\n... [truncated] ...\n" + text[-_PARTIAL_OUTPUT_HALF:]
+
+
+def _kill_tmp_holders(tmp_path: Path | None) -> None:
+    """Kill a process that still holds a killed command's stdout file.
+
+    ``taskkill /T`` has a race with MSYS fork chains: the grandchild that
+    actually carries the inherited stdout handle (a ``sleep`` inside the
+    persistent-cwd wrapper, say) can be missed when its intermediate parent
+    dies first, and the orphan then keeps the tmp file — and itself — alive
+    until its own end. The sweep names the holder directly (``open_files``)
+    and kills it, so the discard retry lands.
+
+    The scan is bounded to the MSYS process family on purpose: the leak class
+    IS the fork-inherited handle, and a plain (non-MSYS) grandchild is killed
+    reliably by ``taskkill /T``. Checking ``open_files`` on every process on
+    the host costs seconds; checking it on the handful of bash/sleep/sh
+    processes costs milliseconds. The tmp path is session-scoped and freshly
+    created — any holder is part of the command this call spawned.
+    """
+    if tmp_path is None:
+        return
+    try:
+        import contextlib
+
+        import psutil
+
+        target = str(tmp_path)
+        me = os.getpid()
+        for proc in psutil.process_iter(["name"]):
+            name = (proc.info.get("name") or "").lower()
+            if proc.pid == me or not any(token in name for token in _MSYS_HOLDER_TOKENS):
+                continue
+            try:
+                files = proc.open_files()
+            except Exception:  # noqa: BLE001 - access denied / gone mid-scan
+                continue
+            if any(f.path == target for f in files):
+                with contextlib.suppress(Exception):
+                    proc.kill()
+    except Exception:  # noqa: BLE001 - best-effort cleanup
+        logger.debug("tmp holder sweep skipped", exc_info=True)
+
+
+def _discard_after_kill(tmp_handle: Any, tmp_path: Path | None) -> None:
+    """Discard the fd output file, breaking a surviving handle's grip if needed.
+
+    The plain discard covers the common case (the tree kill released every
+    handle). Only when the file SURVIVES the first unlink — the ``taskkill /T``
+    MSYS race left an orphan holding the inherited stdout fd — is the expensive
+    holder sweep (a psutil pass over every process) worth paying, followed by
+    one retry.
+    """
+    discard_stdout_tmp(tmp_handle, tmp_path)
+    if tmp_path is not None and tmp_path.exists():
+        _kill_tmp_holders(tmp_path)
+        discard_stdout_tmp(None, tmp_path)
+
+
+#: The MSYS/Git-Bash process family an inherited stdout handle can survive in.
+_MSYS_HOLDER_TOKENS = ("bash", "sh.exe", "sleep", "dash", "zsh", "fish", "busybox")
+
+
+def _should_auto_background(command: str) -> bool:
+    """Whether a timed-out command is adopted into the background instead of killed.
+
+    ZCode's rule, narrowed to this tool's reality: a command that produced a
+    live process worth keeping (anything but a bare ``sleep`` — waiting IS its
+    job, so there is nothing to preserve) and that is not empty. Everything
+    else — servers, builds, test suites, watch mode — keeps running and its
+    output stays readable through ``terminal_bg``.
+    """
+    cmd = command.strip().lower()
+    if not cmd:
+        return False
+    if cmd.startswith("sleep "):
+        return False
+    return True
 
 
 #: Commands whose non-zero exit is a NETWORK/tool failure, not an ordinary
@@ -373,6 +534,11 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             "idempotent": False,
             "side_effect_scope": "system",
             "streak_warn_after": 5,
+            # The tool is not high-risk, but its command text is scanned for
+            # high-risk keywords (rm -rf / credentials / …): the command, not
+            # the tool, decides the risk.
+            "high_risk": False,
+            "scan_keywords": True,
         }
 
     # ── Guards & helpers ────────────────────────────────────────────────────
@@ -477,10 +643,11 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 "(HITL-gated when an operator is in scope)"
             )
             return None, env
-        # List-exec form for the sandbox: ["/bin/sh", "-c", cmd] is
-        # semantically identical to POSIX shell=True (and Windows never has a
-        # backend, so cmd.exe is untouched).
-        return backend.wrap(["/bin/sh", "-c", cmd_str], env, writable_roots)
+        # List-exec form for the sandbox: the backend owns the shell choice,
+        # because Windows' AppContainer cannot host Git Bash (MSYS2 needs
+        # global named objects) — it answers cmd.exe while a POSIX host gets
+        # /bin/sh. Both are semantically identical to shell=True on that host.
+        return backend.wrap(backend.sandbox_shell(cmd_str), env, writable_roots)
 
     # ── Sync execution paths ────────────────────────────────────────────────
 
@@ -571,19 +738,28 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 return output
             return output
         except subprocess.TimeoutExpired:
-            # Bounded cleanup: kill, then wait with a deadline.
+            # Bounded cleanup: kill, then wait with a deadline. The output the
+            # command already produced is READ before the tmp file is discarded
+            # — a timeout used to throw those bytes away, which made a 28 s
+            # test run report nothing at all.
             if proc:
                 kill_process_tree(proc)
-            discard_stdout_tmp(tmp_handle, tmp_path)
+            partial = _read_partial_stdout(tmp_path)
+            _discard_after_kill(tmp_handle, tmp_path)
             logger.warning(
                 "terminal command timed out after {}s: {}",
                 timeout,
                 str(argv)[:120],
             )
-            return (
+            message = (
                 f"Terminal command timed out after {timeout} seconds. "
                 "The command was forcibly terminated. Please try a simpler command."
             )
+            if partial:
+                message += (
+                    f"\n\nPartial output before the timeout ({len(partial)} chars):\n\n{partial}"
+                )
+            return message
         except ToolException:
             # The network-status bridge: let the error surface to
             # ``handle_tool_error`` (ToolMessage(status="error")), not the
@@ -606,9 +782,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
     ) -> str:
         """Run command with explicit encoding for stdout/stderr, with timeout.
 
-        BYTE-IDENTICAL Windows fallback: the command string construction
-        (str join / passthrough) and ``shell=True`` are unchanged vs the
-        pre-sandbox-hardening path; the ONLY addition is ``env=``.
+        The unsandboxed fallback: commands join with ``" && "`` and the spawn
+        uses Git Bash (list-exec) when a Windows bash exists, else the platform
+        shell via ``shell=True``; ``env=`` and ``cwd=`` ride along unchanged.
         """
         cmd_str = self._join_commands(commands)
         return self._execute_sync(
@@ -670,7 +846,13 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
 
         env = _child_env(bound_session)
         if sandbox:
-            argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
+            # The persistent-cwd wrapper needs a POSIX-capable shell; a Windows
+            # backend answers cmd.exe, which cannot run it (the shell fallback
+            # below re-evaluates with Git Bash instead).
+            spawn_str = (
+                cmd_str if os.name == "nt" else _wrap_persistent_shell(cmd_str, bound_session)
+            )
+            argv, wrapped_env = self._resolve_sandbox_argv(spawn_str, env, writable_roots)
             if argv is not None:
                 return self._record_verification(
                     cmd_str,
@@ -690,10 +872,16 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         # without timeout — prone to hanging and fails on Windows for console-dependent
         # commands (e.g. `timeout` needs a real console handle). Bypass it entirely and
         # use _run_with_encoding which has proper timeout and encoding handling.
+        bash_exe = resolve_windows_bash()
+        # A POSIX-capable shell runs the persistent-cwd wrapper: the platform
+        # shell on Linux/macOS, Git Bash on Windows. (resolve_windows_bash
+        # answers None on POSIX by design — the gate must not depend on it.)
+        posix_capable = os.name != "nt" or bool(bash_exe)
+        spawn_str = _wrap_persistent_shell(cmd_str, bound_session) if posix_capable else cmd_str
         return self._record_verification(
             cmd_str,
             self._run_with_encoding(
-                commands,
+                commands if spawn_str == cmd_str else spawn_str,
                 encoding=self._encoding,
                 env=env,
                 cwd=cwd,
@@ -829,6 +1017,64 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             f"status and terminal_bg(action='output', task_id='{task_id}') to read the output."
         )
 
+    async def _adopt_timed_out_background(
+        self,
+        proc: asyncio.subprocess.Process,
+        tmp_path: Path,
+        cmd_str: str,
+        session_id: str,
+        timeout: int,
+    ) -> str | None:
+        """Turn a timed-out foreground process into a background task (no kill).
+
+        The child keeps its output fd, so its bytes keep landing in the SAME
+        tmp file; the task's ``retained_path`` names the ``evicted/`` file the
+        watcher moves it to once the child exits (a rename mid-run would fail
+        on Windows and would need a cross-device copy on POSIX). ``None`` means
+        the adoption could not be registered and the caller must fall back to
+        the kill path.
+        """
+        import time as _time
+        import uuid as _uuid
+
+        from .bg_registry import BackgroundTask, background_registry, open_background_output
+
+        task_id = f"bg-{_uuid.uuid4().hex[:12]}"
+        retained = open_background_output(session_id, task_id)
+        if retained is None:
+            return None
+        task = BackgroundTask(
+            task_id=task_id,
+            session_id=session_id,
+            pid=proc.pid,
+            command=cmd_str,
+            output_path=tmp_path,
+            started_at=_time.monotonic(),
+            pgid=proc.pid,  # start_new_session/creationflags made it the leader
+            retained_path=retained,
+        )
+        task.live = True
+        background_registry.register(task)
+        background_registry.start_watcher(task_id, proc, session_id)
+        await background_registry.push_started(task)
+        logger.info(
+            "terminal: timed-out foreground command {} adopted as background task {} (pid {})",
+            cmd_str[:120],
+            task_id,
+            proc.pid,
+        )
+        partial = _read_partial_stdout(tmp_path)
+        message = (
+            f"Command timed out after {timeout} seconds and was automatically moved to "
+            f"the background (task: {task_id}). The process is still running and its "
+            f"output keeps being captured. Use terminal_bg(action='output', "
+            f"task_id='{task_id}') to check progress, and terminal_bg(action='kill', "
+            f"task_id='{task_id}') to stop it. You will be notified when it exits."
+        )
+        if partial:
+            message += f"\n\nPartial output before the timeout ({len(partial)} chars):\n\n{partial}"
+        return message
+
     @override
     async def _arun(
         self,
@@ -876,7 +1122,10 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         spawn_env = env
         ran_sandboxed = False
         if sandbox:
-            argv, spawn_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
+            spawn_str = (
+                cmd_str if os.name == "nt" else _wrap_persistent_shell(cmd_str, bound_session)
+            )
+            argv, spawn_env = self._resolve_sandbox_argv(spawn_str, env, writable_roots)
             ran_sandboxed = argv is not None
 
         proc = None
@@ -899,13 +1148,18 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 ran_sandboxed = True
             else:
                 # Same POSIX-shell preference as the sync path (Git Bash on
-                # Windows when installed; the platform shell otherwise).
+                # Windows when installed; the platform shell otherwise). Both
+                # POSIX-capable branches run the persistent-cwd wrapper.
                 bash_exe = resolve_windows_bash()
+                posix_capable = os.name != "nt" or bool(bash_exe)
+                spawn_str = (
+                    _wrap_persistent_shell(cmd_str, bound_session) if posix_capable else cmd_str
+                )
                 if bash_exe:
                     proc = await asyncio.create_subprocess_exec(
                         bash_exe,
                         "-c",
-                        cmd_str,
+                        spawn_str,
                         stdout=tmp_handle,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=cwd or str(ROOT_DIR),
@@ -914,7 +1168,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                     )
                 else:
                     proc = await asyncio.create_subprocess_shell(
-                        cmd_str,
+                        spawn_str,
                         stdout=tmp_handle,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=cwd or str(ROOT_DIR),
@@ -944,26 +1198,40 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 )
             return self._record_verification(cmd_str, output, run_manager, sandboxed=ran_sandboxed)
         except TimeoutError:
+            # Adopt-or-kill: a live process worth keeping (anything but a bare
+            # sleep) moves to the background registry and its output keeps
+            # streaming into the tmp file; everything else is killed. BOTH
+            # paths report the bytes the command already wrote — a timeout
+            # used to discard them.
+            if proc and _should_auto_background(cmd_str):
+                adopted = await self._adopt_timed_out_background(
+                    proc, tmp_path, cmd_str, bound_session, effective_timeout
+                )
+                if adopted is not None:
+                    tmp_path = None  # the task now owns the output file
+                    return self._record_verification(cmd_str, adopted, run_manager)
             if proc:
                 await akill_process_tree(proc)
-            discard_stdout_tmp(tmp_handle, tmp_path)
+            partial = _read_partial_stdout(tmp_path)
+            _discard_after_kill(tmp_handle, tmp_path)
             logger.warning(
                 "terminal command timed out after {}s: {}", effective_timeout, cmd_str[:120]
             )
-            return self._record_verification(
-                cmd_str,
-                (
-                    f"Terminal command timed out after {timeout} seconds. "
-                    "The command was forcibly terminated. Please try a simpler command."
-                ),
-                run_manager,
+            message = (
+                f"Terminal command timed out after {effective_timeout} seconds. "
+                "The command was forcibly terminated. Please try a simpler command."
             )
+            if partial:
+                message += (
+                    f"\n\nPartial output before the timeout ({len(partial)} chars):\n\n{partial}"
+                )
+            return self._record_verification(cmd_str, message, run_manager)
         except asyncio.CancelledError:
             if proc:
                 # Kill the whole foreground process group, not just the shell:
                 # a pipeline/subshell would otherwise survive the stop.
                 await akill_process_tree(proc, grace=1.0)
-            discard_stdout_tmp(tmp_handle, tmp_path)
+            _discard_after_kill(tmp_handle, tmp_path)
             logger.warning("terminal command cancelled: {}", cmd_str[:120])
             return self._record_verification(
                 cmd_str, "Terminal command was cancelled (process tree killed).", run_manager

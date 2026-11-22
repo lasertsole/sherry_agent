@@ -46,7 +46,7 @@ bwrap
 
 `--clearenv` 出现在所有 `--setenv` 之前，两者结合才把清洗后的字典变成真正的环境变量白名单。根文件系统只读；写入只能落在项目根目录和临时目录。
 
-**读遮蔽。** `--ro-bind / /` 只是让"读"处处可行，并不无害：没有掩蔽时模型可以 `cat ~/.ssh/id_rsa`。因此两个后端都会掩蔽一份默认敏感路径清单 `DEFAULT_DENY_READ_PATHS`——`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker`——每次调用由 `_sensitive_read_paths()` 解析，并可用环境变量 `SHERRY_DENY_READ_PATHS` 扩展（以 `os.pathsep` 分隔，展开 `~`；空项跳过、顺序保留、去重）。bwrap 的读遮蔽会在每个存在的目录上挂载空目录（对敏感文件则 `--ro-bind /dev/null`）；不存在的路径直接跳过（本来就没有东西可读，而且 bwrap 无法在只读根绑定之下创建挂载点）；主机没有 `/var/empty` 时目录回退为 `--tmpfs <路径>`。遮蔽挂载位于可写绑定**之后**，因此可写的项目根目录永远无法重新暴露被掩蔽的路径。
+**读遮蔽。** `--ro-bind / /` 只是让"读"处处可行，并不无害：没有掩蔽时模型可以 `cat ~/.ssh/id_rsa`。因此 Linux 与 macOS 后端都会掩蔽一份默认敏感路径清单 `DEFAULT_DENY_READ_PATHS`——`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker`——每次调用由 `_sensitive_read_paths()` 解析，并可用环境变量 `SHERRY_DENY_READ_PATHS` 扩展（以 `os.pathsep` 分隔，展开 `~`；空项跳过、顺序保留、去重）。bwrap 的读遮蔽会在每个存在的目录上挂载空目录（对敏感文件则 `--ro-bind /dev/null`）；不存在的路径直接跳过（本来就没有东西可读，而且 bwrap 无法在只读根绑定之下创建挂载点）；主机没有 `/var/empty` 时目录回退为 `--tmpfs <路径>`。遮蔽挂载位于可写绑定**之后**，因此可写的项目根目录永远无法重新暴露被掩蔽的路径。
 
 **macOS：Seatbelt（`sandbox-exec`）**。命令以 `sandbox-exec -p <profile> -- <cmd...>` 运行，profile 如下：
 
@@ -65,10 +65,19 @@ bwrap
 
 顺序即规范：`(allow default)` 之下的 `(deny file-write*)` 表示"除文件写入外全部放行"，随后用显式 allow 重新打开两个可写路径以及 `/dev/null`、`/dev/tty` 两个字面量。读遮蔽的 `deny file-read*` 规则紧跟在 `(deny file-write*)` 之后：每个敏感路径一条 `subpath` 规则（默认清单与 bwrap 相同，同样支持 `SHERRY_DENY_READ_PATHS` 扩展），另加两条正则覆盖任意位置的 `.env` / `.env.*`。不存在的路径照样拒绝——对不存在路径的拒绝无害。路径通过 `json.dumps` 嵌入，路径里的引号或反斜杠无法逃逸成注入的 sbpl 片段。
 
-**探测（可用性检查）**。两个后端都实现 `probe() -> bool`，带类级缓存（每个进程只探测一次，失败结果同样缓存）：
+**Windows：AppContainer + 受限令牌 + Job Object（`WinSandboxBackend`）**。Windows 没有 `bwrap` 也没有 `sandbox-exec`，`wrap()` 又不能改变进程创建属性，所以后端返回一个小 launcher（`python -c` 执行 zlib 压缩、base64 编码的源码），由它在启动命令前完成内核级工作：
+
+1. **AppContainer** —— 每用户 profile（`CreateAppContainerProfile`，已存在则 `DeriveAppContainerSidFromAppContainerName`）给出包 SID。launcher 给该 SID 在 `writable_roots` 上添加可继承的读写/执行/删除 ACE，并给命令自身的可执行文件、venv 的基础解释器（`pyvenv.cfg` 的 `home`，以及 `Lib`/`DLLs`/`python*.dll`）和 launcher 自己的解释器授予读+执行。`UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES)` + `EXTENDED_STARTUPINFO_PRESENT` 让进程**运行在容器内**：只能写被授权的根、只能读包 SID 可读的内容；配置要求断网时不授予 `internetClient` 能力，出站 socket 在 connect 阶段被拒绝。系统目录（`%SystemRoot%`、`%ProgramFiles%`）本身已给 `ALL APPLICATION PACKAGES` 读+执行，直接跳过。`%TEMP%`/`%TMP%` 由 Windows 重定向到 profile 的 `AC\Temp`（可写）；非 AppContainer 路径下 launcher 也会把它们指向某个被授权根。
+2. **受限令牌** —— 对调用方自己的令牌执行 `OpenProcessToken` + `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)`。子进程失去全部特权（不能调试其他进程、加载驱动、夺取所有权），不需要管理员。`DISABLE_MAX_PRIVILEGE` 保留 `SeChangeNotifyPrivilege`，这样容器可以穿越已获授权的路径，而不必给每一级祖先目录加 ACE。
+3. **Job Object** —— `ActiveProcessLimit`（`SHERRY_WIN_SANDBOX_MAX_PROCESSES`，默认 50）、`JobMemoryLimit`（`SHERRY_WIN_SANDBOX_MAX_MEMORY_MB`，默认 4096）与 `KILL_ON_JOB_CLOSE`。fork bomb 或 OOM 被围堵；杀掉 launcher（工具的 timeout 路径）会连命令及全部后代一起杀掉。子进程以**挂起状态**创建并加入 job 后再恢复，绑定窗口内无法 spawn 逃逸进程。
+4. **stdout/stderr 传递** —— 工具把子进程 stdout 指向 FILE 句柄，launcher 把可继承副本交给命令（`STARTUPINFO.hStdOutput/hStdError` + `STARTF_USESTDHANDLES` + `bInheritHandles`）。没有这一步，沙箱输出无处可去。
+
+每一层独立 fail-open——AppContainer profile/创建失败会退回受限令牌路径，`CreateProcessAsUserW` 退回 `CreateProcessW`，令牌失败保留全部特权，job 失败只剩令牌——每次失败都带 Win32 错误码写到 stderr，因此禁止某一层的主机策略是明示降级而不是拒绝运行。`SHERRY_WIN_SANDBOX_APPCONTAINER=0` 关闭第 2 层（沙箱 shell 恢复 Git Bash）。两条刻意的 Windows 限制：**MSYS2/Git Bash 无法在 AppContainer 内初始化**（其运行时需要全局命名对象），所以受沙箱的 shell 是 `cmd.exe`；DACL 授权与 profile 是持久的，命令结束后被授权的根上会留下 `S-1-15-2-…` ACE（以及一个 AppContainer profile）。
+**探测（可用性检查）**。所有后端都实现 `probe() -> bool`，带类级缓存（每个进程只探测一次，失败结果同样缓存）：
 
 - `BwrapBackend.probe()`：以 3 秒超时冒烟运行 `bwrap --ro-bind / / --proc /proc --dev /dev true`。二进制存在并不代表可用；Ubuntu 24.04+ 的 AppArmor 非特权 user namespace 限制可以在 uid-map 阶段杀死所有 bwrap，所以真实的冒烟运行才是诚实的检查。
 - `SeatbeltBackend.probe()`：仅 `shutil.which("sandbox-exec")`；sbpl 没有基于退出码的冒烟探测可用。
+- `WinSandboxBackend.probe()`：本机上 `OpenProcessToken` + `CreateRestrictedToken` + `CreateJobObject` 全部成功；任一失败时，`auto` 就像缺少 `bwrap` 二进制一样降级（`required` 则拒绝）。
 
 **PTC 复用这套后端。** `execute_code`（程序化工具调用）不暴露 `sandbox` 开关，因此在任何策略下都表现得像 `sandbox=True` 调用：后端可用时包装 `[sys.executable, script_path]`；`SANDBOX_POLICY=required` 且无后端时返回 `status: "sandbox_unavailable"` 信封且不派生子进程；`SANDBOX_POLICY=auto` 且无后端时同样返回 `status: "sandbox_unavailable"` 且不派生子进程（PTC 无 HITL 路径，因此拒绝降级）；只有 `off` 才无沙箱运行。PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net`：子进程必须能连到父进程的 loopback RPC 监听，写/读沙箱不变。见 [PTC 页](../../ptc/README.zh.md)。
 

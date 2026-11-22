@@ -43,7 +43,10 @@
   "common": {
     "confirmDelete": "削除の確認",
     "delete": "削除",
-    "cancel": "キャンセル"
+    "cancel": "キャンセル",
+    "save": "保存",
+    "notImplemented": "未実装です",
+    "comingSoon": "近日公開"
   },
   "shortcuts": {
     "hint": "「再割り当て」を押してから新しい組み合わせを押します（Esc でキャンセル）。設定はこのブラウザに保存され、すぐに反映されます。",
@@ -319,6 +322,7 @@
       "pickerTruncated": "先頭 {shown} 件のみ表示（全 {total} 件）",
       "pickerUp": "上の階層へ"
     },
+    "highRiskGuard": "高リスク保護",
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開",
     "floatChat": "会話をフローティング表示",
@@ -822,7 +826,12 @@
   "session": {
     "fork": "ここから分岐",
     "forkedFrom": "{parent} から分岐",
-    "backToParent": "親ブランチに戻る"
+    "backToParent": "親ブランチに戻る",
+    "type": {
+      "chat": "会話",
+      "team": "チーム",
+      "meeting": "会議"
+    }
   },
   "whiteboard": {
     "namePlaceholder": "ボード名",
@@ -859,5 +868,67 @@
     "planApprove": "計画を承認",
     "planRevise": "修正を依頼",
     "planFeedbackPlaceholder": "修正すべき点を入力…"
+  },
+  "nav": {
+    "chat": "チャット",
+    "files": "ファイル",
+    "experts": "専門家",
+    "tasks": "タスク",
+    "meetings": "会議"
+  },
+  "experts": {
+    "create": "専門家を追加",
+    "edit": "専門家を編集",
+    "search": "専門家を検索…",
+    "name": "名前",
+    "nameHint": "一意の ID、作成後は変更不可",
+    "description": "説明",
+    "personaPrompt": "ペルソナプロンプト",
+    "personaHint": "専門家の振る舞いを定義",
+    "model": "モデル",
+    "thinking": "思考レベル",
+    "role": "機能ロール",
+    "skills": "スキル許可リスト",
+    "skillsHint": "空の場合は制限なし",
+    "mcpServers": "MCP サーバー",
+    "mcpHint": "名前を入力して Enter",
+    "timeout": "ステップタイムアウト",
+    "empty": "専門家はいません",
+    "noMatch": "一致する専門家はいません",
+    "teamsSuffix": "チーム",
+    "skillsSuffix": "スキル"
+  },
+  "taskBoard": {
+    "all": "すべて",
+    "running": "実行中",
+    "waiting": "待機",
+    "done": "完了",
+    "failed": "失敗",
+    "empty": "フローはありません",
+    "stepsSuffix": "ステップ"
+  },
+  "meetings": {
+    "create": "会議を作成",
+    "empty": "会議はありません",
+    "topic": "テーマ",
+    "participants": "参加者",
+    "participantsHint": "2 人以上の専門家を選択",
+    "noExperts": "専門家がいません",
+    "peopleSuffix": "人",
+    "iteration": "ラウンド",
+    "status": {
+      "in_progress": "進行中",
+      "waiting_user": "入力待ち",
+      "ended": "終了",
+      "cancelled": "キャンセル"
+    },
+    "back": "戻る",
+    "confirmEnd": "終了を確認",
+    "execute": "今すぐ実行",
+    "speaking": "発言中",
+    "roleSummary": "要約",
+    "emptyStream": "発言を待っています…",
+    "interrupt": "割り込み",
+    "interruptPlaceholder": "割り込み内容を入力…"
   }
 }

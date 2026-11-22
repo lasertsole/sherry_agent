@@ -89,7 +89,7 @@ _GLOBAL_ACTION_TOOL: dict[str, str] = {
 # Signatures cannot express "empty string is missing" for these. A group means
 # "at least one of these must be present" (resume accepts a key or a result).
 _ONE_OF_REQUIRED: dict[str, tuple[tuple[str, ...], ...]] = {
-    "resume": (("child_session_key", "result"),),
+    "resume": (("child_session_key", "result", "approval_context"),),
 }
 # The old taskflow_budget surface took action=query|set. Keep those accepted
 # as aliases so a model that remembers the old shape reaches the budget action
@@ -266,7 +266,21 @@ class TaskflowStepInput(BaseModel):
         default=None,
         description=(
             "success / failure / partial / skipped / blocked; outranks the result gates "
-            "(resume). blocked keeps the partial result and the dependents blocked."
+            "(resume). blocked keeps the partial result and the dependents blocked. "
+            "approved (with approval_context) re-dispatches the step after a human "
+            "approval of a bubbled high-risk keyword."
+        ),
+    )
+    step_id: str | None = Field(
+        default=None,
+        description="Step id (resume with approval_context: which step to re-dispatch).",
+    )
+    approval_context: dict | None = Field(
+        default=None,
+        description=(
+            "After the user approves a step child's [NEEDS_APPROVAL] bubble: "
+            "{keyword, tool} (optionally args_hash) re-dispatches that step with the "
+            "approval. Requires step_outcome='approved'."
         ),
     )
     auto_dispatch: bool | None = Field(

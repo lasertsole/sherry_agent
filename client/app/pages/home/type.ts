@@ -17,6 +17,13 @@ export interface SessionRecord {
   parentTitle?: string;
   /** The parent turn a branch was forked at (absent for a quote side chat). */
   forkTurnNum?: number;
+  /** Session kind (S5). Absent = ordinary chat. */
+  type?: 'chat' | 'team' | 'meeting';
+  /** Team display name when `type === 'team'` (inferred from metadata when the backend has no field). */
+  teamName?: string;
+  /** Meeting topic / id when `type === 'meeting'`. */
+  meetingTopic?: string;
+  meetingId?: string;
 }
 
 /** Toolbar tool */

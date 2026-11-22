@@ -2,8 +2,7 @@
 
 Covers:
   * ``repair_tool_args`` — the conservative syntax-only repair: both real
-    samples from the SWE-bench HARD run (``evals/swebench/RESULTS.md``,
-    run 20261017_003529), trailing commas, and every refusal rule
+    samples from an eval run (20261017_003529), trailing commas, and every refusal rule
     (ambiguous middle value, key-like tokens inside the value, JSON-token
     starts, non-mappings, non-strings).
   * ``InvalidToolCallRepairMiddleware`` — passthrough on clean messages,
@@ -311,3 +310,32 @@ class TestResendStage:
         # out on the wire), restored afterwards.
         assert seen["callbacks_in_flight"] is None
         assert config["callbacks"] is sentinel
+
+
+class TestResendNoteContent:
+    """The resend note quotes the offending args + names the broken shape."""
+
+    def test_the_note_echoes_the_raw_arguments(self):
+        from agent.middlewares.invalid_tool_call_repair.core import (
+            InvalidToolCallRepairMiddleware,
+        )
+        from langchain_core.messages import AIMessage
+
+        ai = AIMessage(
+            content="",
+            invalid_tool_calls=[
+                {
+                    "name": "taskflow_step",
+                    "id": "call-1",
+                    "args": '{"action": "update_steps", "steps": [{"step-2", "task": "x"}]}',
+                    "error": None,
+                }
+            ],
+        )
+        note = InvalidToolCallRepairMiddleware()._build_note(ai)
+        text = str(note.content)
+        # The offending text is quoted back verbatim (the model can see its bug).
+        assert '{"action": "update_steps"' in text
+        # ... and the missing-key shape is named explicitly.
+        assert '"key": value' in text
+        assert "step-2" in text

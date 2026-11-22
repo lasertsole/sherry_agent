@@ -2,7 +2,7 @@ from typing import Never
 import math
 from pathlib import Path
 from loguru import logger
-from config import APP_HOME, LOG_DIR
+from config import DAEMON_HOME, LOG_DIR
 from config.features import LLM_CLIENT_DEFAULTS, LOCAL_DAEMONS
 from config.models_settings import get_model_setting
 from models.daemon.base import (
@@ -25,7 +25,7 @@ _EMBED_DAEMON = DaemonSpec(
     name="embedding",
     host=LOCAL_DAEMONS["host"],
     port=LOCAL_DAEMONS["embed_port"],
-    pid_path=APP_HOME / ".embed_daemon.pid",
+    pid_path=DAEMON_HOME / ".embed_daemon.pid",
     import_fn="models.embed_model.text.daemon",
     ready_wait_s=LOCAL_DAEMONS["embed_ready_wait_s"],
     liveness_timeout_s=LOCAL_DAEMONS["liveness_timeout_s"],

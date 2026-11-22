@@ -43,7 +43,10 @@
   "common": {
     "confirmDelete": "Confirm Delete",
     "delete": "Delete",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "save": "Save",
+    "notImplemented": "Not yet implemented",
+    "comingSoon": "Coming soon"
   },
   "shortcuts": {
     "hint": "Click Rebind, then press the new chord (Esc cancels). Bindings are stored in this browser and apply immediately.",
@@ -319,6 +322,7 @@
       "pickerTruncated": "Showing the first {shown} of {total}",
       "pickerUp": "Up one level"
     },
+    "highRiskGuard": "High-risk guard",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
     "floatChat": "Float conversation",
@@ -822,7 +826,12 @@
   "session": {
     "fork": "Branch from here",
     "forkedFrom": "Forked from {parent}",
-    "backToParent": "Back to the parent branch"
+    "backToParent": "Back to the parent branch",
+    "type": {
+      "chat": "Chat",
+      "team": "Team",
+      "meeting": "Meeting"
+    }
   },
   "whiteboard": {
     "namePlaceholder": "Board name",
@@ -859,5 +868,67 @@
     "planApprove": "Approve Plan",
     "planRevise": "Request Changes",
     "planFeedbackPlaceholder": "What should change? …"
+  },
+  "nav": {
+    "chat": "Chat",
+    "files": "Files",
+    "experts": "Experts",
+    "tasks": "Tasks",
+    "meetings": "Meetings"
+  },
+  "experts": {
+    "create": "New expert",
+    "edit": "Edit expert",
+    "search": "Search experts…",
+    "name": "Name",
+    "nameHint": "Unique id, immutable after creation",
+    "description": "Description",
+    "personaPrompt": "Persona prompt",
+    "personaHint": "Defines the expert behaviour",
+    "model": "Model",
+    "thinking": "Thinking level",
+    "role": "Functional role",
+    "skills": "Skill allowlist",
+    "skillsHint": "Empty means unrestricted",
+    "mcpServers": "MCP servers",
+    "mcpHint": "Type a server name and press Enter",
+    "timeout": "Step timeout",
+    "empty": "No experts yet",
+    "noMatch": "No matching experts",
+    "teamsSuffix": " teams",
+    "skillsSuffix": "skills"
+  },
+  "taskBoard": {
+    "all": "All",
+    "running": "Running",
+    "waiting": "Waiting",
+    "done": "Done",
+    "failed": "Failed",
+    "empty": "No flows yet",
+    "stepsSuffix": "steps"
+  },
+  "meetings": {
+    "create": "New meeting",
+    "empty": "No meetings yet",
+    "topic": "Topic",
+    "participants": "Participants",
+    "participantsHint": "Select at least 2 experts",
+    "noExperts": "No experts available",
+    "peopleSuffix": "people",
+    "iteration": "Round",
+    "status": {
+      "in_progress": "In progress",
+      "waiting_user": "Awaiting input",
+      "ended": "Ended",
+      "cancelled": "Cancelled"
+    },
+    "back": "Back",
+    "confirmEnd": "Confirm end",
+    "execute": "Execute now",
+    "speaking": "Speaking",
+    "roleSummary": "Summary",
+    "emptyStream": "Waiting for speakers…",
+    "interrupt": "Interject",
+    "interruptPlaceholder": "Type your interjection…"
   }
 }

@@ -554,3 +554,33 @@ def test_update_steps_in_main_toolset(build_main_tools_real):
     names = [t.name for t in build_main_tools_real()]
 
     assert "taskflow_step" in names
+
+
+# ---------------------------------------------------------------------------
+# (i) a SKIPPED step is reopenable (measured: the reasoner looped on
+# update_steps(done) after auto-dispatch skipped step-1, until the breaker)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_step_can_be_reopened_as_ready(isolated_db: Path):
+    await _seed([_step("step-1", status=StepStatus.SKIPPED)])
+
+    out = await _update([_step("step-1", status=StepStatus.READY)])
+
+    assert "Error" not in out, out
+    steps = await _stored_steps()
+    assert steps[0]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_step_still_cannot_jump_to_done(isolated_db: Path):
+    await _seed([_step("step-1", status=StepStatus.SKIPPED)])
+
+    out = await _update([_step("step-1", status=StepStatus.DONE)])
+
+    assert "Error" in out
+    assert "cannot become status=done" in out
+    assert "reopened with status=ready" in out
+    steps = await _stored_steps()
+    assert steps[0]["status"] == "skipped"
