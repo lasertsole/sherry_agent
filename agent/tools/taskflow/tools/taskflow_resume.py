@@ -477,6 +477,30 @@ async def taskflow_resume(
                     block_reason=f"StepJudge blocked: {judge_result.reason}",
                 )
                 judge_text = f"\n  judge: BLOCKED {judge_result.reason}"
+            elif judge_result.verdict == StepVerdict.UNKNOWN:
+                # The judge itself failed (provider outage / unparseable output).
+                # A judge outage must never masquerade as a model-issued PASS:
+                # marking the step DONE would unlock dependents on an UNVERIFIED
+                # result. Safe default keeps the step non-terminal and visible;
+                # the legacy fail-open behaviour is opt-in via config.
+                if str(STEP_JUDGE.get("on_judge_error", "block")).lower() == "pass":
+                    logger.warning(
+                        "TaskFlow step {}: judge unavailable, failing open to DONE by config",
+                        step_id,
+                    )
+                    set_step_status(step, StepStatus.DONE)
+                    judge_text = (
+                        f"\n  judge: PASS (fail-open, judge unavailable): {judge_result.reason}"
+                    )
+                else:
+                    set_step_status(
+                        step,
+                        StepStatus.BLOCKED,
+                        block_reason=f"StepJudge unavailable (unverified): {judge_result.reason}",
+                    )
+                    judge_text = (
+                        f"\n  judge: BLOCKED (unverified, judge outage): {judge_result.reason}"
+                    )
             else:
                 set_step_status(step, StepStatus.DONE)
                 judge_text = f"\n  judge: PASS {judge_result.reason}"

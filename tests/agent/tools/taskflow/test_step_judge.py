@@ -1,4 +1,4 @@
-"""StepJudge parsing, fail-open, and prompt assembly."""
+"""StepJudge parsing, outage handling, and prompt assembly."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ async def test_judge_tolerates_malformed_json_via_json_repair(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
-async def test_judge_fails_open_when_llm_unavailable(monkeypatch: pytest.MonkeyPatch):
+async def test_judge_returns_unknown_when_llm_unavailable(monkeypatch: pytest.MonkeyPatch):
     def _build(temperature: float | None = None):
         raise RuntimeError("aux llm offline")
 
@@ -101,19 +101,20 @@ async def test_judge_fails_open_when_llm_unavailable(monkeypatch: pytest.MonkeyP
 
     result = await judge_step_result("task", "criteria", "result")
 
-    assert result.verdict == StepVerdict.PASS
-    assert "fail-open" in result.reason
+    assert result.verdict == StepVerdict.UNKNOWN
+    assert "outage" in result.reason
+    assert "aux llm offline" in result.reason
 
 
 @pytest.mark.asyncio
-async def test_judge_fails_open_on_unparseable_response(monkeypatch: pytest.MonkeyPatch):
+async def test_judge_returns_unknown_on_unparseable_response(monkeypatch: pytest.MonkeyPatch):
     recorder: list = []
     _install_llm(monkeypatch, "I am not sure what to say here.", recorder)
 
     result = await judge_step_result("task", "criteria", "result")
 
-    assert result.verdict == StepVerdict.PASS
-    assert "fail-open" in result.reason
+    assert result.verdict == StepVerdict.UNKNOWN
+    assert "no usable verdict" in result.reason
 
 
 @pytest.mark.asyncio

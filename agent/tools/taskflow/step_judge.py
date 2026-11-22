@@ -5,8 +5,12 @@ a subagent's step result satisfies the step's ``validation_criteria`` and
 returns PASS / RETRY / BLOCK.
 
 Design principles:
-- Fail-open: any judge failure (model error, unparseable response) degrades to
-  PASS so progress is never blocked by the judge itself.
+- Judge OUTAGES are reported as ``UNKNOWN``, never as a model-issued PASS. The
+  consumer (``taskflow_resume``) maps UNKNOWN to ``block`` by default so an
+  unverified result cannot be marked ``done`` and silently unlock dependents —
+  the judge failing must not look like the judge approving. ``on_judge_error``
+  in ``STEP_JUDGE`` restores the legacy fail-open PASS when explicitly set.
+  A model that DOES answer but yields no usable verdict is an outage too.
 - Auxiliary LLM at temperature 0 for deterministic verdicts.
 - Evidence-aware: the judge is shown the verification-evidence summary.
 """
@@ -31,6 +35,10 @@ class StepVerdict(StrEnum):
     PASS = "pass"
     RETRY = "retry"
     BLOCK = "block"
+    UNKNOWN = "unknown"
+    """The judge itself failed (provider error / unparseable output). Not a
+    model-issued verdict: the consumer decides whether to block or pass via
+    ``STEP_JUDGE['on_judge_error']``."""
 
 
 class JudgeResult(NamedTuple):
@@ -135,8 +143,8 @@ def _parse_judge_response(raw: str) -> JudgeResult:
         if verdict is not None:
             return JudgeResult(verdict, "", "")
 
-    logger.warning("StepJudge: no usable verdict in response, failing open as PASS")
-    return JudgeResult(StepVerdict.PASS, "judge parse failure (fail-open)", "")
+    logger.warning("StepJudge: no usable verdict in response, returning UNKNOWN")
+    return JudgeResult(StepVerdict.UNKNOWN, "judge parse failure (no usable verdict)", "")
 
 
 async def judge_step_result(
@@ -153,8 +161,8 @@ async def judge_step_result(
     text when present: the judge then reasons over the actual values rather than
     re-parsing prose.
 
-    Fail-open: any error (model failure, unparseable output) degrades to PASS so
-    the judge can never block progress.
+    A judge outage (model failure, unparseable output) returns ``UNKNOWN`` —
+    never a fake PASS. See the module docstring for the consumer-side policy.
     """
     if structured_result is not None:
         judged_text = json.dumps(structured_result, ensure_ascii=False, default=str)
@@ -176,6 +184,6 @@ async def judge_step_result(
         )
         raw = response.content if hasattr(response, "content") else str(response)
         return _parse_judge_response(str(raw))
-    except Exception as exc:  # noqa: BLE001 - the fail-open boundary of this judge
-        logger.warning("StepJudge failed, failing open as PASS: {}", exc)
-        return JudgeResult(StepVerdict.PASS, f"judge error (fail-open): {exc}", "")
+    except Exception as exc:  # noqa: BLE001 - the judge-outage boundary
+        logger.warning("StepJudge failed, returning UNKNOWN: {}", exc)
+        return JudgeResult(StepVerdict.UNKNOWN, f"judge error (outage): {exc}", "")
