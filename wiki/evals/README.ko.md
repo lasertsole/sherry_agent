@@ -8,7 +8,7 @@
 
 | 스위트 | 측정 대상 | 진입점 |
 | :--- | :--- | :--- |
-| [DeepSWE](../../evals/deepswe/README.md) | 숨겨진 테스트 패치와 benchmark 자체 grader를 쓰는 외부 코딩 과제. 기본 경로는 docker 또는 podman으로 benchmark의 작업 이미지를 실행하고, `--local`은 Docker 없는 호스트 모드 | `evals/deepswe/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | 숨겨진 테스트 패치와 benchmark 자체 grader를 쓰는 외부 코딩 과제. 기본 경로는 docker 또는 podman으로 benchmark의 작업 이미지를 실행합니다 | `evals/deepswe/suite.py` |
 | [DevBench（SWE-bench Verified）](../../evals/devbench/README.md) | 공식 F2P/P2P 목록을 이미지 내 pytest로 판정. 에이전트는 호스트측 `/testbed` 복사본 편집 | `evals/devbench/suite.py` |
 | [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | devbench 코어로 ByteDance 다국어 데이터 실행(`--lang` 필터, 이미지는 레코드에서) | `evals/multi_swe_bench/suite.py` |
 | [TAU-bench](../../evals/tau_bench/README.md) | 모의 비즈니스 API를 sherry 도구로 랩. 기록된 호출+출력으로 일반 판정 | `evals/tau_bench/suite.py` |
@@ -42,7 +42,6 @@ uv run --no-sync python evals/deepswe/suite.py --preflight-only  # 이미지 pul
 SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py --timeout 1800
 
 # DeepSWE 기본 슬라이스를 Docker 없는 호스트 모드로 실행:
-uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
 `SHERRY_EVAL_CONTAINER_BIN`이 엔진을 고정합니다(`docker` / `podman`, 기본은 docker 우선,
@@ -76,8 +75,9 @@ DeepSWE는 실제 메인 에이전트를 구동하므로, harness는 규칙을 �
   `acceptance_checklist`, `reviewer_checklist_injections`), `continuations`,
   `no_progress_stop`, 그리고 verifier 판정과 patch.
 
-알려진 공백: 컨테이너 경로는 각 턴을 `asyncio.wait_for`로 제한합니다. `--local`의 worker
-프로세스와 달리 강제 종료가 없어, 진행 중인 provider 호출이 기한을 넘겨 남을 수 있습니다.
+알려진 공백: 컨테이너 경로는 각 턴을 `asyncio.wait_for`로 제한합니다. 진행 중인 provider
+호출에 대한 강제 종료가 없어 기한을 넘길 수 있습니다(삭제된 `--local` 모드의 worker 프로세스
+강제 종료가 수정 참고).
 
 ## 결과
 

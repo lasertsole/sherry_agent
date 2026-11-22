@@ -9,7 +9,7 @@ a score is not a capability percentage.
 
 | Suite | What it measures | Entry point |
 | :--- | :--- | :--- |
-| [DeepSWE](../../evals/deepswe/README.md) | External coding tasks with hidden test patches and the benchmark's own grader; the default arm runs the benchmark's task images through docker or podman, `--local` is the Docker-free host mode | `evals/deepswe/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | External coding tasks with hidden test patches and the benchmark's own grader; the default arm runs the benchmark's task images through docker or podman | `evals/deepswe/suite.py` |
 | [DevBench (SWE-bench Verified)](../../evals/devbench/README.md) | Official F2P/P2P test lists judged from an in-image pytest pass; the agent edits a host copy of `/testbed` | `evals/devbench/suite.py` |
 | [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | The devbench core over ByteDance's multi-language records (`--lang` filter; per-record images) | `evals/multi_swe_bench/suite.py` |
 | [TAU-bench](../../evals/tau_bench/README.md) | Simulated business API wrapped as sherry tools; generic reward over recorded calls + outputs | `evals/tau_bench/suite.py` |
@@ -49,7 +49,6 @@ uv run --no-sync python evals/deepswe/suite.py --preflight-only  # pull + verifi
 SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py --timeout 1800
 
 # DeepSWE default slice in the Docker-free host mode:
-uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
 `SHERRY_EVAL_CONTAINER_BIN` pins the engine (`docker` / `podman`; the default
@@ -88,11 +87,11 @@ then verifies them instead of trusting the prompt:
   `acceptance_checklist`, `reviewer_checklist_injections`), `continuations`,
   `no_progress_stop`, plus the verifier verdict and the patch.
 
-Known gap: the container arm bounds each driven turn with `asyncio.wait_for`;
-unlike `--local`'s worker process it has no hard kill, so an in-flight provider
-call can outlive the deadline.
+Known gap: the container arm bounds each driven turn with `asyncio.wait_for`; it
+has no hard kill for an in-flight provider call, which can outlive the deadline
+(the retired `--local` mode's worker-process kill is the sketch for fixing this).
 
 ## Results
 
-- [DeepSWE](../../evals/deepswe/README.md) — local-mode results and failure
-  analysis in `evals/deepswe/RESULTS.md`.
+- [DeepSWE](../../evals/deepswe/README.md) — run records and failure analysis
+  in `evals/deepswe/RESULTS.md`.

@@ -7,7 +7,7 @@
 
 | 套件 | 测量内容 | 入口 |
 | :--- | :--- | :--- |
-| [DeepSWE](../../evals/deepswe/README.md) | 外部编码任务，隐藏测试补丁 + benchmark 自带 grader；默认路径通过 docker 或 podman 运行基准的任务镜像，`--local` 是无 Docker 的宿主机模式 | `evals/deepswe/suite.py` |
+| [DeepSWE](../../evals/deepswe/README.md) | 外部编码任务，隐藏测试补丁 + benchmark 自带 grader；默认路径通过 docker 或 podman 运行基准的任务镜像 | `evals/deepswe/suite.py` |
 | [DevBench（SWE-bench Verified）](../../evals/devbench/README.md) | 官方 F2P/P2P 测试清单经镜像内 pytest 判分；agent 编辑宿主侧 `/testbed` 副本 | `evals/devbench/suite.py` |
 | [Multi-SWE-bench](../../evals/multi_swe_bench/README.md) | devbench 核心跑字节跳动多语言数据（`--lang` 过滤；镜像来自数据集字段） | `evals/multi_swe_bench/suite.py` |
 | [TAU-bench](../../evals/tau_bench/README.md) | 模拟业务 API 包装为 sherry 工具；按记录的调用与输出做通用判分 | `evals/tau_bench/suite.py` |
@@ -37,7 +37,6 @@ uv run --no-sync python evals/deepswe/suite.py --preflight-only  # 拉镜像 + �
 SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py --timeout 1800
 
 # DeepSWE 默认切片，无 Docker 宿主机模式：
-uv run --no-sync python evals/deepswe/suite.py --local --timeout 1200
 ```
 
 `SHERRY_EVAL_CONTAINER_BIN` 指定引擎（`docker` / `podman`；默认先找 docker，再退回 podman）。
@@ -67,10 +66,10 @@ DeepSWE 驱动的是真实主 agent，因此 harness 把规则说出来并**核�
   `reviewer_checklist_injections`）、`continuations`、`no_progress_stop`，以及 verifier 判定
   和补丁。
 
-已知缺口：容器模式用 `asyncio.wait_for` 约束每个回合；与 `--local` 的 worker 进程不同，它没有
-硬杀，进行中的 provider 调用可能超过截止时间。
+已知缺口：容器模式用 `asyncio.wait_for` 约束每个回合，对进行中的 provider 调用没有
+硬杀，可能超过截止时间（已删除的 `--local` 模式的 worker 进程硬杀是修复的参考）。
 
 ## 结果
 
-- [DeepSWE](../../evals/deepswe/README.md) —— 本地模式结果与失败分析在
+- [DeepSWE](../../evals/deepswe/README.md) —— 运行记录与失败分析在
   `evals/deepswe/RESULTS.md`。
