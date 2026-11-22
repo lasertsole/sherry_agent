@@ -635,14 +635,16 @@ class TodoService:
         old_flow_ids = {str(t.get("flow_id")) for t in old_todos if t.get("flow_id")}
         new_flow_ids = {str(t.get("flow_id")) for t in validated if t.get("flow_id")}
         orphaned = sorted(old_flow_ids - new_flow_ids)
-        mode = str(TODOLIST_INFRA.get("orphan_flow_on_drop", "cancel")).lower()
+        mode = str(TODOLIST_INFRA.get("orphan_flow_on_drop", "refuse")).lower()
         if mode not in {"cancel", "refuse", "sweep_only"}:
-            mode = "cancel"
+            mode = "refuse"
         if orphaned and mode == "refuse":
             raise TodoReferenceError(
                 "Cannot replace the todo list: it would drop the GC-root todo of "
-                f"active flow(s) {', '.join(orphaned)}. Finish or cancel those flows "
-                "first, or keep their todo in the replacement list."
+                f"active flow(s) {', '.join(orphaned)}. Keep each flow's todo in the "
+                'replacement list (or use todowrite(action="patch") to edit items), '
+                'or finish/cancel the flow first with taskflow_flow(action="finish") '
+                '/ (action="cancel").'
             )
         if orphaned and mode == "cancel":
             from agent.tools.taskflow.tools._shared import compensate_orphaned_flows

@@ -13,8 +13,12 @@ class TodoListInfraConfig(TypedDict):
     #: reaches this many todos.
     position_shift_offset: int
     #: What a full ``todowrite`` replacement does when it drops a flow's GC-root
-    #: todo: ``cancel`` immediately fails the orphaned flow, ``refuse`` rejects
-    #: the replacement, ``sweep_only`` leaves it to the background sweep.
+    #: todo: ``refuse`` rejects the replacement (the default — a full-list
+    #: rewrite that forgets the flow root is almost always a model slip, and
+    #: cancelling destroys in-flight step children; measured: one replacement
+    #: killed a 5-step flow with two children mid-flight and cascaded every step
+    #: to failed), ``cancel`` immediately fails the orphaned flow, ``sweep_only``
+    #: leaves it to the background sweep.
     orphan_flow_on_drop: str
     #: Run a session-scoped unreferenced-flow sweep immediately after a full
     #: replacement (defense in depth behind ``orphan_flow_on_drop``).
@@ -56,7 +60,7 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     "store_busy_timeout_ms": 5000,
     "store_init_wait_timeout_s": 10.0,
     "position_shift_offset": 1_000_000,
-    "orphan_flow_on_drop": "cancel",
+    "orphan_flow_on_drop": "refuse",
     "trigger_sweep_after_replace": True,
     "stagnation_max_stagnation": 3,
     "stagnation_base_cooldown_s": 2.0,
