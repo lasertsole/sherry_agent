@@ -143,6 +143,12 @@ Decompose the flow so it RUNS in parallel, not as one serial chain:
   ready set drive the wave.
 - While step children run, do one `taskflow_step(action="wait_all")` (it
   wakes as results land) instead of polling with terminal commands.
+- Plan ONCE. After `taskflow_flow(action="plan")` returns, do NOT rewrite the
+  step list with `taskflow_step(action="update_steps")` — hand-writing a long
+  step array is the most common source of malformed tool arguments and kills
+  the turn. To correct course, dispatch a remaining ready step
+  (`action="dispatch"`) or wait; add follow-up work as ONE short step, never a
+  full-list rewrite.
 """
 
 
