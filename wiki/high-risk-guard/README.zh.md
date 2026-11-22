@@ -42,6 +42,16 @@
 
 **已执行**的关键字享受同样的一次性待遇：批准过的操作成功执行后，该关键字被标记为已执行，之后任何参数包含它的调用都会被拒绝并返回首次结果，直到面板（或 `high_risk_guard action=reset_keyword`）清除标记。
 
+### 面板 API 的传输门禁
+
+`args_preview` 可能携带敏感值，因此每个面板路由（`GET/POST/PUT/DELETE /sessions/:sid/high-risk-keywords*`、`/high-risk-ops/:id`、`/high-risk-keywords/builtin`）都要求**安全传输**（`server/trigger/http/transport_guard.py`）：
+
+* **同一主机** —— loopback peer 或 `Host: localhost/127.0.0.1/[::1]` 放行（桌面 webview 直连 `http://localhost:8080`）。
+* **加密** —— `X-Forwarded-Proto: https` 或 `wss` 放行。Fleet Ingress 依据自身 TLS 方案（`tls_cert`/`tls_key`）重新生成该头；只有设置 `SHERRY_INGRESS_TRUST_FORWARDED` 时才采信客户端传入的值，因此明文远程客户端无法伪造 `https`。
+* **否则降级** —— 跨主机纯 HTTP/WS 调用得到 **HTTP 200 + 空的 `keywords`/`ops` + `degraded: true` + 中文提示语**，绝不返回真实账本；写操作同样被拒。面板显示提示而非传输错误，敏感数据不会经不安全链路外泄。
+
+这是传输层门禁，与网关 Origin/token、CSRF、登录门禁互补，不替代它们。
+
 ## 🔁 主智能体与子智能体
 
 | | 主智能体 | 子智能体 |
@@ -100,6 +110,7 @@ HITL 卡片会在 `interrupt()` 之前冻结会话心跳（`HEARTBEAT_SKIP`）�
 - **关键字的已执行标记是会话级的。** 计划里"每个步骤重新询问"在这里被刻意收紧为更严格的语义：第一次批准的操作会标记该关键字，之后任何包含它的调用都被拒绝，直到重置标记。这对防重放是安全的，但合法地再跑一次需要面板操作。
 - **未标注的工具默认低危。** 显式的 `metadata.high_risk` 优先；没有该键的 `mcp__` 工具是高危，其余未标注工具不是。把危险操作藏在普通名字后面的插件必须自己标注。
 - **MCP 按前缀入账本且默认非幂等。** 确实安全的 MCP 读操作可以声明 `high_risk: False` / `idempotent: True`。
-- **账本保存参数预览（≤300 字符）。** 它留在本地 `high_risk_guard.db`（绝不进入被跟踪的 workspace）；预览仍可能包含调用时带入的值。
+- **账本保存参数预览（≤300 字符）。** 它留在本地 `high_risk_guard.db`（绝不进入被跟踪的 workspace）；预览仍可能包含调用时带入的值。面板 API 仅在同主机或 HTTPS/WSS 传输下返回它（否则降级提示）。
+- **传输信任基于请求头。** `X-Forwarded-Proto` 仅采信可信代理；在别处终止 TLS 的部署须在 ingress 上设置 `SHERRY_INGRESS_TRUST_FORWARDED` 以转发真实协议。
 - **冒泡依赖父智能体进入回合。** 完成消息现在会自动带引导，但真正的批准仍是主智能体必须发起的 `question` 调用；不读完成消息的父智能体会让步骤一直 blocked。
 - **保留期是惰性的。** 过期行最多每小时在一次账本访问时清扫；一条行可能超过 24 小时窗口存活到下一次清扫。

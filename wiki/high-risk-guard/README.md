@@ -42,6 +42,16 @@ A ledger row is keyed by the **root main session** (a subagent resolves `APPROVA
 
 A keyword that has **executed** gets the same one-shot treatment: after an approved operation succeeds, its keyword is marked executed and a later call whose arguments contain it is refused with the first result until the panel (or `high_risk_guard action=reset_keyword`) clears the marker.
 
+### Transport gate for the panel API
+
+`args_preview` can carry sensitive values, so every panel route (`GET/POST/PUT/DELETE /sessions/:sid/high-risk-keywords*`, `/high-risk-ops/:id`, `/high-risk-keywords/builtin`) requires a **safe transport** (`server/trigger/http/transport_guard.py`):
+
+* **Same host** — a loopback peer or `Host: localhost/127.0.0.1/[::1]` passes (the desktop webview dialing `http://localhost:8080`).
+* **Encrypted** — `X-Forwarded-Proto: https` or `wss` passes. Fleet Ingress re-mints this header from its own TLS scheme (`tls_cert`/`tls_key`); it only honors a client-supplied value when `SHERRY_INGRESS_TRUST_FORWARDED` is set, so a plaintext remote client cannot mint `https`.
+* **Otherwise degraded** — a cross-host plain-HTTP/WS call gets **HTTP 200 with empty `keywords`/`ops`, `degraded: true` and a Chinese notice**, never the real ledger. Writes are refused the same way. The panel shows the notice instead of a transport error while no operation data crosses the insecure link.
+
+This is a transport-layer guard, complementary to the gateway Origin/token, CSRF and login gates; it does not replace them.
+
 ## 🔁 Main Agent vs Subagent
 
 | | Main agent | Subagent |
@@ -100,6 +110,7 @@ The shield button in the toolbar opens `HighRiskGuardPanel` for the current sess
 - **A keyword's executed marker is session-wide.** The plan's "one approval asks again per step" is intentionally stricter here: the first approved operation marks the keyword, and every later call containing it is refused until the marker is reset. That is safe against replays but needs the panel for a legitimate second run.
 - **Unannotated tools default to low risk.** Explicit `metadata.high_risk` wins; an `mcp__` tool without the key is high-risk, every other unannotated tool is not. A plugin that hides a dangerous operation behind a plain name must annotate itself.
 - **MCP is ledgered by prefix and non-idempotent by default.** A genuinely safe MCP read can declare `high_risk: False` / `idempotent: True`.
-- **The ledger stores an args preview (≤300 chars).** It stays in the local `high_risk_guard.db` (never the tracked workspace); a preview may still contain a value the call included.
+- **The ledger stores an args preview (≤300 chars).** It stays in the local `high_risk_guard.db` (never the tracked workspace); a preview may still contain a value the call included. The panel API withholds it unless the transport is same-host or HTTPS/WSS (degraded notice otherwise).
+- **Transport trust is header-based.** `X-Forwarded-Proto` is honored only from a trusted proxy; a deployment that terminates TLS elsewhere must set `SHERRY_INGRESS_TRUST_FORWARDED` on the ingress so it forwards the real scheme.
 - **The bubble depends on the parent taking a turn.** The completion message now carries the guide automatically, but the actual approval is still a `question` call the main agent must make; a parent that never reads its completion leaves the step blocked.
 - **Retention is lazy.** Expired rows are swept at most once an hour on a store access; a row can outlive the 24 h window until the next sweep.
