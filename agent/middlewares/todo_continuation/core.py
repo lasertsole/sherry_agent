@@ -184,26 +184,27 @@ Only when you can point at the proof may you finish and summarize.
 _VERIFY_DIRECTIVE = """
 [VERIFY TODO]
 The only remaining item is the system [VERIFY] todo. Acceptance is independent:
-- If no reviewer is linked yet: read every work todo's acceptance criteria AND
-  the Intent Anchor at the top of your todo reminder, then spawn
-  sessions_spawn(functional_role="reviewer") with a brief that lists each
-  todo_id + its criteria + the exact command(s) + the anchor's Goal, Must-have,
-  Must-NOT-have and Accept lines. Require this JSON report:
-  {"verified": bool, "intent_match": bool, "intent_deviations": [{"todo_id": N, "detail": "..."}], "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
-  intent_match must be false if the work drifted from the approved intent even
-  when every acceptance command passed. Patch the returned child_session_key
-  into this todo's subagent_id.
+- If no reviewer is linked yet: read every work todo's acceptance criteria, then
+  spawn sessions_spawn(functional_role="reviewer") with a brief that lists each
+  todo_id + its criteria + the exact command(s). Require this JSON report:
+  {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
+  Patch the returned child_session_key into this todo's subagent_id.
+  ADDITIONALLY, include the Intent Anchor (Goal / Must-have / Must-NOT-have /
+  Accept) from your todo reminder in the brief. If the report also carries
+  "intent_match": false or "intent_deviations", treat those as failures too.
 - If a reviewer finished: read its report (the completion notice / sessions_messages).
   For every passed=false todo_id, patch that todo back to pending and put the
-  evidence in its notes. For every intent_deviations entry, re-open that todo
-  (or the whole plan when intent_match is false with no entries) and put the
-  deviation in its notes. Do not rewrite the whole list; passed, in-intent todos
-  stay completed.
+  evidence in its notes. Do not rewrite the whole list; passed todos stay completed.
   If the report is unreadable, spawn a new reviewer (the gate allows a bounded number
   of re-spawns before the exhausted escape).
-- Only a {"verified": true, "intent_match": true} report may complete this todo;
-  the transition barrier requires a linked, finished reviewer and an unchanged
-  plan file. If the intent no longer fits, call enter_plan_mode(replan=True) first.
+  ADDITIONALLY, for every "intent_deviations" entry in the report, re-open that
+  todo and put the deviation in its notes; when "intent_match" is false with no
+  entries, re-open the work todos. Do not rewrite the whole list.
+- Only a {"verified": true} report may complete this todo; the transition barrier
+  requires a linked, finished reviewer.
+  ADDITIONALLY, if the intent no longer fits the approved plan, call
+  enter_plan_mode(replan=True) first — or amend_intent(goal, reason) when your
+  earlier reading of the intent was wrong.
 """
 
 #: Injected once when the reviewer link was re-spawned past its budget. The main
