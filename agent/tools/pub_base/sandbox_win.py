@@ -1055,7 +1055,10 @@ class WinSandboxBackend(SandboxBackend):
         """True when a restricted token and a Job Object can both be created.
 
         AppContainer is optional (an enterprise policy can forbid the profile):
-        its absence degrades to layers 1 + 3, so it does not fail the probe.
+        its absence degrades to the restricted token + Job Object, so it does
+        not fail the probe. Numbering follows the module docstring here
+        (AppContainer=1, token=2, job=3); the launcher's inline comments use a
+        different order, so name the layers instead of citing numbers.
         """
         if self._probe_cache is not None:
             return self._probe_cache
@@ -1114,6 +1117,12 @@ class WinSandboxBackend(SandboxBackend):
         """Return the launcher command; the launcher applies the isolation."""
         roots = normalize_writable_roots(writable_roots)
         config = read_win_config()
+        # PTC (execute_code) passes allow_network=True because its child must
+        # reach the parent's loopback RPC listener. That intentionally wins
+        # over SHERRY_WIN_SANDBOX_BLOCK_NETWORK: the AppContainer keeps the
+        # internetClient capability, while file/read confinement is unchanged.
+        # Documented in wiki/sandbox + wiki/sandbox/isolation; the override is
+        # locked by test_allow_network_suppresses_the_block_request.
         block_network = config.block_network and not allow_network
         payload = _launcher_payload(cmd, roots, config, block_network=block_network)
         # The AppContainer child cannot write the user's %TEMP%; point the

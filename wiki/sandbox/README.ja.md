@@ -68,7 +68,7 @@
 `get_backend(policy)` のディスパッチ:
 
 1. `OFF` は即座に `None` を返す: プローブなし、インポートなし、サブプロセスなし。
-2. `platform.system()` のプラットフォームレジストリから登録済みファクトリでバックエンドを構築します——Linux → `BwrapBackend`、macOS → `SeatbeltBackend`、Windows → `WinSandboxBackend`。いずれも**遅延インポート**ファクトリとして登録されます(`ImportError` は「利用不可」であってクラッシュではありません)。ファクトリ未登録のプラットフォームにはバックエンドがありません。`register_sandbox_backend(system, factory)` で追加/置換でき、重複登録は `replace=True` がない限り拒否されます。
+2. `platform.system()` のプラットフォームレジストリから登録済みファクトリでバックエンドを構築します。Linux は**複合ファクトリ**です：`BwrapBackend.probe()` が成功した場合のみ `BwrapBackend` を返し、失敗すると `LandlockBackend` にフォールバックします（`bwrap` のないスリムコンテナでもサンドボックスなしで実行される代わりにカーネル LSM サンドボックスを得られます）。macOS → `SeatbeltBackend`、Windows → `WinSandboxBackend`。いずれも**遅延インポート**ファクトリとして登録されます(`ImportError` は「利用不可」であってクラッシュではありません)。ファクトリ未登録のプラットフォームにはバックエンドがありません。`register_sandbox_backend(system, factory)` で追加/置換でき、重複登録は `replace=True` がない限り拒否されます。
 3. バックエンドが存在しても `probe()` が失敗した場合: `REQUIRED` は `RuntimeError("Required sandbox unavailable on {system}")` を送出し、`AUTO` / `OFF` は `None` を返します。
 
 ### ツール統合
@@ -133,7 +133,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 SHERRY_WIN_SANDBOX_MAX_PROCESSES=50     # Job Object ActiveProcessLimit(1..10000 にクランプ)
 SHERRY_WIN_SANDBOX_MAX_MEMORY_MB=4096   # Job Object JobMemoryLimit(64..1048576 にクランプ)
 SHERRY_WIN_SANDBOX_BLOCK_NETWORK=0      # 1 = internetClient 能力を付与しない(AppContainer はネットワーク不可)
-SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 第 1+3 層のみ、サンドボックス shell は Git Bash に戻る
+SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 制限付きトークン + Job Object のみ、サンドボックス shell は Git Bash に戻る
 ```
 
 解析できない値はデフォルトに戻り、WARNING が 1 行出ます。launcher は適用できなかった各層を Win32 エラーコード付きで stderr に報告し、コマンド自体は実行されます(fail-open)。
@@ -182,7 +182,7 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 第 1+3 層のみ、サンドボ�
 - **Windows では 3 層すべてが稼働しますが、shell に意図的な変更が 1 つあります。** ユーザーごとの AppContainer profile がコマンドにパッケージ SID を与えます。launcher は `writable_roots` に継承可能な書き込み ACE を付与し(既存ファイルにも伝播)、shell と venv のベースインタープリタ(`pyvenv.cfg` の `home`)に読み取り+実行を付与するため、venv の `python.exe` も動作します。制限トークンが全特権を除き、Job Object がプロセス/メモリを制限して launcher の死でツリー全体を殺し、`internetClient` 能力を付けなければネットワークも遮断されます。実際の end-to-end テストが書き込み/読み取り封じ込め、ネットワークスイッチ、stdout/stderr/終了コード、上限、kill-on-close を覆います。**Git Bash(MSYS2)は AppContainer 内で起動できません**。そのためサンドボックス化された shell は `cmd.exe` で、POSIX 専用構文(`;`、`$()`、`export`)は使えません。Git Bash が必要なら `SHERRY_WIN_SANDBOX_APPCONTAINER=0` を設定してください(ファイル/ネットワーク封じ込めを失い、制限トークン + Job Object は維持)。DACL 付与は許可したルートに永続し(パッケージ SID のみ読み書き可)、AppContainer profile は実行時に削除されません。
 - **機密ファイル正規表現は緩和であり、障壁ではありません。** リテラルなコマンド形状にしかマッチせず、`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、変数、グロブは層の設計上迂回できます。バックエンドが存在する場合の実際の読み取り障壁は OS リードシールドです。
 - **`python_repl` には機密ファイル正規表現がありません。** terminal 専用ゲート([分離 §3](isolation/README.ja.md#3-危険コマンドゲート-terminal-のみ))はそれをカバーしません。代わりにラッパースクリプトがビルトインを制限し(`open`/`__import__`/`getattr`/`type`/`dir`/`vars` なし)、`pub_base/safe_exec.py` が子プロセス起動前に dunder 属性アクセスを拒否します — 別の、より狭い制御であり、読み取りに敏感なホストでは引き続き OS サンドボックスが必要です。
-- **PTC は同じバックエンドの注意点を継承します。** `execute_code` は使えるバックエンドがあるとき L2 バックエンドで子を包み、内省による脱出も静的に拒否します(制限付きセットに `getattr`/`type`/`dir`/`vars` なし、dunder 属性禁止)。`SANDBOX_POLICY=auto` で使えるバックエンドがない場合は実行を**拒否**します(PTC には HITL ミドルウェアがなく、降格は承認制ではありませんでした)——明示的な `off` のときだけサンドボックスなしで実行されます。PTC は `allow_network=True` を渡すため、bwrap は loopback RPC ブリッジを到達可能に保つべく `--unshare-all` の隣に `--share-net` を追加します。`terminal` と `python_repl` はプライベートなネットワーク名前空間のままです。PTC のワンタイム RPC トークンとその `/proc/<pid>/environ` 残余は [PTC ページ](../ptc/README.ja.md)に記しています。
+- **PTC は同じバックエンドの注意点を継承します。** `execute_code` は使えるバックエンドがあるとき L2 バックエンドで子を包み、内省による脱出も静的に拒否します(制限付きセットに `getattr`/`type`/`dir`/`vars` なし、dunder 属性禁止)。`SANDBOX_POLICY=auto` で使えるバックエンドがない場合は実行を**拒否**します(PTC には HITL ミドルウェアがなく、降格は承認制ではありませんでした)——明示的な `off` のときだけサンドボックスなしで実行されます。PTC は `allow_network=True` を渡すため、bwrap は loopback RPC ブリッジを到達可能に保つべく `--unshare-all` の隣に `--share-net` を追加します。Windows では同じフラグが `SHERRY_WIN_SANDBOX_BLOCK_NETWORK` を抑制し(AppContainer が `internetClient` を得る)、変数が `1` でも PTC 子プロセスは外向きネットワークを保持します(ファイル/読み取りの閉じ込めは不変)。`terminal` と `python_repl` はプライベートなネットワーク名前空間のままです。PTC のワンタイム RPC トークンとその `/proc/<pid>/environ` 残余は [PTC ページ](../ptc/README.ja.md)に記しています。
 - **降格経路はメイン経路では承認制、それ以外はツール層のみ。** `auto` + バックエンドなし: メインセッションの `terminal` / `python_repl` はサンドボックス迂回カードを出してからサンドボックスなしで実行し、ヘッドレスは自動拒否、confirm-all のカードには注記が付き、YOLO は設計どおり迂回します（有効化時に警告）。子エージェント鎖、バックグラウンドグラフ、PTC には HITL ミドルウェアがないため、`auto` でバックエンドがない場合は起動前に拒否します（`_deny_unsandboxed_degrade`）。明示的な `off` だけがサンドボックスなしの経路を残します。同梱 `.env` は `auto` です。ハード保証には `required` を設定し、`SANDBOX_STRICT_BOOT=1` なら起動自体を拒否します。
 - **コマンドパスのスクリーンは緩和層であり、障壁ではありません。** ハード拒否パス(資格情報/システムファイル、YOLO 拒否リスト)を**文字どおり名指しした**コマンドだけを拒否し、それ以外はサンドボックスに委ねます。`base64 -d | sh`、断片から組み立てた変数、`cd` + 相対パスはいずれも構造的に回避できます。境界は OS サンドボックスです。
 - **環境変数洗浄は名前ベースです。** ブロック対象の部分文字列を1つも含まない名前(かつ拒否リストにない名前)で保存されたシークレットはそのまま通ります。値のスキャンも動的シークレット検出もなく、それは意図的なものです。
