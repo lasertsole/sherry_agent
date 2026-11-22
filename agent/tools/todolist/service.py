@@ -552,12 +552,50 @@ async def _assert_transition_allowed(
             )
 
 
+def _plan_is_gone(todos: list[dict]) -> bool:
+    """Whether the live plan is over: no todos, or every todo is terminal.
+
+    The intent anchor belongs to ONE plan (one todo list). It must be cleared
+    when that list is gone so a stale intent cannot leak into the NEXT task —
+    the anchor rides the todo reminder, so an orphaned one silently re-anchors
+    unrelated later work. A list is over when it is empty (all rows removed /
+    replaced with nothing) or every row is ``completed``/``cancelled``.
+
+    While ANY todo is still active (``pending``/``in_progress``), the plan —
+    and therefore its intent — is live. Keeping the anchor through the verify
+    step is essential: ``_assert_transition_allowed`` calls ``plan_drifted``
+    before the verify todo may complete, and that gate needs the anchor.
+    """
+    if not todos:
+        return True
+    return all(t.get("status") in _TERMINAL_STATUSES for t in todos)
+
+
+def _sync_intent_anchor(session_id: str, todos: list[dict]) -> None:
+    """Clear the approved-plan intent anchor once its todo list is finished.
+
+    Kept strictly out of the drift gate's way: this runs from
+    ``_push_todo_update`` AFTER the write and after ``_normalize_verify``, so a
+    verify todo that was just completed already passed ``plan_drifted`` while
+    the anchor was still present. Cleanup is best-effort and never raises.
+    """
+    if not session_id or not _plan_is_gone(todos):
+        return
+    try:
+        from agent.tools.plan_mode.intent_anchor import clear_intent_anchor
+
+        clear_intent_anchor(session_id)
+    except Exception:  # noqa: BLE001 - lifecycle cleanup never breaks a write
+        logger.debug("intent anchor: todo-gone cleanup failed ({})", session_id, exc_info=True)
+
+
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
-    """Best-effort ``todo_updated`` WS frame; never raises.
+    """Sync anchor lifecycle, then best-effort ``todo_updated`` WS frame.
 
     Mirrors ``server/service/heartbeat.py``: an absent websocket or a failed
     send is logged and swallowed so it cannot break the persistence path.
     """
+    _sync_intent_anchor(session_id, todos)
     try:
         payload = {
             "event": "todo_updated",
@@ -936,6 +974,8 @@ __all__ = [
     "_TASKFLOW_TERMINAL",
     "_VERIFY_TODO_CONTENT",
     "_normalize_verify",
+    "_plan_is_gone",
+    "_sync_intent_anchor",
     "is_verify_todo",
     "set_verify_budget_exhausted",
     "verify_budget_exhausted",
