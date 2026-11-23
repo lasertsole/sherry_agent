@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import sqlite3
 import shutil
 import tempfile
@@ -54,6 +53,12 @@ if str(REPO_ROOT) not in sys.path:
 from evals import external_bench  # noqa: E402
 from evals.deepswe import instances  # noqa: E402
 from evals.deepswe.instances import Task  # noqa: E402
+from evals.shared.eval_checklist import acceptance_checklist  # noqa: E402
+from evals.shared.eval_iteration_budget import (  # noqa: E402
+    pin_eval_budget,
+    resolve_eval_iteration_budget,
+)
+from evals.shared.eval_temperature import pin_eval_temperature  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
 _DEFAULT_TIMEOUT_S = 3600.0
@@ -278,45 +283,9 @@ def _work_root(results_dir: Path) -> Path:
     return base / results_dir.name
 
 
-#: Clauses worth verifying: normative language a reviewer can answer pass/fail.
-_CLAUSE_KEYWORDS = (
-    "must",
-    "raise",
-    "reject",
-    "only",
-    "return",
-    "yield",
-    "parse",
-    "decode",
-    "encode",
-    "support",
-    "require",
-    "case-insensitive",
-    "allow",
-    "ignore",
-)
-
-
 def _acceptance_checklist(instruction: str, *, limit: int = 8) -> list[str]:
-    """Turn the task text's decidable clauses into reviewer checklist items.
-
-    Deterministic sentence/semicolon split plus a normative-keyword filter:
-    the reviewer gets concrete, answerable lines instead of the whole essay
-    (a measured run passed its self-check while missing an explicitly stated
-    media-type rule).
-    """
-    text = re.sub(r"\s+", " ", instruction or "").strip()
-    if not text:
-        return []
-    chunks: list[str] = []
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
-        chunks.extend(part.strip() for part in sentence.split(";") if part.strip())
-    items = [
-        chunk
-        for chunk in chunks
-        if len(chunk) >= 20 and any(word in chunk.lower() for word in _CLAUSE_KEYWORDS)
-    ]
-    return items[:limit]
+    """Backward-compatible local alias for the shared checklist extractor."""
+    return acceptance_checklist(instruction, limit=limit)
 
 
 def _checklist_block(items: list[str]) -> str:
@@ -495,6 +464,12 @@ async def _run(
     # imported it at module load, so this import must happen before the
     # sandbox redirects persistence.
     import agent.core  # noqa: F401
+
+    # Pin the eval controls AFTER the workspace override and config hydration:
+    # importing server.service.messages too early would freeze WORKSPACE_DIR
+    # onto the live persona directory, defeating the sandbox isolation.
+    pin_eval_budget(resolve_eval_iteration_budget())
+    pin_eval_temperature()
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(

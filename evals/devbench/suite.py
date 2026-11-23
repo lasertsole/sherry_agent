@@ -47,10 +47,20 @@ if str(REPO_ROOT) not in sys.path:
 from evals import external_bench  # noqa: E402
 from evals.shared import batch_runner, env_setup, score_reporter  # noqa: E402
 from evals.shared.container_manager import TaskContainer, work_root  # noqa: E402
+from evals.shared.eval_checklist import acceptance_checklist  # noqa: E402
+from evals.shared.eval_iteration_budget import (  # noqa: E402
+    pin_eval_budget,
+    resolve_eval_iteration_budget,
+)
+from evals.shared.eval_temperature import pin_eval_temperature  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
 SUITE = "devbench"
 DATA_ENV_VAR = "SWEBENCH_DATA_DIR"
+
+#: Match deepswe's bounded continuation ladder (3 rounds) so the two coding
+#: benchmarks give the agent the same number of auto-resume chances.
+_MAX_PLAN_CONTINUATIONS = 3
 
 _WORKDIR = "/testbed"
 _PROMPT = """{problem_statement}
@@ -280,6 +290,13 @@ async def run_task(
         container.prepare()
         container.connect()
         await external_bench.bind_external_session(session_id, container.host_workdir)
+        # Same reviewer contract as deepswe: extract decidable clauses from the
+        # task text so the reviewer answers PASS/FAIL per item instead of
+        # agreeing with the plan. No clauses -> checklist left unset (no-op).
+        problem = str(record.get("problem_statement") or "")
+        clauses = acceptance_checklist(problem)
+        if clauses:
+            external_bench.set_reviewer_checklist(clauses)
         prompt = _PROMPT.format(
             problem_statement=external_bench.localize_instruction(
                 str(record.get("problem_statement") or ""),
@@ -362,7 +379,7 @@ async def _drive_with_continuations(
         "timeout": False,
         "error": "",
     }
-    for attempt in range(1 + 2):
+    for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
         turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
         drive["tool_calls"] += int(turn.get("tool_calls") or 0)
         for name, count in (turn.get("tool_names") or {}).items():
@@ -373,7 +390,7 @@ async def _drive_with_continuations(
             drive["error"] = str(turn.get("error") or drive["error"])
             break
         open_items = open_plan_items(results_dir)
-        if not open_items or attempt >= 2:
+        if not open_items or attempt >= _MAX_PLAN_CONTINUATIONS:
             break
         prompt = (
             "[SYSTEM DIRECTIVE: PLAN CONTINUATION]\nOpen items:\n"
@@ -537,6 +554,11 @@ async def _run(
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401 — hydrates .env / .models / .network
     import agent.core  # noqa: F401 — bind build_main_tools before the sandbox
+
+    # Pin the same deterministic decoding + env-driven iteration budget every
+    # coding suite uses (after workspace override / config hydration).
+    pin_eval_budget(resolve_eval_iteration_budget())
+    pin_eval_temperature()
 
     from evals.coding_capability import suite as harness
     from evals.sandbox import EvalSandbox

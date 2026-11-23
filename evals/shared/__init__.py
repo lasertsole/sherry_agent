@@ -10,4 +10,10 @@ the token folding in ``coding_capability.suite._session_tokens``) now delegate
 their shared algorithms to ``pub.func.session_report``, the product layer's
 single source of truth. Eval-only report shapes stay here as thin compatibility
 adapters; ``pub`` has no dependency back on ``evals`` or ``agent``.
+
+The eval-control helpers (``eval_temperature``, ``eval_iteration_budget``,
+``eval_session``, ``eval_checklist``) keep any agent/server import inside the
+calling function, so importing this package never pulls in the runtime. They
+give every coding benchmark the same deterministic decoding, iteration budget,
+YOLO session grant and reviewer-checklist extraction.
 """

@@ -1047,6 +1047,12 @@ async def bind_external_session(
     _write_value(session_id, StateKey.AGENT_CONFIG, payload)
     _delete_value(session_id, StateKey.AGENT_CONFIG_PENDING)
     invalidate_session_prompt(session_id)
+    # Grant HITL approvals on this path too. ``_bind_session`` already does it,
+    # but making the contract explicit here keeps container suites safe even if
+    # the coding suite's binding changes later. Idempotent.
+    from evals.shared.eval_session import set_session_yolo
+
+    set_session_yolo(session_id)
     if append_note:
         print(f"[evals] session {session_id}: {append_note}", flush=True)
     return payload

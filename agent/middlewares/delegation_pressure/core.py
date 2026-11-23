@@ -93,7 +93,10 @@ def _active(session_id: str) -> bool:
     # middleware to the child chain: the gate is a MAIN-agent contract.
     if ":subagent:" in session_id or ":swarm:" in session_id:
         return False
-    if os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1" and session_id.startswith("evals-swe-"):
+    # Eval opt-in is not tied to a legacy session prefix (no suite uses
+    # ``evals-swe-`` any more): the env var alone enables the gate for any
+    # non-child session. Child/swarm sessions were excluded above.
+    if os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1":
         return True
     return bool(DELEGATION_PRESSURE["enabled"])
 

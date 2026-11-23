@@ -57,9 +57,18 @@ class EvalSandbox:
         self._originals: dict[object, dict[str, Any]] = {}
         self._applied = False
         self._opened_connections: list[aiosqlite.Connection] = []
+        #: Process-global eval overrides captured so consecutive suites in one
+        #: interpreter cannot inherit a previous suite's settings.
+        self._original_run_timeout: float | None = None
 
     def _set(self, module: object, attr: str, value: Any) -> None:
-        self._originals.setdefault(module, {})[attr] = getattr(module, attr, None)
+        # Capture the FIRST pre-sandbox value only. Several stores share the
+        # same module (``pending_injections`` is patched once per registry
+        # redirect); overwriting the snapshot on a later pass would make
+        # restore() put the sandbox path back instead of the real DB path.
+        attrs = self._originals.setdefault(module, {})
+        if attr not in attrs:
+            attrs[attr] = getattr(module, attr, None)
         setattr(module, attr, value)
 
     def _mkdir_parents(self, path: Path) -> None:
@@ -184,14 +193,21 @@ class EvalSandbox:
         memory_dir.mkdir(parents=True, exist_ok=True)
         self._set(memory, "MEMORY_DIR", memory_dir)
 
-        drain = importlib.import_module("agent.middlewares.subagent_completion_drain.core")
-
-        async def _noop_backflow(*args: object, **kwargs: object) -> None:
-            return None
-
-        self._set(drain, "_backflow_shared_memory", _noop_backflow)
         self._restrict_child_tools()
         self._redirect_skills_and_knowledge()
+
+        # deepswe's _eval_child_run_timeout_s() raises the process-wide
+        # SubagentConfig.run_timeout_seconds. Snapshot it here so restore()
+        # returns the product default rather than leaking into the next suite.
+        from agent.tools.subagent.config import get_config
+
+        self._original_run_timeout = get_config().run_timeout_seconds
+
+        # The subagent-completion backflow is NOT server-dependent: it just
+        # reloads the shared memory store, whose DB path was redirected above
+        # (``memory.MEMORY_DIR``/``context_engine.store.db._db``). No-op'ing it
+        # made a child's memory writes invisible to the parent turn. Leave the
+        # production behavior intact.
 
         self._set(os, "environ", {**os.environ})
         os.environ["SANDBOX_POLICY"] = "auto" if platform.system() == "Windows" else "required"
@@ -205,6 +221,15 @@ class EvalSandbox:
                     setattr(module, attr, value)
                 except (AttributeError, TypeError):
                     pass
+        if self._original_run_timeout is not None:
+            from agent.tools.subagent.config import get_config
+
+            get_config().run_timeout_seconds = self._original_run_timeout
+            self._original_run_timeout = None
+        # Undo any evals-side iteration-budget override (also process-global).
+        from evals.shared.eval_iteration_budget import restore_eval_budget
+
+        restore_eval_budget()
         self._applied = False
 
     def _track_aiosqlite_connections(self) -> None:
@@ -273,9 +298,7 @@ class EvalSandbox:
             def _worker() -> None:
                 box["result"] = _close_all()
 
-            thread = threading.Thread(
-                target=_worker, daemon=True, name="eval-aiosqlite-close"
-            )
+            thread = threading.Thread(target=_worker, daemon=True, name="eval-aiosqlite-close")
             thread.start()
             thread.join(timeout=30)
             if "result" not in box:
