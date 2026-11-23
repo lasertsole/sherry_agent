@@ -17,7 +17,12 @@ import pytest
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
-from agent.middlewares.path_guard import PathGuard
+from agent.middlewares.path_guard import (
+    PathGuard,
+    clear_denials,
+    drain_denials,
+    record_denial,
+)
 from config.path import ROOT_DIR
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -165,6 +170,75 @@ class TestAsync:
         result = asyncio.run(PathGuard().awrap_tool_call(_request("src/app.py"), _handler))
         assert result.content == "ran"
         assert len(record) == 1
+
+
+class TestDenialAccounting:
+    """B-class patch: rejections are counted per session and surfaced at turn end.
+
+    The tally is observability only — it must never change the reject/pass
+    decision, and draining must be one-shot so the notice fires once per turn.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        for sid in ("s1", "s-denial", ""):
+            clear_denials(sid)
+        yield
+        for sid in ("s1", "s-denial", ""):
+            clear_denials(sid)
+
+    def test_rejected_call_records_a_denial(self):
+        record: list[ToolCallRequest] = []
+        PathGuard().wrap_tool_call(_request("/etc/passwd"), _ok_handler(record))
+
+        denial = drain_denials("s1")
+        assert denial is not None
+        assert denial["count"] == 1
+        assert "/etc/passwd" in denial["paths"]
+        assert record == []
+
+    def test_awrap_records_a_denial(self):
+        async def _handler(request: ToolCallRequest) -> ToolMessage:
+            return ToolMessage(content="ran", tool_call_id="call-1", name="fake_tool")
+
+        asyncio.run(PathGuard().awrap_tool_call(_request("../../etc/passwd"), _handler))
+
+        denial = drain_denials("s1")
+        assert denial is not None and denial["count"] == 1
+
+    def test_allowed_call_does_not_record_a_denial(self):
+        record: list[ToolCallRequest] = []
+        PathGuard().wrap_tool_call(_request("src/app.py"), _ok_handler(record))
+
+        assert drain_denials("s1") is None
+
+    def test_drain_is_one_shot(self):
+        record: list[ToolCallRequest] = []
+        PathGuard().wrap_tool_call(_request("/etc/passwd"), _ok_handler(record))
+
+        assert drain_denials("s1") is not None
+        assert drain_denials("s1") is None, "a drained tally must not reappear next turn"
+
+    def test_multiple_denials_aggregate_and_dedupe_paths(self):
+        record: list[ToolCallRequest] = []
+        guard = PathGuard()
+        for _ in range(3):
+            guard.wrap_tool_call(_request("/etc/passwd"), _ok_handler(record))
+        guard.wrap_tool_call(_request("../../etc/shadow"), _ok_handler(record))
+
+        denial = drain_denials("s1")
+        assert denial is not None
+        assert denial["count"] == 4
+        assert set(denial["paths"]) == {"/etc/passwd", "../../etc/shadow"}
+
+    def test_empty_session_id_is_not_counted(self):
+        record_denial("", "/etc/passwd")
+        assert drain_denials("") is None
+
+    def test_clear_drops_tally_without_reporting(self):
+        record_denial("s-denial", "/etc/passwd")
+        clear_denials("s-denial")
+        assert drain_denials("s-denial") is None
 
 
 @pytest.mark.asyncio

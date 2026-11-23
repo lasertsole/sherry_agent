@@ -333,6 +333,31 @@ async def on_turn_finished(
         except Exception as e:  # pragma: no cover - promotion must never break the turn
             logger.warning(f"TurnRunner: project-dir promotion failed for {session_id}: {e}")
 
+        # Surface PathGuard denials once per turn. A blocked agent can otherwise
+        # burn hundreds of tool calls with nothing to show and no clue why.
+        # drain_denials is process-local and best-effort: a notice never breaks
+        # the turn, and a clean turn (no denials) costs one dict lookup.
+        try:
+            from agent.middlewares.path_guard import drain_denials
+            from runtime.session.system_notice import push_system_notice
+
+            denial = await asyncio.to_thread(drain_denials, session_id)
+            if denial:
+                shown = ", ".join(denial["paths"][:5]) or "(paths omitted)"
+                more = f" (+{len(denial['paths']) - 5})" if len(denial["paths"]) > 5 else ""
+                await push_system_notice(
+                    session_id,
+                    title="PathGuard 拒绝了写/读操作",
+                    content=(
+                        f"本轮共拒绝 {denial['count']} 次路径访问，涉及 {len(denial['paths'])} 个路径："
+                        f"{shown}{more}。agent 可能无法修改目标文件；请确认项目目录或路径是否正确。"
+                    ),
+                    level="warning",
+                    source="path_guard",
+                )
+        except Exception as e:  # pragma: no cover - notice must never break the turn
+            logger.warning(f"TurnRunner: PathGuard denial notice failed for {session_id}: {e}")
+
     normalized: list[str] | None
     if claim_row_ids is None:
         normalized = None

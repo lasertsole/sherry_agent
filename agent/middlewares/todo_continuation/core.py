@@ -121,6 +121,26 @@ Review the block reasons in the board and pick one action per blocked step:
 {todo_status}
 {flow_status}"""
 
+# Wait-only directive: TaskFlow step children are in flight (dispatched/ready).
+# The ordinary continuation says "continue working on the next pending task",
+# which invites the model to declare completion or open new work while a child
+# is still writing its result. This directive narrows the decision to the one
+# action that is meaningful now — wait for the children and process their
+# results. The board footer (``_build_flow_block``) already names wait_all +
+# resume; this prompt makes waiting the whole instruction instead of a footnote.
+_WAIT_ONLY_PROMPT = """[SYSTEM DIRECTIVE: STEPS IN FLIGHT]
+
+Your plan is NOT finished — TaskFlow step children are still running.
+Call `taskflow_step(action='wait_all')` now to wait for the in-flight steps,
+then `taskflow_step(action='resume')` to inject their results. Continue closing
+the flow with `taskflow_flow(action='finish')` once every step is terminal.
+
+Do NOT declare completion and do NOT start new work until every dispatched
+step has settled and its result has been processed.
+
+{todo_status}
+{flow_status}"""
+
 # Recovery directive (behavior contract of this module).
 _RECOVERY_PROMPT = """[SYSTEM DIRECTIVE: RECOVERY MODE]
 
@@ -849,7 +869,17 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 session_id,
                 len(incomplete),
             )
-            template = _BLOCKED_ONLY_PROMPT if _blocked_only(todos, flows) else _CONTINUATION_PROMPT
+            # In-flight step children narrow the directive to "wait and process
+            # their results" — "continue working on the next pending task"
+            # would invite a premature completion claim while a child is still
+            # writing. Blocked-only still wins over the ordinary continuation
+            # for the all-blocked shape (in-flight and blocked are disjoint).
+            if _has_in_flight_steps(flows):
+                template = _WAIT_ONLY_PROMPT
+            elif _blocked_only(todos, flows):
+                template = _BLOCKED_ONLY_PROMPT
+            else:
+                template = _CONTINUATION_PROMPT
             prompt = template.format(
                 todo_status=_build_status_block(todos), flow_status=flow_status
             )

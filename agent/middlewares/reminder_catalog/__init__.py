@@ -19,6 +19,7 @@ from .core import (
 )
 from .dynamic import (
     DynamicReminderMiddleware as DynamicReminderMiddleware,
+    capture_reminder_snapshot as capture_reminder_snapshot,
     reset_session as reset_session,
 )
 from .sources import register_default_sources as _register_default_sources
@@ -27,6 +28,7 @@ _register_default_sources()
 
 __all__ = [
     "DynamicReminderMiddleware",
+    "capture_reminder_snapshot",
     "ReminderChannel",
     "ReminderSource",
     "clear_session",

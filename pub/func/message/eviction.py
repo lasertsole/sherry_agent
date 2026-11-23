@@ -83,7 +83,7 @@ _PREVIEW_TEMPLATE = """\
 {tail}
 [full content: {total_chars} chars, evicted at {ts}]
 
-Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.{cut_note}]"""
+Use read_file(file_path='{path}', offset=1, limit=100) to read the full content in chunks.{cut_note}]"""
 
 #: Same shape as ``_PREVIEW_TEMPLATE``, but for a payload that is ALREADY a file
 #: (the terminal tool's fd-direct-write stdout): the total is the file's byte
@@ -396,7 +396,9 @@ def evict_human_message(msg: HumanMessage, session_id: str) -> HumanMessage | No
     return msg.model_copy(update={"additional_kwargs": additional_kwargs})
 
 
-def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
+def evict_tool_result(
+    msg: ToolMessage, session_id: str, *, force: bool = False
+) -> ToolMessage | None:
     """Offload an oversized tool result; return the preview message or ``None``.
 
     ``None`` means "keep the original": the tool is excluded, the result is at
@@ -416,7 +418,11 @@ def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
         return None
 
     text = _extract_text(msg.content)
-    if len(text) <= TOOL_RESULT_EVICTION["evict_threshold_chars"]:
+    # ``force`` is for the batch-aggregate path: a single 19K result is below
+    # the per-call 20K threshold and would not be evicted, but 100 of them sum
+    # to ~1.9M chars. That path already decided to evict based on the TOTAL;
+    # skip the per-call check there. Default callers are unchanged.
+    if not force and len(text) <= TOOL_RESULT_EVICTION["evict_threshold_chars"]:
         return None
     if text.startswith(_EVICTION_PREFIX):
         return None
@@ -438,7 +444,7 @@ def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
     return msg.model_copy(update={"content": _build_evicted_content(msg.content, preview)})
 
 
-def hard_clip_tool_result(msg: ToolMessage) -> ToolMessage | None:
+def hard_clip_tool_result(msg: ToolMessage, *, force: bool = False) -> ToolMessage | None:
     """Bound an oversized result IN MEMORY when offloading is unavailable.
 
     Returns ``None`` when the result is not eligible (disabled, excluded tool,
@@ -455,7 +461,9 @@ def hard_clip_tool_result(msg: ToolMessage) -> ToolMessage | None:
     content = msg.content
     if not isinstance(content, str):
         return None
-    if len(content) <= TOOL_RESULT_EVICTION["evict_threshold_chars"]:
+    # See ``evict_tool_result``: ``force`` skips the per-call threshold for the
+    # aggregate path; default behavior is byte-for-byte unchanged.
+    if not force and len(content) <= TOOL_RESULT_EVICTION["evict_threshold_chars"]:
         return None
     if content.startswith(_EVICTION_PREFIX) or content.startswith(_CLIPPED_PREFIX):
         return None
