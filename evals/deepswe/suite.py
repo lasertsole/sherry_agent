@@ -65,13 +65,14 @@ _NETWORK = "no-network"
 _PULL_RETRIES = 3
 _PULL_RETRY_PAUSE_S = 20.0
 #: The LEAF budget of the spawn depth ladder (``resolve_run_timeout_for_requester``):
-#: 3× the configured spawn default (600 s), because a DeepSWE step (read +
-#: implement + run the task's tests) burns the default to TIMEOUT and the retry
-#: loop eats the task's whole wall clock. Under the ladder this value governs
-#: the LEAF; a depth-1 step child gets 3× IT (1800 → 5400).
+#: 1× the configured spawn default (now 1800 s), because the product default was
+#: raised from 600 s to 1800 s to cover a full read + implement + run-tests step
+#: (DeepSWE: 9/20 resolved at 1800 s vs 20/20 at 7200 s). The eval no longer
+#: compensates with a 3× multiplier — it matches the product. Under the ladder
+#: this value governs the LEAF; a depth-1 step child gets 3× IT (1800 → 5400).
 #: ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` (seconds) overrides the value outright,
 #: clamped to the spawn bounds.
-_EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER = 3.0
+_EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER = 1.0
 _EVAL_CHILD_RUN_TIMEOUT_ENV = "SHERRY_EVAL_CHILD_RUN_TIMEOUT_S"
 
 

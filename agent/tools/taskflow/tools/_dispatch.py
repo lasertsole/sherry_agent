@@ -89,6 +89,29 @@ async def dispatch_child(
         except Exception:  # noqa: BLE001 - best-effort injection
             logger.debug("taskflow environment read failed for flow {}", flow_id, exc_info=True)
 
+    # Reviewer subagents get a numbered PASS/FAIL acceptance checklist extracted
+    # from normative sentences in the task, so the self-check is clause-by-clause
+    # instead of free-form prose. Fail-open: extraction errors leave the task
+    # text untouched; only the reviewer role is affected. The eval-side wrapper
+    # checks for the ACCEPTANCE CHECKLIST label and skips its own injection when
+    # we have already added one (eval checklist stays authoritative).
+    if functional_role == "reviewer" and task:
+        try:
+            from config.features import TASKFLOW_INFRA
+
+            if TASKFLOW_INFRA.get("reviewer_checklist_enabled", True):
+                from agent.tools.taskflow.checklist_extractor import (
+                    ACCEPTANCE_CHECKLIST_LABEL,
+                    augment_task_with_checklist,
+                    extract_acceptance_checklist,
+                )
+
+                if ACCEPTANCE_CHECKLIST_LABEL not in task:
+                    clauses = extract_acceptance_checklist(task)
+                    task = augment_task_with_checklist(task, clauses)
+        except Exception:  # noqa: BLE001 - a bad extraction must not block dispatch
+            logger.debug("taskflow reviewer checklist extraction failed", exc_info=True)
+
     result = await spawn_subagent_direct(
         task=task,
         requester_session_key=requester_session_key,

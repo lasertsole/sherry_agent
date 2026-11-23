@@ -100,14 +100,14 @@ class TestDepthLadder:
 
     def test_a_main_requesters_child_gets_one_triple_of_the_leaf_budget(self, monkeypatch):
         # Main requester (no run record) → the child is depth 1 of max 2 → one
-        # level above the leaf: 600 × 3.
+        # level above the leaf: 1800 × 3.
         _bind_parent(monkeypatch, None)
         monkeypatch.setattr(
             "agent.tools.subagent.spawn.plan.get_config",
-            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=2),
+            lambda: SimpleNamespace(run_timeout_seconds=1800.0, max_spawn_depth=2),
         )
 
-        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 1800.0
+        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 5400.0
 
     def test_a_child_requesters_grandchild_is_the_leaf_and_gets_the_default(self, monkeypatch):
         # The requester IS a depth-1 run → its child is depth 2 = the leaf →
@@ -115,14 +115,14 @@ class TestDepthLadder:
         _bind_parent(monkeypatch, _run("r-parent", PARENT_KEY, timeout=5400.0))
         monkeypatch.setattr(
             "agent.tools.subagent.spawn.plan.get_config",
-            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=2),
+            lambda: SimpleNamespace(run_timeout_seconds=1800.0, max_spawn_depth=2),
         )
         # The bound parent doubles as the requester's own run (depth defaults
-        # to 1) and as the subtree cap: the leaf's 600 s fits its remaining.
+        # to 1) and as the subtree cap: the leaf's 1800 s fits its remaining.
         remaining = remaining_parent_run_budget(PARENT_KEY)
         assert remaining is not None and remaining > 4000
 
-        assert resolve_run_timeout_for_requester(PARENT_KEY) == 600.0
+        assert resolve_run_timeout_for_requester(PARENT_KEY) == 1800.0
 
     def test_the_eval_knob_raises_the_whole_ladder(self, monkeypatch):
         # Leaf budget 1800 (the eval's 3× knob) → a depth-1 child gets 5400.
@@ -139,16 +139,16 @@ class TestDepthLadder:
         _bind_parent(monkeypatch, None)
         monkeypatch.setattr(
             "agent.tools.subagent.spawn.plan.get_config",
-            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=1),
+            lambda: SimpleNamespace(run_timeout_seconds=1800.0, max_spawn_depth=1),
         )
 
-        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 600.0
+        assert resolve_run_timeout_for_requester("agent:main:session:s1") == 1800.0
 
     def test_an_explicit_timeout_beats_the_ladder(self, monkeypatch):
         _bind_parent(monkeypatch, None)
         monkeypatch.setattr(
             "agent.tools.subagent.spawn.plan.get_config",
-            lambda: SimpleNamespace(run_timeout_seconds=600.0, max_spawn_depth=2),
+            lambda: SimpleNamespace(run_timeout_seconds=1800.0, max_spawn_depth=2),
         )
 
         assert resolve_run_timeout_for_requester("agent:main:session:s1", 900) == 900.0

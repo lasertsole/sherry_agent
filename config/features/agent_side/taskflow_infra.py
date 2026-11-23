@@ -74,6 +74,10 @@ class TaskFlowInfraConfig(TypedDict):
     deadlock_tool_fail_count: int
     deadlock_judge_fail_count: int
     deadlock_no_progress_s: float
+    #: Reviewer subagents get a numbered PASS/FAIL acceptance checklist extracted
+    #: from normative sentences in their task when this is on. Fail-open: a bad
+    #: extraction just leaves the task text unchanged.
+    reviewer_checklist_enabled: bool
 
 
 TASKFLOW_INFRA: TaskFlowInfraConfig = {
@@ -121,4 +125,5 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     "deadlock_tool_fail_count": 3,
     "deadlock_judge_fail_count": 5,
     "deadlock_no_progress_s": 1800.0,
+    "reviewer_checklist_enabled": True,
 }

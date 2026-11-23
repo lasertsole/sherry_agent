@@ -75,7 +75,7 @@ class TestClamp:
         assert config.run_timeout_max_seconds == 7200.0
         # Unset stays unset for the shared resolver — which then reads the global
         # default. The clamp never rewrites it to a number of its own.
-        assert resolve_run_timeout_seconds(clamp_run_timeout_seconds(None)) == 600.0
+        assert resolve_run_timeout_seconds(clamp_run_timeout_seconds(None)) == 1800.0
 
 
 class TestRuntimeToolSurface:

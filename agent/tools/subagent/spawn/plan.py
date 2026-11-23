@@ -64,9 +64,9 @@ def resolve_run_timeout_for_requester(
     Depth ladder (leaves get the configured default, every level above triples,
     main_agent excluded — its budget is the caller's own turn): a run at depth
     ``d`` gets ``run_timeout_seconds * 3 ** (max_spawn_depth - d)``. With the
-    defaults (leaf 600 s, max depth 2) a depth-1 child gets 1800 s; with the
-    eval's leaf knob at 1800 s (``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S``) a depth-1
-    child gets 5400 s. An explicit ``timeout`` still wins — the ladder shapes
+    defaults (leaf 1800 s, max depth 2) a depth-1 child gets 5400 s; a model
+    override via ``SHERRY_EVAL_CHILD_RUN_TIMEOUT_S`` reshapes the leaf and every
+    level above it. An explicit ``timeout`` still wins — the ladder shapes
     only the default. The subtree rule applies afterwards unchanged: a
     descendant may never outlive its parent's remaining budget, with a 1 s
     fail-fast floor.

@@ -80,10 +80,10 @@ class SessionsSpawnSchema(BaseModel):
     run_timeout_seconds: float | None = Field(
         default=None,
         description="Wall-clock timeout for this subagent in seconds. "
-        "Default 600 (10 min), min 600, max 7200 (2 h). "
+        "Default 1800 (30 min), min 600, max 7200 (2 h). "
         "Values outside [600, 7200] are clamped to the nearest bound. "
         "Raise it for complex tasks (e.g. large codebase refactors); "
-        "the minimum already covers most tasks.",
+        "the minimum still covers short tasks.",
     )
     output_schema: dict | None = Field(
         default=None,
