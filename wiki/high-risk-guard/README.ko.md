@@ -4,7 +4,7 @@
 
 > 되돌릴 수 없는 작업을 어떻게 식별하고, 한 번만 승인하며, 재생 시 거부하고, 하위 에이전트에서 메인 에이전트의 사람 승인으로 버블하는지 설명합니다.
 
-정보 출처: `agent/tools/pub_base/high_risk_guard_store.py`, `agent/tools/pub_base/high_risk_policy.py`, `agent/tools/high_risk_guard.py`, `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/humanInTheLoop/strategies.py`, `config/features/agent_side/high_risk_guard.py`, `server/trigger/http/high_risk_guard.py`, `client/app/pages/home/components/HighRiskGuardPanel.vue`.
+정보 출처: `agent/tools/pub_base/high_risk_guard_store.py`, `agent/tools/pub_base/high_risk_policy.py`, `agent/tools/pub_base/high_risk_gate.py`, `agent/tools/high_risk_guard.py`, `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/humanInTheLoop/strategies.py`, `agent/tools/ptc/rpc_server.py`, `agent/tools/ldw/guarded_face.py`, `config/features/agent_side/high_risk_guard.py`, `server/trigger/http/high_risk_guard.py`, `client/app/pages/home/components/HighRiskGuardPanel.vue`.
 
 ## 🎯 위협 모델
 
@@ -16,8 +16,11 @@
 | L2 키워드 원장 | 어떤 작업을 사람이 봐야 하나 | 내장 + session/global 키워드, 부분 문자열 스캔 |
 | L3 실행된 작업 원장 | 이 정확한 호출이 이미 실행됐나 | `(루트 세션, 도구, args_hash)` 행 + 첫 결과 |
 | L4 승인 | 첫 실행을 누가 승인하나 | 메인 HITL 카드, 하위 에이전트의 `[NEEDS_APPROVAL]` 버블 |
+| L5 재생 경로 | 어떤 자동 경로가 같은 호출을 다시 실행할 수 있나 | PTC 스크립트 내부 호출과 LDW leaf 도구 면의 같은 게이트 |
 
-각 계층은 독립적입니다. 사용자가 첫 실행을 승인해도 원장은 재생을 거부하고, 키워드 일치는 원장에 기록이 없을 때도 먼저 확인합니다.
+각 계층은 독립적입니다. 사용자가 첫 실행을 승인해도 원장은 재생을 거부하고, 키워드 일치는 원장에 기록이 없을 때도 먼저 확인합니다. 판정 표 자체는 `pub_base/high_risk_gate.py`에 있고 `ToolGuardrails`, PTC RPC 디스패치, LDW leaf의 보호 도구 면이 모두 이를 호출하므로 스크립트 내부 호출과 직접 호출이 서로 다른 규칙을 갖지 않습니다. 일반 도구는 메타데이터에서 단락되어 데이터베이스를 열지 않습니다.
+
+"재생 경로"의 의미: 미들웨어 체인은 도구가 실행되는 유일한 장소가 아닙니다. PTC는 스크립트의 호출을 `tool.ainvoke`로 바로 보내고, LDW leaf는 미들웨어가 전혀 없는 순수 `create_agent` 그래프입니다. 이 두 경로가 이제 같은 게이트를 통과합니다 — 거부된 내부 호출은 스크립트의 `calls_log`에서 실패 단계가 되고, PTC 프리런은 ReAct로 돌아가 정상 승인 흐름(또는 TaskFlow 축소)이 이어받습니다.
 
 ## ⚙️ 키워드 원장
 
@@ -39,6 +42,8 @@
 원장에는 **고위험이고 비멱등**인 도구만 들어갑니다: PTC의 `execute_code`와 모든 MCP 도구(기본). `terminal`, `python_repl`, `write_file`, `patch_file`은 들어가지 않습니다 — 셸 명령이나 편집은 정상 작업이며, 특정 명령을 확인하게 만드는 것은 키워드 스캔입니다.
 
 원장 행은 **루트 메인 세션**(하위 에이전트는 `APPROVAL_SCOPE_PARENT` 해석), 도구 이름, 안정적인 인수 다이제스트(정렬된 JSON, 원시 인수는 저장하지 않음)를 키로 합니다. 재실행은 실행 전에 거부되고 첫 `result_summary`가 반환됩니다. 행은 설정된 보존 기간(24시간)이 지나면 만료되고 세션 삭제 시 제거됩니다. 패널의 삭제가 명시적인 "한 번 더 실행"입니다.
+
+행에는 생명주기가 있습니다. `in_flight`는 핸들러가 실행되기 **전에** 기록되고, 이후 `committed`(호출이 반환됨) 또는 `failed`(도구가 스스로 실패를 보고 — 재시도는 정당하므로 차단하지 않음)가 됩니다. 이것이 원장이 보지 못했던 크래시 창을 닫습니다: **이전 프로세스**가 남긴 `in_flight` 행은 보고 전에 중단된 호출이므로 부작용이 불명이며, 패널에서 삭제할 때까지 "결과 불명"으로 거부됩니다. 현재 프로세스의 행은 "실행 중"으로 거부됩니다. 핸들러가 예외를 던지면 행을 `failed`로 표시한 뒤 다시 던지므로, 예외가 영구적인 "실행 중" 행을 남기지 않습니다.
 
 **실행된** 키워드도 같은 일회성 대우를 받습니다: 승인된 작업이 성공하면 키워드가 실행됨으로 표시되고, 이후 그 키워드를 포함한 호출은 첫 결과와 함께 거부되며, 패널(또는 `high_risk_guard action=reset_keyword`)이 표시를 지울 때까지 유지됩니다.
 
@@ -79,6 +84,8 @@ HITL 카드는 `interrupt()` 전에 세션 하트비트를 동결하고(`HEARTBE
 
 `high_risk_guard`(메인과 하위 모두)가 원장과 작업을 관리합니다: `add_keyword`, `list_keywords`, `remove_keyword`, `set_policy`, `reset_keyword`, `register_op`, `list_ops`, `remove_op`. 자식의 쓰기는 루트 세션으로 해석됩니다.
 
+하위 에이전트에는 사람 승인 채널이 없으므로 가드를 **강화**할 수는 있어도 **약화**할 수는 없습니다: `block` 키워드 등록, `allow`를 `block`으로 되돌리기, allow 재정의 행 삭제는 허용되고, 키워드를 `allow`로 설정, block 키워드나 내장 기본값 삭제, 원장 행 삭제는 거부되며 메인 에이전트/패널로 안내합니다. 유일한 예외는 `reset_keyword`로, 그 하위가 기록된 승인을 가진 키워드에 한해 허용됩니다 — "사람이 방금 이 spawn을 승인한" 경우이며, 같은 승인 단계 안에서 정당한 두 번째 실행을 가능하게 합니다.
+
 | 엔드포인트 | 용도 |
 | :------- | :------ |
 | `GET /sessions/:sid/high-risk-keywords` | 키워드 + 원장(패널 일괄 로드) |
@@ -95,12 +102,18 @@ HITL 카드는 `interrupt()` 전에 세션 하트비트를 동결하고(`HEARTBE
 
 | 스위트 | 범위 |
 | :---- | :----- |
-| `tests/agent/tools/pub_base/test_high_risk_guard_store.py` | 검증, 스캔, 범위, 정책, 실행 표시, 원장 왕복, 정리, 보존 |
-| `tests/agent/middlewares/test_high_risk_guard.py` | 원장 거부/재생, 키워드 NEEDS_APPROVAL, 승인, YOLO, confirm_all, 루트 범위 |
+| `tests/agent/tools/pub_base/test_high_risk_guard_store.py` | 검증, 스캔, 범위, 정책, 실행 표시, 원장 왕복, 정리, 보존, in-flight 생명주기, 구 스키마 수렴 |
+| `tests/agent/tools/pub_base/test_high_risk_gate.py` | 공유 판정 표: 메타데이터 단락, committed/in-flight/unknown, 승인, YOLO/confirm_all, 두 스위치 |
+| `tests/agent/middlewares/test_high_risk_guard.py` | 원장 거부/재생, 키워드 NEEDS_APPROVAL, 승인, YOLO, confirm_all, 루트 범위, 핸들러 실행 중 in-flight 행, error/예외 → failed |
 | `tests/agent/middlewares/humanInTheLoop/test_high_risk_keyword_handler.py` | 핸들러 일치, 실행됨 거부, 승인/거부, 하트비트 동결, 헤드리스 거부 |
-| `tests/agent/tools/test_high_risk_guard_tool.py` | 에이전트 도구의 모든 액션 + 자식→루트 범위 |
+| `tests/agent/tools/test_high_risk_guard_tool.py` | 에이전트 도구의 모든 액션 + 자식→루트 범위 + 자식의 강화/약화 규칙 |
+| `tests/agent/tools/ptc/test_rpc_guard.py` | PTC 스크립트 내부 호출 게이트, 실제 자식 프로세스 엔드투엔드, 탈출 스위치 |
+| `tests/agent/tools/ldw/test_guarded_face.py` | leaf 도구 면 계약, 정상 호출, 키워드 거부, leaf 그래프 배선 |
+| `tests/agent/middlewares/test_skill_review_ptc_compile.py` | 근거가 차단어와 일치하면 컴파일하지 않음. 정상 단계는 그대로 컴파일 |
+| `tests/agent/test_state_port_high_risk_placeholder.py` | heal 이음새의 고위험 누락 결과 문구 |
 | `tests/agent/tools/taskflow/test_approval_resume.py` | 승인 후 재디스패치, 재시도 시 승인 유지, 검증 거부 |
 | `tests/agent/tools/subagent/test_child_access_inheritance.py` | 접근 모드 상속, 승인 범위의 토큰 루트 해석, 승인 스탬프 |
+| `tests/agent/tools/subagent/test_ptc_prefill.py` | 프리런이 루트 범위를 스크립트 게이트로 전달 |
 | `tests/server/trigger/http/test_high_risk_guard_api.py` | 키워드 CRUD, 정책, 초기화, 원장 삭제 |
 | `client/app/pages/home/components/__tests__/HighRiskGuardPanel.integration.test.ts` | 패널 렌더, 추가/정책/초기화/삭제, 백엔드 거부 |
 
@@ -110,6 +123,10 @@ HITL 카드는 `interrupt()` 전에 세션 하트비트를 동결하고(`HEARTBE
 - **키워드의 실행 표시는 세션 전체입니다.** 계획의 "단계마다 다시 묻기"는 여기서 의도적으로 더 엄격합니다: 처음 승인된 작업이 키워드를 실행됨으로 표시하고, 이후 그 키워드를 포함한 모든 호출은 표시를 지울 때까지 거부됩니다. 재생에는 안전하지만 정당한 두 번째 실행에는 패널 조작이 필요합니다.
 - **주석 없는 도구는 저위험으로 취급됩니다.** 명시적 `metadata.high_risk`가 우선하며, 키가 없는 `mcp__` 도구는 고위험이고 나머지 주석 없는 도구는 아닙니다. 위험한 작업을 평범한 이름 뒤에 숨긴 플러그인은 스스로 주석해야 합니다.
 - **MCP는 접두사로 원장에 들어가며 기본 비멱등입니다.** 정말 안전한 MCP 읽기는 `high_risk: False` / `idempotent: True`를 선언할 수 있습니다.
+- **브라우저 동작에는 위험 메타데이터가 없습니다.** 클릭은 키워드 스캔도 원장도 거치지 않습니다: 같은 클릭의 반복은 종종 정당하며("다음 페이지" 버튼) 브라우저 의도 판정은 의도적으로 범위 밖입니다.
+- **재생 경로 게이트는 전환 가능합니다.** `HIGH_RISK_GUARD["replay_path_gate_enabled"]`(기본 true)가 PTC 내부 호출, LDW leaf 도구 면, PTC 컴파일 검사를 덮습니다. false로 두면 코드 롤백 없이 변경 전 동작이 됩니다. `enabled = false`는 가드 전체(미들웨어 체인 포함)를 끕니다.
+- **근거가 차단어와 일치하는 PTC 단계는 컴파일되지 않습니다.** 재생이 불가능해지는 것은 아니며(단계는 ReAct로 실행됨) 결코 성공할 수 없는 스크립트를 만드는 대신 최적화를 생략합니다.
+- **크래시 창은 원장 대상 도구에만 닫힙니다.** `terminal` / `python_repl`은 원장에 들어가지 않으므로(대신 텍스트를 스캔) 중단된 셸 호출을 거부할 행이 없습니다. 복구된 자리표시자는 "이미 효과를 냈을 수 있음"을 경고할 뿐입니다.
 - **원장은 인수 미리보기(≤300자)를 저장합니다.** 로컬 `high_risk_guard.db`(추적되는 workspace 아님)에 남지만, 미리보기에는 호출이 포함한 값이 남을 수 있습니다. 패널 API는 동일 호스트 또는 HTTPS/WSS 전송에서만 이를 반환합니다(그 외에는 축소 알림).
 - **전송 신뢰는 헤더 기반입니다.** `X-Forwarded-Proto`는 신뢰할 수 있는 프록시에서만 채택됩니다. 다른 곳에서 TLS를 종료하는 배포에서는 ingress에 `SHERRY_INGRESS_TRUST_FORWARDED`를 설정해 실제 스킴을 전달해야 합니다.
 - **버블은 부모가 턴을 잡는 것에 의존합니다.** 완료 메시지가 안내를 자동으로 덧붙이지만, 실제 승인은 메인 에이전트가 해야 하는 `question` 호출입니다. 완료 메시지를 읽지 않는 부모는 단계를 blocked로 남깁니다.

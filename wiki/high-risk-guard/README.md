@@ -4,7 +4,7 @@
 
 > How an irreversible operation is recognized, approved once, refused on replay, and bubbled from a subagent to the human at the main agent.
 
-Source of truth: `agent/tools/pub_base/high_risk_guard_store.py`, `agent/tools/pub_base/high_risk_policy.py`, `agent/tools/high_risk_guard.py`, `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/humanInTheLoop/strategies.py`, `config/features/agent_side/high_risk_guard.py`, `server/trigger/http/high_risk_guard.py`, `client/app/pages/home/components/HighRiskGuardPanel.vue`.
+Source of truth: `agent/tools/pub_base/high_risk_guard_store.py`, `agent/tools/pub_base/high_risk_policy.py`, `agent/tools/pub_base/high_risk_gate.py`, `agent/tools/high_risk_guard.py`, `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/humanInTheLoop/strategies.py`, `agent/tools/ptc/rpc_server.py`, `agent/tools/ldw/guarded_face.py`, `config/features/agent_side/high_risk_guard.py`, `server/trigger/http/high_risk_guard.py`, `client/app/pages/home/components/HighRiskGuardPanel.vue`.
 
 ## 🎯 Threat Model
 
@@ -16,8 +16,11 @@ A verification pass, a retried tool call or a re-spawned TaskFlow step can run t
 | L2 keyword registry | Which operations must a human see? | built-in + session/global keywords, substring scan |
 | L3 executed-operation ledger | Has this exact call already run? | `(root session, tool, args_hash)` row with the first result |
 | L4 approval | Who approves the first run? | main-agent HITL card; subagent `[NEEDS_APPROVAL]` bubble |
+| L5 replay paths | Which automatic paths could re-run a call? | the same gate on PTC script-inner calls and LDW leaf tools |
 
-The layers are independent: the ledger refuses a replay even after the user approved the first run, and a keyword hit asks before the ledger has anything to say.
+The layers are independent: the ledger refuses a replay even after the user approved the first run, and a keyword hit asks before the ledger has anything to say. The decision table itself lives in `pub_base/high_risk_gate.py`; `ToolGuardrails`, the PTC RPC dispatch and the LDW leaf's guarded tool face all call it, so a script call and a direct call cannot drift apart. An ordinary tool short-circuits on metadata and never opens the database.
+
+A note on what "replay path" means: the middleware chain is not the only place a tool runs. PTC dispatches a script's calls straight into `tool.ainvoke`, and an LDW leaf is a bare `create_agent` graph with no middleware at all. Those two paths now apply the same gate — a refused inner call becomes a failed step in the script's `calls_log`, so the PTC prefill falls back to ReAct and the normal approval flow (or the TaskFlow degrade) takes over.
 
 ## ⚙️ Keyword Registry
 
@@ -39,6 +42,8 @@ Resolution is session → global → built-int default. An `allow` row removes t
 Only tools that are **high risk AND not idempotent** are ledgered: PTC `execute_code` and every MCP tool by default. `terminal`, `python_repl`, `write_file` and `patch_file` are not ledgered — a shell command or an edit is ordinary work; the keyword scan is what makes a specific command ask.
 
 A ledger row is keyed by the **root main session** (a subagent resolves `APPROVAL_SCOPE_PARENT`), the tool name and a stable argument digest (sorted JSON, never the raw arguments). On a repeat the tool call is refused before execution and the first `result_summary` is returned. Rows expire after the configured retention (24 h) and are removed when the session is deleted; the panel's delete is the explicit "run once more" action.
+
+A row has a lifecycle. `in_flight` is written **before** the handler runs, then becomes `committed` (the call returned) or `failed` (the tool reported an error — never blocking, since a retry is legitimate). That closes the one crash window the ledger could not see: a row left `in_flight` by a **previous process** means the call was interrupted before it reported, so its side effects are unknown; it is refused as "outcome unknown" until the panel deletes it. A row from the current process is refused as "still in progress". A handler that raises marks the row failed before re-raising, so an exception never leaves a permanently in-progress row behind.
 
 A keyword that has **executed** gets the same one-shot treatment: after an approved operation succeeds, its keyword is marked executed and a later call whose arguments contain it is refused with the first result until the panel (or `high_risk_guard action=reset_keyword`) clears the marker.
 
@@ -79,6 +84,8 @@ Only TaskFlow steps carry `approval_context` through `_OPTIONAL_STEP_FIELDS` →
 
 `high_risk_guard` (main + subagents) manages the registry and the ledger: `add_keyword`, `list_keywords`, `remove_keyword`, `set_policy`, `reset_keyword`, `register_op`, `list_ops`, `remove_op`. A child's writes resolve to the root session.
 
+A subagent has no human approval channel, so it may **tighten** the guard but never **loosen** it: registering a `block` keyword, switching an `allow` back to `block` and deleting an allow override are allowed; setting a keyword to `allow`, deleting a block keyword or a built-in default, and removing a ledger row are refused with the main agent/panel as the way out. The one exception is `reset_keyword` for a keyword the child holds a recorded approval for — that is the "human just approved this spawn" case, and it keeps a legitimate second run possible inside the same approved step.
+
 | Endpoint | Purpose |
 | :------- | :------ |
 | `GET /sessions/:sid/high-risk-keywords` | keywords + ledger (one panel load) |
@@ -95,12 +102,18 @@ The shield button in the toolbar opens `HighRiskGuardPanel` for the current sess
 
 | Suite | Covers |
 | :---- | :----- |
-| `tests/agent/tools/pub_base/test_high_risk_guard_store.py` | validation, scanning, scopes, policy, executed markers, ledger round-trip, purge, retention |
-| `tests/agent/middlewares/test_high_risk_guard.py` | ledger block/replay, keyword NEEDS_APPROVAL, approvals, YOLO, confirm_all, root scope |
+| `tests/agent/tools/pub_base/test_high_risk_guard_store.py` | validation, scanning, scopes, policy, executed markers, ledger round-trip, purge, retention, the in-flight lifecycle, old-schema convergence |
+| `tests/agent/tools/pub_base/test_high_risk_gate.py` | the shared decision table: metadata short-circuit, committed/in-flight/unknown, approvals, YOLO/confirm_all, both switches |
+| `tests/agent/middlewares/test_high_risk_guard.py` | ledger block/replay, keyword NEEDS_APPROVAL, approvals, YOLO, confirm_all, root scope, the in-flight row around the handler, error/raise → failed |
 | `tests/agent/middlewares/humanInTheLoop/test_high_risk_keyword_handler.py` | handler matching, executed refusal, approve/reject, heartbeat freeze, headless deny |
-| `tests/agent/tools/test_high_risk_guard_tool.py` | the agent-facing tool's every action + child→root scope |
+| `tests/agent/tools/test_high_risk_guard_tool.py` | the agent-facing tool's every action + child→root scope + the child tightening/loosening rules |
+| `tests/agent/tools/ptc/test_rpc_guard.py` | the gate on PTC script-inner calls, the real child process end-to-end, the escape switch |
+| `tests/agent/tools/ldw/test_guarded_face.py` | the leaf tool face contract, a clean call, a keyword refusal, the leaf graph wiring |
+| `tests/agent/middlewares/test_skill_review_ptc_compile.py` | no script for a step whose evidence hits a blocker; a clean step still compiles |
+| `tests/agent/test_state_port_high_risk_placeholder.py` | the high-risk missing-result wording at the heal seam |
 | `tests/agent/tools/taskflow/test_approval_resume.py` | approved re-dispatch, approval inheritance on retry, validation refusals |
 | `tests/agent/tools/subagent/test_child_access_inheritance.py` | access-mode inheritance, approval scope to the token root, approval stamping |
+| `tests/agent/tools/subagent/test_ptc_prefill.py` | the prefill passes the root scope to the script gate |
 | `tests/server/trigger/http/test_high_risk_guard_api.py` | keyword CRUD, policy, reset, ledger deletion |
 | `client/app/pages/home/components/__tests__/HighRiskGuardPanel.integration.test.ts` | panel render, add/policy/reset/delete, backend refusal |
 
@@ -110,7 +123,12 @@ The shield button in the toolbar opens `HighRiskGuardPanel` for the current sess
 - **A keyword's executed marker is session-wide.** The plan's "one approval asks again per step" is intentionally stricter here: the first approved operation marks the keyword, and every later call containing it is refused until the marker is reset. That is safe against replays but needs the panel for a legitimate second run.
 - **Unannotated tools default to low risk.** Explicit `metadata.high_risk` wins; an `mcp__` tool without the key is high-risk, every other unannotated tool is not. A plugin that hides a dangerous operation behind a plain name must annotate itself.
 - **MCP is ledgered by prefix and non-idempotent by default.** A genuinely safe MCP read can declare `high_risk: False` / `idempotent: True`.
+- **Browser actions carry no risk metadata.** A click is neither keyword-scanned nor ledgered: repeating an identical click is often legitimate (a "next page" button), so browser intent judgment is deliberately out of scope.
+- **The replay-path gate is switchable.** `HIGH_RISK_GUARD["replay_path_gate_enabled"]` (default true) covers PTC script-inner calls, the LDW leaf face and the PTC compile check; setting it false restores the pre-change behaviour without a code rollback. `enabled = false` still turns the whole guard off (including the middleware chain).
+- **A PTC step whose evidence hits a blocker is not compiled.** The replay is not impossible — the step runs through ReAct — but the optimization is skipped rather than producing a script that can never succeed.
+- **The crash window is closed for ledgered tools only.** `terminal` / `python_repl` calls are not ledgered (their text is scanned instead), so an interrupted shell call has no row to refuse; its healed placeholder merely warns that it may already have taken effect.
 - **The ledger stores an args preview (≤300 chars).** It stays in the local `high_risk_guard.db` (never the tracked workspace); a preview may still contain a value the call included. The panel API withholds it unless the transport is same-host or HTTPS/WSS (degraded notice otherwise).
 - **Transport trust is header-based.** `X-Forwarded-Proto` is honored only from a trusted proxy; a deployment that terminates TLS elsewhere must set `SHERRY_INGRESS_TRUST_FORWARDED` on the ingress so it forwards the real scheme.
 - **The bubble depends on the parent taking a turn.** The completion message now carries the guide automatically, but the actual approval is still a `question` call the main agent must make; a parent that never reads its completion leaves the step blocked.
 - **Retention is lazy.** Expired rows are swept at most once an hour on a store access; a row can outlive the 24 h window until the next sweep.
+

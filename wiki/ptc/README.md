@@ -134,6 +134,7 @@ The controls below are capability reduction, not an OS boundary — the honest p
 8. **Child-session isolation.** Every dispatched tool call carries the child's `session_id` in its runnable config, so tools resolve state against the child session. The parent session is never exposed through PTC.
 9. **Anti-recursion and privilege exclusion.** `execute_code` is not in its own allowlist, and the spawn, memory, skill-management, and question tools are excluded by configuration — a script cannot spawn agents, manage skills, or ask the user from inside the sandbox.
 10. **Main-agent invisibility.** No PTC builder is registered in `_MAIN_TOOLS_BUILDERS`; the tool is constructed only inside child-agent assembly, and only when the role is in `PTC_ROLES`.
+11. **High-risk gate on every inner call.** The RPC dispatch applies the same decision table `ToolGuardrails` uses (`pub_base/high_risk_gate.py`): the executed-operation ledger, the keyword registry and the recorded approvals. A refused call is recorded in the script's `calls_log` as a failed step, so the prefill falls back to React where the normal approval flow runs — a script can never approve itself, and a refusal cannot be silently swallowed. Ordinary tools (read/write/patch/search/web) short-circuit on metadata and never open the ledger. The compile step skips a step whose evidence matches a blocker, so a script that could only fail at replay is not written at all; the escape switch `HIGH_RISK_GUARD["replay_path_gate_enabled"]` restores the pre-gate behaviour.
 
 ## ⚙️ Configuration
 

@@ -60,6 +60,7 @@ LDW スクリプトは `PLAN_KEY`、`REQUIRED_AGENT_TYPES`、`WORKFLOW_META` を
 
 - `register_roster(meta, session_id)` は **step ごとに 1 つの builder** を登録します。builder により LDW は schema 束縛の runnable を要求でき、`agent_type` の step 接尾辞が journal と PTC 検索を step 単位に保ちます。
 - leaf は実際の child 契約を再利用します。`_assemble_child_tools` がロール allow-list を適用し、code intelligence、ast-grep、executor 専用 PTC を注入します。session id は runnable config を通り、共有グラフへ焼き込まれません。
+- leaf グラフには**ミドルウェアチェーンがありません**。そのツール面は `guarded_face.guarded_tool_face` で包まれ、各呼び出しは実行前に `ToolGuardrails` と同じ高リスク判定表(操作台帳、キーワードレジストリ、記録済み承認)を通り、成功した台帳対象呼び出しは記録されます。ラッパーは各ツールの `name` / `description` / `args_schema` / `metadata` をそのまま保つため、ロールポリシー、構造化出力、PTC ツールマップは変わりません。通常のツールはメタデータで短絡します。拒否はツール結果テキストとして返り、そのステップが失敗して既存の auto-degrade が TaskFlow に渡します — そこでは通常の子が完全な承認フローを持ちます。`HIGH_RISK_GUARD["replay_path_gate_enabled"]`(既定 true)でラッパーを切れます。PTC プリランは**生の**ツールリストを受け取る点に注意: その内部呼び出しは PTC RPC ディスパッチ側でゲートされます。
 - leaf のモデルはロール tier と `step_model` 上書きに従います。schema 付き leaf は thinking を強制 off にし、child agent の構造化出力の最終段と揃えます。
 - journal miss のとき executor leaf はまず `run_ptc` でその step の PTC スクリプトを実行できます。PTC 失敗は `[PTC Pre-run Progress]` を追加して ReAct へ続行します。PTC の schema miss は失敗であり、成功にはなりません。
 - `SRC_DIR/data/workflow_runs.db` の `SqliteWorkflowStore` がプロセス間再開を支えます。同じ prompt / agent_type / model / schema の再リプレイは journal 結果を返し、leaf 呼び出しはゼロです。各結果は `journal_hits` と `leaf_calls` を報告します。
