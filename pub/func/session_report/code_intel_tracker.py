@@ -10,7 +10,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["CODE_INTEL_TOOLS", "CodeIntelTracker", "analyze_code_intel"]
+__all__ = [
+    "CODE_INTEL_TOOLS",
+    "CodeIntelTracker",
+    "analyze_code_intel",
+    # Shared taxonomy/consumer hooks used by the eval-side compatibility adapter.
+    "_PRECISE_TOOLS",
+    "_GREEDY_TOOLS",
+    "_is_degraded",
+]
 
 #: Every tool name the code-intel layer registers (agent/tools/code_intel/).
 CODE_INTEL_TOOLS: frozenset[str] = frozenset(

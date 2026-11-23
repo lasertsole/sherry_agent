@@ -54,16 +54,21 @@ class ContextAnalyzer:
     def payload(self) -> dict[str, Any]:
         effective, wasted = self.effective, self.wasted
         total = effective + wasted
+        wasted_by_tool = {
+            tool: entry["calls"] - entry["hit"]
+            for tool, entry in self.by_tool.items()
+            if entry["calls"] > entry["hit"]
+        }
         return {
             "total_tool_calls": self.calls,
             "effective": effective,
             "wasted": wasted,
             "hit_rate": round(effective / total, 4) if total else 1.0,
-            "wasted_by_tool": {
-                tool: entry["calls"] - entry["hit"]
-                for tool, entry in self.by_tool.items()
-                if entry["calls"] > entry["hit"]
-            },
+            "wasted_by_tool": wasted_by_tool,
+            # Legacy alias pinned by evals/shared/context_analyzer consumers.
+            # Additive: the product UI reads wasted_by_tool; the eval reports
+            # read wasted_breakdown. One value, two names, no second analyzer.
+            "wasted_breakdown": wasted_by_tool,
             "effective_tokens": effective,
             "wasted_tokens": wasted,
             "tool_calls_analyzed": self.calls,

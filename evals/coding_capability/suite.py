@@ -600,18 +600,20 @@ async def _drive(
 
 
 async def _session_tokens(session_id: str) -> dict[str, int]:
+    """Fold one session's ``usage_metadata`` (thin async shell over the product fn).
+
+    The transcript read stays here (async, eval side); the usage folding is the
+    product's ``pub.func.session_report.token_tracker.session_tokens`` so the
+    two copies cannot drift. Eleven suites alias this as ``harness._session_tokens``.
+    """
     from agent.state_port import read_messages
+    from pub.func.session_report.token_tracker import session_tokens
 
     try:
         messages = await read_messages(session_id)
     except Exception:  # noqa: BLE001 — token accounting is reported, never fatal
         return {}
-    input_tokens = output_tokens = 0
-    for message in messages:
-        usage = getattr(message, "usage_metadata", None) or {}
-        input_tokens += int(usage.get("input_tokens") or 0)
-        output_tokens += int(usage.get("output_tokens") or 0)
-    return {"input": input_tokens, "output": output_tokens}
+    return session_tokens(messages)
 
 
 # ── Report, persona evidence, baseline ──────────────────────────────────────

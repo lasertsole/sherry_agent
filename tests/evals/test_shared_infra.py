@@ -20,7 +20,6 @@ from evals.shared import (
     context_analyzer,
     env_setup,
     score_reporter,
-    token_tracker,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -234,34 +233,7 @@ class TestScoreReporter:
         assert path.read_text(encoding="utf-8").startswith("suite: s")
 
 
-# ── token_tracker ────────────────────────────────────────────────────────────
-
-
-class TestTokenTracker:
-    def test_ledger_breaks_roles_out(self):
-        ledger = token_tracker.TokenLedger("t1")
-        ledger.record("s-main", {"input": 100, "output": 40})
-        ledger.record("s-child", {"input": 30, "output": 10}, role="researcher")
-        payload = ledger.payload()
-        assert payload["total_tokens"] == 180
-        assert payload["main_agent"]["input"] == 100
-        assert payload["subagents"] == [{"role": "researcher", "input": 30, "output": 10}]
-        assert "cost_usd" not in payload  # no price map set
-
-    def test_price_map_computes_cost(self, monkeypatch, tmp_path):
-        prices = tmp_path / "prices.json"
-        prices.write_text(json.dumps({"m": {"input": 0.01, "output": 0.02}}), encoding="utf-8")
-        monkeypatch.setenv("SHERRY_EVAL_TOKEN_PRICES", str(prices))
-        ledger = token_tracker.TokenLedger("t1", model="m")
-        ledger.record("s", {"input": 1000, "output": 2000})
-        assert ledger.payload()["cost_usd"] == pytest.approx(0.01 * 1 + 0.02 * 2)
-
-    def test_a_missing_price_file_is_not_fatal(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("SHERRY_EVAL_TOKEN_PRICES", str(tmp_path / "nope.json"))
-        assert token_tracker.load_price_map() == {}
-
-
-# ── context_analyzer ─────────────────────────────────────────────────────────
+# ── context_analyzer (thin alias over the product analyzer) ──────────────────
 
 
 class TestContextAnalyzer:

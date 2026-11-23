@@ -19,7 +19,7 @@
 | [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + ビジョン差分(JS-evaluate 有効、vision-model 証跡を報告) | `evals/visualwebarena/suite.py` |
 | [OSWorld](../../evals/osworld/README.md) | Ubuntu タスクコンテナ、TERMINAL-FIRST(計画どおり VNC は降級)。vm_* 状態評価をネイティブ判定 | `evals/osworld/suite.py` |
 
-共有基盤は `evals/shared/`: データセット解決、バッチ+再開、統一レポート(計画の token/文脈命中率/code-intel サマリ付き)、compose を含むコンテナ生命周期、3 つのトラッカー(`token_tracker`、`context_analyzer`、`code_intel_tracker`)。全スイートは契約としてデータオプション：データセット・コンテナ実行環境・キーの欠落は大声で SKIP(exit 3)、黙通過はしません。
+共有基盤は `evals/shared/`: データセット解決、バッチ+再開、統一レポート(計画の token/文脈命中率/code-intel サマリ付き)、compose を含むコンテナのライフサイクル、2 つのレポートアナライザ(`context_analyzer`、`code_intel_tracker`)。これらは製品層 `pub.func.session_report` アナライザの薄いアダプタで、アルゴリズムは共有しつつ eval 側のレポート形式は維持します。token の集計は製品の `session_tokens()` に委譲し、追跡コードの重複はありません。全スイートは契約としてデータオプション：データセット・コンテナ実行環境・キーの欠落は大声で SKIP(exit 3)、黙通過はしません。
 | コーディング能力 | 自作のコーディング課題と同梱プロンプト arm | `evals/coding_capability/` |
 | 外部ベンチ | ブリッジされたコーディングベンチと harness アダプタ | `evals/` |
 

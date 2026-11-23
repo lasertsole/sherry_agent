@@ -18,7 +18,7 @@
 | [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + 비전 델타(JS-evaluate 활성, vision-model 증거 보고) | `evals/visualwebarena/suite.py` |
 | [OSWorld](../../evals/osworld/README.md) | Ubuntu 작업 컨테이너, TERMINAL-FIRST(계획에 따라 VNC 강등). vm_* 상태 평가 네이티브 판정 | `evals/osworld/suite.py` |
 
-공유 기반은 `evals/shared/`: 데이터셋 해석, 배치+재개, 통합 보고서(계획의 token/문맥 적중률/code-intel 요약 포함), compose를 포함한 컨테이너 수명주기, 세 개의 트래커(`token_tracker`, `context_analyzer`, `code_intel_tracker`). 모든 스위트는 계약상 데이터 옵션：데이터셋·컨테이너 런타임·키 부재는 큰 소리로 SKIP(exit 3), 조용한 통과는 없습니다.
+공유 기반은 `evals/shared/`: 데이터셋 해석, 배치+재개, 통합 보고서(계획의 token/문맥 적중률/code-intel 요약 포함), compose를 포함한 컨테이너 수명주기, 두 개의 보고서 분석기(`context_analyzer`, `code_intel_tracker`). 이 둘은 제품 계층 `pub.func.session_report` 분석기의 얇은 어댑터로, 알고리즘은 공유하되 eval 보고서 형식은 유지합니다. token 집계는 제품의 `session_tokens()`에 위임하며 추적 코드의 중복은 없습니다. 모든 스위트는 계약상 데이터 옵션：데이터셋·컨테이너 런타임·키 부재는 큰 소리로 SKIP(exit 3), 조용한 통과는 없습니다.
 | 코딩 능력 | 자체 설계한 코딩 과제와 내장 프롬프트 arm | `evals/coding_capability/` |
 | 외부 벤치 | 브리지된 코딩 벤치마크와 harness 어댑터 | `evals/` |
 

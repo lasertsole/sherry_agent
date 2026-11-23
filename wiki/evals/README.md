@@ -22,8 +22,11 @@ a score is not a capability percentage.
 Shared infrastructure lives in `evals/shared/`: dataset resolution, batch
 slicing + resume, the uniform report (with the plan's token / context-hit-rate
 / code-intel summaries), the per-suite container lifecycle including compose
-projects, and three trackers (`token_tracker`, `context_analyzer`,
-`code_intel_tracker`). Every suite is dataset-optional by contract: a missing
+projects, and two report analyzers (`context_analyzer`, `code_intel_tracker`).
+Those two are thin adapters over the product layer's `pub.func.session_report`
+analyzers — shared algorithms, eval-only report shapes — and token folding
+delegates to the product's `session_tokens()`; there is no second copy of the
+tracking code. Every suite is dataset-optional by contract: a missing
 dataset, container runtime or key SKIPS loudly (exit 3), never a silent pass.
 | Coding capability | Self-designed coding tasks and the shipped prompt arms | `evals/coding_capability/` |
 | External benches | Bridged coding benchmarks and harness adapters | `evals/` |

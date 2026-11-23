@@ -17,7 +17,7 @@
 | [VisualWebArena](../../evals/visualwebarena/README.md) | WebArena + 视觉增量（JS-evaluate 打开；报告带 vision-model 证据） | `evals/visualwebarena/suite.py` |
 | [OSWorld](../../evals/osworld/README.md) | Ubuntu 任务容器，TERMINAL-FIRST（按计划降级 VNC）；vm_* 状态评估器原生判分 | `evals/osworld/suite.py` |
 
-共享基础设施在 `evals/shared/`：数据集解析、分批+断点续跑、统一报告（含计划的 token / 上下文命中率 / code-intel 汇总）、逐套件容器生命周期（含 compose 工程）、三个追踪器（`token_tracker`、`context_analyzer`、`code_intel_tracker`）。每个套件按契约"数据可选"：缺数据集、缺容器运行时或缺密钥都大声跳过（exit 3），绝不静默通过。
+共享基础设施在 `evals/shared/`：数据集解析、分批+断点续跑、统一报告（含计划的 token / 上下文命中率 / code-intel 汇总）、逐套件容器生命周期（含 compose 工程）、两个报告分析器（`context_analyzer`、`code_intel_tracker`）。这两个是产品层 `pub.func.session_report` 分析器的薄适配层——算法共用、报告形状按 eval 保留；token 折叠委托产品的 `session_tokens()`，不再保留第二份追踪代码。每个套件按契约"数据可选"：缺数据集、缺容器运行时或缺密钥都大声跳过（exit 3），绝不静默通过。
 | 编码能力 | 自建编码任务与内置提示词 arm | `evals/coding_capability/` |
 | 外部基准 | 桥接的编码基准与 harness 适配器 | `evals/` |
 
