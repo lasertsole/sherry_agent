@@ -176,3 +176,56 @@ async def test_a_skip_from_the_compiler_writes_nothing(monkeypatch) -> None:
     await reviews._compile_ptc_scripts(_context(), before, after, "{}")
 
     assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_keyword_bearing_step_is_not_compiled(monkeypatch, tmp_path) -> None:
+    """A script whose evidence hits the high-risk scan could only fail at replay."""
+    monkeypatch.setenv("SHERRY_HIGH_RISK_GUARD_PATH", str(tmp_path / "guard.db"))
+    before, after = _snapshots()
+    writes: list[tuple] = []
+    compiled: list[dict] = []
+
+    async def _compile(**kwargs):
+        compiled.append(kwargs)
+        return "print('should not compile')\n"
+
+    monkeypatch.setitem(reviews.PTC, "ptc_prefill_enabled", True)
+    monkeypatch.setattr("agent.tools.ptc.compiler.compile_step_script", _compile)
+    monkeypatch.setattr(
+        "agent.tools.skill_tools.skill_manage._write_file",
+        lambda *args: writes.append(args) or {"success": True},
+    )
+    context = _context()
+    step = context["aggregated_handoff"]["success_steps"][0]
+    step["tool"] = "terminal"
+    step["params"] = "commands=['echo password']"
+
+    await reviews._compile_ptc_scripts(context, before, after, "{}", session_id="sess-kw")
+
+    assert compiled == []
+    assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_clean_step_still_compiles_with_the_gate_on(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("SHERRY_HIGH_RISK_GUARD_PATH", str(tmp_path / "guard.db"))
+    before, after = _snapshots()
+    writes: list[tuple] = []
+    compiled: list[dict] = []
+
+    async def _compile(**kwargs):
+        compiled.append(kwargs)
+        return "from sherry_tools import read_file\nprint(read_file(file_path='config.json'))\n"
+
+    monkeypatch.setitem(reviews.PTC, "ptc_prefill_enabled", True)
+    monkeypatch.setattr("agent.tools.ptc.compiler.compile_step_script", _compile)
+    monkeypatch.setattr(
+        "agent.tools.skill_tools.skill_manage._write_file",
+        lambda *args: writes.append(args) or {"success": True},
+    )
+
+    await reviews._compile_ptc_scripts(_context(), before, after, "{}", session_id="sess-clean")
+
+    assert len(compiled) == 1
+    assert len(writes) == 1

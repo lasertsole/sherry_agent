@@ -216,3 +216,68 @@ def test_a_yolo_child_still_hits_the_root_ledger(guard_db):
     )
     # The keyword executed marker (session/root scope) blocks the second one.
     assert calls == [] and "already ran" in blocked.content
+
+
+# ---------------------------------------------------------------------------
+# In-flight ledger lifecycle (the crash window)
+# ---------------------------------------------------------------------------
+
+
+def test_the_ledger_row_is_in_flight_while_the_tool_runs(guard_db):
+    mw = _mw()
+    session = "hr-intent"
+    observed: dict = {}
+
+    async def handler(req):
+        row = guard_db.check_op(session, MCP_TOOL.name, {"amount": 7})
+        observed["status"] = row["status"] if row else None
+        return ToolMessage(content="charged", tool_call_id="c1", name="mcp__stripe__charge")
+
+    asyncio.run(mw.awrap_tool_call(_request(session, MCP_TOOL, {"amount": 7}), handler))
+
+    assert observed["status"] == "in_flight"
+    assert guard_db.check_op(session, MCP_TOOL.name, {"amount": 7})["status"] == "committed"
+
+
+def test_an_error_result_marks_the_row_failed_and_a_retry_runs(guard_db):
+    mw = _mw()
+    session = "hr-intent-error"
+    _run(mw, _request(session, MCP_TOOL, {"amount": 1}), content="boom", status="error")
+
+    row = guard_db.check_op(session, MCP_TOOL.name, {"amount": 1})
+    assert row["status"] == "failed"
+
+    _, calls = _run(mw, _request(session, MCP_TOOL, {"amount": 1}, "c2"))
+    assert calls == ["mcp__stripe__charge"]
+
+
+def test_a_raising_handler_marks_the_row_failed(guard_db):
+    mw = _mw()
+    session = "hr-intent-raise"
+
+    async def handler(_req):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(mw.awrap_tool_call(_request(session, MCP_TOOL, {"amount": 2}), handler))
+
+    row = guard_db.check_op(session, MCP_TOOL.name, {"amount": 2})
+    assert row["status"] == "failed"
+
+    _, calls = _run(mw, _request(session, MCP_TOOL, {"amount": 2}, "c2"))
+    assert calls == ["mcp__stripe__charge"]
+
+
+def test_a_row_left_in_flight_by_a_previous_boot_is_refused(guard_db):
+    import sqlite3
+
+    session = "hr-intent-stale"
+    guard_db.record_intent(session, MCP_TOOL.name, {"amount": 3})
+    with sqlite3.connect(str(guard_db.path)) as conn:
+        conn.execute("UPDATE high_risk_ops SET boot_id = 'previous-boot'")
+        conn.commit()
+
+    result, calls = _run(_mw(), _request(session, MCP_TOOL, {"amount": 3}))
+
+    assert calls == []
+    assert "interrupted" in result.content and "unknown" in result.content

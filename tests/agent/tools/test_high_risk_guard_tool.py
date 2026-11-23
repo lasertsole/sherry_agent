@@ -92,3 +92,129 @@ def test_unknown_action_is_reported():
     # a validation error rather than executing anything.
     with pytest.raises(Exception):
         tool.invoke({"action": "nope", "session_id": SESSION})
+
+
+# ---------------------------------------------------------------------------
+# A subagent may tighten the guard but never loosen it
+# ---------------------------------------------------------------------------
+
+CHILD = "agent:main:subagent:guard-permissions"
+
+
+def _as_child() -> None:
+    state_register_mem.set_state(CHILD, StateKey.APPROVAL_SCOPE_PARENT, SESSION)
+
+
+def test_a_child_cannot_switch_a_keyword_to_allow():
+    tool = build_high_risk_guard_tool()
+    tool.invoke({"action": "add_keyword", "keyword": "deploy_prod", "session_id": SESSION})
+    _as_child()
+
+    out = tool.invoke(
+        {
+            "action": "set_policy",
+            "keyword": "deploy_prod",
+            "policy": "allow",
+            "session_id": CHILD,
+        }
+    )
+
+    assert out.startswith("Error:")
+    assert "deploy_prod" in default_store().load_active_blockers(SESSION)
+
+
+def test_a_child_cannot_register_an_allow_keyword():
+    tool = build_high_risk_guard_tool()
+    _as_child()
+
+    out = tool.invoke(
+        {
+            "action": "add_keyword",
+            "keyword": "charge_card",
+            "policy": "allow",
+            "session_id": CHILD,
+        }
+    )
+
+    assert out.startswith("Error:")
+    assert default_store().get_keyword(SESSION, "charge_card") is None
+
+
+def test_a_child_can_tighten():
+    tool = build_high_risk_guard_tool()
+    _as_child()
+
+    added = tool.invoke({"action": "add_keyword", "keyword": "deploy_prod", "session_id": CHILD})
+
+    assert "registered" in added
+    assert "deploy_prod" in default_store().load_active_blockers(SESSION)
+
+
+def test_a_child_cannot_remove_a_block_keyword():
+    tool = build_high_risk_guard_tool()
+    tool.invoke({"action": "add_keyword", "keyword": "deploy_prod", "session_id": SESSION})
+    _as_child()
+
+    out = tool.invoke({"action": "remove_keyword", "keyword": "deploy_prod", "session_id": CHILD})
+
+    assert out.startswith("Error:")
+    assert "deploy_prod" in default_store().load_active_blockers(SESSION)
+
+
+def test_a_child_cannot_remove_a_builtin_default():
+    tool = build_high_risk_guard_tool()
+    _as_child()
+
+    out = tool.invoke({"action": "remove_keyword", "keyword": "rm -rf", "session_id": CHILD})
+
+    assert out.startswith("Error:")
+    assert "rm -rf" in default_store().load_active_blockers(SESSION)
+
+
+def test_a_child_can_remove_an_allow_override():
+    tool = build_high_risk_guard_tool()
+    tool.invoke(
+        {"action": "set_policy", "keyword": "password", "policy": "allow", "session_id": SESSION}
+    )
+    _as_child()
+
+    out = tool.invoke({"action": "remove_keyword", "keyword": "password", "session_id": CHILD})
+
+    assert "removed" in out
+    assert "password" in default_store().load_active_blockers(SESSION)
+
+
+def test_a_child_may_reset_only_a_keyword_it_was_approved_for():
+    tool = build_high_risk_guard_tool()
+    default_store().mark_executed(SESSION, "deploy", "done")
+    _as_child()
+
+    refused = tool.invoke({"action": "reset_keyword", "keyword": "deploy", "session_id": CHILD})
+    assert refused.startswith("Error:")
+    assert default_store().get_keyword(SESSION, "deploy")["executed"] is True
+
+    state_register_mem.set_state(
+        CHILD, StateKey.KEYWORD_APPROVALS, [{"keyword": "deploy", "tool": "terminal"}]
+    )
+    allowed = tool.invoke({"action": "reset_keyword", "keyword": "deploy", "session_id": CHILD})
+    assert "reset" in allowed
+    assert default_store().get_keyword(SESSION, "deploy")["executed"] is False
+
+
+def test_a_child_cannot_delete_a_ledger_row():
+    tool = build_high_risk_guard_tool()
+    tool.invoke(
+        {
+            "action": "register_op",
+            "tool_name": "execute_code",
+            "args": {"script": "deploy.py"},
+            "session_id": SESSION,
+        }
+    )
+    op_id = default_store().list_ops(SESSION)[0]["id"]
+    _as_child()
+
+    out = tool.invoke({"action": "remove_op", "op_id": op_id, "session_id": CHILD})
+
+    assert out.startswith("Error:")
+    assert default_store().check_op(SESSION, "execute_code", {"script": "deploy.py"})

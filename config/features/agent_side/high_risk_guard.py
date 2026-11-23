@@ -24,6 +24,11 @@ class HighRiskGuardConfig(TypedDict):
     """Keyword/ledger guard: built-in keywords, retention and length bounds."""
 
     enabled: bool
+    #: Gates the REPLAY paths that used to run outside the middleware chain
+    #: (PTC script-inner calls, LDW leaf tool calls, the PTC compile check).
+    #: ``False`` restores the pre-replay-gate behaviour without a code change;
+    #: ``enabled=False`` still turns the whole guard off.
+    replay_path_gate_enabled: bool
     #: Hours an executed keyword/op row stays before the lazy sweep removes it.
     retention_hours: int
     min_keyword_chars: int
@@ -35,6 +40,7 @@ class HighRiskGuardConfig(TypedDict):
 
 HIGH_RISK_GUARD: HighRiskGuardConfig = {
     "enabled": True,
+    "replay_path_gate_enabled": True,
     "retention_hours": 24,
     "min_keyword_chars": 3,
     "max_keyword_chars": 100,

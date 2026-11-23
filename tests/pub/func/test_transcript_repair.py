@@ -92,3 +92,14 @@ def test_an_empty_result_is_kept_with_a_default_hint():
     assert tool_messages[0].content == EMPTY_TOOL_RESULT
     assert tool_messages[0].additional_kwargs["sherry_repair"] == "empty_result"
     assert "missing" not in str(tool_messages[0].content).lower()
+
+
+def test_a_high_risk_missing_result_warns_about_a_possible_side_effect():
+    from pub.func.transcript_repair import MISSING_HIGH_RISK_TOOL_RESULT, make_missing_tool_result
+
+    placeholder = make_missing_tool_result("call-9", "terminal", high_risk=True)
+
+    assert placeholder.content == MISSING_HIGH_RISK_TOOL_RESULT
+    assert "may already have taken effect" in placeholder.content
+    assert placeholder.status == "success"
+    assert placeholder.additional_kwargs["sherry_repair"] == "missing_tool_result"

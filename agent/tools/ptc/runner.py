@@ -247,11 +247,15 @@ async def run_ptc(
     config: Any,
     *,
     cwd: str | None = None,
+    scope: str | None = None,
 ) -> str:
     """Execute ``code`` in an isolated child process with RPC tool access.
 
     Returns a JSON string describing the outcome. ``tools_map`` maps tool name
     to a live BaseTool; ``config`` is the :data:`config.features.PTC` mapping.
+    ``scope`` is the root session whose high-risk ledger the script's calls
+    share; a caller holding a synthetic session key (the LDW leaf prefill)
+    passes it explicitly, otherwise it resolves from the state register.
     """
     max_stdout = int(config["ptc_max_stdout_bytes"])
     max_stderr = int(config["ptc_max_stderr_bytes"])
@@ -274,6 +278,7 @@ async def run_ptc(
         session_id,
         tool_call_timeout=float(timeout),
         token=token,
+        scope=scope,
     )
     host, port = server.start()
 

@@ -230,7 +230,7 @@ def heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> lis
     validity (appending a ToolMessage at the end can only answer the last
     AIMessage's calls anyway).
     """
-    from pub.func.transcript_repair import make_missing_tool_result
+    from pub.func.transcript_repair import MISSING_HIGH_RISK_TOOL_RESULT, make_missing_tool_result
 
     last_ai_idx = None
     for i in range(len(messages) - 1, -1, -1):
@@ -258,12 +258,28 @@ def heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> lis
     for call_id in call_names:
         if call_id in answered:
             continue
-        placeholder = make_missing_tool_result(call_id, call_names[call_id])
+        name = call_names[call_id]
+        placeholder = make_missing_tool_result(call_id, name)
+        if name and _missing_result_high_risk(name):
+            # A cancelled/killed high-risk call may already have taken effect:
+            # a blind retry is the duplicate this marker must not invite.
+            placeholder.content = MISSING_HIGH_RISK_TOOL_RESULT
         # Deterministic placeholder id: the id-keyed reducer upserts it, so a
         # retried reconciliation never duplicates the heal.
         placeholder.id = f"{marker_id}-heal-{call_id}"
         placeholders.append(placeholder)
     return placeholders
+
+
+def _missing_result_high_risk(tool_name: str) -> bool:
+    """Whether a missing result may hide an irreversible side effect.
+
+    Name-only (this seam has no tool object): the fail-safe set is MCP plus the
+    shell/interpreter tools, the same names the high-risk scan always covers.
+    """
+    from agent.tools.pub_base.high_risk_policy import should_scan_keywords_by_name
+
+    return should_scan_keywords_by_name(tool_name)
 
 
 async def restore_interrupt_marker(

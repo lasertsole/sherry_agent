@@ -38,6 +38,15 @@ from typing import Any
 
 from loguru import logger
 
+from agent.tools.pub_base.high_risk_gate import (
+    PTC_REFUSAL_NOTE,
+    HighRiskDecision,
+    check_high_risk_call,
+    record_high_risk_result,
+    replay_path_gate_enabled,
+    resolve_approval_scope,
+)
+
 
 class PtcCallBudgetExceededError(Exception):
     """The PTC script exceeded its per-script tool-call budget."""
@@ -88,6 +97,7 @@ class PtcRpcServer:
         host: str = "127.0.0.1",
         tool_call_timeout: float = 120.0,
         token: str | None = None,
+        scope: str | None = None,
     ) -> None:
         if host in _FORBIDDEN_HOSTS:
             raise ValueError(f"PTC RPC must bind loopback only; refusing host {host!r}")
@@ -95,6 +105,11 @@ class PtcRpcServer:
         self._loop = loop
         self._max_calls = max_calls
         self._session_id = session_id
+        #: The root session whose ledger/approvals a script's calls share. The
+        #: spawn path resolves APPROVAL_SCOPE_PARENT itself; a system-triggered
+        #: prefill from an LDW leaf has a synthetic session key and passes the
+        #: main session explicitly.
+        self._scope = str(scope or "")
         self._host = host
         self._tool_call_timeout = tool_call_timeout
         # One-time, in-memory token. The runner always supplies a fresh value;
@@ -248,6 +263,12 @@ class PtcRpcServer:
             raise
         self._calls_made += 1
         tool = self._tools_map[tool_name]
+        decision = self._high_risk_decision(tool_name, tool, args)
+        if decision is not None and decision.refusal is not None:
+            # A script has no approval channel: refuse the inner call so the
+            # replay falls back to ReAct, where the normal approval flow runs.
+            self._record_call(tool_name, args, error=decision.refusal)
+            return {"ok": False, "error": decision.refusal}
         try:
             result = self._invoke(tool, args)
         except Exception as exc:  # tool errors are returned to the child, not raised
@@ -258,7 +279,41 @@ class PtcRpcServer:
             self._record_call(tool_name, args, error=_preview(result))
         else:
             self._record_call(tool_name, args, result=result)
+        if decision is not None:
+            record_high_risk_result(
+                scope=decision.scope,
+                tool_name=tool_name,
+                tool=tool,
+                args=args,
+                result_text=_preview(result),
+                status="error" if _is_error_result(result) else "success",
+                hit_keyword=decision.hit_keyword,
+            )
         return {"ok": True, "result": result}
+
+    def _high_risk_decision(
+        self, tool_name: str, tool: Any, args: dict[str, Any]
+    ) -> HighRiskDecision | None:
+        """Evaluate the shared high-risk gate for one inner call.
+
+        ``None`` means "no opinion" — either the replay-path gate is switched
+        off or the guard itself failed. Both are fail-open on purpose: a broken
+        safety net must not turn a runnable script into a failure.
+        """
+        if not replay_path_gate_enabled():
+            return None
+        try:
+            return check_high_risk_call(
+                session_id=self._session_id,
+                scope=self._scope or resolve_approval_scope(self._session_id),
+                tool_name=tool_name,
+                tool=tool,
+                args=args,
+                note=PTC_REFUSAL_NOTE,
+            )
+        except Exception:  # noqa: BLE001 - fail-open, never fail the script
+            logger.warning("PTC high-risk gate failed; allowing the call", exc_info=True)
+            return None
 
     def _record_call(
         self,

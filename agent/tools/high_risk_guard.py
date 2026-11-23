@@ -12,7 +12,7 @@ substring-matched case-insensitively and must be at least three characters.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
@@ -65,6 +65,70 @@ def _format_keywords(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _keyword_approval_held(*sessions: str, keyword: str) -> bool:
+    """Whether a human approved this keyword for one of *sessions*."""
+    needle = str(keyword or "").strip().lower()
+    if not needle:
+        return False
+    try:
+        from runtime import StateKey, state_register_mem
+    except Exception:  # noqa: BLE001 - no register means no approval record
+        return False
+    for session in sessions:
+        if not session:
+            continue
+        approvals = state_register_mem.get_state(session, StateKey.KEYWORD_APPROVALS, []) or []
+        if not isinstance(approvals, list):
+            continue
+        for entry in approvals:
+            if isinstance(entry, dict) and str(entry.get("keyword") or "").lower() == needle:
+                return True
+    return False
+
+
+def _child_loosening_error(
+    *,
+    action: str,
+    store: Any,
+    session: str,
+    requester: str,
+    keyword: str,
+    policy: str,
+) -> str | None:
+    """Refuse a subagent's attempt to weaken the guard (``None`` = allowed)."""
+    cleaned = str(keyword or "").strip()
+    if action == "add_keyword" and policy == "allow":
+        return (
+            "Error: a subagent cannot set a keyword to allow; the main agent or the "
+            "high-risk panel must do that."
+        )
+    if action == "set_policy" and policy == "allow":
+        return (
+            "Error: a subagent cannot set a keyword to allow; the main agent or the "
+            "high-risk panel must do that."
+        )
+    if action == "remove_keyword":
+        entry = store.get_keyword(session, cleaned)
+        if entry is None or str(entry.get("policy") or "") != "allow":
+            return (
+                "Error: a subagent may only delete an 'allow' override; deleting a "
+                "block keyword (or a built-in default) needs the main agent or the panel."
+            )
+    if action == "reset_keyword" and not _keyword_approval_held(
+        requester, session, keyword=cleaned
+    ):
+        return (
+            "Error: a subagent may reset a keyword only when this spawn was approved "
+            "for it; otherwise the main agent or the high-risk panel must reset it."
+        )
+    if action == "remove_op":
+        return (
+            "Error: a subagent cannot delete a ledger row that allows a re-run; the "
+            "main agent or the high-risk panel must remove it."
+        )
+    return None
+
+
 @tool("high_risk_guard", args_schema=HighRiskGuardInput)
 def high_risk_guard_tool(
     action: str,
@@ -89,7 +153,9 @@ def high_risk_guard_tool(
       tool call, the recorded executions, and their deletion.
     """
     store = default_store()
-    session = str(session_id or "").strip() or "default"
+    requester = str(session_id or "").strip() or "default"
+    session = requester
+    is_child = False
     # A child's registrations belong to the ROOT main session: the panel, the
     # parent's scans and a later step's approval all read that one scope.
     try:
@@ -98,8 +164,25 @@ def high_risk_guard_tool(
         parent = state_register_mem.get_state(session, StateKey.APPROVAL_SCOPE_PARENT, None)
         if isinstance(parent, str) and parent.strip():
             session = parent.strip()
+            is_child = session != requester
     except Exception:  # noqa: BLE001 - a missing register keeps the given session
         logger.debug("high_risk_guard: approval scope lookup failed", exc_info=True)
+
+    if is_child:
+        # A subagent has no human approval channel, so it may TIGHTEN the guard
+        # (register a block keyword, delete an allow row) but never LOOSEN it:
+        # otherwise the protected side could disable its own protection. The
+        # one exception is a reset for a keyword this spawn was approved for.
+        loosening_error = _child_loosening_error(
+            action=action,
+            store=store,
+            session=session,
+            requester=requester,
+            keyword=keyword,
+            policy=policy,
+        )
+        if loosening_error is not None:
+            return loosening_error
 
     if action == "add_keyword":
         error = validate_keyword(keyword)

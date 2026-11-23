@@ -10,7 +10,11 @@ One SQLite file (:func:`config.path.resolve_high_risk_guard_path`,
   instead of running again (the verify-retest guard);
 * ``high_risk_ops`` — the operation ledger for tools that are BOTH
   ``high_risk`` and non-idempotent (PTC ``execute_code`` and every MCP tool by
-  default), keyed by ``(session, tool, args_hash)``.
+  default), keyed by ``(session, tool, args_hash)``. One row per call identity
+  carries a lifecycle: ``in_flight`` (written BEFORE the handler runs, so an
+  interrupted process leaves a marker), ``committed`` (the call returned) and
+  ``failed`` (the tool reported an error; never blocks a retry). A row left
+  ``in_flight`` by a previous boot is refused as "outcome unknown".
 
 Scope: a main session owns its rows; every descendant resolves the ROOT main
 session and passes that id, so a re-spawned TaskFlow step still sees the
@@ -28,9 +32,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
+import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -79,9 +85,27 @@ CREATE TABLE IF NOT EXISTS high_risk_ops (
     args_preview TEXT NOT NULL DEFAULT '',
     result_summary TEXT NOT NULL DEFAULT '',
     executed_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'committed',
+    boot_id TEXT NOT NULL DEFAULT '',
+    pid INTEGER NOT NULL DEFAULT 0,
     UNIQUE(session_id, tool_name, args_hash)
 );
 """
+
+#: Columns added after the first release. An existing database file keeps its
+#: original CREATE TABLE shape, so these are applied with a PRAGMA-guarded
+#: additive ``ALTER TABLE`` (the side-chat store's precedent) instead of
+#: recreating the table.
+_ADDED_OP_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("status", "TEXT NOT NULL DEFAULT 'committed'"),
+    ("boot_id", "TEXT NOT NULL DEFAULT ''"),
+    ("pid", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+#: This process's identity: an ``in_flight`` row written by ANOTHER boot means
+#: the call was interrupted and its outcome is unknown. ``time.monotonic`` is
+#: process-relative, so it cannot answer this question.
+_BOOT_ID = uuid.uuid4().hex
 
 _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_high_risk_keywords_session "
@@ -195,6 +219,12 @@ class HighRiskGuardStore:
             conn.executescript(_SCHEMA)
             for ddl in _INDEXES:
                 conn.execute(ddl)
+            existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(high_risk_ops)")}
+            for name, declaration in _ADDED_OP_COLUMNS:
+                if name not in existing:
+                    # Additive, PRAGMA-guarded: an older database file keeps its
+                    # rows and gains the new columns with their defaults.
+                    conn.execute(f"ALTER TABLE high_risk_ops ADD COLUMN {name} {declaration}")
             conn.commit()
             _INITIALIZED_PATHS.add(key)
 
@@ -458,7 +488,13 @@ class HighRiskGuardStore:
     # ── executed-operation ledger ───────────────────────────────────────
 
     def check_op(self, session_id: str, tool_name: str, args: dict[str, Any] | None) -> dict | None:
-        """The recorded execution of this exact call, or ``None``."""
+        """The recorded execution row for this exact call, or ``None``.
+
+        The row's ``status`` decides what it means: ``committed`` ran to
+        completion, ``in_flight`` is running (or was interrupted before it
+        reported — compare ``boot_id``), ``failed`` reported an error.
+        :meth:`check_blocking` applies that policy; this is the raw read.
+        """
         digest = args_hash(tool_name, args)
         with self._connection() as conn:
             row = conn.execute(
@@ -473,9 +509,56 @@ class HighRiskGuardStore:
             "args_preview": str(row["args_preview"]),
             "result_summary": str(row["result_summary"]),
             "executed_at": int(row["executed_at"]),
+            "status": str(row["status"] or "committed"),
+            "boot_id": str(row["boot_id"] or ""),
+            "pid": int(row["pid"] or 0),
         }
 
-    def record_op(
+    def check_blocking(
+        self, session_id: str, tool_name: str, args: dict[str, Any] | None
+    ) -> tuple[str, dict[str, Any]] | None:
+        """``(reason, row)`` when this call must be refused, else ``None``.
+
+        Reasons: ``committed`` (already ran), ``in_flight`` (running right now
+        in this process) and ``unknown`` — a row this process left in flight
+        when it died, whose side effects are therefore unknown. A ``failed``
+        row never blocks: the tool itself reported an error, so a retry is
+        legitimate.
+        """
+        row = self.check_op(session_id, tool_name, args)
+        if row is None:
+            return None
+        status = row["status"]
+        if status == "committed":
+            return ("committed", row)
+        if status == "in_flight":
+            return ("in_flight" if row["boot_id"] == _BOOT_ID else "unknown", row)
+        return None
+
+    def record_intent(self, session_id: str, tool_name: str, args: dict[str, Any] | None) -> None:
+        """Mark this exact call as in flight BEFORE the handler runs.
+
+        The upsert deliberately never rewrites a ``committed`` row: a late or
+        concurrent intent must not erase the refusal reason and the first
+        result summary.
+        """
+        digest = args_hash(tool_name, args)
+        now = _now()
+        with self._connection() as conn:
+            conn.execute(
+                "INSERT INTO high_risk_ops "
+                "(session_id, tool_name, args_hash, args_preview, result_summary, "
+                " executed_at, status, boot_id, pid) "
+                "VALUES (?, ?, ?, ?, '', ?, 'in_flight', ?, ?) "
+                "ON CONFLICT(session_id, tool_name, args_hash) DO UPDATE SET "
+                "status = 'in_flight', boot_id = excluded.boot_id, pid = excluded.pid, "
+                "args_preview = excluded.args_preview, executed_at = excluded.executed_at "
+                "WHERE high_risk_ops.status != 'committed'",
+                (session_id, tool_name, digest, _preview(args), now, _BOOT_ID, os.getpid()),
+            )
+            conn.commit()
+
+    def commit_op(
         self,
         session_id: str,
         tool_name: str,
@@ -489,19 +572,58 @@ class HighRiskGuardStore:
         with self._connection() as conn:
             conn.execute(
                 "INSERT INTO high_risk_ops "
-                "(session_id, tool_name, args_hash, args_preview, result_summary, executed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
+                "(session_id, tool_name, args_hash, args_preview, result_summary, "
+                " executed_at, status, boot_id, pid) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'committed', ?, ?) "
                 "ON CONFLICT(session_id, tool_name, args_hash) DO UPDATE SET "
-                "result_summary = excluded.result_summary, executed_at = excluded.executed_at",
-                (session_id, tool_name, digest, _preview(args), summary, now),
+                "result_summary = excluded.result_summary, executed_at = excluded.executed_at, "
+                "status = 'committed', boot_id = excluded.boot_id, pid = excluded.pid",
+                (
+                    session_id,
+                    tool_name,
+                    digest,
+                    _preview(args),
+                    summary,
+                    now,
+                    _BOOT_ID,
+                    os.getpid(),
+                ),
             )
             conn.commit()
 
+    def mark_failed(self, session_id: str, tool_name: str, args: dict[str, Any] | None) -> None:
+        """Mark an in-flight row as failed (visible in the panel, never blocking)."""
+        digest = args_hash(tool_name, args)
+        with self._connection() as conn:
+            conn.execute(
+                "UPDATE high_risk_ops SET status = 'failed' "
+                "WHERE session_id = ? AND tool_name = ? AND args_hash = ? "
+                "AND status != 'committed'",
+                (session_id, tool_name, digest),
+            )
+            conn.commit()
+
+    def record_op(
+        self,
+        session_id: str,
+        tool_name: str,
+        args: dict[str, Any] | None,
+        result_summary: str,
+    ) -> None:
+        """Record one execution as committed (also the preventive registry path)."""
+        self.commit_op(session_id, tool_name, args, result_summary)
+
     def list_ops(self, session_id: str) -> list[dict[str, Any]]:
-        """Every recorded high-risk execution for the session, newest first."""
+        """Every recorded high-risk execution for the session, newest first.
+
+        ``failed`` rows are hidden: they are not a repeat the panel should
+        offer to delete-and-rerun (the tool already reported the failure), and
+        hiding them keeps the existing panel response shape truthful.
+        """
         with self._connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM high_risk_ops WHERE session_id = ? ORDER BY executed_at DESC",
+                "SELECT * FROM high_risk_ops WHERE session_id = ? AND status != 'failed' "
+                "ORDER BY executed_at DESC",
                 (session_id,),
             ).fetchall()
         return [
@@ -511,6 +633,7 @@ class HighRiskGuardStore:
                 "args_preview": str(row["args_preview"]),
                 "result_summary": str(row["result_summary"]),
                 "executed_at": int(row["executed_at"]),
+                "status": str(row["status"] or "committed"),
             }
             for row in rows
         ]

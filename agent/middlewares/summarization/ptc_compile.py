@@ -1,5 +1,6 @@
 """PTC replay-script compilation (job 5): one script per successful TaskFlow step, written after the skill judge accepts the update."""
 
+import asyncio
 import json
 from typing import Any
 from loguru import logger
@@ -94,6 +95,41 @@ def _ptc_tool_signatures(allowed_tools: set[str]) -> list[str]:
     return rendered
 
 
+async def _step_evidence_hits_blocker(steps: list[dict[str, Any]], session_id: str) -> bool:
+    """Whether this step's evidence names a call the high-risk scan would stop.
+
+    A script compiled from a keyword-bearing command can only fail at replay
+    time (the PTC RPC gate refuses the inner call), so refusing to compile it
+    keeps the replay path honest and avoids a permanently failing script. The
+    scan uses the session's LIVE blocker list; a disabled guard or an
+    unreadable store means "compile as before" (fail-open).
+    """
+    from agent.tools.pub_base.high_risk_gate import replay_path_gate_enabled
+
+    if not replay_path_gate_enabled() or not session_id:
+        return False
+    from agent.tools.pub_base.high_risk_guard_store import (
+        default_store as high_risk_store,
+        scan_high_risk_keywords,
+    )
+
+    try:
+        store = high_risk_store()
+        blockers = await asyncio.to_thread(store.load_active_blockers, session_id)
+    except Exception:  # noqa: BLE001 - the compile must never fail on the guard
+        logger.warning(
+            "PTC compile: high-risk scan unavailable; compiling as before", exc_info=True
+        )
+        return False
+    if not blockers:
+        return False
+    for step in steps:
+        params = str(step.get("params") or "")
+        if params and scan_high_risk_keywords(params, blockers) is not None:
+            return True
+    return False
+
+
 async def _compile_ptc_scripts(
     context: dict[str, Any],
     before: Any,
@@ -172,6 +208,11 @@ async def _compile_ptc_scripts(
         filename = script_filename(plan_key, step_id)
         if filename is None:
             logger.debug("PTC compile: unsafe step id {!r}, skipping", step_id)
+            continue
+        if await _step_evidence_hits_blocker(steps, session_id):
+            logger.info(
+                "PTC compile: step {} evidence matches a high-risk keyword; skipping", step_id
+            )
             continue
         allowed = {
             str(step.get("tool") or "").strip()
