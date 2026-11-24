@@ -3533,6 +3533,14 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   (`USER_HOOKS["enabled"]`): the config file is git-tracked, so executing its
   commands must be a deliberate act. Listed in `MIDDLEWARE_ORDER`, and the config is read once at construction
   (change = restart).
+- resume carries the child's OWN result: omitting `result` injects the run's
+  stored `completion.result_text` (the parent only ever sees the ~4k delivery
+  carrier, so retyping a long report loses it — a DeepSWE run lost a 24k report
+  to a 452-char summary). A materially shorter caller-supplied result is
+  refused while the child is recorded successful/partial (`failure`/`blocked`
+  keeps the caller's note), and a child whose run is not TERMINAL cannot be
+  resumed at all — wait for it. The deliberate-summary escape is an INTERNAL
+  function parameter (`force_result`), never in the tool schema.
 - the TaskFlow loop closes itself and starts every ready sibling: a child spawned
   by a flow resumes it automatically
   (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
