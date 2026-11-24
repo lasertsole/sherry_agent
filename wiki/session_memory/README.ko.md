@@ -64,6 +64,8 @@ SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagen
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 압축 락(TTL 자가 복구, 동기 + 비동기 획득, 타임아웃 시 fail-open), `_apply_compression`과 `_aapply_compression` 둘 다를 감쌉니다.
 - **`runtime/session/state_register.py`** —— `context_epoch` 테이블 기반의 `ContextEpoch` 라이프사이클(initialize / prepare / replace / advance).
 
+`message_search`의 검색 범위는 세 가지입니다. query가 없으면 최근 **다른 세션**만 나열합니다(메타데이터만, LLM 비용 없음). query가 있는 기본 `cross_session=False`는 압축으로 제거된 메시지를 포함해 **현재 세션**만 검색합니다. `cross_session=True`는 키워드와 `semantic: true` 모두에서 **다른 모든 세션**을 검색합니다. 체크포인트 폴백은 기본 동일 세션 경로에만 적용됩니다.
+
 ## 테스트
 
 ```bash

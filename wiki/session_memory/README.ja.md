@@ -64,6 +64,8 @@ SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-m
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）、`_apply_compression` と `_aapply_compression` の両方をラップします。
 - **`runtime/session/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
 
+`message_search` の検索範囲は 3 通りです。query なしでは最近の**他セッション**を一覧するだけ（メタデータのみ、LLM コストなし）。query ありのデフォルト `cross_session=False` では圧縮で取り除かれたメッセージを含め**現在のセッション**のみを検索します。`cross_session=True` はキーワード・`semantic: true` の両方で**他のすべてのセッション**を検索します。チェックポイントへのフォールバックはデフォルトの同一セッション経路にのみ適用されます。
+
 ## テスト
 
 ```bash

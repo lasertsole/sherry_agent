@@ -43,6 +43,12 @@ class MessageSearchSchema(BaseModel):
         description="Semantic mode: rank past messages by embedding similarity to the "
         "query instead of FTS keyword matching.",
     )
+    cross_session: bool = Field(
+        default=False,
+        description="Search across ALL other sessions instead of just the current one. "
+        "Default False searches the current session (including compacted messages). "
+        "Set to True when looking for work done in a different session.",
+    )
 
 
 class ConversationTruncator:
@@ -170,10 +176,19 @@ class ConversationTruncator:
 
 
 class SessionSearcher:
-    """FTS5 search across past sessions (current session excluded) plus
-    retrieval of each match's conversation scope."""
+    """FTS5 search over messages plus retrieval of each match's conversation scope.
 
-    def search(self, query: str, session_id: str, role_filter: str | None) -> list[dict[str, Any]]:
+    The default scope is the current session; ``cross_session=True`` searches
+    every other session instead.
+    """
+
+    def search(
+        self,
+        query: str,
+        session_id: str,
+        role_filter: str | None,
+        cross_session: bool = False,
+    ) -> list[dict[str, Any]]:
         """FTS5 search — get matches ranked by relevance."""
         role_list = None
         if role_filter and role_filter.strip():
@@ -185,6 +200,7 @@ class SessionSearcher:
             role_filter=role_list,
             limit=_FTS_MATCH_LIMIT,  # Get more matches to find unique sessions
             offset=0,
+            cross_session=cross_session,
         )
 
     def collect_tasks(
@@ -203,7 +219,9 @@ class SessionSearcher:
                     continue
                 conversation_text = _format_conversation(messages)
                 conversation_text = _truncate_around_matches(conversation_text, query)
-                tasks.append((session_id, match_info, conversation_text))
+                # Attribute the task to the session that actually contained the
+                # hit. In cross-session mode that is NOT the caller's session.
+                tasks.append((match_info["session_id"], match_info, conversation_text))
             except Exception as e:
                 logger.warning(
                     "Failed to prepare session %s: %s",
@@ -574,14 +592,18 @@ def _search_latest_checkpoint_messages(
 
 
 def session_search(
-    query: str | None, session_id: str, role_filter: str = None, limit: int = 3
+    query: str | None,
+    session_id: str,
+    role_filter: str = None,
+    limit: int = 3,
+    cross_session: bool = False,
 ) -> str:
-    """
-    Search past sessions and return focused summaries of matching conversations.
+    """Search message history and return focused summaries of matching sessions.
 
     Uses FTS5 to find matches, then summarizes the top sessions with the
-    configured auxiliary session_search model.
-    The current session is excluded from results since the agent already has that context.
+    configured auxiliary session_search model. By default the search is scoped
+    to the current session (including compacted messages); with
+    ``cross_session=True`` all other sessions are searched instead.
     """
     db: sqlite3.Connection = get_db()
 
@@ -604,38 +626,41 @@ def session_search(
 
     try:
         searcher = SessionSearcher()
-        raw_results = searcher.search(query, session_id, role_filter)
+        raw_results = searcher.search(query, session_id, role_filter, cross_session)
 
         if not raw_results or len(raw_results) == 0:
-            try:
-                checkpoint_results = _search_latest_checkpoint_messages(
-                    query, session_id, role_filter, _FTS_MATCH_LIMIT
-                )
-            except Exception as e:
-                logger.warning(
-                    "Checkpoint fallback search failed for session %s: %s",
-                    session_id,
-                    e,
-                    exc_info=True,
-                )
-                checkpoint_results = []
+            # The checkpoint fallback only knows how to load the caller's own
+            # session, so it must not fire for a cross-session search.
+            if not cross_session:
+                try:
+                    checkpoint_results = _search_latest_checkpoint_messages(
+                        query, session_id, role_filter, _FTS_MATCH_LIMIT
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Checkpoint fallback search failed for session %s: %s",
+                        session_id,
+                        e,
+                        exc_info=True,
+                    )
+                    checkpoint_results = []
 
-            if checkpoint_results:
-                return json.dumps(
-                    {
-                        "success": True,
-                        "query": query,
-                        "source": "checkpoint",
-                        "mode": "checkpoint_fallback",
-                        "results": checkpoint_results,
-                        "count": len(checkpoint_results),
-                        "message": (
-                            "No matches in persisted sessions; results come from the newest "
-                            "session checkpoint and may include not-yet-persisted turns."
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
+                if checkpoint_results:
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "query": query,
+                            "source": "checkpoint",
+                            "mode": "checkpoint_fallback",
+                            "results": checkpoint_results,
+                            "count": len(checkpoint_results),
+                            "message": (
+                                "No matches in persisted sessions; results come from the newest "
+                                "session checkpoint and may include not-yet-persisted turns."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
 
             return json.dumps(
                 {
@@ -678,15 +703,19 @@ def session_search(
         return _tool_error(f"Search failed: {str(e)}", success=False)
 
 
-def _run_semantic_search(query: str, session_id: str | None, limit: int) -> str:
+def _run_semantic_search(
+    query: str, session_id: str | None, limit: int, cross_session: bool = False
+) -> str:
     """Embedding-similarity ranking over MesMemory messages."""
     from context_engine.embeddings import semantic_search
 
+    # semantic_search treats session_id=None as "all sessions".
+    search_sid = None if cross_session else session_id
     # run_async, not asyncio.run: the latter creates a disposable loop that
     # conflicts with the cached AsyncOpenAI/httpx clients bound to the gateway's
     # loop (the deadlock the sibling path above documents), while run_async
     # bridges sync→async across CLI, gateway and worker-thread callers.
-    matches = run_async(semantic_search(query, session_id, limit))
+    matches = run_async(semantic_search(query, search_sid, limit))
     if not matches:
         return (
             "No semantically similar messages found. The embedding index may "
@@ -714,17 +743,21 @@ def _message_search_tool(
     role_filter: str | None = None,
     limit: int = 3,
     semantic: bool = False,
+    cross_session: bool = False,
     session_id: Annotated[str, InjectedState("session_id")] = "",
 ) -> str:
-    """Search your long-term memory of past conversations, or browse recent sessions. This is your recall --
-    every past session is searchable, and this tool summarizes what happened.
+    """Search past conversations, or browse recent sessions. This is your recall tool.
 
-    TWO MODES:
+    THREE MODES:
     1. Recent sessions (no query): Call with no arguments to see what was worked on recently.
-    Returns titles, previews, and timestamps. Zero LLM cost, instant.
-    Start here when the user asks what were we working on or what did we do recently.
-    2. Keyword search (with query): Search for specific topics across all past sessions.
-    Returns LLM-generated summaries of matching sessions.
+       Returns titles, previews, and timestamps. Zero LLM cost, instant.
+       Lists OTHER sessions (the current session is excluded).
+    2. Same-session search (default, cross_session=False): Search the CURRENT session's
+       message history, including messages that were compressed/compacted away (soft-deleted
+       but still FTS-indexed). Use this to recall details lost to context compression.
+    3. Cross-session search (cross_session=True): Search ALL OTHER sessions' messages.
+       Use when the user references work done in a different session.
+       Works with both keyword (semantic=False) and semantic (semantic=True) modes.
 
     USE THIS PROACTIVELY when:
     - The user says 'we did this before', 'remember when', 'last time', 'as I mentioned'
@@ -732,6 +765,7 @@ def _message_search_tool(
     - The user references a project, person, or concept that seems familiar but isn't in memory
     - You want to check if you've solved a similar problem before
     - The user asks 'what did we do about X?' or 'how did we fix Y?'
+    - The user says 'in another session' or 'last time we worked on this'
 
     Don't hesitate to search when it is actually cross-session -- it's fast and cheap.
     Better to search and confirm than to guess or ask the user to repeat themselves.
@@ -747,9 +781,9 @@ def _message_search_tool(
     if semantic:
         if not query:
             return "Error: semantic search requires a query."
-        return _run_semantic_search(query, session_id or None, limit)
+        return _run_semantic_search(query, session_id or None, limit, cross_session)
 
-    return session_search(query, session_id, role_filter, limit)
+    return session_search(query, session_id, role_filter, limit, cross_session)
 
 
 def build_message_search_tool() -> BaseTool:
