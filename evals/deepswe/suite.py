@@ -671,13 +671,17 @@ async def _run(
             "fired_tasks": [
                 r["id"] for r in results if r.get("experience_extraction", {}).get("fired")
             ],
+            "forced_tasks": [
+                r["id"] for r in results if r.get("experience_extraction", {}).get("forced")
+            ],
             "produced_tasks": [
                 r["id"] for r in results if r.get("experience_extraction", {}).get("snapshot_hash")
             ],
             "policy": (
                 "only the 12-task L1 set can opt in via --experience-extraction; "
                 "the session-level skill_extraction_enabled override is written for "
-                "those tasks only, so L2/full runs stay on the historical arm"
+                "those tasks only, and the eval harness forces the skill-review pass "
+                "after the run so L2/full runs stay on the historical arm"
             ),
         },
         "aggregate": _aggregate(results, started),
@@ -810,6 +814,7 @@ async def _run_task(
         "gold_self_check": "checked" if gold_checked else "skipped",
         "experience_extraction": {
             "enabled": experience_extraction,
+            "forced": False,
             "fired": False,
             "snapshot_hash": "",
         },
@@ -948,9 +953,13 @@ async def _run_task(
             await asyncio.sleep(5.0)
 
         if experience_extraction:
-            from evals.shared.eval_session import experience_extraction_evidence
+            # L1-only special handling: the eval harness forces the product's
+            # skill-review pass after the run, independent of the product's
+            # plan-completion hook. Product code is not modified.
+            from evals.shared.eval_session import force_experience_extraction
 
-            result["experience_extraction"].update(experience_extraction_evidence(session_id))
+            result["experience_extraction"].update(await force_experience_extraction(session_id))
+            result["experience_extraction"]["forced"] = True
 
         patch = _agent_patch(host_workdir, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"

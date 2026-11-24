@@ -50,10 +50,12 @@ flag is equivalent to the short command above. Passing the flag with no L1 task
 selected is a usage error; non-L1 tasks in a mixed selection are left on the
 historical arm.
 
-Each result records `experience_extraction` (`enabled`, `fired`,
-`snapshot_hash`) and the report has an `experience_extraction` summary, so the
-same L1 run can be used to measure both regression and whether extraction
-actually produced output.
+Each result records `experience_extraction` (`enabled`, `forced`, `fired`,
+`snapshot_hash`) and the report has an `experience_extraction` summary. For L1
+tasks with `--experience-extraction`, the eval harness forces the product's
+skill-review pass after the run instead of relying on the plan-completion hook,
+so the same L1 run can measure both regression and whether extraction actually
+produced output.
 
 Task checkouts are staged under the OS temp dir
 (`<temp>/sherry_evals/deepswe-work/<run_id>`, override with

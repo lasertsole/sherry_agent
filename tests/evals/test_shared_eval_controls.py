@@ -6,6 +6,7 @@ Every helper must be importable WITHOUT a model key, Docker or the server.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -187,6 +188,78 @@ def test_experience_extraction_evidence_reads_mem_first(monkeypatch):
         "snapshot_hash": "abc",
     }
     assert experience_extraction_evidence("") == {"fired": False, "snapshot_hash": ""}
+
+
+def test_force_experience_extraction_runs_product_pass_and_marks_fired(monkeypatch):
+    import agent.middlewares.summarization.background_reviews as background_reviews
+    import agent.middlewares.summarization.skill_review_runner as runner
+    import runtime
+    from evals.shared.eval_session import force_experience_extraction
+    from runtime.session.state_keys import StateKey
+
+    class _Register:
+        def __init__(self) -> None:
+            self.values: dict[str, object] = {}
+
+        def set_state(self, _sid: str, key: object, value: object) -> None:
+            self.values[str(key)] = value
+
+        def get_state(self, _sid: str, key: object, default: object = None) -> object:
+            return self.values.get(str(key), default)
+
+    mem, db = _Register(), _Register()
+    monkeypatch.setattr(runtime, "state_register_mem", mem)
+    monkeypatch.setattr(runtime, "state_register_db", db)
+
+    calls: list[str] = []
+
+    async def _fake_skill_review(session_id: str) -> None:
+        calls.append(session_id)
+        db.set_state(session_id, StateKey.SKILL_REVIEW_SNAPSHOT_HASH, "forced-hash")
+
+    monkeypatch.setattr(runner, "_run_skill_review", _fake_skill_review)
+
+    evidence = asyncio.run(force_experience_extraction("evals-deepswe-l1"))
+
+    assert calls == ["evals-deepswe-l1"]
+    assert evidence == {"fired": True, "snapshot_hash": "forced-hash"}
+    assert db.values[str(StateKey.SKILL_REVIEW_FIRED)] is True
+    assert mem.values[str(background_reviews._SKILL_REVIEW_LOCK_KEY)] is False
+
+
+def test_force_experience_extraction_fails_open(monkeypatch):
+    import agent.middlewares.summarization.skill_review_runner as runner
+    import runtime
+    from evals.shared.eval_session import force_experience_extraction
+
+    class _Register:
+        def __init__(self) -> None:
+            self.values: dict[str, object] = {}
+
+        def set_state(self, _sid: str, key: object, value: object) -> None:
+            self.values[str(key)] = value
+
+        def get_state(self, _sid: str, key: object, default: object = None) -> object:
+            return self.values.get(str(key), default)
+
+    monkeypatch.setattr(runtime, "state_register_mem", _Register())
+    monkeypatch.setattr(runtime, "state_register_db", _Register())
+
+    async def _boom(_session_id: str) -> None:
+        raise RuntimeError("forced review exploded")
+
+    monkeypatch.setattr(runner, "_run_skill_review", _boom)
+
+    assert asyncio.run(force_experience_extraction("evals-deepswe-l1")) == {
+        "fired": True,
+        "snapshot_hash": "",
+    }
+
+
+def test_force_experience_extraction_skips_empty_session():
+    from evals.shared.eval_session import force_experience_extraction
+
+    assert asyncio.run(force_experience_extraction("")) == {"fired": False, "snapshot_hash": ""}
 
 
 def test_bind_external_session_grants_yolo(monkeypatch, tmp_path: Path):
