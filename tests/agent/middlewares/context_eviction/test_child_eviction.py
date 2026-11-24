@@ -126,12 +126,12 @@ def test_child_mode_keeps_the_read_file_slice():
     assert "read_file with offset and limit" in result.content
 
 
-def test_child_task_message_without_user_origin_is_never_evicted():
-    """Full parity is safe: the spawn prompt is a bare HumanMessage.
+def test_message_without_user_origin_is_never_evicted():
+    """Human eviction is fail-closed on ``metadata.origin == "user"``.
 
-    Human eviction only matches ``metadata.origin == "user"``. A child's task
-    and continuation messages carry no origin, so enabling the shared switch
-    for the child chain never offloads its instructions.
+    Internal/continuation messages without that marker are never offloaded.
+    The initial task message now DOES carry origin=user (so compaction labels
+    it `[User]`); this test locks the other side — unmarked messages stay put.
     """
     middleware = ContextEvictionMiddleware()
     message = HumanMessage(content="x" * 250_000)

@@ -36,14 +36,18 @@ class CompletionVerdict(StrEnum):
 
     DONE = "done"
     CONTINUE = "continue"
+    DRIFTED = "drifted"
 
 
 class CompletionJudgeResult(NamedTuple):
-    """A completion verdict plus its rationale and (on CONTINUE) next-turn guidance."""
+    """A completion verdict plus its rationale and per-verdict guidance."""
 
     verdict: CompletionVerdict
     reason: str
     continuation_prompt: str
+    # Only populated on DRIFTED: a one-paragraph directive that refocuses the
+    # subagent on the original task and its acceptance criteria.
+    drift_correction: str = ""
 
 
 COMPLETION_JUDGE_SYSTEM_PROMPT = """\
@@ -54,7 +58,7 @@ completed its assigned task. You receive:
 2. The subagent's most recent response (what it produced)
 3. Verification evidence status (test/lint/build pass-fail if available)
 
-Decide one of two verdicts:
+Decide one of three verdicts:
 
 DONE — the task is fully satisfied:
 - The deliverable was produced and matches the task description
@@ -65,12 +69,19 @@ CONTINUE — not done, and there is a concrete next step:
 - A verification step (test/build/lint) was not run
 - An error occurred that could be fixed with another attempt
 
+DRIFTED — the recent work is UNRELATED to the original task:
+- The agent is working on something that does not serve the original task
+- The agent has veered off into refactoring/fixing unrelated code
+- Preparatory work (reading files, understanding code) is ALIGNED, not DRIFTED
+- When acceptance criteria are shown, compare against them explicitly
+
 Reply ONLY with a single JSON object on one line:
 {"verdict": "done", "reason": "<one sentence>"}
 {"verdict": "continue", "reason": "<one sentence>", "continuation_prompt": "<one paragraph: what the subagent should do next>"}
+{"verdict": "drifted", "reason": "<one sentence>", "drift_correction": "<one paragraph: tell the subagent to refocus on the original task>"}
 """
 
-_VERDICT_PATTERN = re.compile(r'"(?:verdict)"\s*:\s*"(done|continue)"', re.IGNORECASE)
+_VERDICT_PATTERN = re.compile(r'"(?:verdict)"\s*:\s*"(done|continue|drifted)"', re.IGNORECASE)
 
 # Truncate the child's answer so a pathologically long one cannot blow the judge's context window.
 _MAX_RESPONSE_CHARS = MAX_INLINE_TEXT_CHARS
@@ -80,6 +91,7 @@ def _build_completion_prompt(
     task_text: str,
     last_response: str,
     evidence_summary: str | None,
+    acceptance: list[str] | None = None,
 ) -> str:
     """Build the user prompt for the completion judge."""
     parts = [f"## Task\n{task_text}", f"## Subagent Response\n{last_response}"]
@@ -87,6 +99,9 @@ def _build_completion_prompt(
         parts.append(f"## Verification Evidence\n{evidence_summary}")
     else:
         parts.append("## Verification Evidence\n(none recorded)")
+    if acceptance:
+        items = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(acceptance))
+        parts.append(f"## Acceptance Criteria (assess alignment)\n{items}")
     parts.append("## Your Verdict")
     return "\n\n".join(parts)
 
@@ -128,7 +143,14 @@ def _parse_completion_response(raw: str) -> CompletionJudgeResult:
                 if verdict is CompletionVerdict.CONTINUE
                 else ""
             )
-            return CompletionJudgeResult(verdict, str(data.get("reason") or ""), continuation)
+            drift_correction = (
+                str(data.get("drift_correction") or "")
+                if verdict is CompletionVerdict.DRIFTED
+                else ""
+            )
+            return CompletionJudgeResult(
+                verdict, str(data.get("reason") or ""), continuation, drift_correction
+            )
 
     match = _VERDICT_PATTERN.search(raw)
     if match is not None:
@@ -145,17 +167,21 @@ async def judge_completion(
     last_response: str,
     evidence_summary: str | None = None,
     max_chars: int | None = None,
+    acceptance: list[str] | None = None,
 ) -> CompletionJudgeResult:
     """Judge whether a subagent run is complete.
 
     Fail-open: any error (model failure, unparseable output) degrades to DONE so
     the judge can never trap a subagent in a goal loop. ``max_chars`` follows
     the run's serving-model output budget; ``None`` keeps the inline default.
+    ``acceptance`` are the task's normative clauses, shown to the judge so it
+    can distinguish aligned work from drift.
     """
     prompt = _build_completion_prompt(
         task_text,
         (last_response or "")[: (max_chars or _MAX_RESPONSE_CHARS)],
         evidence_summary,
+        acceptance,
     )
     try:
         llm = build_auxiliary_llm(temperature=0)

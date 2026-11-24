@@ -150,17 +150,20 @@
 
 ## 🧪 完了判定器と goal loop
 
-完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め。これは未設定時の旧基準で、serving model の出力予算に応じて拡大縮小します）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。
+完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め。これは未設定時の旧基準で、serving model の出力予算に応じて拡大縮小します）、子セッションの検証証跡サマリ、そしてタスクの受け入れ基準を受け取り、`DONE`、`CONTINUE`、`DRIFTED` のいずれかを一文の理由とともに返します。`CONTINUE` は短い継続プロンプトを、`DRIFTED` は `drift_correction` 指示を運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。
+
+**タスクの固定（アンカリング）。** 子の system prompt（`build_subagent_system_prompt_from_context`）は `## Your Task` 節で元のタスクを保持します。`SystemMessage` は圧縮対象のメッセージ一覧の外にあるため、タスクは圧縮を経てもそのまま残ります——子の summarizer は意図的に `need_update_system_prompt` をオフのままにします（オンにすると再構築が主エージェントのビルダーを通り、子の prompt が置き換わるため）。保険として、最初のタスク `HumanMessage` に `metadata.origin="user"` を付与し、圧縮サマリでは `[System notice]`（500 文字）ではなく `[User]`（最大 2000 文字）として扱われます。spawn 時にタスクから抽出した規範的な条項は子の state register の `subagent_task_acceptance` キーに二重書き込みされ、判定器に提示されます。子セッション状態の解放時にこのキーは削除されます。
 
 goal loop は予算が 1 ターンを超えるすべての spawn で実行され、`COMPLETION_JUDGE["goal_max_turns"]`（既定 `5`）を予算とし、最初のターンも算入します。spawn ごとの `goal_max_turns` パラメータがこれを上書きします。`CONTINUE` のとき、判定器のプロンプトは**同じ checkpoint スレッド**上の次の `HumanMessage` として注入されるため、継続は新しい会話ではなく同じ子会話を延長します。
 
 ```text
 ターン 1 ─► 判定器 DONE ────────────────────────────────────► 確定
-         └─► 判定器 CONTINUE（continuation_prompt）─► ターン 2 ─► 判定器 …
+         ├─► 判定器 CONTINUE（continuation_prompt）─► ターン 2 ─► 判定器 …
+         └─► 判定器 DRIFTED ─► drift_correction（タスク＋受け入れ基準）を注入 ─► ターン 2 ─► 判定器 …
                 （DONE、継続プロンプトが空、または turns_used == goal_max_turns まで繰り返し）
 ```
 
-予算を使い切っても実行は `OK` として確定し、`error="goal_loop_budget_exhausted"` が記録されます——このループは枯渇を失敗に変えることはありません。継続プロンプトが空の場合もループは終わります。予算 `1` では子は単一ターンのまま、つまり判定器は一切呼ばれません。
+`DRIFTED` は直近の作業が元のタスクに寄与しない場合を指します（ファイルを読むなどの準備作業は `CONTINUE`／`DONE` のまま）。漂移すると、`metadata={"internal": true, "provenance": "drift_correction"}` 付きの修正指示 `HumanMessage` が注入され、タスクと受け入れ基準（または判定器自身の修正テキスト）を引用します。漂移カウンタは間の `CONTINUE` をまたいでもリセットされず蓄積します。3 回の漂移で `error="task_drift_3_times"` とともに `BUDGET_EXHAUSTED` が報告されます——ターン予算ゲートより前に判定されるため、最終ターンの漂移が単なる枯渇と誤表示されることはありません。予算を使い切っても実行は `OK` として確定し、`error="goal_loop_budget_exhausted"` が記録されます——このループは枯渇を失敗に変えることはありません。継続プロンプトが空の場合もループは終わります。予算 `1` では子は単一ターンのまま、つまり判定器は一切呼ばれません。
 
 ## 🤝 子エージェント・ハンドオフ（Phase 1）
 

@@ -126,6 +126,13 @@ def build_subagent_system_prompt_from_context(ctx: SubagentPromptContext) -> str
 
     sections.append(f"## Your Role\n{role_desc}")
 
+    # Section 1.5: Your Task. The system prompt is a SystemMessage outside the
+    # conversation history, so compression cannot evict it. Keeping the task
+    # here (in addition to the initial HumanMessage) means a long-running child
+    # never loses sight of what it was asked to do after its history is summed.
+    if ctx.task:
+        sections.append(f"## Your Task\n\n{ctx.task}")
+
     if role_prompt_body:
         sections.append(f"## Role Instructions\n{role_prompt_body}")
 

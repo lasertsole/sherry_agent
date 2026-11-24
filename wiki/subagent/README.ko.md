@@ -150,17 +150,20 @@
 
 ## 🧪 완료 판정기와 goal loop
 
-완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단. 미설정 시 기존 기준이며 serving model 출력 예산에 따라 조정됩니다), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.
+완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단. 미설정 시 기존 기준이며 serving model 출력 예산에 따라 조정됩니다), 자식 세션의 검증 증거 요약, 그리고 작업의 수용 기준을 받아 `DONE`, `CONTINUE`, `DRIFTED` 중 하나를 한 문장 이유와 함께 반환합니다. `CONTINUE`는 짧은 연속 프롬프트를, `DRIFTED`는 `drift_correction` 지시를 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.
+
+**작업 고정(앵커링).** 자식의 system prompt(`build_subagent_system_prompt_from_context`)는 `## Your Task` 절에 원래 작업을 담습니다. `SystemMessage`는 압축 대상 메시지 목록 밖에 있으므로 작업은 압축을 거쳐도 그대로 남습니다——자식 summarizer는 의도적으로 `need_update_system_prompt`를 끈 상태로 둡니다(켜면 재구성이 주 에이전트 빌더를 거쳐 자식 prompt가 교체되기 때문). 백업으로 초기 작업 `HumanMessage`에 `metadata.origin="user"`를 붙여, 압축 요약에서 `[System notice]`(500자)가 아닌 `[User]`(최대 2000자)로 처리됩니다. spawn 시 작업에서 추출한 규범 조항은 자식 state register의 `subagent_task_acceptance` 키에 이중 기록되어 판정기에 표시되고, 자식 세션 상태가 해제될 때 삭제됩니다.
 
 goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, `COMPLETION_JUDGE["goal_max_turns"]`(기본 `5`)를 예산으로 삼아 첫 턴까지 포함합니다. spawn별 `goal_max_turns` 파라미터가 이를 재정의합니다. `CONTINUE`일 때 판정기의 프롬프트는 **같은 checkpoint 스레드**의 다음 `HumanMessage`로 주입되므로, 연속은 새 대화가 아니라 같은 자식 대화를 연장합니다.
 
 ```text
 턴 1 ─► 판정기 DONE ────────────────────────────────────────► 확정
-     └─► 판정기 CONTINUE(continuation_prompt) ─► 턴 2 ─► 판정기 …
+     ├─► 판정기 CONTINUE(continuation_prompt) ─► 턴 2 ─► 판정기 …
+     └─► 판정기 DRIFTED ─► drift_correction(작업＋수용 기준) 주입 ─► 턴 2 ─► 판정기 …
             (DONE, 빈 연속 프롬프트, 또는 turns_used == goal_max_turns까지 반복)
 ```
 
-예산을 다 써도 실행은 `OK`로 확정되고 `error="goal_loop_budget_exhausted"`가 기록됩니다——이 루프는 예산 소진을 실패로 바꾸지 않습니다. 연속 프롬프트가 비어 있어도 루프는 끝납니다. 예산 `1`이면 자식은 단일 턴으로 남고, 판정기는 아예 호출되지 않습니다.
+`DRIFTED`는 최근 작업이 원래 작업에 기여하지 않을 때를 뜻합니다(파일 읽기 같은 준비 작업은 `CONTINUE`/`DONE`으로 유지). 드리프트가 감지되면 `metadata={"internal": true, "provenance": "drift_correction"}`가 붙은 교정 `HumanMessage`가 주입되어 작업과 수용 기준(또는 판정기 자체의 교정 텍스트)을 인용합니다. 드리프트 카운터는 사이의 `CONTINUE`를 거쳐도 초기화되지 않고 누적됩니다. 드리프트가 3회 누적되면 `error="task_drift_3_times"`와 함께 `BUDGET_EXHAUSTED`로 보고됩니다——턴 예산 게이트보다 먼저 판정되므로 마지막 턴의 드리프트가 단순 소진으로 오인되지 않습니다. 예산을 다 써도 실행은 `OK`로 확정되고 `error="goal_loop_budget_exhausted"`가 기록됩니다——이 루프는 예산 소진을 실패로 바꾸지 않습니다. 연속 프롬프트가 비어 있어도 루프는 끝납니다. 예산 `1`이면 자식은 단일 턴으로 남고, 판정기는 아예 호출되지 않습니다.
 
 ## 🤝 하위 에이전트 핸드오프(Phase 1)
 
