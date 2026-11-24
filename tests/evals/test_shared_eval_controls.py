@@ -135,6 +135,60 @@ def test_set_session_yolo_delegates_and_skips_empty(monkeypatch):
     assert granted == ["evals-devbench-task-1"]
 
 
+def test_set_session_experience_extraction_writes_only_session_override(monkeypatch):
+    from evals.shared.eval_session import set_session_experience_extraction
+
+    writes: list[tuple[str, object, object]] = []
+    deletes: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "server.service.session_settings_service._write_value",
+        lambda sid, key, value: writes.append((sid, key, value)),
+    )
+    monkeypatch.setattr(
+        "server.service.session_settings_service._delete_value",
+        lambda sid, key: deletes.append((sid, key)),
+    )
+
+    set_session_experience_extraction("evals-deepswe-l1", enabled=True)
+    set_session_experience_extraction("", enabled=True)
+
+    assert len(writes) == 1
+    assert writes[0][0] == "evals-deepswe-l1"
+    assert writes[0][2] == {"skill_extraction_enabled": True}
+    assert len(deletes) == 1
+    assert deletes[0][0] == "evals-deepswe-l1"
+
+
+def test_experience_extraction_evidence_reads_mem_first(monkeypatch):
+    import runtime
+
+    from evals.shared.eval_session import experience_extraction_evidence
+
+    class _Register:
+        def __init__(self, values: dict[str, object]) -> None:
+            self.values = values
+
+        def get_state(self, _sid: str, key: object, default: object) -> object:
+            return self.values.get(str(key), default)
+
+    monkeypatch.setattr(
+        runtime,
+        "state_register_mem",
+        _Register({"skill_review_fired": True, "skill_review_snapshot_hash": "abc"}),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "state_register_db",
+        _Register({"skill_review_fired": False, "skill_review_snapshot_hash": "db-hash"}),
+    )
+
+    assert experience_extraction_evidence("evals-deepswe-l1") == {
+        "fired": True,
+        "snapshot_hash": "abc",
+    }
+    assert experience_extraction_evidence("") == {"fired": False, "snapshot_hash": ""}
+
+
 def test_bind_external_session_grants_yolo(monkeypatch, tmp_path: Path):
     """The container binding path must not leave HITL approvals off."""
     import asyncio

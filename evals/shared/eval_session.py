@@ -19,3 +19,48 @@ def set_session_yolo(session_id: str) -> None:
     from agent.middlewares.humanInTheLoop.approval import set_session_yolo as _grant
 
     _grant(str(session_id))
+
+
+def set_session_experience_extraction(session_id: str, *, enabled: bool = True) -> None:
+    """Override one eval session's experience-learning switch (fail-open).
+
+    The global ``sherry.jsonc`` value is left untouched: this writes only the
+    session's ``skill_extraction_enabled`` override, so every inherited field
+    (flow compilation, iteration ceilings) keeps its global value. The parked
+    twin is removed so a write made while a turn is running cannot be held back
+    until a later turn boundary.
+    """
+    if not session_id:
+        return
+    from runtime.session.state_keys import StateKey
+    from server.service.session_settings_service import _delete_value, _write_value
+
+    _write_value(str(session_id), StateKey.EXTRACTION, {"skill_extraction_enabled": bool(enabled)})
+    _delete_value(str(session_id), StateKey.EXTRACTION_PENDING)
+
+
+def experience_extraction_evidence(session_id: str) -> dict[str, object]:
+    """Read the extraction trace a task left behind (never raises).
+
+    ``fired`` means the plan-completion hook scheduled the extraction pass;
+    ``snapshot_hash`` is non-empty only after a pass actually produced output.
+    Both are read mem-first, like the extraction gates themselves.
+    """
+    if not session_id:
+        return {"fired": False, "snapshot_hash": ""}
+    try:
+        from runtime import state_register_db, state_register_mem
+        from runtime.session.state_keys import StateKey
+
+        def _read(key: object, default: object) -> object:
+            value = state_register_mem.get_state(session_id, key, None)  # type: ignore[arg-type]
+            if value is None:
+                value = state_register_db.get_state(session_id, key, None)  # type: ignore[arg-type]
+            return default if value is None else value
+
+        return {
+            "fired": bool(_read(StateKey.SKILL_REVIEW_FIRED, False)),
+            "snapshot_hash": str(_read(StateKey.SKILL_REVIEW_SNAPSHOT_HASH, "") or ""),
+        }
+    except Exception:  # noqa: BLE001 - an eval report must never crash on telemetry
+        return {"fired": False, "snapshot_hash": ""}

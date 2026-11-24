@@ -21,6 +21,40 @@ SHERRY_EVAL_CONTAINER_BIN=podman uv run python evals/deepswe/suite.py --timeout 
 uv run python evals/deepswe/suite.py --all --n-tasks 5 --keep-workdirs
 ```
 
+## Layered regression
+
+The 117-task benchmark is split into a 12-task **L1** regression set and the
+remaining 105 tasks (**L2**). L1 covers all five languages, mixes baselined
+with previously untested tasks, and is the only set that can opt into
+experience extraction:
+
+```bash
+# L1 (~5h): rerun after each change; --experience-extraction is L1-only
+SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py \
+  --experience-extraction --timeout 3600
+
+# L2 (105 tasks, ~53h): run only after L1 passes; no extraction override
+SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py \
+  --timeout 3600
+```
+
+The L1 IDs are defined as `L1_TASK_IDS` in
+[`suite.py`](suite.py) (`actionlint-action-pinning-lint`,
+`bandit-interprocedural-taint-checks`, `arktype-json-schema-refs-dependencies`,
+`aiomonitor-task-snapshots-diff`, `abs-module-cache-flags`,
+`bandit-incremental-cache-control`, `koota-entity-snapshot-rollback`,
+`returns-validated-error-accumulation`, `langchain-request-coalescing`,
+`happy-dom-abort-pending-body-reads`, `csstree-shorthand-expansion-compression`,
+`pest-character-class-coalescing`). Selecting `L1_TASK_IDS` explicitly with the
+flag is equivalent to the short command above. Passing the flag with no L1 task
+selected is a usage error; non-L1 tasks in a mixed selection are left on the
+historical arm.
+
+Each result records `experience_extraction` (`enabled`, `fired`,
+`snapshot_hash`) and the report has an `experience_extraction` summary, so the
+same L1 run can be used to measure both regression and whether extraction
+actually produced output.
+
 Task checkouts are staged under the OS temp dir
 (`<temp>/sherry_evals/deepswe-work/<run_id>`, override with
 `SHERRY_EVAL_WORK_ROOT`) — never inside the product checkout, whose self-path

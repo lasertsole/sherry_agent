@@ -24,6 +24,7 @@ Usage::
     uv run python evals/evals.py deepswe
     uv run python evals/deepswe/suite.py --dry-run
     uv run python evals/deepswe/suite.py httpx-streaming-json-iteration --timeout 1800
+    uv run python evals/deepswe/suite.py --l1 --experience-extraction --timeout 3600
     uv run python evals/deepswe/suite.py --all --n-tasks 5 --keep-workdirs
 
 ``--dry-run`` validates the dataset and task files without Docker or a model.
@@ -79,6 +80,36 @@ _PULL_RETRY_PAUSE_S = 20.0
 #: clamped to the spawn bounds.
 _EVAL_CHILD_RUN_TIMEOUT_MULTIPLIER = 1.0
 _EVAL_CHILD_RUN_TIMEOUT_ENV = "SHERRY_EVAL_CHILD_RUN_TIMEOUT_S"
+
+#: L1 regression set (plan 2026-11-23): 12 tasks, all five languages, a mix of
+#: baselined and untested tasks. This is the ONLY set that may opt into
+#: experience extraction; L2/full runs deliberately keep the historical path so
+#: the two arms stay comparable.
+L1_TASK_IDS: tuple[str, ...] = (
+    "actionlint-action-pinning-lint",
+    "bandit-interprocedural-taint-checks",
+    "arktype-json-schema-refs-dependencies",
+    "aiomonitor-task-snapshots-diff",
+    "abs-module-cache-flags",
+    "bandit-incremental-cache-control",
+    "koota-entity-snapshot-rollback",
+    "returns-validated-error-accumulation",
+    "langchain-request-coalescing",
+    "happy-dom-abort-pending-body-reads",
+    "csstree-shorthand-expansion-compression",
+    "pest-character-class-coalescing",
+)
+_L1_TASK_ID_SET = frozenset(L1_TASK_IDS)
+
+
+def is_l1_task(task_id: str) -> bool:
+    """True when *task_id* belongs to the 12-task L1 regression set."""
+    return task_id in _L1_TASK_ID_SET
+
+
+def resolve_experience_extraction(task_id: str, requested: bool) -> bool:
+    """Only L1 tasks may enable the extraction arm, even if the flag is set."""
+    return bool(requested and is_l1_task(task_id))
 
 
 def _eval_child_run_timeout_s() -> float:
@@ -339,6 +370,8 @@ def main() -> None:
             "--keep-workdirs",
             "--update-baseline",
             "--preflight-only",
+            "--l1",
+            "--experience-extraction",
         }:
             flags.add(arg)
         elif arg.startswith("--"):
@@ -349,6 +382,8 @@ def main() -> None:
 
     if wanted and "--all" in flags:
         raise SystemExit("name task ids or use --all, not both")
+    if "--l1" in flags and (wanted or "--all" in flags):
+        raise SystemExit("--l1 selects the fixed 12-task set; do not pass task ids or --all")
     timeout = max(60.0, min(float(timeout), _MAX_TIMEOUT_S))
 
     if "--dry-run" not in flags:
@@ -368,7 +403,16 @@ def main() -> None:
         print(f"[evals] HARNESS FAILURE: {exc}", flush=True)
         raise SystemExit(2) from exc
 
-    ids = tuple(wanted) if wanted else tuple(tasks) if "--all" in flags else instances.DEFAULT_SLICE
+    if "--l1" in flags:
+        ids = L1_TASK_IDS
+    else:
+        ids = (
+            tuple(wanted)
+            if wanted
+            else tuple(tasks)
+            if "--all" in flags
+            else instances.DEFAULT_SLICE
+        )
     if n_tasks is not None:
         ids = ids[: max(0, n_tasks)]
     try:
@@ -376,6 +420,21 @@ def main() -> None:
     except (KeyError, ValueError) as exc:
         print(f"[evals] {exc}", flush=True)
         raise SystemExit(2) from exc
+
+    experience_extraction = "--experience-extraction" in flags
+    if experience_extraction:
+        l1_ids = [task.task_id for task in selected if is_l1_task(task.task_id)]
+        if not l1_ids:
+            raise SystemExit(
+                "--experience-extraction only applies to the 12-task L1 set; "
+                "no L1 task was selected"
+            )
+        skipped = [task.task_id for task in selected if task.task_id not in _L1_TASK_ID_SET]
+        print(
+            f"[evals] experience extraction enabled for {len(l1_ids)} L1 task(s)"
+            + (f"; skipped for {len(skipped)} non-L1 task(s)" if skipped else ""),
+            flush=True,
+        )
 
     print(f"[evals] DeepSWE tasks: {len(tasks)} at {task_root} (commit {commit})", flush=True)
     if "--dry-run" in flags:
@@ -401,6 +460,7 @@ def main() -> None:
                 keep_workdirs="--keep-workdirs" in flags,
                 update_baseline="--update-baseline" in flags,
                 preflight_only="--preflight-only" in flags,
+                experience_extraction=experience_extraction,
             )
         )
     )
@@ -417,6 +477,7 @@ async def _run(
     keep_workdirs: bool,
     update_baseline: bool,
     preflight_only: bool = False,
+    experience_extraction: bool = False,
 ) -> int:
     run_id = external_bench.run_id_now()
     results_dir = REPO_ROOT / "evals" / "results" / "deepswe" / run_id
@@ -538,6 +599,9 @@ async def _run(
                 timeout=timeout,
                 keep_workdirs=keep_workdirs,
                 gold_checked=not skip_self_check,
+                experience_extraction=resolve_experience_extraction(
+                    task.task_id, experience_extraction
+                ),
             )
             last_payload = payload or last_payload
             results.append(result)
@@ -599,6 +663,22 @@ async def _run(
             "taskflow_calls": sum(int(r.get("taskflow_calls") or 0) for r in results),
             "compliant_tasks": [r["id"] for r in results if r.get("orchestration_compliant")],
             "violating_tasks": [r["id"] for r in results if not r.get("orchestration_compliant")],
+        },
+        "experience_extraction": {
+            "enabled_tasks": [
+                r["id"] for r in results if r.get("experience_extraction", {}).get("enabled")
+            ],
+            "fired_tasks": [
+                r["id"] for r in results if r.get("experience_extraction", {}).get("fired")
+            ],
+            "produced_tasks": [
+                r["id"] for r in results if r.get("experience_extraction", {}).get("snapshot_hash")
+            ],
+            "policy": (
+                "only the 12-task L1 set can opt in via --experience-extraction; "
+                "the session-level skill_extraction_enabled override is written for "
+                "those tasks only, so L2/full runs stay on the historical arm"
+            ),
         },
         "aggregate": _aggregate(results, started),
         "tasks": results,
@@ -692,6 +772,7 @@ async def _run_task(
     timeout: float,
     keep_workdirs: bool,
     gold_checked: bool,
+    experience_extraction: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from evals.coding_capability import suite as harness
 
@@ -727,6 +808,11 @@ async def _run_task(
         "reply": "",
         "tokens": {},
         "gold_self_check": "checked" if gold_checked else "skipped",
+        "experience_extraction": {
+            "enabled": experience_extraction,
+            "fired": False,
+            "snapshot_hash": "",
+        },
     }
     try:
         external_bench.extract_workdir(
@@ -751,6 +837,10 @@ async def _run_task(
         )
         external_bench.install_terminal_bridge(bridge)
         payload = await external_bench.bind_external_session(session_id, host_workdir)
+        if experience_extraction:
+            from evals.shared.eval_session import set_session_experience_extraction
+
+            set_session_experience_extraction(session_id, enabled=True)
 
         checklist_items = _acceptance_checklist(task.instruction)
         external_bench.set_reviewer_checklist(checklist_items)
@@ -856,6 +946,11 @@ async def _run_task(
         settle_deadline = time.monotonic() + _FLOW_SETTLE_WAIT_S
         while _flow_in_flight(results_dir) and time.monotonic() < settle_deadline:
             await asyncio.sleep(5.0)
+
+        if experience_extraction:
+            from evals.shared.eval_session import experience_extraction_evidence
+
+            result["experience_extraction"].update(experience_extraction_evidence(session_id))
 
         patch = _agent_patch(host_workdir, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"
