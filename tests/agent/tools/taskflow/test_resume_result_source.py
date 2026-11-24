@@ -61,24 +61,29 @@ def _record(
     )
 
 
-async def _seed_flow(flow_id: str, child_key: str) -> None:
+async def _seed_flow(flow_id: str, child_key: str, *, judge_criteria: str = "") -> None:
+    step = {
+        "step_id": "step-1",
+        "task": "investigate",
+        "depends_on": [],
+        "status": "dispatched",
+        "child_session_key": child_key,
+    }
+    if judge_criteria:
+        step["judge_criteria"] = judge_criteria
     out = await taskflow_create.coroutine(
         session_id=_SESSION,
         flow_id=flow_id,
         description="resume source probe",
-        initial_state={
-            "steps": [
-                {
-                    "step_id": "step-1",
-                    "task": "investigate",
-                    "depends_on": [],
-                    "status": "dispatched",
-                    "child_session_key": child_key,
-                }
-            ]
-        },
+        initial_state={"steps": [step]},
     )
     assert "Error" not in out, out
+
+
+async def _step_status(flow_id: str) -> str:
+    flow = await store_sqlite.get_flow(flow_id, _SESSION)
+    assert flow is not None
+    return str(((flow["state"] or {}).get("steps") or [{}])[0].get("status"))
 
 
 async def _results(flow_id: str) -> list[dict]:
@@ -255,3 +260,52 @@ async def test_no_run_record_keeps_the_legacy_path(isolated_db):
     assert "Error" not in out, out
     results = await _results("flow-src-unknown")
     assert results and results[0]["result"] == "caller text"
+
+
+@pytest.mark.asyncio
+async def test_redeclaring_the_same_result_as_success_rejudges_it(
+    isolated_db, run_registry, monkeypatch
+):
+    """The delivery auto-resume records the stored text as BLOCKED; the agent must
+    be able to re-declare that SAME text as a success so the judge sees it."""
+    from agent.tools.taskflow.step_judge import JudgeResult, StepVerdict
+
+    key = _run_key("redeclare")
+    run_registry(
+        _record(
+            "redeclare",
+            status=ExecutionStatus.TERMINAL,
+            result_text=_LONG,
+            outcome=RunOutcomeStatus.BUDGET_EXHAUSTED,
+        )
+    )
+    await _seed_flow("flow-src-redeclare", key, judge_criteria="the full report")
+    blocked = await taskflow_resume.coroutine(
+        session_id=_SESSION,
+        flow_id="flow-src-redeclare",
+        child_session_key=key,
+        result=_LONG,
+        step_outcome="blocked",
+    )
+    assert "Error" not in blocked, blocked
+    assert await _step_status("flow-src-redeclare") == "blocked"
+
+    seen: dict = {}
+
+    async def _judge(**kwargs):
+        seen["result_text"] = kwargs["result_text"]
+        return JudgeResult(StepVerdict.PASS, "full report judged", "")
+
+    import sys
+
+    # The package attribute is the decorated TOOL; the module lives in sys.modules.
+    resume_mod = sys.modules["agent.tools.taskflow.tools.taskflow_resume"]
+    monkeypatch.setattr(resume_mod, "judge_step_result", _judge)
+
+    out = await taskflow_resume.coroutine(
+        session_id=_SESSION, flow_id="flow-src-redeclare", child_session_key=key
+    )
+
+    assert "already resumed" not in out, out
+    assert seen.get("result_text") == _LONG, "the judge must see the stored report"
+    assert await _step_status("flow-src-redeclare") == "done"

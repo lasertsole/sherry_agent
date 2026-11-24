@@ -365,7 +365,7 @@ async def taskflow_resume(
         if child_outcome:
             source_text += f", child_outcome={child_outcome}"
 
-    result_hash_value = result_hash(child_session_key, result)
+    result_hash_value = result_hash(child_session_key, result, declared_outcome or "")
     state = dict(flow["state"])
     results = list(state.get("results") or [])
     if any(isinstance(r, dict) and r.get("result_hash") == result_hash_value for r in results):
