@@ -83,6 +83,11 @@ _MESSAGES_INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_meeting_messages_meeting "
     "ON meeting_messages(meeting_id, sequence)"
 )
+# 2026-11-24 index audit: list_meetings() does `ORDER BY created_at DESC`
+# with no index at all (the table only has its TEXT PK) -> full scan + sort.
+_MEETINGS_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at DESC)"
+)
 
 _STATUS = {"in_progress": 0, "waiting_user": 1, "ended": 2, "cancelled": 3}
 
@@ -99,7 +104,7 @@ class MeetingStore(BaseSQLiteRepository):
         return _TABLES_DDL
 
     def _index_ddls(self) -> tuple[str, ...]:
-        return (_MESSAGES_INDEX_DDL,)
+        return (_MESSAGES_INDEX_DDL, _MEETINGS_INDEX_DDL)
 
     @asynccontextmanager
     async def _connect(self):
