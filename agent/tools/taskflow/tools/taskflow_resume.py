@@ -315,6 +315,20 @@ async def taskflow_resume(
             child_run = run_memory.find_by_child_session_key(child_session_key)
         except Exception:  # noqa: BLE001 - registry unavailable: keep the old path
             child_run = None
+    # A schema-bound step is a STRUCTURED-CONTRACT step: the caller passes the
+    # validated JSON (often a short one), and Tier 1 parses `result` against the
+    # schema. Defaulting that to the child's prose answer would break the
+    # contract, so the stored-text default and the summary guard apply to
+    # PROSE steps only; schema steps keep the pre-change behaviour exactly.
+    schema_step = next(
+        (
+            step
+            for step in (flow["state"] or {}).get("steps") or []
+            if isinstance(step, dict) and step.get("child_session_key") == child_session_key
+        ),
+        None,
+    )
+    schema_bound = isinstance((schema_step or {}).get("response_schema"), dict)
     stored_result = ""
     child_outcome = ""
     child_status = None
@@ -340,6 +354,7 @@ async def taskflow_resume(
         and stored_result.strip()
         and structured_result is None
         and not force_result
+        and not schema_bound
     ):
         if not supplied_result:
             result = stored_result

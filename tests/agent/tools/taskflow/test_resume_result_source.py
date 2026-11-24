@@ -12,6 +12,7 @@ its place. These tests pin the contract:
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -61,7 +62,13 @@ def _record(
     )
 
 
-async def _seed_flow(flow_id: str, child_key: str, *, judge_criteria: str = "") -> None:
+async def _seed_flow(
+    flow_id: str,
+    child_key: str,
+    *,
+    judge_criteria: str = "",
+    response_schema: dict | None = None,
+) -> None:
     step = {
         "step_id": "step-1",
         "task": "investigate",
@@ -71,6 +78,8 @@ async def _seed_flow(flow_id: str, child_key: str, *, judge_criteria: str = "") 
     }
     if judge_criteria:
         step["judge_criteria"] = judge_criteria
+    if response_schema is not None:
+        step["response_schema"] = response_schema
     out = await taskflow_create.coroutine(
         session_id=_SESSION,
         flow_id=flow_id,
@@ -309,3 +318,51 @@ async def test_redeclaring_the_same_result_as_success_rejudges_it(
     assert "already resumed" not in out, out
     assert seen.get("result_text") == _LONG, "the judge must see the stored report"
     assert await _step_status("flow-src-redeclare") == "done"
+
+
+_SCHEMA = {
+    "type": "object",
+    "properties": {"status": {"type": "string"}, "count": {"type": "integer"}},
+    "required": ["status", "count"],
+    "additionalProperties": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_a_schema_step_does_not_default_to_the_stored_prose(isolated_db, run_registry):
+    """A schema-bound step keeps its structured contract: no prose injection."""
+    key = _run_key("schema-null")
+    run_registry(_record("schema-null", status=ExecutionStatus.TERMINAL, result_text=_LONG))
+    await _seed_flow("flow-src-schema-null", key, response_schema=_SCHEMA)
+
+    out = await taskflow_resume.coroutine(
+        session_id=_SESSION, flow_id="flow-src-schema-null", child_session_key=key
+    )
+
+    assert "Error" not in out, out
+    results = await _results("flow-src-schema-null")
+    assert results and results[0]["result"] == "", "the prose must NOT be injected"
+    assert results[0].get("schema_validated") is False
+
+
+@pytest.mark.asyncio
+async def test_a_schema_step_accepts_a_short_valid_json_beside_a_long_stored_text(
+    isolated_db, run_registry
+):
+    """The summary guard must not refuse a schema payload that is legitimately short."""
+    key = _run_key("schema-json")
+    run_registry(_record("schema-json", status=ExecutionStatus.TERMINAL, result_text=_LONG))
+    await _seed_flow("flow-src-schema-json", key, response_schema=_SCHEMA)
+
+    out = await taskflow_resume.coroutine(
+        session_id=_SESSION,
+        flow_id="flow-src-schema-json",
+        child_session_key=key,
+        result=json.dumps({"status": "ok", "count": 3}),
+        step_outcome="success",
+    )
+
+    assert "Error" not in out, out
+    results = await _results("flow-src-schema-json")
+    assert results and results[0]["schema_validated"] is True
+    assert await _step_status("flow-src-schema-json") == "done"
