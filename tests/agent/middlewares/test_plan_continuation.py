@@ -1107,6 +1107,24 @@ async def test_a_refused_reminder_is_retried(
     assert _SID not in tc._reminded_plans, "a refused reminder must be retried"
 
 
+@pytest.mark.asyncio
+async def test_an_absent_auto_turn_channel_still_extracts(
+    monkeypatch: pytest.MonkeyPatch, extraction_spy: list
+) -> None:
+    """Headless / eval runs register no trigger: the reminder can never land.
+
+    Returning early there stranded the extraction behind an undeliverable
+    reminder, so a finished plan was never handed to the skill-review fork.
+    """
+    assert hooks.resolve(hooks.MAYBE_TRIGGER_AUTO_TURN) is None
+    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "completed")])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert extraction_spy == [_SID], "the completed plan must still be extracted"
+    assert _SID not in tc._reminded_plans, "no reminder was recorded as delivered"
+
+
 # ============================================================================
 # (h) the SYSTEM verify todo: wait, drive, and the exhausted escape
 # ============================================================================
@@ -1180,6 +1198,27 @@ async def test_a_finished_reviewer_drives_the_report_read(
     assert _CONTINUATION_MARKER in prompt
     assert "[VERIFY TODO]" in prompt
     assert "read its report" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reviewer_is_reported_as_not_passed(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """A run that ended without an OK verdict must not read as an approval."""
+    _stub_verify(monkeypatch, state="failed")
+    _patch_todos(
+        monkeypatch,
+        [_todo("done work", "completed"), _verify_todo(subagent_id="reviewer-1")],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    prompt = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in prompt
+    assert "did NOT finish successfully" in prompt
+    assert "must not be treated as a pass" in prompt
+    assert "A reviewer finished: read its report and act on it." not in prompt
 
 
 @pytest.mark.asyncio

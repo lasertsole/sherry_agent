@@ -189,6 +189,29 @@ def _plan_snapshot_hash(todos: list[dict]) -> str:
     ).hexdigest()[:16]
 
 
+def _verify_reviewer_outcome(todo: dict) -> str | None:
+    """The linked reviewer run's outcome value, or ``None`` when unknown.
+
+    Fail-open: a missing run (never registered / already swept) or a registry
+    error reads as ``None`` and leaves the legacy behaviour untouched.
+    """
+    child_key = str(todo.get("subagent_id") or "").strip()
+    if not child_key:
+        return None
+    try:
+        from agent.tools.subagent.registry import get_run_by_child_session_key
+
+        run = get_run_by_child_session_key(child_key)
+    except Exception:  # noqa: BLE001 - the detector must never break a turn
+        return None
+    if run is None:
+        return None
+    outcome = getattr(getattr(run, "execution", None), "outcome", None)
+    status = getattr(outcome, "status", None)
+    value = str(getattr(status, "value", status) or "").strip().lower()
+    return value or None
+
+
 def _detect_todo_all_complete(session_id: str) -> bool:
     """Whether the plan is complete AND its current content is not extracted yet.
 
@@ -228,6 +251,14 @@ def _detect_todo_all_complete(session_id: str) -> bool:
     verifies = [t for t in todos if (t.get("metadata") or {}).get("kind") == "verify"]
     if verifies and verifies[-1].get("status") == "cancelled":
         return False
+    # The same hazard from the other side: the model COMPLETED the verify todo
+    # on a report from a reviewer run that never ended with an OK verdict
+    # (budget_exhausted / timeout / killed / error). Extracting a skill from
+    # such a plan teaches from an unaccepted result.
+    if verifies and verifies[-1].get("status") == "completed":
+        reviewer_outcome = _verify_reviewer_outcome(verifies[-1])
+        if reviewer_outcome is not None and reviewer_outcome != "ok":
+            return False
 
     already_fired = state_register_db.get_state(session_id, _SKILL_REVIEW_FIRED_KEY, False)
     if not already_fired:

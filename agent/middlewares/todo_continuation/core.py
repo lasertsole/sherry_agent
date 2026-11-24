@@ -520,6 +520,16 @@ def _build_verify_block(verify: dict, state: str, *, settle_timed_out: bool = Fa
         lines.append("No reviewer is linked yet: spawn one and patch its child_session_key.")
     elif state == "finished":
         lines.append("A reviewer finished: read its report and act on it.")
+    elif state == "failed":
+        # The linked reviewer run did not end with an OK verdict
+        # (budget_exhausted / timeout / killed / error). Its report is partial;
+        # treating it as a pass is what let a verify todo be completed on a
+        # half-finished review.
+        lines.append(
+            "The reviewer run did NOT finish successfully (no OK verdict): its report is "
+            "partial and must not be treated as a pass. Fix the issues and re-run the "
+            "reviewer, or cancel this verify todo with the reason."
+        )
     if settle_timed_out:
         lines.append(_VERIFY_SETTLE_WARNING.rstrip())
     return "\n".join(lines)
@@ -543,6 +553,18 @@ def _turn_error(state: Any) -> BaseException | None:
 
 
 _hook_misses_logged: set[str] = set()
+
+
+def _reminder_channel_available() -> bool:
+    """Whether the auto-turn trigger exists at all (not whether it accepts).
+
+    A registered trigger that REFUSES (busy / already_pending) is a retryable
+    condition and keeps the existing "retry next turn" behaviour; a MISSING
+    trigger (headless runs, the eval harness) means the final-verification
+    reminder can never be delivered, so the completed plan must not be left
+    un-extracted behind it.
+    """
+    return hooks.resolve(hooks.MAYBE_TRIGGER_AUTO_TURN) is not None
 
 
 def _resolve_hook(name: str) -> Callable[..., Any] | None:
@@ -753,9 +775,15 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 # already verify the goal).
                 fingerprint = _plan_fingerprint(todos, _flow_rows(flows))
                 if not flows and _reminded_plans.get(session_id) != fingerprint:
-                    if await self._inject(session_id, _VERIFICATION_REMINDER, count_turn=False):
-                        _reminded_plans[session_id] = fingerprint
-                    return None
+                    if _reminder_channel_available():
+                        if await self._inject(session_id, _VERIFICATION_REMINDER, count_turn=False):
+                            _reminded_plans[session_id] = fingerprint
+                        # A REFUSAL (busy / already_pending) is retried next turn.
+                        return None
+                    # No auto-turn channel at all (headless / eval): the paranoid
+                    # self-check cannot be delivered, but the plan IS complete.
+                    # Stranding the extraction fork behind an undeliverable
+                    # reminder leaves a finished plan un-extracted forever.
                 st.reset(session_id)
                 # The plan just finished: hand it to the skill-review fork.
                 # Deliberately independent of compaction — a short session whose

@@ -180,12 +180,44 @@ def is_verify_todo(todo: dict) -> bool:
     return isinstance(metadata, dict) and str(metadata.get("kind") or "") == "verify"
 
 
+#: Terminal run outcomes that are NOT a passing review. ``ok`` is the only
+#: success; an absent outcome (legacy/partial records) stays ``finished`` so the
+#: fail-open default is unchanged.
+_VERIFY_FAILED_OUTCOMES = frozenset({"error", "timeout", "killed", "budget_exhausted", "unknown"})
+
+
+def _reviewer_outcome(child_session_key: str) -> str | None:
+    """The linked reviewer run's terminal outcome value, or ``None`` when unknown."""
+    try:
+        run = _get_run_by_child_session_key(child_session_key)
+    except Exception:  # noqa: BLE001 - a registry failure must not change the state
+        return None
+    if run is None:
+        return None
+    outcome = getattr(getattr(run, "execution", None), "outcome", None)
+    status = getattr(outcome, "status", None)
+    value = str(getattr(status, "value", status) or "").strip().lower()
+    return value or None
+
+
 def verify_subagent_state(todo: dict) -> str:
-    """``none`` | ``running`` | ``finished`` for a verify todo's reviewer link."""
+    """``none`` | ``running`` | ``finished`` | ``failed`` for a verify todo.
+
+    ``failed`` means the linked reviewer run is over but did NOT end with an OK
+    verdict (budget_exhausted / timeout / killed / error, plus the explicit
+    ``unknown`` status). Its report is partial and must not be read as a pass;
+    an ABSENT outcome (missing run / legacy record) keeps the legacy
+    ``finished`` reading (fail-open).
+    """
     subagent_id = str(todo.get("subagent_id") or "").strip()
     if not subagent_id:
         return "none"
-    return "running" if _is_subagent_running(subagent_id) else "finished"
+    if _is_subagent_running(subagent_id):
+        return "running"
+    outcome = _reviewer_outcome(subagent_id)
+    if outcome is not None and outcome in _VERIFY_FAILED_OUTCOMES:
+        return "failed"
+    return "finished"
 
 
 def verify_budget_exhausted(session_id: str) -> bool:

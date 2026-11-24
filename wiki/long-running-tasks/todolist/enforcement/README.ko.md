@@ -89,7 +89,7 @@ turn ends (no tool_call, agent loop exits)
 
 **계속 예산**: `mark_injected` — 모든 지시가 trigger에 수락된 뒤 반드시 지나는 유일한 지점 — 은 그 turn도 세므로, 이 카운터는 실제로 전달된 연속 계속 turn 수 그 자체입니다 (trigger가 거부한 지시는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). 15에 도달하면 강제기는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 보내고 세션을 래치한 뒤, 이 강제기가 스스로 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 알림 (새 이벤트이지 계속이 아님) — 이 카운터와 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 감지가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 — 상태 하나를 바꾸고 step 하나를 추가해 — 스냅샷을 계속 움직여 streak이 발화하지 않는 경우)를 커버합니다.
 
-**최종 검증 리마인더**: 계획이 완료되었을 때(미완료 todo도, 열린 flow도 없음) 게이트는 계획을 완료로 처리하기 전에 한 번의 자동 turn으로 자체 점검 프롬프트를 보낸다. diff를 다시 읽고 테스트/타입 검사/lint를 실제로 실행하며, 사용자 대상 변경은 실행해 확인한다. 이것은 **게이트가 아니라 프롬프트**이며, 증거를 검사하거나 차단하지 않는다. 스로틀은 완료된 계획의 fingerprint를 키로 사용하므로, 계획을 확장하면 새 리마인더가 발송된다. 전달이 거부되면 재시도한다. TaskFlow 세션은 건너뛴다(flow의 finish 게이트가 검증을 담당한다).
+**최종 검증 리마인더**: 계획이 완료되었을 때(미완료 todo도, 열린 flow도 없음) 게이트는 계획을 완료로 처리하기 전에 한 번의 자동 turn으로 자체 점검 프롬프트를 보낸다. diff를 다시 읽고 테스트/타입 검사/lint를 실제로 실행하며, 사용자 대상 변경은 실행해 확인한다. 이것은 **게이트가 아니라 프롬프트**이며, 증거를 검사하거나 차단하지 않는다. 스로틀은 완료된 계획의 fingerprint를 키로 사용하므로, 계획을 확장하면 새 리마인더가 발송된다. 전달이 거부되면 재시도한다. TaskFlow 세션은 건너뛴다(flow의 finish 게이트가 검증을 담당한다). 자동 turn 채널이 **없는** 경우(headless 실행, eval 하네스)는 거부가 아니다 — 거기서는 리마인더가 결코 전달될 수 없으므로, 게이트는 완료된 계획을 전달 불가능한 프롬프트 뒤에 방치하지 않고 스킬 추출로 진행한다.
 
 **파일**: `stagnation_tracker.py`(~190줄) + `todo_continuation/core.py`(~545줄) + `agent/core.py`(~2줄 등록).
 
@@ -122,7 +122,7 @@ for todo in validated:
         )
 ```
 
-**verify todo 계약 + 인텐트 드리프트 게이트**(시스템 소유 `[VERIFY]` todo, MAIN 에이전트 전용). 비어 있지 않은 모든 계획에는 꼬리에 verify todo가 하나만 붙습니다. 완료는 연결된 reviewer가 종료되었고 모든 work todo가 종료 상태여야 통과합니다. reviewer의 구조화된 보고서(`{"verified": bool, "results": [...]}`)는 실패한 todo를 근거와 수정 제안과 함께 다시 엽니다. brief에 승인된 계획의 **인텐트 앵커**가 있으면 reviewer는 추가로 `intent_match` / `intent_deviations`를 보고합니다 — 원래 스키마에 추가된 것이므로 기존 reviewer도 호환됩니다.
+**verify todo 계약 + 인텐트 드리프트 게이트**(시스템 소유 `[VERIFY]` todo, MAIN 에이전트 전용). 비어 있지 않은 모든 계획에는 꼬리에 verify todo가 하나만 붙습니다. 완료는 연결된 reviewer가 종료되었고 모든 work todo가 종료 상태여야 통과합니다. OK가 아닌 결말로 끝난 실행(`budget_exhausted` / `timeout` / `killed` / `error`)은 finished가 아니라 **failed**로 표시됩니다 — 보고서는 부분적이며, 계속 프롬프트가 그렇게 밝히고, 그런 실행 위에서 verify를 완료해도 스킬 추출이 열리지 않습니다(outcome이나 run이 없으면 fail-open). reviewer의 구조화된 보고서(`{"verified": bool, "results": [...]}`)는 실패한 todo를 근거와 수정 제안과 함께 다시 엽니다. brief에 승인된 계획의 **인텐트 앵커**가 있으면 reviewer는 추가로 `intent_match` / `intent_deviations`를 보고합니다 — 원래 스키마에 추가된 것이므로 기존 reviewer도 호환됩니다.
 
 `_assert_transition_allowed`의 머신 게이트는 verify todo 완료 **전에** `plan_drifted()`를 실행합니다. 계획 파일이 앵커 기록 시점의 리비전으로 해싱되지 않으면 완료를 거부하고 replan을 요구합니다. 앵커 자체는 매 턴 todo 리마인더에 실리고(시스템 프롬프트에는 없음), todo 목록이 사라지면 `_push_todo_update`가 삭제하므로 오래된 의도가 다음 작업으로 새지 않습니다. [플랜 모드 §인텐트 앵커](../../../plan-mode/README.ko.md#인텐트-앵커--승인된-계획의-파일이-아닌-의도를-보관)를 참조하세요.
 
