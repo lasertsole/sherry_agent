@@ -241,9 +241,10 @@ async def taskflow_resume(
     Omitting ``result`` injects the child's stored ``completion.result_text``
     (the parent only sees a ~4k delivery carrier, so retyping a long report
     loses it). A materially shorter caller-supplied result is refused while the
-    child is recorded as successful; ``force_result=true`` submits a deliberate
-    summary instead. A child that is not TERMINAL cannot be resumed at all
-    (``force_result`` overrides): wait for it, do not speak for it.
+    child is recorded as successful/partial; declaring ``failure``/``blocked``
+    carries the caller's own note instead. A child that is not TERMINAL cannot
+    be resumed at all: wait for it, do not speak for it. ``force_result`` is an
+    INTERNAL escape (never exposed in the tool schema) for tests/maintenance.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -343,7 +344,7 @@ async def taskflow_resume(
         if not supplied_result:
             result = stored_result
         elif (
-            declared_outcome in (None, "success")
+            declared_outcome in (None, "success", "partial")
             and len(stored_result) >= 2 * len(result)
             and len(stored_result) >= 2000
         ):

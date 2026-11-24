@@ -138,6 +138,44 @@ async def test_a_short_caller_summary_is_refused(isolated_db, run_registry):
 
 
 @pytest.mark.asyncio
+async def test_a_partial_summary_is_refused_too(isolated_db, run_registry):
+    """`partial` is success-shaped: a summary must not slip through under it."""
+    key = _run_key("partial")
+    run_registry(_record("partial", status=ExecutionStatus.TERMINAL, result_text=_LONG))
+    await _seed_flow("flow-src-partial", key)
+
+    out = await taskflow_resume.coroutine(
+        session_id=_SESSION,
+        flow_id="flow-src-partial",
+        child_session_key=key,
+        result="partial summary",
+        step_outcome="partial",
+    )
+
+    assert out.startswith("Error:")
+    assert await _results("flow-src-partial") == []
+
+
+@pytest.mark.asyncio
+async def test_a_declared_failure_may_carry_the_callers_own_note(isolated_db, run_registry):
+    key = _run_key("failed-note")
+    run_registry(_record("failed-note", status=ExecutionStatus.TERMINAL, result_text=_LONG))
+    await _seed_flow("flow-src-failed-note", key)
+
+    out = await taskflow_resume.coroutine(
+        session_id=_SESSION,
+        flow_id="flow-src-failed-note",
+        child_session_key=key,
+        result="the child produced an unusable dump",
+        step_outcome="failure",
+    )
+
+    assert "Error" not in out, out
+    results = await _results("flow-src-failed-note")
+    assert results and results[0]["result"] == "the child produced an unusable dump"
+
+
+@pytest.mark.asyncio
 async def test_force_result_accepts_a_deliberate_summary(isolated_db, run_registry):
     key = _run_key("forced")
     run_registry(_record("forced", status=ExecutionStatus.TERMINAL, result_text=_LONG))
