@@ -182,6 +182,7 @@ async def taskflow_resume(
     auto_dispatch: bool = True,
     step_id: str = "",
     approval_context: dict | None = None,
+    force_result: bool = False,
     session_id: SessionId = "",
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
@@ -236,6 +237,13 @@ async def taskflow_resume(
     dependents cascade ``skipped``), and ``success``/``partial`` are recorded
     on the result while the gates still run. A ``failed`` step never unlocks
     its dependents.
+
+    Omitting ``result`` injects the child's stored ``completion.result_text``
+    (the parent only sees a ~4k delivery carrier, so retyping a long report
+    loses it). A materially shorter caller-supplied result is refused while the
+    child is recorded as successful; ``force_result=true`` submits a deliberate
+    summary instead. A child that is not TERMINAL cannot be resumed at all
+    (``force_result`` overrides): wait for it, do not speak for it.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -290,6 +298,71 @@ async def taskflow_resume(
             child_session_key=child_session_key,
             approval=approval,
         )
+
+    # ── Result source (2026-11-24) ─────────────────────────────────────────
+    # Omitting `result` means "use the child's own result". The parent only
+    # ever sees the DELIVERY CARRIER (capped at ~4k chars), so requiring it to
+    # retype a long report invites a short summary in place of the real thing;
+    # a DeepSWE run lost a 24k research report exactly that way and the judge
+    # then (correctly) rejected the 452-char summary. The stored completion is
+    # the source of truth; `force_result` is the explicit opt-out.
+    child_run = None
+    if child_session_key:
+        try:
+            from agent.tools.subagent.registry import memory as run_memory
+
+            child_run = run_memory.find_by_child_session_key(child_session_key)
+        except Exception:  # noqa: BLE001 - registry unavailable: keep the old path
+            child_run = None
+    stored_result = ""
+    child_outcome = ""
+    child_status = None
+    if child_run is not None:
+        stored_result = str(getattr(child_run.completion, "result_text", "") or "")
+        outcome = getattr(child_run.execution, "outcome", None)
+        child_outcome = str(getattr(outcome, "status", "") or "")
+        child_status = child_run.execution.status
+    if child_run is not None and not force_result:
+        from agent.tools.subagent.types.registry import ExecutionStatus
+
+        if child_status != ExecutionStatus.TERMINAL:
+            started = getattr(child_run.execution, "started_at", None)
+            elapsed = f"{max(0.0, time.monotonic() - started):.0f}s" if started else "unknown"
+            return (
+                f"Error: child {child_session_key} is still {child_status} (elapsed {elapsed}); "
+                "its result is not final. Call taskflow_step(action='wait_all') and resume after "
+                "it settles, or pass force_result=true to override deliberately."
+            )
+    supplied_result = bool(result.strip())
+    if (
+        child_run is not None
+        and stored_result.strip()
+        and structured_result is None
+        and not force_result
+    ):
+        if not supplied_result:
+            result = stored_result
+        elif (
+            declared_outcome in (None, "success")
+            and len(stored_result) >= 2 * len(result)
+            and len(stored_result) >= 2000
+        ):
+            return (
+                f"Error: the supplied result is {len(result)} chars but the child already stored "
+                f"{len(stored_result)} chars (completion.result_text). Omit `result` to inject the "
+                "child's own result, or pass force_result=true to submit a deliberate summary."
+            )
+    result_source = ""
+    if structured_result is None:
+        if child_run is not None and stored_result.strip() and not supplied_result:
+            result_source = "child_completion"
+        elif supplied_result:
+            result_source = "caller"
+    source_text = ""
+    if result_source:
+        source_text = f"\n  result_source={result_source} ({len(result)} chars)"
+        if child_outcome:
+            source_text += f", child_outcome={child_outcome}"
 
     result_hash_value = result_hash(child_session_key, result)
     state = dict(flow["state"])
@@ -783,6 +856,7 @@ async def taskflow_resume(
         f"{validation_text}"
         f"{retry_text}"
         f"{judge_text}"
+        f"{source_text}"
         f"{outcome_text}"
         f"{_schema_text(schema_validated, schema_error)}"
         f"\n  auto_dispatched=[{dispatched_text}]"

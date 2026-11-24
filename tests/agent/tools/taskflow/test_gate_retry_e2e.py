@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 
 from agent.tools.subagent.registry import clear as clear_registry
+from agent.tools.subagent.registry import memory as run_memory
+from agent.tools.subagent.types.registry import ExecutionStatus
 from agent.tools.subagent.spawn import core as spawn_core
 from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
@@ -47,6 +49,23 @@ def _captured_lane(monkeypatch: pytest.MonkeyPatch):
 
     async def _fake_lane(**kwargs):
         captured.append(kwargs)
+        # A real child SETTLES before its parent resumes it, and
+        # ``taskflow_resume`` refuses to speak for a child that is still
+        # PENDING/RUNNING. The fake lane has no child to run, so it marks the
+        # run TERMINAL — keeping this test about the spawn/schema pipeline.
+        run = kwargs["run"]
+        run_memory.set_run(
+            run.model_copy(
+                update={
+                    "execution": run.execution.model_copy(
+                        update={
+                            "status": ExecutionStatus.TERMINAL,
+                            "ended_at": run.execution.started_at,
+                        }
+                    )
+                }
+            )
+        )
 
     monkeypatch.setattr(spawn_core, "_execute_subagent_with_lane", _fake_lane)
     clear_registry()

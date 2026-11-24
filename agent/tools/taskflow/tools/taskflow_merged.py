@@ -288,6 +288,14 @@ class TaskflowStepInput(BaseModel):
         default=None, description="Completed child session key (resume)."
     )
     result: str | None = Field(default=None, description="Child result text to inject (resume).")
+    force_result: bool | None = Field(
+        default=None,
+        description=(
+            "resume: submit this result even though the child is still running or already "
+            "stored a much longer completion (a deliberate summary). Omit `result` instead "
+            "to inject the child's own stored result."
+        ),
+    )
     token_usage: dict | None = Field(
         default=None,
         description="Child spend: {input_tokens, output_tokens, model_name} (resume).",

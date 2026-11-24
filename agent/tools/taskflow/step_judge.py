@@ -194,6 +194,25 @@ def _parse_self_eval_response(raw: str) -> SelfEvalResult:
     return SelfEvalResult(None, "self-eval parse failure (no usable score)", "")
 
 
+def _clip_for_judge(text: str, limit: int | None = None) -> str:
+    """Clip a long result head+tail so its CONCLUSION survives the budget.
+
+    A plain head slice hid exactly what many judge criteria ask for: the
+    "dependency-ordered implementation plan" / final verdict lives at the END of
+    a long report. The middle is dropped with a visible marker so the judge
+    knows the text was clipped.
+    """
+    budget = int(limit if limit is not None else STEP_JUDGE["max_result_chars"])
+    if budget <= 0 or len(text) <= budget:
+        return text
+    marker = "\n\n[... middle omitted for the judge ...]\n\n"
+    head = (budget * 7) // 10
+    tail = budget - head - len(marker)
+    if tail <= 0:
+        return text[:budget]
+    return text[:head] + marker + text[-tail:]
+
+
 async def judge_step_self_eval(
     step_task: str,
     criteria: str | None,
@@ -214,7 +233,7 @@ async def judge_step_self_eval(
     prompt = _build_judge_prompt(
         step_task,
         criteria,
-        judged_text[: int(STEP_JUDGE["max_result_chars"])],
+        _clip_for_judge(judged_text),
         evidence_summary if STEP_JUDGE["evidence_aware"] else None,
     )
     try:
@@ -256,7 +275,7 @@ async def judge_step_result(
     prompt = _build_judge_prompt(
         step_task,
         criteria,
-        judged_text[: int(STEP_JUDGE["max_result_chars"])],
+        _clip_for_judge(judged_text),
         evidence_summary if STEP_JUDGE["evidence_aware"] else None,
     )
     try:
