@@ -827,4 +827,14 @@ async def _build_child_agent(
 
     child_agent = RepetitionGuardWrapper(child_agent, phantom_stream_guard=True)
 
+    # Expose the model actually passed to create_agent so a timeout/cancel can
+    # force-close its provider HTTP client pool. asyncio.wait_for's
+    # CancelledError is a BaseException and bypasses LLMRetryMiddleware's
+    # except Exception, so reset_async_client() never fires on that path; the
+    # goal loop reuses this same agent across continuation turns, leaving a
+    # stale connection in the pool until the run ends. Set on the OUTER wrapper
+    # (a plain class with __dict__), not the CompiledStateGraph — the wrapper's
+    # __getattr__ also proxies it, but setting here avoids relying on that.
+    child_agent._sherry_model = agent_llm
+
     return child_agent

@@ -291,11 +291,20 @@ async def _execute_steered_subagent(
                 )
 
     except TimeoutError:
+        # CancelledError/TimeoutError bypass LLMRetryMiddleware's except
+        # Exception; force-close the child's provider pool so the restart does
+        # not reuse a stale keep-alive connection. Fail-open via the shared helper.
+        from ..spawn.lifecycle import reset_child_provider_client
+
+        await asyncio.shield(reset_child_provider_client(child_agent))
         outcome = RunOutcome(
             status=RunOutcomeStatus.TIMEOUT,
             error=f"Steered subagent timed out after {timeout_seconds}s",
         )
     except asyncio.CancelledError:
+        from ..spawn.lifecycle import reset_child_provider_client
+
+        await asyncio.shield(reset_child_provider_client(child_agent))
         outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error="Steered subagent was killed")
     except Exception as e:
         outcome = RunOutcome(status=RunOutcomeStatus.ERROR, error=str(e))

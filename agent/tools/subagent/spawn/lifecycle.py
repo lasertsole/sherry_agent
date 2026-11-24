@@ -90,6 +90,37 @@ def _read_acceptance(child_session_key: str) -> list[str]:
     return list(value) if isinstance(value, list) else []
 
 
+async def reset_child_provider_client(child_agent: Any) -> None:
+    """Force-close a child's provider HTTP client pool after timeout/cancel.
+
+    ``asyncio.wait_for`` raises TimeoutError / CancelledError, both of which
+    bypass ``LLMRetryMiddleware``'s ``except Exception`` — so the middleware's
+    ``reset_async_client()`` never fires on those paths and a stale keep-alive
+    connection can stay in the pool. The goal loop reuses the same child agent
+    across continuation turns, so the bad connection survives to the end of the
+    run. Closing it here lets the next turn start on a fresh pool.
+
+    Fail-open with a debug log (matching ``_refresh_provider_client``): a model
+    without ``_sherry_model``/``reset_async_client``, or a failed rebuild, never
+    changes the timeout/kill outcome.
+    """
+    try:
+        model = getattr(child_agent, "_sherry_model", None)
+        reset = getattr(model, "reset_async_client", None)
+        if not callable(reset):
+            logger.debug("child provider client reset skipped: no resettable model")
+            return
+        refreshed = await reset()
+        if refreshed:
+            logger.warning(
+                "Child timeout/cancel: rebuilt the provider HTTP client on a fresh connection"
+            )
+        else:
+            logger.debug("child provider client rebuild returned no-op")
+    except Exception:  # noqa: BLE001 - fail-open boundary of cleanup
+        logger.debug("child provider client reset failed (fail-open)", exc_info=True)
+
+
 # Fallback when the judge flags drift but omits its own correction text.
 _DRIFT_CORRECTION_PROMPT = """[SYSTEM DIRECTIVE: TASK DRIFT DETECTED]
 
@@ -970,10 +1001,15 @@ async def _execute_subagent_scoped(
 
     # --- Exception handling: map failures to RunOutcome statuses ---
     except TimeoutError:
+        # shield keeps the client reset from being cancelled mid-teardown when
+        # a timeout and an external cancel race; both paths share the fail-open
+        # helper so a reset failure never changes the run outcome.
+        await asyncio.shield(reset_child_provider_client(child_agent))
         outcome = RunOutcome(
             status=RunOutcomeStatus.TIMEOUT, error=f"Subagent timed out after {timeout_seconds}s"
         )
     except asyncio.CancelledError:
+        await asyncio.shield(reset_child_provider_client(child_agent))
         outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error="Subagent was killed")
     except Exception as e:
         outcome = RunOutcome(status=RunOutcomeStatus.ERROR, error=str(e))

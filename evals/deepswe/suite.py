@@ -780,6 +780,11 @@ async def _run_task(
             try:
                 turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
             except TimeoutError:
+                # Timeout is terminal here (break, no next wait_for), and every
+                # `_drive` rebuilds the main graph+client via
+                # `_GenerateTurn._prepare(force_rebuild=True)`. So unlike the
+                # subagent goal loop there is no stale pool to reset — see the
+                # known-gap note in wiki/evals/README.md.
                 drive["timeout"] = True
                 break
             drive["tool_calls"] += int(turn.get("tool_calls") or 0)
