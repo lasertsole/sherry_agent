@@ -64,6 +64,11 @@ CREATE INDEX IF NOT EXISTS idx_evidence_timestamp
     ON evidence_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_evidence_flow
     ON evidence_events(flow_id, event_id);
+-- 2026-11-24 index audit: mark_stale_for_path filters `event IS NULL` on every
+-- file edit. Partial index keeps only unmarked rows; the session prefix covers
+-- the per-session stale scan (cross-session scans still read a much smaller index).
+CREATE INDEX IF NOT EXISTS idx_evidence_unmarked
+    ON evidence_events(session_id, event_id) WHERE event IS NULL;
 CREATE TABLE IF NOT EXISTS verification_state (
     session_id TEXT PRIMARY KEY,
     changed_paths_json TEXT NOT NULL DEFAULT '[]',

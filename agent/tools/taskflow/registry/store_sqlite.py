@@ -85,17 +85,33 @@ _SELECT_COLUMNS_SQL = (
     f"FROM {TABLE_NAME}"
 )
 
-# Query-coverage indexes (2026-09 SQLite index audit). Both are created with
+# Query-coverage indexes (2026-09 audit, extended 2026-11-24). All created with
 # ``IF NOT EXISTS`` on every schema init -- async and sync alike.
 # ``idx_taskflow_deadline`` is partial: get_overdue_flows only ever scans
 # non-NULL deadlines, so NULL rows stay out of the index entirely.
-# ``idx_taskflow_session_status`` covers the session-scoped reads
-# (get_active_flows_sync / get_all_flows_sync filter on session_id and status).
+# ``idx_taskflow_session_status`` covers exact-status session reads and now
+# carries ``expected_revision DESC`` so that ORDER BY needs no temp sort.
+# ``idx_taskflow_session_rev`` covers the session-wide ordering paths: the
+# planner needs (session_id, expected_revision) directly because a status-filtered
+# index cannot serve `status IN (?, ?)` or the "all statuses" read in order —
+# EXPLAIN confirmed a temp B-tree persisted without it.
+# ``idx_taskflow_active`` is partial on superseded_by IS NULL: the 3 non-terminal
+# read paths filter that predicate, so it is an index match, not a post-filter.
 _INDEX_DDL: tuple[str, ...] = (
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_status ON {TABLE_NAME}(status)",
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_deadline ON {TABLE_NAME}(deadline_ts) "
     "WHERE deadline_ts IS NOT NULL",
-    f"CREATE INDEX IF NOT EXISTS idx_taskflow_session_status ON {TABLE_NAME}(session_id, status)",
+    # SQLite has no ALTER INDEX: DROP + CREATE migrates existing DBs idempotently.
+    "DROP INDEX IF EXISTS idx_taskflow_session_status",
+    "CREATE INDEX IF NOT EXISTS idx_taskflow_session_status "
+    f"ON {TABLE_NAME}(session_id, status, expected_revision DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_taskflow_active "
+    f"ON {TABLE_NAME}(session_id, status) WHERE superseded_by IS NULL",
+    # Session-wide revision ordering cannot use the status-prefixed index; this
+    # direct (session_id, expected_revision DESC) index removes the temp sort on
+    # get_active_flows_sync / get_all_flows_sync("all") (EXPLAIN-verified).
+    "CREATE INDEX IF NOT EXISTS idx_taskflow_session_rev "
+    f"ON {TABLE_NAME}(session_id, expected_revision DESC)",
 )
 
 

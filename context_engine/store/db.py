@@ -423,6 +423,14 @@ def build_memory_schema(db: sqlite3.Connection) -> None:
         ON memory_entries(target, created_at, id) WHERE archived = 0;
     CREATE INDEX IF NOT EXISTS idx_memory_entries_target_usage
         ON memory_entries(target, usage_count, id) WHERE archived = 0;
+    -- 2026-11-24 index audit: the embedding job and semantic recall filter
+    -- embedding IS NULL / IS NOT NULL on active rows. Two partial indexes keep
+    -- the target prefix (list_missing/list_with filter on target) while excluding
+    -- the opposite embedding state and archived rows from each side.
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_missing_embedding
+        ON memory_entries(target, id) WHERE archived = 0 AND embedding IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_has_embedding
+        ON memory_entries(target, id) WHERE archived = 0 AND embedding IS NOT NULL;
 
     -- UI-editable memory limits (capacity caps, aging window). Absent rows
     -- fall back to config.features.agent_side.memory_tool defaults, so an

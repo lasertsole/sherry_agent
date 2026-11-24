@@ -152,7 +152,10 @@ async def test_query_plans_use_new_indexes(isolated_db: Path):
         + " WHERE session_id = ? AND status IN (?, ?) ORDER BY expected_revision DESC",
         ("", TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
     )
-    assert _SESSION_INDEX in active_plan, active_plan
+    # 2026-11-24 audit added a direct (session_id, expected_revision DESC) index;
+    # the planner now prefers it for session-wide ordering. Either covering index
+    # is correct — the sort-free assertion lives in the new audit test file.
+    assert _SESSION_INDEX in active_plan or "idx_taskflow_session_rev" in active_plan, active_plan
 
     overdue_plan = _plan(
         isolated_db,
