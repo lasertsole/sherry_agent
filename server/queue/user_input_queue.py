@@ -135,6 +135,18 @@ _CREATE_INDEX_SQLS = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_input_queue_client_msg_active "
     "ON user_input_queue (client_msg_id) "
     "WHERE client_msg_id IS NOT NULL AND status IN ('QUEUED', 'CLAIMED')",
+    # 2026-11-24 index audit: claim/list_active filter (session_id, status)
+    # but ORDER BY priority DESC, created_at ASC, id ASC. The 2-column index
+    # above finds the rows but leaves a temp B-tree for the sort on every
+    # dequeue. Extending the prefix removes that sort (EXPLAIN verified).
+    "CREATE INDEX IF NOT EXISTS idx_uiq_claim_order "
+    "ON user_input_queue (session_id, status, priority DESC, created_at ASC, id ASC)",
+    # DELIVERED reconnect dedup (find_delivered_by_client_msg) filters by
+    # client_msg_id + status='DELIVERED' + updated_at window and orders by
+    # updated_at DESC, id DESC. The partial UNIQUE above only covers ACTIVE
+    # rows, so DELIVERED was a full scan + sort (EXPLAIN verified).
+    "CREATE INDEX IF NOT EXISTS idx_uiq_client_delivered_updated "
+    "ON user_input_queue (client_msg_id, status, updated_at DESC, id DESC)",
 )
 
 _ACTIVE_STATUSES_SQL = "('QUEUED', 'CLAIMED')"

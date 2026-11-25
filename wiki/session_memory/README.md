@@ -64,6 +64,8 @@ Every row records `origin_session`, `usage_count` and `last_used`. The rendered 
 - **`agent/middlewares/summarization/compaction_lock.py`** — SQLite compaction lock (TTL self-healing, sync + async acquire, fail-open on timeout), wrapping both `_apply_compression` and `_aapply_compression`.
 - **`runtime/session/state_register.py`** — `ContextEpoch` lifecycle (initialize / prepare / replace / advance) over the `context_epoch` table.
 
+`message_search` has three scopes: with no query it lists recent **other** sessions (metadata only, no LLM cost); a query with the default `cross_session=False` searches only the **current** session, including messages removed by compaction; `cross_session=True` searches **all other** sessions in both keyword and `semantic: true` modes. The checkpoint fallback applies only to the default same-session path.
+
 ## Testing
 
 ```bash

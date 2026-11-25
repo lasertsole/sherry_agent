@@ -135,6 +135,49 @@ def test_dry_run_cli_with_local_task_tree(tmp_path: Path):
     assert "dry-run ok: demo-task" in completed.stdout
 
 
+def test_l1_ids_are_unique_and_experience_extraction_is_l1_only():
+    from evals.deepswe import suite
+
+    assert len(suite.L1_TASK_IDS) == 12
+    assert len(set(suite.L1_TASK_IDS)) == 12
+    assert suite.L1_TASK_IDS[0] == "actionlint-action-pinning-lint"
+    assert suite.L1_TASK_IDS[-1] == "pest-character-class-coalescing"
+
+    assert suite.is_l1_task(suite.L1_TASK_IDS[0]) is True
+    assert suite.is_l1_task("some-l2-task") is False
+    assert suite.resolve_experience_extraction(suite.L1_TASK_IDS[0], True) is True
+    assert suite.resolve_experience_extraction(suite.L1_TASK_IDS[0], False) is False
+    assert suite.resolve_experience_extraction("some-l2-task", True) is False
+
+
+def test_l1_cli_selects_only_the_12_task_set(tmp_path: Path):
+    from evals.deepswe import suite
+
+    for task_id in suite.L1_TASK_IDS:
+        _make_task(tmp_path / "tasks", task_id)
+    _make_task(tmp_path / "tasks", "l2-only-task")
+    env = {
+        **dict(os.environ),
+        "DEEPSWE_TASKS_DIR": str(tmp_path),
+        "SHERRY_EVAL_DEEPSWE_CHILD": "1",
+    }
+    repo = Path(__file__).resolve().parents[2]
+
+    completed = subprocess.run(
+        [sys.executable, "evals/deepswe/suite.py", "--l1", "--dry-run"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "dry-run ok: actionlint-action-pinning-lint" in completed.stdout
+    assert "dry-run ok: pest-character-class-coalescing" in completed.stdout
+    assert "l2-only-task" not in completed.stdout
+
+
 def test_runner_registers_both_suites():
     from evals.evals import SUITES
 

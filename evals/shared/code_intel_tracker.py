@@ -1,73 +1,29 @@
-"""Code-intel usage tracking (the plan's §7.4).
+"""Code-intel usage tracking for eval reports (the plan's §7.4).
 
-The code-intel tools (tree-sitter explore/callers/callees/impact/path, semantic
-search, the lsp_* family, ast-grep) are subagent-only in production; a benchmark
-run that spawns CODE_INTEL_ROLES children on a host with the binaries may use
-them, and the plan wants that usage counted. The tracker consumes what the
-harness already captures — per-task ``tool_names`` counters plus the session
-transcript for DEGRADED calls (a code-intel call whose ToolMessage carries an
-error mentions the missing binary / model) — and renders the plan's
-``code_intel_usage.json`` shape.
+The tool taxonomy (``CODE_INTEL_TOOLS`` / precise / greedy sets) and the
+degraded-call detector now come from the product analyzer — one source of
+truth. What stays here is the eval-only data shape: the harness feeds per-name
+counters via ``record_names``/``task_id`` (the product tracker reads the
+transcript instead), and the eval report pins the ``code_intel_usage.json``
+keys (``tool_calls``, ``degraded_calls`` as a count, ``code_intel_available``).
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
+
+from pub.func.session_report.code_intel_tracker import (
+    CODE_INTEL_TOOLS,
+    _GREEDY_TOOLS,
+    _PRECISE_TOOLS,
+    _is_degraded,
+)
 
 __all__ = ["CODE_INTEL_TOOLS", "CodeIntelTracker", "analyze_code_intel"]
 
-#: Every tool name the code-intel layer registers (agent/tools/code_intel/).
-CODE_INTEL_TOOLS: frozenset[str] = frozenset(
-    {
-        "explore",
-        "callers",
-        "callees",
-        "impact",
-        "path",
-        "semantic_code_search",
-        "lsp_goto_definition",
-        "lsp_find_references",
-        "lsp_workspace_symbol",
-        "lsp_call_hierarchy",
-        "lsp_hover",
-        "lsp_rename",
-        "lsp_diagnostics",
-        "lsp_format",
-        "ast_grep_search",
-        "ast_grep_replace",
-    }
-)
-
-_LSP_TOOLS = frozenset(name for name in CODE_INTEL_TOOLS if name.startswith("lsp_"))
-#: The tool calls the precise-retrieval side of the ratio counts.
-_PRECISE_TOOLS = _LSP_TOOLS | {"explore", "callers", "callees", "semantic_code_search"}
-#: The brute-force side it is compared against.
-_GREEDY_TOOLS = frozenset({"search_files", "read_file"})
-
-_DEGRADED_PATTERNS = (
-    re.compile(r"not installed|not found|unavailable|missing", re.IGNORECASE),
-    re.compile(r"lsp|language server", re.IGNORECASE),
-    re.compile(r"semantic|model", re.IGNORECASE),
-)
-
-
-def _is_degraded(tool: str, result_text: str) -> tuple[bool, str]:
-    """A code-intel call that came back with an error naming the missing
-    dependency. The tool result of a degraded call says WHY (the tool layer's
-    fail-open text), so a bounded prefix check is enough."""
-    head = (result_text or "")[:300].lower()
-    if "error" not in head and "unavailable" not in head and "not" not in head:
-        return False, ""
-    for pattern in _DEGRADED_PATTERNS:
-        match = pattern.search(head)
-        if match:
-            return True, match.group(0)
-    return False, ""
-
 
 class CodeIntelTracker:
-    """One task's code-intel usage."""
+    """One eval task's code-intel usage (harness counters + transcript)."""
 
     def __init__(self, task_id: str) -> None:
         self.task_id = task_id
@@ -99,7 +55,7 @@ class CodeIntelTracker:
                 self.degraded_reasons.append(f"{name}: {reason}")
 
     def payload(self) -> dict[str, Any]:
-        """The plan's code_intel_usage.json shape."""
+        """The eval report's code_intel_usage.json shape."""
         total = sum(self.tool_calls.values())
         precise = sum(count for name, count in self.tool_calls.items() if name in _PRECISE_TOOLS)
         ratio = (

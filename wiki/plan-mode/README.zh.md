@@ -4,7 +4,7 @@
 
 会话可以先设计、再执行：Agent 进入**计划模式**，只用只读工具工作，提交计划，在用户批准之前不写任何文件。直接冲向多文件改动正是容易走偏的路径，而用户连纠偏的机会都没有。
 
-事实来源：`agent/tools/plan_mode/`（两个工具 + 共享状态助手）、`agent/middlewares/plan_mode_gate/core.py`（白名单）、`workspace/prompt_builder.py::_build_plan_mode_block`（系统提醒）、`config/features/agent_side/plan_mode.py`（可调参数）。
+事实来源：`agent/tools/plan_mode/`（三个工具——enter、exit 与 `amend_intent`——以及共享状态助手和 `intent_anchor.py`）、`agent/middlewares/plan_mode_gate/core.py`（白名单）、`workspace/prompt_builder.py::_build_plan_mode_block`（系统提醒）、`config/features/agent_side/plan_mode.py`（可调参数）。
 
 ## 流程
 
@@ -36,7 +36,16 @@
 * **修改预算** —— `PLAN_MODE["max_mutations"]`（5）：每个计划最多 5 轮"退回修改"。超出后 `exit_plan_mode` 拒绝再提交，要求 Agent 请用户直接给出批准或拒绝。
 * **修订绑定** —— 审批绑定 `sha256(plan)[:16]`。若审批期间存储的修订号或计划**文件**发生变化，审批作废，计划必须重新提交。
 * **大小上限** —— `PLAN_MODE["max_plan_chars"]`（20000）；超长计划被拒绝并提示"压缩一下"，而不是截断。
-* **关闭开关** —— `PLAN_MODE["enabled"] = false` 时两个工具都不注册，其余行为不变。
+* **关闭开关** —— `PLAN_MODE["enabled"] = false` 时三个工具都不注册，其余行为不变。
+
+## 意图锚点——被批准计划的意图，而不只是它的文件
+
+批准不只是把状态翻到 `ready`。`exit_plan_mode` 会把计划的 `## Goal` / `## Scope`（`Must-have`、`Must-NOT-have`）/ `accept:` 条目解析成紧凑的**意图锚点**，双写到会话状态寄存器的 `StateKey.PLAN_INTENT_ANCHOR` 下。锚点是模型和验证器可检查的计划意图形式，并通过哈希绑定到批准的修订号（`sha256(plan)[:16]`）。
+
+* **搭载位置** —— `workspace/prompt_builder.py::_build_todo_block` 把锚点渲染在每轮 todo 提醒的顶部。因此它随工作计划一起到达模型、压缩后不丢，并作为整块（非逐条 todo）做哈希去重。它**不在**系统提示词中，因此不触碰 provider 前缀缓存。
+* **谁来检查** —— verify 门禁（见 [todolist enforcement](../long-running-tasks/todolist/enforcement/README.md)）要求 reviewer 对照锚点检查工作，并在报告中增加 `intent_match` / `intent_deviations`。verify todo 完成前，`plan_drifted()` 会重新哈希计划文件：若批准后未经 replan 就改动，则拒绝完成，Agent 必须调用 `enter_plan_mode(replan=True)`。
+* **受控修订** —— `amend_intent(goal, reason)` 允许模型直接纠正误读的目标（reason 必填且留痕），无需 HITL 或 reviewer 复核。它保持 `revision` / `source_ref` 不变，因此纠正后的意图不会被误判为计划漂移。
+* **生命周期** —— 锚点属于**一个** todo 列表。当该列表被清空或所有 todo 进入 `completed`/`cancelled` 时，todo 服务会清除锚点，避免旧意图泄漏到下一个任务。只要还有任意 todo（含 verify todo）处于活动态，锚点就保留。
 
 ## 用户看到的
 

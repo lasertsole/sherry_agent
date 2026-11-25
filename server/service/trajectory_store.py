@@ -87,6 +87,11 @@ _DDL_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_trajectory_session_turn "
     "ON trajectory_events(session_id, turn_id, seq)",
     "CREATE INDEX IF NOT EXISTS idx_trajectory_turn ON trajectory_events(turn_id, seq)",
+    # 2026-11-24 index audit: read(session_id) without a turn_id (the
+    # observability list) filters only session_id but ORDER BY seq. In
+    # (session_id, turn_id, seq) the seq column is separated by turn_id, so
+    # the planner could not use it for ordering and did a temp B-tree sort.
+    "CREATE INDEX IF NOT EXISTS idx_trajectory_session_seq ON trajectory_events(session_id, seq)",
 )
 
 #: Frames that become an event, and the kind each maps to.

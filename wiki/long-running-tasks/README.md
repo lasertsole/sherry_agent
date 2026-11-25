@@ -30,6 +30,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
 - [Judgement Gates](gates/README.md)
 - [Evidence Ledger](gates/evidence-ledger/README.md)
 - [Concurrency Lanes](lanes/README.md)
+- [WorkMode Sub-Mechanisms](workmode/README.md)
 - [Unreferenced-Flow Orphan GC](#-unreferenced-flow-orphan-gc)
 - [Dispatch Serialization & Idempotent Planning](#-dispatch-serialization--idempotent-planning)
 - [Configuration Registry](#-configuration-registry)

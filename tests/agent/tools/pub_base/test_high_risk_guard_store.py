@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 
 import pytest
 
@@ -190,3 +191,76 @@ def test_retention_expires_old_ops(tmp_path):
     store._last_purge = None  # force the next access to sweep
     store.list_keywords(SESSION)
     assert store.list_ops(SESSION) == []
+
+
+# --------------------------------------------------------------------------
+# Ledger lifecycle (in flight → committed / failed) + old-schema convergence
+# --------------------------------------------------------------------------
+
+
+def test_intent_commit_lifecycle(store):
+    store.record_intent(SESSION, "mcp__x__pay", {"amount": 1})
+    assert store.check_op(SESSION, "mcp__x__pay", {"amount": 1})["status"] == "in_flight"
+    assert store.check_blocking(SESSION, "mcp__x__pay", {"amount": 1})[0] == "in_flight"
+
+    store.commit_op(SESSION, "mcp__x__pay", {"amount": 1}, "paid")
+    row = store.check_op(SESSION, "mcp__x__pay", {"amount": 1})
+    assert row["status"] == "committed" and row["result_summary"] == "paid"
+    assert store.check_blocking(SESSION, "mcp__x__pay", {"amount": 1})[0] == "committed"
+
+
+def test_failed_rows_never_block_and_are_hidden_from_list_ops(store):
+    store.record_intent(SESSION, "mcp__x__pay", {"amount": 2})
+    store.mark_failed(SESSION, "mcp__x__pay", {"amount": 2})
+    assert store.check_blocking(SESSION, "mcp__x__pay", {"amount": 2}) is None
+    assert store.list_ops(SESSION) == []
+
+
+def test_a_previous_boot_in_flight_row_is_unknown(store, tmp_path):
+    store.record_intent(SESSION, "mcp__x__pay", {"amount": 3})
+    with sqlite3.connect(str(store.path)) as conn:
+        conn.execute("UPDATE high_risk_ops SET boot_id = 'other-boot'")
+        conn.commit()
+    assert store.check_blocking(SESSION, "mcp__x__pay", {"amount": 3})[0] == "unknown"
+
+
+def test_a_committed_row_survives_a_late_intent(store):
+    store.commit_op(SESSION, "mcp__x__pay", {"amount": 4}, "paid")
+    store.record_intent(SESSION, "mcp__x__pay", {"amount": 4})
+    row = store.check_op(SESSION, "mcp__x__pay", {"amount": 4})
+    assert row["status"] == "committed" and row["result_summary"] == "paid"
+
+
+def test_an_old_schema_file_gains_the_new_columns(tmp_path):
+    """An existing database keeps its rows: the ALTER is additive and guarded."""
+    path = tmp_path / "old_guard.db"
+    with sqlite3.connect(str(path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE high_risk_ops (
+                op_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                args_hash TEXT NOT NULL,
+                args_preview TEXT NOT NULL DEFAULT '',
+                result_summary TEXT NOT NULL DEFAULT '',
+                executed_at INTEGER NOT NULL,
+                UNIQUE(session_id, tool_name, args_hash)
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO high_risk_ops "
+            "(session_id, tool_name, args_hash, args_preview, result_summary, executed_at) "
+            "VALUES (?, 'mcp__old__call', ?, '{}', 'legacy', ?)",
+            (SESSION, args_hash("mcp__old__call", {"a": 1}), int(time.time())),
+        )
+        conn.commit()
+
+    store = HighRiskGuardStore(path=str(path))
+    # Any access converges the schema; a legacy row reads as committed.
+    store.list_keywords(SESSION)
+    row = store.check_op(SESSION, "mcp__old__call", {"a": 1})
+    assert row is not None and row["status"] == "committed"
+    store.record_intent(SESSION, "mcp__new__call", {"a": 2})
+    assert store.check_op(SESSION, "mcp__new__call", {"a": 2})["status"] == "in_flight"

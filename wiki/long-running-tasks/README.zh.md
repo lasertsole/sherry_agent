@@ -30,6 +30,7 @@
 - [判断门](gates/README.zh.md)
 - [证据账本](gates/evidence-ledger/README.zh.md)
 - [并发 Lane](lanes/README.zh.md)
+- [WorkMode 子机制](workmode/README.zh.md)
 - [无引用孤儿回收](#-无引用孤儿回收)
 - [派发串行化与幂等规划](#-dispatch-serialization--idempotent-planning)
 - [配置注册表](#-配置注册表)

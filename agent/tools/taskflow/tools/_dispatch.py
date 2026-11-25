@@ -21,6 +21,8 @@ import weakref
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from loguru import logger
+
 _DISPATCH_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
@@ -59,6 +61,7 @@ async def dispatch_child(
     step_persona: str | None = None,
     step_skills_whitelist: list[str] | None = None,
     step_goal_max_turns: int | None = None,
+    environment: dict | None = None,
 ) -> str:
     """Dispatch a detached child session and return its child_session_key.
 
@@ -75,6 +78,40 @@ async def dispatch_child(
     """
     from agent.tools.subagent import spawn_subagent_direct
 
+    # Task-level environment: prefer an explicit value, else read the owning
+    # flow's environment (WorkMode stage 5). Fail-open — a read error leaves
+    # the child without the block but never blocks dispatch.
+    if environment is None and flow_id:
+        try:
+            from agent.tools.taskflow.registry import store_sqlite
+
+            environment = store_sqlite.get_flow_environment_sync(flow_id)
+        except Exception:  # noqa: BLE001 - best-effort injection
+            logger.debug("taskflow environment read failed for flow {}", flow_id, exc_info=True)
+
+    # Reviewer subagents get a numbered PASS/FAIL acceptance checklist extracted
+    # from normative sentences in the task, so the self-check is clause-by-clause
+    # instead of free-form prose. Fail-open: extraction errors leave the task
+    # text untouched; only the reviewer role is affected. The eval-side wrapper
+    # checks for the ACCEPTANCE CHECKLIST label and skips its own injection when
+    # we have already added one (eval checklist stays authoritative).
+    if functional_role == "reviewer" and task:
+        try:
+            from config.features import TASKFLOW_INFRA
+
+            if TASKFLOW_INFRA.get("reviewer_checklist_enabled", True):
+                from agent.tools.taskflow.checklist_extractor import (
+                    ACCEPTANCE_CHECKLIST_LABEL,
+                    augment_task_with_checklist,
+                    extract_acceptance_checklist,
+                )
+
+                if ACCEPTANCE_CHECKLIST_LABEL not in task:
+                    clauses = extract_acceptance_checklist(task)
+                    task = augment_task_with_checklist(task, clauses)
+        except Exception:  # noqa: BLE001 - a bad extraction must not block dispatch
+            logger.debug("taskflow reviewer checklist extraction failed", exc_info=True)
+
     result = await spawn_subagent_direct(
         task=task,
         requester_session_key=requester_session_key,
@@ -90,6 +127,7 @@ async def dispatch_child(
         persona_prompt=step_persona,
         skills_whitelist=step_skills_whitelist,
         goal_max_turns=step_goal_max_turns,
+        environment=environment,
     )
     if result.status != "accepted" or not result.child_session_key:
         raise RuntimeError(f"status={result.status} error={result.error}")

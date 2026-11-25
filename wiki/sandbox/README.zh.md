@@ -68,7 +68,7 @@
 `get_backend(policy)` 的分发逻辑：
 
 1. `OFF` 立即返回 `None`：不探测、不导入、不碰子进程。
-2. 按 `platform.system()` 查平台注册表并由已注册工厂构造后端——Linux → `BwrapBackend`，macOS → `SeatbeltBackend`，Windows → `WinSandboxBackend`，三者都注册为**惰性导入**工厂（`ImportError` 视为"不可用"，绝不是崩溃）。没有注册工厂的平台没有后端。`register_sandbox_backend(system, factory)` 可新增/替换；重复注册默认拒绝（`replace=True` 才覆盖）。
+2. 按 `platform.system()` 查平台注册表并由已注册工厂构造后端。Linux 使用**组合工厂**：仅当 `BwrapBackend.probe()` 成功时返回 `BwrapBackend`，否则回退到 `LandlockBackend`（因此没有 `bwrap` 的精简容器仍能获得内核 LSM 沙箱，而不是完全无沙箱运行）。macOS → `SeatbeltBackend`，Windows → `WinSandboxBackend`，都注册为**惰性导入**工厂（`ImportError` 视为"不可用"，绝不是崩溃）。没有注册工厂的平台没有后端。`register_sandbox_backend(system, factory)` 可新增/替换；重复注册默认拒绝（`replace=True` 才覆盖）。
 3. 后端存在但 `probe()` 失败：`REQUIRED` 抛出 `RuntimeError("Required sandbox unavailable on {system}")`；`AUTO` / `OFF` 返回 `None`。
 
 ### 工具集成
@@ -134,7 +134,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 SHERRY_WIN_SANDBOX_MAX_PROCESSES=50     # Job Object ActiveProcessLimit（钳制到 1..10000）
 SHERRY_WIN_SANDBOX_MAX_MEMORY_MB=4096   # Job Object JobMemoryLimit（钳制到 64..1048576）
 SHERRY_WIN_SANDBOX_BLOCK_NETWORK=0      # 1 = 不授予 internetClient 能力（AppContainer 无网络）
-SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 只用第 1+3 层，沙箱 shell 恢复 Git Bash
+SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 只用受限令牌 + Job Object，沙箱 shell 恢复 Git Bash
 ```
 
 无法解析的取值会回退到默认值并记一条 WARNING。launcher 对每一层无法应用的限制都会带 Win32 错误码写到 stderr，命令仍照常运行（fail-open）。
@@ -154,7 +154,7 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 只用第 1+3 层，沙箱 shell �
 
 ### landlock 兜底（Linux，无 bwrap）
 
-`agent/tools/pub_base/sandbox_landlock.py` 是第二个 Linux 后端：bwrap 缺失时（精简容器、distroless 镜像），内核级 landlock LSM（Linux 5.13+）不需要任何外部二进制就能限制命令。规则是**允许清单**——系统树（`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`）只读，调用方的可写根与 `/dev/null` 可读写——因此 `~/.ssh` 等凭据目录被**默认排除**（比 bwrap 的遮挡更强，比"整个文件系统只读"更严格）。landlock 只能限制**调用进程自身**，所以 `wrap()` 返回一个启动器——`python -I -c <loader> -- <真实命令>`——先应用规则（ctypes，系统调用号 444-446，先 `PR_SET_NO_NEW_PRIVS`）再 `execvp` 真实命令；规则放在一个环境变量里，加载器会把它弹出。初始化失败以 126 退出：沙箱**失败即关闭**，与 `required` 下缺失 bwrap 一致。冻结构建与非 x86_64/aarch64 机器报告不支持，保持原派发。REFER（ABI v2）与 TRUNCATE（ABI v3）随内核扩展受控集合。测试：`tests/agent/tools/pub_base/test_sandbox_landlock.py`（probe/规则/工厂；真实系统调用路径需要 5.13+ 内核）。
+`agent/tools/pub_base/sandbox_landlock.py` 是第二个 Linux 后端：bwrap 缺失时（精简容器、distroless 镜像），内核级 landlock LSM（Linux 5.13+）不需要任何外部二进制就能限制命令。规则是**允许清单**——系统树（`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`）只读，调用方的可写根与 `/dev/null` 可读写——因此 `~/.ssh` 等凭据目录被**默认排除**（比 bwrap 的遮挡更强，比"整个文件系统只读"更严格）。landlock 只能限制**调用进程自身**，所以 `wrap()` 返回一个启动器——`python -I -c <loader> -- <真实命令>`——先应用规则（ctypes，系统调用号 444-446，先 `PR_SET_NO_NEW_PRIVS`）再 `execvp` 真实命令；规则放在一个环境变量里，加载器会把它弹出。初始化失败以 126 退出：沙箱**失败即关闭**，与 `required` 下缺失 bwrap 一致。冻结构建与非 x86_64/aarch64 机器报告不支持，保持原派发。REFER（ABI v2）与 TRUNCATE（ABI v3）随内核扩展受控集合。`probe()` 不只看 ABI 号：它会通过启动器真实 smoke-test 执行一次 `/bin/true`（与 bwrap 的 probe 一致）并缓存结果——因为嵌套/容器化主机可能暴露了 ABI，却在 `restrict_self` 之后拒绝 `execve`（seccomp/`no_new_privs` 相互作用）；此时它如实报告不可用，`AUTO` 策略下降级。该发行版布局中不存在的固定只读路径（如 usrmerge 下的 `/lib64`）会被跳过——为不存在的路径跳过允许清单规则不会扩大访问面。测试：`tests/agent/tools/pub_base/test_sandbox_landlock.py`（probe/规则/工厂，含 smoke-test 成功与 exec 被拒两条路径；真实系统调用路径需要 5.13+ 内核）。
 
 ## 🧪 测试
 
@@ -183,7 +183,7 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 只用第 1+3 层，沙箱 shell �
 - **Windows 上三层均已生效，但 shell 有一处刻意变化。** 每用户 AppContainer profile 给命令一个包 SID；launcher 在 `writable_roots` 上授予继承式写权限（新老文件都生效），并对 shell 与 venv 的基础解释器（读 `pyvenv.cfg` 的 `home`）授予读+执行，因此 venv 的 `python.exe` 仍可用。受限令牌移除全部特权，Job Object 限制进程/内存并在 launcher 死亡时杀掉整棵树，不授予 `internetClient` 能力即断网。真实端到端测试覆盖写/读围堵、网络开关、stdout/stderr/退出码、上限与 kill-on-close。**Git Bash（MSYS2）无法在 AppContainer 内启动**，因此受沙箱的 shell 是 `cmd.exe`——仅 POSIX 的语法（`;`、`$()`、`export`）在那里不可用；需要 Git Bash 就设 `SHERRY_WIN_SANDBOX_APPCONTAINER=0`（失去文件/网络围堵，保留受限令牌 + Job Object）。DACL 授权会持久留在被授权的根上（只有包 SID 获得读写），AppContainer profile 不会在运行期删除。
 - **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
 - **`python_repl` 没有对应的敏感文件正则。** terminal 专属门禁（[隔离 §3](isolation/README.zh.md#3-危险命令拦截仅-terminal)）不覆盖它；它的包装脚本限制内建（不含 `open`/`__import__`/`getattr`/`type`/`dir`/`vars`），并且 `pub_base/safe_exec.py` 会在子进程启动前拒绝 dunder 属性访问——这是一道不同且更窄的控制，读敏感环境仍需 OS 沙箱兜底。
-- **PTC 继承同一套后端的局限。** `execute_code` 在后端可用时用 L2 后端包装子进程，并静态拒绝自省逃逸（受限内建不含 `getattr`/`type`/`dir`/`vars`，且禁止 dunder 属性）；在 `SANDBOX_POLICY=auto` 且无可用后端时现在会**拒绝运行**（PTC 无 HITL 中间件，降级从来不是审批制的）——只有显式 `off` 才无沙箱运行；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net` 以保持 loopback RPC 桥可达；`terminal` 与 `python_repl` 仍使用私有网络命名空间。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
+- **PTC 继承同一套后端的局限。** `execute_code` 在后端可用时用 L2 后端包装子进程，并静态拒绝自省逃逸（受限内建不含 `getattr`/`type`/`dir`/`vars`，且禁止 dunder 属性）；在 `SANDBOX_POLICY=auto` 且无可用后端时现在会**拒绝运行**（PTC 无 HITL 中间件，降级从来不是审批制的）——只有显式 `off` 才无沙箱运行；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net` 以保持 loopback RPC 桥可达；Windows 上同一标志会抑制 `SHERRY_WIN_SANDBOX_BLOCK_NETWORK`（AppContainer 获得 `internetClient`），因此即使该变量设为 `1`，PTC 子进程仍保留出站网络——文件/读隔离不变；`terminal` 与 `python_repl` 仍使用私有网络命名空间。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
 - **降级路径在主路径上需审批，其余路径仅靠工具层。** `auto` + 无后端：主会话的 `terminal` / `python_repl` 先弹沙箱绕过卡再无沙箱执行；headless 回合自动拒绝；confirm-all 的卡片附带说明；YOLO 按设计绕过（激活时会记警告）。子代理链、后台图与 PTC 没有 HITL 中间件，因此在 `auto` 且无后端时会在启动前直接拒绝（`_deny_unsandboxed_degrade`）；只有显式 `off` 保留无沙箱路径。随包 `.env` 是 `auto`；需要硬保证请设 `required`，`SANDBOX_STRICT_BOOT=1` 还会拒绝启动。
 - **命令路径筛查是缓解层，不是屏障。** 它只拒绝**字面点名**硬拒路径（凭据/系统文件、YOLO 拒绝名单）的命令，其余一律交给沙箱；`base64 -d | sh`、用碎片拼出的变量、以及 `cd` + 相对路径都天然绕过它。真正的边界是 OS 沙箱。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。

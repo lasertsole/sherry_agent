@@ -147,6 +147,110 @@ def _parse_judge_response(raw: str) -> JudgeResult:
     return JudgeResult(StepVerdict.UNKNOWN, "judge parse failure (no usable verdict)", "")
 
 
+# ── Optional self-evaluation mode (WorkMode stage 3) ────────────────────────
+#
+# The default judge stays a three-value PASS/RETRY/BLOCK discriminator. A step
+# can OPT IN to scored self-evaluation (``self_evaluate=True`` with a min score
+# and a retry cap) for a finer quality gradient. This path is deliberately a
+# SEPARATE function/result type so the existing verdict contract is untouched.
+
+SELF_EVAL_SYSTEM_PROMPT = """\
+You are a strict reviewer scoring whether a subagent's result satisfies a task \
+step's acceptance criteria. You receive the step's task, its criteria, the \
+produced result, and verification evidence (test/lint/build status).
+
+Score the result from 1 to 10:
+- 9-10: fully satisfies the criteria, production-quality;
+- 7-8: satisfies the criteria with only minor gaps;
+- 4-6: partial work, meaningful gaps remain, fixable on retry;
+- 1-3: unsalvageable or wrong.
+
+Reply ONLY with one JSON object on one line:
+{"score": <integer 1-10>, "reason": "<one sentence>", "feedback": "<actionable guidance if score is low>"}
+"""
+
+
+class SelfEvalResult(NamedTuple):
+    """A scored self-evaluation. ``score is None`` means a judge outage."""
+
+    score: int | None
+    reason: str
+    feedback: str
+
+
+def _parse_self_eval_response(raw: str) -> SelfEvalResult:
+    """Parse a scored review; a missing/invalid score is an outage (None)."""
+    data = _load_json_object(raw)
+    if data is not None:
+        try:
+            score = int(data.get("score"))
+        except (TypeError, ValueError):
+            score = -1
+        if 1 <= score <= 10:
+            return SelfEvalResult(
+                score, str(data.get("reason") or ""), str(data.get("feedback") or "")
+            )
+    logger.warning("StepJudge self-eval: no usable score in response")
+    return SelfEvalResult(None, "self-eval parse failure (no usable score)", "")
+
+
+def _clip_for_judge(text: str, limit: int | None = None) -> str:
+    """Clip a long result head+tail so its CONCLUSION survives the budget.
+
+    A plain head slice hid exactly what many judge criteria ask for: the
+    "dependency-ordered implementation plan" / final verdict lives at the END of
+    a long report. The middle is dropped with a visible marker so the judge
+    knows the text was clipped.
+    """
+    budget = int(limit if limit is not None else STEP_JUDGE["max_result_chars"])
+    if budget <= 0 or len(text) <= budget:
+        return text
+    marker = "\n\n[... middle omitted for the judge ...]\n\n"
+    head = (budget * 7) // 10
+    tail = budget - head - len(marker)
+    if tail <= 0:
+        return text[:budget]
+    return text[:head] + marker + text[-tail:]
+
+
+async def judge_step_self_eval(
+    step_task: str,
+    criteria: str | None,
+    result_text: str,
+    evidence_summary: str | None = None,
+    structured_result: dict | None = None,
+) -> SelfEvalResult:
+    """Score a step result 1-10 for the opt-in self-evaluation mode.
+
+    Mirrors :func:`judge_step_result`'s LLM call and truncation so the two modes
+    stay behaviourally aligned; an outage returns ``score=None`` (never a fake
+    passing score), which the consumer treats like a judge UNKNOWN.
+    """
+    if structured_result is not None:
+        judged_text = json.dumps(structured_result, ensure_ascii=False, default=str)
+    else:
+        judged_text = result_text or ""
+    prompt = _build_judge_prompt(
+        step_task,
+        criteria,
+        _clip_for_judge(judged_text),
+        evidence_summary if STEP_JUDGE["evidence_aware"] else None,
+    )
+    try:
+        llm = build_taskflow_llm(temperature=0)
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": SELF_EVAL_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        raw = response.content if hasattr(response, "content") else str(response)
+        return _parse_self_eval_response(str(raw))
+    except Exception as exc:  # noqa: BLE001 - the judge-outage boundary
+        logger.warning("StepJudge self-eval failed (outage): {}", exc)
+        return SelfEvalResult(None, f"self-eval error (outage): {exc}", "")
+
+
 async def judge_step_result(
     step_task: str,
     criteria: str | None,
@@ -171,7 +275,7 @@ async def judge_step_result(
     prompt = _build_judge_prompt(
         step_task,
         criteria,
-        judged_text[: int(STEP_JUDGE["max_result_chars"])],
+        _clip_for_judge(judged_text),
         evidence_summary if STEP_JUDGE["evidence_aware"] else None,
     )
     try:

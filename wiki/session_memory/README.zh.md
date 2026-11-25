@@ -64,6 +64,8 @@ SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev 
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 压缩锁（TTL 自愈、同步 + 异步获取、超时 fail-open），包裹 `_apply_compression` 与 `_aapply_compression` 两条路径。
 - **`runtime/session/state_register.py`** —— `ContextEpoch` 生命周期（initialize / prepare / replace / advance），基于 `context_epoch` 表。
 
+`message_search` 有三种范围：不带 query 时只列出最近的**其他** session（仅元数据，零 LLM 成本）；带 query 且默认 `cross_session=False` 时只搜**当前** session，包括被压缩移除的消息；`cross_session=True` 则在关键词模式和 `semantic: true` 模式下搜**其他所有** session。checkpoint 兜底只适用于默认的同 session 路径。
+
 ## 测试
 
 ```bash

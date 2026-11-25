@@ -405,7 +405,11 @@ def test_get_all_flows_sync_filters_are_session_scoped(isolated_db: Path):
     assert [f["flow_id"] for f in store_sqlite.get_all_flows_sync(_SESSION, "active")] == [
         "flow-run"
     ]
-    assert [f["flow_id"] for f in store_sqlite.get_all_flows_sync(_SESSION, "all")] == [
+    # Session scoping is the contract here. Both flows share INITIAL_REVISION,
+    # so their ORDER BY expected_revision DESC tie-break is unspecified (the
+    # 2026-11 session/revision index yields rowid order); the sort-free ordering
+    # property is locked separately by the index audit tests.
+    assert sorted(f["flow_id"] for f in store_sqlite.get_all_flows_sync(_SESSION, "all")) == [
         "flow-done",
         "flow-run",
     ]

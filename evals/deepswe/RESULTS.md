@@ -1,8 +1,9 @@
 # DeepSWE 本地模式运行记录
 
 > **历史存档（2026-11-22）**：`--local` 模式（`evals/deepswe/local.py`）已随容器
-> 路径在 podman 下的打通而删除；本文件保留其历史测量，不再更新。现行容器模式的
-> 运行结果记录在各自的 `evals/results/deepswe/<run_id>/`。
+> 路径在 podman 下的打通而删除；本文件保留其历史测量，不再更新。现行容器模式
+> 的结果汇总在 `wiki/evals/`（前 14 题实测表），逐次运行的原始数据留在各自的
+> `evals/results/deepswe/<run_id>/`。
 
 本文件记录 `--local` 模式的真实运行结果。报告和补丁在 gitignored 的
 `evals/results/deepswe-local/<run_id>/`；任务 checkout 在

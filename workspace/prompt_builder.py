@@ -12,6 +12,7 @@ from config import WORKSPACE_DIR
 from config.path import resolve_boulder_path, resolve_plan_path
 from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
+from workspace.intent_anchor_view import format_intent_anchor, read_intent_anchor
 
 if TYPE_CHECKING:
     from runtime.data_provider import PromptDataProvider
@@ -87,7 +88,21 @@ def _build_todo_block(session_id: str) -> str:
         todos = _read_todos_sync(session_id)
         if not todos:
             return ""
+        # The approved plan's INTENT rides with the working plan: without this,
+        # the model sees only tasks ("patch step_judge.py") and can drift away
+        # from the goal ("judge outage must fail closed") unnoticed. Read is
+        # guarded separately so a broken anchor never drops the todo list.
+        anchor_text = ""
+        try:
+            anchor = read_intent_anchor(session_id)
+            if anchor:
+                anchor_text = format_intent_anchor(anchor)
+        except Exception as error:  # noqa: BLE001 - advisory, never load-bearing
+            logger.debug("prompt builder: intent anchor read failed ({})", error)
         lines = ["## Current Todo List"]
+        if anchor_text:
+            lines.append(anchor_text)
+            lines.append("")
         for todo in todos:
             icon = _TODO_ICONS.get(todo.get("status", ""), "○")
             tag_parts = [todo.get("category") or "quick"]

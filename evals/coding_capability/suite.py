@@ -56,6 +56,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from evals.coding_capability import tasks  # noqa: E402
 from evals.coding_capability.tasks import TASKS, Task  # noqa: E402
+from evals.shared.eval_iteration_budget import (  # noqa: E402
+    eval_main_max_iterations,
+    pin_eval_budget,
+)
+from evals.shared.eval_session import set_session_yolo  # noqa: E402
+from evals.shared.eval_temperature import pin_eval_temperature  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
 #: Below this pass rate the suite exits non-zero (the threshold rule).
@@ -124,41 +130,10 @@ EVAL_TEMPERATURE = 0.0
 EVAL_MAX_ITERATIONS = int(os.getenv("SHERRY_EVAL_MAX_ITERATIONS", "0") or 0)
 
 
-def pin_eval_budget() -> None:
-    """Raise the main agent's model-call budget when the arm asks for it."""
-    if EVAL_MAX_ITERATIONS <= 0:
-        return
-    from config.features import ITERATION_BUDGET
-
-    ITERATION_BUDGET["main_agent_max_iterations"] = EVAL_MAX_ITERATIONS
-
-
-def eval_main_max_iterations() -> int:
-    """The main agent's effective model-call ceiling in this process."""
-    from config.features import ITERATION_BUDGET
-
-    return int(ITERATION_BUDGET["main_agent_max_iterations"])
-
-
-def pin_eval_temperature() -> None:
-    """Force ``server.service.messages.built_agent`` to build at temperature 0.
-
-    Patched at the module seam rather than changing the product default: the
-    server keeps its persona temperature, while every eval turn (including a
-    HITL resume) rebuilds the graph through this wrapper.
-    """
-    import server.service.messages as messages
-
-    original = messages.built_agent
-    if getattr(original, "_sherry_eval_temperature_pin", False):
-        return
-
-    async def _pinned(*args, **kwargs):
-        kwargs["temperature"] = EVAL_TEMPERATURE
-        return await original(*args, **kwargs)
-
-    _pinned._sherry_eval_temperature_pin = True  # type: ignore[attr-defined]
-    messages.built_agent = _pinned
+# ``pin_eval_budget`` / ``pin_eval_temperature`` / ``eval_main_max_iterations``
+# now come from ``evals.shared`` — every coding-benchmark suite pins the same
+# deterministic decoding and reads the same env override. The constants below
+# stay module-local for the report and the explicit opt-in call site.
 
 
 # ── Entry point ─────────────────────────────────────────────────────────────
@@ -221,8 +196,8 @@ def _run(selected: list[Task], *, update_baseline: bool, skip_self_check: bool) 
     # Pin after the workspace override and config hydration: importing
     # ``server.service.messages`` too early would freeze WORKSPACE_DIR onto the
     # live persona directory, defeating the sandbox isolation.
-    pin_eval_budget()
-    pin_eval_temperature()
+    pin_eval_budget(EVAL_MAX_ITERATIONS)
+    pin_eval_temperature(EVAL_TEMPERATURE)
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(
@@ -489,8 +464,6 @@ async def _bind_session(session_id: str, repo: Path) -> None:
     for register in (state_register_mem, state_register_db):
         register.set_state(session_id, StateKey.PROJECT_DIR, str(repo))
 
-    from agent.middlewares.humanInTheLoop.approval import set_session_yolo
-
     set_session_yolo(session_id)
 
     # Pin the thinking switch to the shipped default (reasoning OFF, see
@@ -600,18 +573,20 @@ async def _drive(
 
 
 async def _session_tokens(session_id: str) -> dict[str, int]:
+    """Fold one session's ``usage_metadata`` (thin async shell over the product fn).
+
+    The transcript read stays here (async, eval side); the usage folding is the
+    product's ``pub.func.session_report.token_tracker.session_tokens`` so the
+    two copies cannot drift. Eleven suites alias this as ``harness._session_tokens``.
+    """
     from agent.state_port import read_messages
+    from pub.func.session_report.token_tracker import session_tokens
 
     try:
         messages = await read_messages(session_id)
     except Exception:  # noqa: BLE001 — token accounting is reported, never fatal
         return {}
-    input_tokens = output_tokens = 0
-    for message in messages:
-        usage = getattr(message, "usage_metadata", None) or {}
-        input_tokens += int(usage.get("input_tokens") or 0)
-        output_tokens += int(usage.get("output_tokens") or 0)
-    return {"input": input_tokens, "output": output_tokens}
+    return session_tokens(messages)
 
 
 # ── Report, persona evidence, baseline ──────────────────────────────────────

@@ -23,7 +23,6 @@ approval.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any, override
 
@@ -37,6 +36,12 @@ from langgraph.types import interrupt
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from agent.tools.plan_mode.intent_anchor import (
+    clear_intent_anchor,
+    parse_intent_anchor,
+    revision_of,
+    write_intent_anchor,
+)
 from agent.tools.plan_mode.state import (
     PLAN_ACTIVE_STATUSES,
     PLAN_MODE,
@@ -69,7 +74,7 @@ _PLAN_TEMPLATE = (
 
 
 def _revision_of(plan: str) -> str:
-    return hashlib.sha256(plan.encode("utf-8")).hexdigest()[:16]
+    return revision_of(plan)
 
 
 class ExitPlanModeInput(BaseModel):
@@ -228,6 +233,12 @@ class ExitPlanModeTool(BaseTool):
         message = str(decision.get("message") or "").strip()
         if decision_type in ("approve", "yolo"):
             set_plan_state(session_id, status=PLAN_STATUS_READY, mutation_count=0)
+            # Bind the approved INTENT, not just the file: from now on every
+            # turn's todo reminder carries this anchor and verify checks drift.
+            write_intent_anchor(
+                session_id,
+                parse_intent_anchor(plan, revision=revision, source_ref=path),
+            )
             logger.info("exit_plan_mode: plan {} approved for {}", revision, session_id or "-")
             where = f" It is saved at {path} for later reference." if path else ""
             return (
@@ -239,12 +250,14 @@ class ExitPlanModeTool(BaseTool):
         if message:
             mutations += 1
             set_plan_state(session_id, status=PLAN_STATUS_PLANNING, mutation_count=mutations)
+            clear_intent_anchor(session_id)
             return (
                 f'User requested changes: "{message}". Revise the plan and call '
                 f"exit_plan_mode again (revision {mutations}/{budget} of the "
                 "mutation budget)."
             )
         set_plan_state(session_id, status=PLAN_STATUS_IDLE, mutation_count=0)
+        clear_intent_anchor(session_id)
         return (
             "User rejected the plan. Decide whether to keep exploring in plan "
             "mode (call enter_plan_mode again) or to stop."

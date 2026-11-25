@@ -178,16 +178,17 @@ class TodoService:
 
 ```python
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
-    from runtime import relation_register
-    ws = relation_register.get_websocket_by_session_id(session_id)
-    if ws:
-        await ws.send_text(json.dumps({
+    _sync_intent_anchor(session_id, todos)   # plan ended -> clear the anchor
+    try:
+        await broadcast_to_session(session_id, {
             "event": "todo_updated", "session_id": session_id,
             "content": {"todos": todos}
-        }))
+        }, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Failed to push todo_updated for session {}: {}", session_id, e)
 ```
 
-`relation_register`의 직접 전송 패턴을 재사용하여 `todo_updated` 이벤트를 푸시합니다.
+`_push_todo_update`는 **모든** todo 쓰기(update/add/patch/remove/complete/cancel/reattach)의 유일한 수렴 지점이며, 이제 **앵커 라이프사이클**도 담당합니다. 목록이 비거나 모든 todo가 종료 상태(`completed`/`cancelled`)가 되면 `_sync_intent_anchor`가 `StateKey.PLAN_INTENT_ANCHOR`를 삭제하여 완료된 계획의 의도가 다음 작업으로 새지 않게 합니다. verify todo를 포함해 todo가 하나라도 활성 상태이면 앵커는 유지됩니다. verify 드리프트 게이트 `plan_drifted`([E4](enforcement/README.md#e4-transition-barrier--dual-insurance) 참조)는 이 쓰기 **전에** 실행되므로 정리가 게이트를 해제하지 않습니다.
 
 ---
 
@@ -327,7 +328,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 
 | Block                      | 데이터 소스       | 컨텍스트 비용 | 설명                                              |
 | -------------------------- | ----------------- | ------------- | ------------------------------------------------- |
-| `_build_todo_block()`      | registry.db          | ~10행         | 현재 todo 리스트 + 상태 + TaskFlow flow/step 연결 |
+| `_build_todo_block()`      | registry.db + `StateKey.PLAN_INTENT_ANCHOR` | ~10행 | 인텐트 앵커(승인된 경우) + 현재 todo 리스트 + 상태 + TaskFlow flow/step 연결 |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5행          | 활성 작업 상태                                    |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
@@ -335,27 +336,50 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 
 ```python
 def _build_todo_block(session_id: str) -> str:
-    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-    todos = get_todos_sync(session_id)
+    todos = _read_todos_sync(session_id)
     if not todos:
         return ""
+    # The approved plan's INTENT rides with the working plan; guarded so a
+    # broken anchor can never drop the todo list itself.
+    anchor_text = ""
+    try:
+        anchor = read_intent_anchor(session_id)   # workspace.intent_anchor_view
+        if anchor:
+            anchor_text = format_intent_anchor(anchor)
+    except Exception as error:
+        logger.debug("prompt builder: intent anchor read failed ({})", error)
     lines = ["## Current Todo List"]
-    for t in todos:
-        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
-        tag_parts = [t.get("category", "quick")]
-        if t.get("delegation", "self") != "self":
-            tag_parts.append(t["delegation"])
-        if t.get("flow_id"):
-            tag_parts.append(f"flow:{t['flow_id']}")
-        if t.get("step_id"):
-            tag_parts.append(t["step_id"])
-        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("todowrite의 patch/add/remove 로컬 작업을 우선하고, 전체 재작성일 때만 replace를 사용하세요.")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
-    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
-    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    if anchor_text:
+        lines.append(anchor_text)                  # Goal / Must-have / Must-NOT-have / Accept
+        lines.append("")
+    for todo in todos:
+        icon = _TODO_ICONS.get(todo.get("status", ""), "○")
+        tag_parts = [todo.get("category") or "quick"]
+        delegation = todo.get("delegation")
+        if delegation and delegation != "self":
+            tag_parts.append(delegation)
+        if todo.get("flow_id"):
+            tag_parts.append(f"flow:{todo['flow_id']}")
+        if todo.get("step_id"):
+            tag_parts.append(todo["step_id"])
+        tag = f"({', '.join(tag_parts)})"
+        todo_id = todo.get("todo_id")
+        id_prefix = f"#{todo_id} " if todo_id else ""
+        lines.append(f"- [{icon}] {id_prefix}{tag} {todo['content']} ({todo.get('priority') or 'medium'})")
+        notes = str(todo.get("notes") or "").strip()
+        if notes:
+            lines.append(f"  notes: {notes[:300]}")
+    lines.append(
+        "Your todo list is tracked by the continuation system. "
+        "Incomplete todos will trigger automatic continuation."
+    )
+    lines.append(
+        "Completion is verified by the Sisyphus contract — unverified claims will be rejected."
+    )
     return "\n".join(lines)
 ```
+
+인텐트 앵커는 **하나의 블록**으로 렌더링되며(블록 전체 해시 중복 제거, todo 단위 아님), 시스템 프롬프트에 없어(프리픽스 캐시 안전) 압축 후 다시 주입됩니다(reminder catalog의 해시 상태가 초기화되기 때문). 이를 검사하는 verify 게이트는 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance), 플랜 모드 측은 [플랜 모드 §인텐트 앵커](../../plan-mode/README.ko.md#인텐트-앵커--승인된-계획의-파일이-아닌-의도를-보관)를 참조하세요.
 
 ### omo의 5층 방어보다 경량인 이유
 

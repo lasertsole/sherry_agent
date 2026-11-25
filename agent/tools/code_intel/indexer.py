@@ -114,6 +114,18 @@ _SCHEMA: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_mixins_host ON mixin_edges(host_id)",
     "CREATE INDEX IF NOT EXISTS idx_mixins_mixin ON mixin_edges(mixin_id)",
     "CREATE INDEX IF NOT EXISTS idx_mixins_name ON mixin_edges(mixin_name)",
+    # 2026-11-24 index audit: query.resolve_symbol uses `lower(name) = ?`
+    # (exact, case-insensitive) — the plain idx_symbols_name cannot serve the
+    # expression, so it degraded to a full index scan. Expression index fixes
+    # it; `lower(name) LIKE '%x%'` still needs FTS5 (out of scope here).
+    "CREATE INDEX IF NOT EXISTS idx_symbols_name_lower ON symbols(lower(name))",
+    # The incremental resolve pass runs `WHERE resolved = 0` on all three
+    # named edge tables; call_edges has idx_edges_resolved but these did not,
+    # so every incremental index paid three full scans. Partial indexes match
+    # the pass exactly (resolved=0 rows are a small minority).
+    "CREATE INDEX IF NOT EXISTS idx_imports_resolved ON import_edges(resolved) WHERE resolved = 0",
+    "CREATE INDEX IF NOT EXISTS idx_inherits_resolved ON inherit_edges(resolved) WHERE resolved = 0",
+    "CREATE INDEX IF NOT EXISTS idx_mixins_resolved ON mixin_edges(resolved) WHERE resolved = 0",
     # One row of index-level metadata (the shadow-git watermark). A separate
     # table avoids widening index_meta and therefore needs no migration.
     """

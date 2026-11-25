@@ -24,6 +24,12 @@ class TodoListInfraConfig(TypedDict):
     #: replacement (defense in depth behind ``orphan_flow_on_drop``).
     trigger_sweep_after_replace: bool
     stagnation_max_stagnation: int
+    #: Consecutive continuation turns whose WORKING-TREE DIFF hash is unchanged
+    #: (and no step child is in flight) before the gate stops. Complements
+    #: ``stagnation_max_stagnation`` (which watches the plan TEXT): a model can
+    #: keep editing todos while never changing the code — diff stagnation
+    #: catches that shape.
+    diff_stagnation_threshold: int
     stagnation_base_cooldown_s: float
     stagnation_max_cooldown_s: float
     stagnation_failure_reset_window_s: int
@@ -54,6 +60,12 @@ class TodoListInfraConfig(TypedDict):
     #: How many reviewer links a verify todo may replace before the gate offers
     #: the exhausted escape (cancel + verify yourself).
     max_verify_respawns: int
+    #: Max seconds to wait at verify completion for in-flight TaskFlow step
+    #: children to settle (their edits may still be writing to disk after the
+    #: step reports done). Bounded: a child that never settles gets a warning
+    #: injected instead of blocking completion forever. Eval uses 180 s; the
+    #: product keeps 30 s — children normally flush in a few seconds.
+    verify_settle_wait_s: float
 
 
 TODOLIST_INFRA: TodoListInfraConfig = {
@@ -63,6 +75,7 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     "orphan_flow_on_drop": "refuse",
     "trigger_sweep_after_replace": True,
     "stagnation_max_stagnation": 3,
+    "diff_stagnation_threshold": 2,
     "stagnation_base_cooldown_s": 2.0,
     "stagnation_max_cooldown_s": 60.0,
     "stagnation_failure_reset_window_s": 300,
@@ -77,4 +90,5 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     "max_continuation_turns": 15,
     "verify_todo_enabled": True,
     "max_verify_respawns": 2,
+    "verify_settle_wait_s": 30.0,
 }

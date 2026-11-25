@@ -60,6 +60,7 @@ LDW 脚本把 `PLAN_KEY`、`REQUIRED_AGENT_TYPES` 和 `WORKFLOW_META` 存为 Pyt
 
 - `register_roster(meta, session_id)` 按**每个 step 一个 builder** 注册。builder 让 LDW 能请求绑定 schema 的 runnable；`agent_type` 里的 step 后缀让 journal 和 PTC 查找保持 step 级隔离。
 - leaf 复用真实 child 契约：`_assemble_child_tools` 应用角色 allow-list，并注入 code intelligence、ast-grep 和仅 executor 的 PTC。session id 通过 runnable config 传递，绝不烘进共享图。
+- leaf 图**没有中间件链**，所以它的工具面由 `guarded_face.guarded_tool_face` 包装：每次调用在执行前都走与 `ToolGuardrails` 相同的高危判定表（操作账本、关键字注册表、已记录审批），成功的账本类调用会入账。包装器逐字保留每个工具的 `name` / `description` / `args_schema` / `metadata`，因此角色策略、结构化输出与 PTC 工具映射都不变；普通工具在元数据处短路。拒绝会作为工具结果文本返回，使该 step 失败，由既有 auto-degrade 交给 TaskFlow——在那里普通子代拥有完整审批流程。`HIGH_RISK_GUARD["replay_path_gate_enabled"]`（默认 true）可关闭包装。注意 PTC 预跑拿到的是**原始**工具列表：它内部调用改由 PTC RPC 分发加闸。
 - leaf 的模型遵循角色 tier 和 `step_model` 覆盖。带 schema 的 leaf 强制关闭 thinking，与 child agent 结构化输出的最后一级一致。
 - journal miss 时，executor leaf 可能先用 `run_ptc` 执行该 step 的 PTC 脚本。PTC 失败会追加 `[PTC Pre-run Progress]` 并继续 ReAct；PTC 的 schema miss 是失败，绝不当作成功。
 - `SRC_DIR/data/workflow_runs.db` 上的 `SqliteWorkflowStore` 支持跨进程恢复。相同 prompt / agent_type / model / schema 的重复重放直接返回 journal 结果，leaf 调用为零。每次结果会报告 `journal_hits` 和 `leaf_calls`。

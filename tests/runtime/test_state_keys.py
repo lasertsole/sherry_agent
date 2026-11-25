@@ -121,6 +121,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "PLAN_REVISION": "plan_revision",
     "PLAN_MUTATION_COUNT": "plan_mutation_count",
     "PLAN_FILE_PATH": "plan_file_path",
+    "PLAN_INTENT_ANCHOR": "plan_intent_anchor",
 }
 
 

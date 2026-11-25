@@ -231,6 +231,10 @@
           </div>
         </section>
       </template>
+
+      <!-- Post-task run report (token / hit-rate / code-intel). Self-contained:
+           fetched on mount, collapsible, independent of this tab's data. -->
+      <SessionReport />
     </div>
   </div>
 </template>
@@ -239,6 +243,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from 'vue-i18n';
+import SessionReport from '~/components/chat/SessionReport.vue';
 
 import { useRoute } from 'vue-router';
 

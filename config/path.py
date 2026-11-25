@@ -219,6 +219,11 @@ PLUGIN_SKILLS_DIR = USER_SKILLS_DIR / "plugins"
 #: (``APP_HOME/experts/<name>.json``) — one JSON file per expert, shared by
 #: every team and meeting that references it by name.
 EXPERTS_DIR = APP_HOME / "experts"
+#: Reusable TaskFlow PLAN structures (WorkMode stage 4): one JSON per template
+#: (``APP_HOME/taskflow_templates/<name>.json``). Holds the step decomposition
+#: (ids/tasks/deps/roles/criteria) WITHOUT runtime results or session keys —
+#: distinct from PTC/LDW replay, which reuses an EXECUTION sequence.
+TASKFLOW_TEMPLATES_DIR = APP_HOME / "taskflow_templates"
 SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
 #: Loader cache (written on every scan) — writable by definition.
 SKILLS_SNAPSHOT_FILE = USER_SKILLS_DIR / "skills_snapshot.json"

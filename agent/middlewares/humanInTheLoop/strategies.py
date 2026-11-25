@@ -557,8 +557,12 @@ class HighRiskKeywordApprovalHandler(ToolApprovalHandler):
     """
 
     def matches(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
+        from agent.tools.pub_base.high_risk_gate import guard_enabled
         from agent.tools.pub_base.high_risk_policy import should_scan_keywords_by_name
 
+        if not guard_enabled():
+            # The whole guard is switched off: no card, no ledger refusal.
+            return False
         return should_scan_keywords_by_name(str(tool_call.get("name", "")))
 
     def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:

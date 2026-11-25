@@ -23,6 +23,8 @@ _TABLE = "user_input_queue"
 _SESSION_INDEX = "idx_user_input_queue_session"
 _UNIQUE_INDEX = "uq_user_input_queue_client_msg_active"
 _COMPOSITE_INDEX = "idx_user_input_queue_session_status"
+_CLAIM_ORDER_INDEX = "idx_uiq_claim_order"
+_DELIVERED_INDEX = "idx_uiq_client_delivered_updated"
 
 # The pre-audit index set, frozen: reproducing an old database must not drift
 # with the source's current _CREATE_INDEX_SQLS.
@@ -132,7 +134,11 @@ async def test_query_plans_use_composite_index(tmp_path: Path):
     _seed_rows(db_path)
 
     claim_plan = _plan(db_path, queue_module._CLAIM_NEXT_SQL, (0.0, "sess-0", 0.0))
-    assert _COMPOSITE_INDEX in claim_plan, claim_plan
+    # 2026-11-24: the claim-order index extends (session_id, status) with the
+    # ORDER BY columns, so SQLite now prefers it. Either index is a correct
+    # plan; the stronger "no temp B-tree" property is locked in the dedicated
+    # test below.
+    assert _COMPOSITE_INDEX in claim_plan or _CLAIM_ORDER_INDEX in claim_plan, claim_plan
 
     count_plan = _plan(
         db_path,
@@ -140,7 +146,9 @@ async def test_query_plans_use_composite_index(tmp_path: Path):
         f"WHERE session_id = ? AND status IN {queue_module._ACTIVE_STATUSES_SQL}",
         ("sess-0",),
     )
-    assert _COMPOSITE_INDEX in count_plan, count_plan
+    # 2026-11-24: the claim-order index is also covering for this count and
+    # may be preferred; either composite index is a valid covering plan.
+    assert _COMPOSITE_INDEX in count_plan or _CLAIM_ORDER_INDEX in count_plan, count_plan
 
     list_plan = _plan(
         db_path,
@@ -149,4 +157,49 @@ async def test_query_plans_use_composite_index(tmp_path: Path):
         "ORDER BY created_at ASC, id ASC",
         ("sess-0",),
     )
-    assert _COMPOSITE_INDEX in list_plan, list_plan
+    # 2026-11-24: claim-order index also satisfies this ORDER BY and can be
+    # preferred by the planner; either composite index is a valid plan.
+    assert _COMPOSITE_INDEX in list_plan or _CLAIM_ORDER_INDEX in list_plan, list_plan
+
+
+def test_claim_order_index_removes_the_sort(tmp_path: Path):
+    """2026-11-24 audit: index use alone was not enough — the sort must go too.
+
+    The 2026-09 test above only asserted the composite index is picked, so a
+    `USE TEMP B-TREE FOR ORDER BY` on the priority/created_at claim order went
+    unnoticed. This test locks the stronger property.
+    """
+    db_path = tmp_path / "uiq.db"
+    store = UserInputQueue(db_path=db_path)
+    import asyncio
+
+    asyncio.run(store.count_active("warm"))  # one-time schema init
+    _seed_rows(db_path)
+
+    names = _index_names(db_path)
+    assert _CLAIM_ORDER_INDEX in names, names
+
+    plan = _plan(db_path, queue_module._CLAIM_NEXT_SQL, (0.0, "sess-0", 0.0))
+    assert _CLAIM_ORDER_INDEX in plan, plan
+    assert "USE TEMP B-TREE FOR ORDER BY" not in plan, plan
+
+
+def test_delivered_lookup_uses_index_without_sort(tmp_path: Path):
+    """DELIVERED reconnect dedup must not fall back to a full scan + sort."""
+    db_path = tmp_path / "uiq.db"
+    store = UserInputQueue(db_path=db_path)
+    import asyncio
+
+    asyncio.run(store.count_active("warm"))
+    _seed_rows(db_path)
+
+    assert _DELIVERED_INDEX in _index_names(db_path)
+
+    plan = _plan(
+        db_path,
+        queue_module._FIND_DELIVERED_BY_CLIENT_MSG_SQL,
+        ("client-0", 0.0),
+    )
+    assert _DELIVERED_INDEX in plan, plan
+    assert "SCAN user_input_queue" not in plan, plan
+    assert "USE TEMP B-TREE FOR ORDER BY" not in plan, plan

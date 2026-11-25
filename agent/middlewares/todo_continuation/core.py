@@ -48,9 +48,12 @@ enforcer can never break a turn.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -118,6 +121,26 @@ Review the block reasons in the board and pick one action per blocked step:
 {todo_status}
 {flow_status}"""
 
+# Wait-only directive: TaskFlow step children are in flight (dispatched/ready).
+# The ordinary continuation says "continue working on the next pending task",
+# which invites the model to declare completion or open new work while a child
+# is still writing its result. This directive narrows the decision to the one
+# action that is meaningful now — wait for the children and process their
+# results. The board footer (``_build_flow_block``) already names wait_all +
+# resume; this prompt makes waiting the whole instruction instead of a footnote.
+_WAIT_ONLY_PROMPT = """[SYSTEM DIRECTIVE: STEPS IN FLIGHT]
+
+Your plan is NOT finished — TaskFlow step children are still running.
+Call `taskflow_step(action='wait_all')` now to wait for the in-flight steps,
+then `taskflow_step(action='resume')` to inject their results. Continue closing
+the flow with `taskflow_flow(action='finish')` once every step is terminal.
+
+Do NOT declare completion and do NOT start new work until every dispatched
+step has settled and its result has been processed.
+
+{todo_status}
+{flow_status}"""
+
 # Recovery directive (behavior contract of this module).
 _RECOVERY_PROMPT = """[SYSTEM DIRECTIVE: RECOVERY MODE]
 
@@ -151,6 +174,23 @@ The plan is still open, but you must stop working on it now.
 {todo_status}
 {flow_status}"""
 
+# Diff-stagnation directive: the plan text keeps changing (or the model keeps
+# running closure passes) but the working-tree patch is byte-identical across
+# consecutive turns and no step child is in flight. This is the shape the
+# plan-snapshot stagnation check cannot see. Delivery latches a stop like the
+# continuation-budget cap — the user (or a new event) decides what to do next.
+_NO_PROGRESS_PROMPT = """[SYSTEM DIRECTIVE: NO PROGRESS DETECTED]
+
+The working tree has not changed across consecutive continuation turns and no
+sub-task is still running. Repeating the same actions will not advance the work.
+
+- Stop calling tools now; do not launch another closure/replan pass.
+- Give the user a final summary: what is done, what remains, and why it stalled.
+- Do not mark unverified or untouched work complete.
+
+{todo_status}
+{flow_status}"""
+
 # Final-verification reminder: the plan is complete, but the agent may be
 # overstating the work. This is a PROMPT, not a gate — the agent re-checks and
 # either keeps fixing or confirms; nothing here inspects evidence or blocks.
@@ -163,6 +203,11 @@ failure is marking work done when it is not.
 Verify it yourself now:
 - Read what you changed (`git diff` / the edited files): confirm it matches the
   request, with no stubs, TODOs, placeholders or unrequested scope creep.
+- Check it against the Intent Anchor at the top of your todo reminder: every
+  Must-have covered, every Must-NOT-have respected, every Accept criterion
+  proven. A ticked checkbox is not intent alignment. If the work no longer
+  fits the approved intent, call enter_plan_mode(replan=True) instead of
+  silently redefining the goal.
 - Actually run the checks (tests / typecheck / lint) through the terminal tool.
   "It should pass" is not evidence; a real command output is.
 - For user-facing changes, launch it and exercise it — UI, CLI or API — and read
@@ -184,13 +229,35 @@ The only remaining item is the system [VERIFY] todo. Acceptance is independent:
   todo_id + its criteria + the exact command(s). Require this JSON report:
   {"verified": bool, "results": [{"todo_id": N, "passed": bool, "evidence": "...", "suggested_fix": "..."}]}
   Patch the returned child_session_key into this todo's subagent_id.
+  ADDITIONALLY, include the Intent Anchor (Goal / Must-have / Must-NOT-have /
+  Accept) from your todo reminder in the brief. If the report also carries
+  "intent_match": false or "intent_deviations", treat those as failures too.
 - If a reviewer finished: read its report (the completion notice / sessions_messages).
   For every passed=false todo_id, patch that todo back to pending and put the
   evidence in its notes. Do not rewrite the whole list; passed todos stay completed.
   If the report is unreadable, spawn a new reviewer (the gate allows a bounded number
   of re-spawns before the exhausted escape).
+  ADDITIONALLY, for every "intent_deviations" entry in the report, re-open that
+  todo and put the deviation in its notes; when "intent_match" is false with no
+  entries, re-open the work todos. Do not rewrite the whole list.
 - Only a {"verified": true} report may complete this todo; the transition barrier
   requires a linked, finished reviewer.
+  ADDITIONALLY, if the intent no longer fits the approved plan, call
+  enter_plan_mode(replan=True) first — or amend_intent(goal, reason) when your
+  earlier reading of the intent was wrong.
+"""
+
+#: Appended to the verify directive when in-flight step children did not settle
+#: within ``verify_settle_wait_s``. Completion is NOT blocked — the model is
+#: told the result may be incomplete so it can re-open/fix rather than claiming
+#: a clean finish on a patch that is still being written.
+_VERIFY_SETTLE_WARNING = """
+[WARNING: SUB-TASKS STILL RUNNING]
+Some TaskFlow step children are still in flight and their edits may not have
+landed yet. Before completing verification, wait for them (taskflow_step
+action='wait_all' then 'resume') or re-check the work — a completion now may
+miss their final changes. If they are genuinely abandoned, cancel those steps
+first and note it in the verify evidence.
 """
 
 #: Injected once when the reviewer link was re-spawned past its budget. The main
@@ -240,6 +307,93 @@ def _active_flows(session_id: str) -> list[dict]:
     except Exception:
         logger.debug("plan continuation: taskflow read failed; continuing with todos only")
         return []
+
+
+def _working_tree_diff_hash(project_dir: str | Path) -> str:
+    """Hash the current working-tree diff (staged + unstaged) at turn end.
+
+    Used by diff-stagnation detection to tell "the plan text changed" apart
+    from "the actual code changed". The staged and unstaged binary diffs are
+    combined and hashed so any change to tracked content produces a different
+    fingerprint. ``--binary`` keeps binary edits visible; untracked files are
+    intentionally excluded (the model's patch products are tracked edits;
+    counting volatile scratch files would mask a stall). Full diff text — not
+    ``git status --porcelain`` — is hashed so even a changed line with an
+    unchanged path list is detected.
+
+    Returns "" on ANY failure — not a git repo, git missing, timeout, decode
+    error. The empty hash is the fail-open signal: the tracker never counts it
+    as "no progress", so non-git sessions are never stopped by this check.
+    Runs synchronously with a short timeout; called from ``aafter_agent`` via
+    ``asyncio.to_thread`` so the event loop is never blocked.
+    """
+    try:
+        combined: list[str] = []
+        for extra in (["--cached"], []):
+            result = subprocess.run(
+                ["git", "diff", "--binary", *extra],
+                cwd=str(project_dir),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode != 0:
+                # Not a git repo (128), bad revision, git missing, ...: fail-open.
+                return ""
+            combined.append(result.stdout)
+        return hashlib.md5(
+            "\x1f".join(combined).encode("utf-8", "surrogateescape"), usedforsecurity=False
+        ).hexdigest()
+    except Exception:  # noqa: BLE001 - fail-open: git absence is not a stall
+        logger.debug("plan continuation: diff hash unavailable (fail-open)")
+        return ""
+
+
+def _has_in_flight_steps(flows: list[dict]) -> bool:
+    """True when any TaskFlow step is dispatched/ready (a child is working).
+
+    A main turn that produces no diff while step children are mid-flight is
+    legitimate waiting, NOT churn — the same distinction the eval's
+    ``no_progress_stop`` makes. Diff stagnation must not fire in that window.
+    """
+    for flow in flows:
+        for step in steps_of(flow):
+            if str(step.get("status") or "ready") in ("dispatched", "ready"):
+                return True
+    return False
+
+
+async def _wait_for_step_settle(session_id: str, timeout_s: float) -> bool:
+    """Wait (bounded) until no TaskFlow step is dispatched/ready, or time out.
+
+    A step child can report done just as the last turn ends while its file edits
+    are still flushing to disk. Completing verify in that window produces a
+    false completion — the user sees "done" but the final edits are missing.
+    Poll the flow store until the in-flight steps settle; return True when
+    settled, False on timeout (the caller injects a warning but does not block
+    completion forever). A broken flow read degrades to "settled" — the gate
+    must never wedge on a store error.
+
+    ``poll_s`` is a module seam so tests drive it deterministically with no
+    real sleeps.
+    """
+    poll_s = _SETTLE_POLL_S
+    deadline = time.monotonic() + timeout_s
+    try:
+        while True:
+            if not _has_in_flight_steps(_active_flows(session_id)):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(poll_s, max(0.0, deadline - time.monotonic())))
+    except Exception:  # noqa: BLE001 - a store failure must not wedge completion
+        logger.debug("plan continuation: settle wait failed (degrading to settled)")
+        return True
+
+
+#: Poll interval for :func:`_wait_for_step_settle` (test seam).
+_SETTLE_POLL_S = 0.5
 
 
 def _flow_rows(flows: list[dict]) -> list[dict]:
@@ -357,7 +511,7 @@ def _build_status_block(todos: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _build_verify_block(verify: dict, state: str) -> str:
+def _build_verify_block(verify: dict, state: str, *, settle_timed_out: bool = False) -> str:
     """The verify-specific continuation text (or "" when not the only item)."""
     if state == "running":
         return ""
@@ -366,6 +520,18 @@ def _build_verify_block(verify: dict, state: str) -> str:
         lines.append("No reviewer is linked yet: spawn one and patch its child_session_key.")
     elif state == "finished":
         lines.append("A reviewer finished: read its report and act on it.")
+    elif state == "failed":
+        # The linked reviewer run did not end with an OK verdict
+        # (budget_exhausted / timeout / killed / error). Its report is partial;
+        # treating it as a pass is what let a verify todo be completed on a
+        # half-finished review.
+        lines.append(
+            "The reviewer run did NOT finish successfully (no OK verdict): its report is "
+            "partial and must not be treated as a pass. Fix the issues and re-run the "
+            "reviewer, or cancel this verify todo with the reason."
+        )
+    if settle_timed_out:
+        lines.append(_VERIFY_SETTLE_WARNING.rstrip())
     return "\n".join(lines)
 
 
@@ -387,6 +553,18 @@ def _turn_error(state: Any) -> BaseException | None:
 
 
 _hook_misses_logged: set[str] = set()
+
+
+def _reminder_channel_available() -> bool:
+    """Whether the auto-turn trigger exists at all (not whether it accepts).
+
+    A registered trigger that REFUSES (busy / already_pending) is a retryable
+    condition and keeps the existing "retry next turn" behaviour; a MISSING
+    trigger (headless runs, the eval harness) means the final-verification
+    reminder can never be delivered, so the completed plan must not be left
+    un-extracted behind it.
+    """
+    return hooks.resolve(hooks.MAYBE_TRIGGER_AUTO_TURN) is not None
 
 
 def _resolve_hook(name: str) -> Callable[..., Any] | None:
@@ -488,7 +666,8 @@ class PlanContinuationEnforcer(AgentMiddleware):
             # wake: any turn this gate did not itself inject — resets the
             # consecutive-continuation budget. The gate's own directives are
             # exactly what the budget counts, so they never reset it.
-            if not _is_continuation_turn(state):
+            is_continuation = _is_continuation_turn(state)
+            if not is_continuation:
                 st.reset_continuation_turns(session_id)
 
             # Abort-class failures (user cancel / timeout) must never continue.
@@ -527,6 +706,7 @@ class PlanContinuationEnforcer(AgentMiddleware):
             )
             verify_only = False
             verify_state = "none"
+            verify_settle_timed_out = False
             if verify_todo is not None:
                 flow_rows = _flow_rows(flows)
                 work_incomplete = any(
@@ -548,6 +728,22 @@ class PlanContinuationEnforcer(AgentMiddleware):
                         # notice resumes the session; the liveness read treats a
                         # terminal/missing run as finished on a later turn.
                         return None
+                    # Reviewer finished (report available): before the model
+                    # completes verify, let in-flight step children flush their
+                    # edits. A step can report done while its write is still in
+                    # flight; completing in that window yields a false finish.
+                    # Bounded wait; on timeout warn but never wedge completion.
+                    if verify_state == "finished" and _has_in_flight_steps(flows):
+                        settled = await _wait_for_step_settle(
+                            session_id, TODOLIST_INFRA["verify_settle_wait_s"]
+                        )
+                        verify_settle_timed_out = not settled
+                        logger.info(
+                            "plan continuation: verify settle for session {} {} (timeout {}s)",
+                            session_id,
+                            "completed" if settled else "timed out",
+                            TODOLIST_INFRA["verify_settle_wait_s"],
+                        )
                     respawns = todo_service.verify_respawns(verify_todo)
                     if verify_state == "finished" and respawns >= int(
                         TODOLIST_INFRA["max_verify_respawns"]
@@ -579,9 +775,15 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 # already verify the goal).
                 fingerprint = _plan_fingerprint(todos, _flow_rows(flows))
                 if not flows and _reminded_plans.get(session_id) != fingerprint:
-                    if await self._inject(session_id, _VERIFICATION_REMINDER, count_turn=False):
-                        _reminded_plans[session_id] = fingerprint
-                    return None
+                    if _reminder_channel_available():
+                        if await self._inject(session_id, _VERIFICATION_REMINDER, count_turn=False):
+                            _reminded_plans[session_id] = fingerprint
+                        # A REFUSAL (busy / already_pending) is retried next turn.
+                        return None
+                    # No auto-turn channel at all (headless / eval): the paranoid
+                    # self-check cannot be delivered, but the plan IS complete.
+                    # Stranding the extraction fork behind an undeliverable
+                    # reminder leaves a finished plan un-extracted forever.
                 st.reset(session_id)
                 # The plan just finished: hand it to the skill-review fork.
                 # Deliberately independent of compaction — a short session whose
@@ -654,6 +856,38 @@ class PlanContinuationEnforcer(AgentMiddleware):
                     )
                 return None
 
+            # Diff-stagnation: catch the "plan text keeps changing but the code
+            # patch is identical" churn that the plan-snapshot check cannot see.
+            # Only continuation turns advance the streak; a real user turn or a
+            # turn with step children in flight sets a fresh baseline (waiting
+            # for children with no local diff is legitimate, not a stall).
+            # The git hash read is short and runs off the event loop.
+            if is_continuation and not _has_in_flight_steps(flows):
+                from runtime.session.project_dir import current_project_dir
+
+                project_dir = current_project_dir(session_id)
+                diff_hash = await asyncio.to_thread(_working_tree_diff_hash, project_dir)
+                if st.check_diff_stagnation(session_id, diff_hash):
+                    logger.info(
+                        "plan continuation: session {} code patch unchanged for {} "
+                        "continuation turns; injecting no-progress stop",
+                        session_id,
+                        TODOLIST_INFRA["diff_stagnation_threshold"],
+                    )
+                    if await self._inject(
+                        session_id,
+                        _NO_PROGRESS_PROMPT.format(
+                            todo_status=_build_status_block(todos),
+                            flow_status=flow_status,
+                        ),
+                    ):
+                        st.mark_stopped(session_id)
+                    return None
+            else:
+                # Non-continuation turn or children in flight: re-baseline so an
+                # earlier near-stall is not carried into a genuinely new phase.
+                st.record_diff_baseline(session_id, "")
+
             if st.is_in_cooldown(session_id):
                 logger.debug("plan continuation: session {} in cooldown; skipping", session_id)
                 return None
@@ -663,12 +897,30 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 session_id,
                 len(incomplete),
             )
-            template = _BLOCKED_ONLY_PROMPT if _blocked_only(todos, flows) else _CONTINUATION_PROMPT
+            # In-flight step children narrow the directive to "wait and process
+            # their results" — "continue working on the next pending task"
+            # would invite a premature completion claim while a child is still
+            # writing. Blocked-only still wins over the ordinary continuation
+            # for the all-blocked shape (in-flight and blocked are disjoint).
+            if _has_in_flight_steps(flows):
+                template = _WAIT_ONLY_PROMPT
+            elif _blocked_only(todos, flows):
+                template = _BLOCKED_ONLY_PROMPT
+            else:
+                template = _CONTINUATION_PROMPT
             prompt = template.format(
                 todo_status=_build_status_block(todos), flow_status=flow_status
             )
             if verify_only:
-                prompt += "\n\n" + _build_verify_block(verify_todo, verify_state)
+                prompt += "\n\n" + _build_verify_block(
+                    verify_todo, verify_state, settle_timed_out=verify_settle_timed_out
+                )
+            elif verify_settle_timed_out:
+                # In-flight step children outlived the settle window but still
+                # show as work-incomplete (so verify is not "only" yet): warn
+                # on the ordinary continuation so the model does not claim the
+                # patch is complete while those edits are still landing.
+                prompt += "\n\n" + _VERIFY_SETTLE_WARNING.rstrip()
             turns_without = st.turns_since_todowrite(session_id)
             if turns_without >= _TODO_WRITE_REMINDER_TURNS:
                 # Appended, never a directive of its own: the model receives

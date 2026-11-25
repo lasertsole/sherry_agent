@@ -61,6 +61,44 @@ class _Rejection:
 
 _PATH_ARG_KEYS = frozenset({"file_path", "path", "directory", "dir"})
 
+
+# ── Denial accounting (observability only) ──────────────────────────────────
+# A blocked call returns a normal error ToolMessage; the agent may loop on it
+# for hundreds of turns without the user ever seeing why nothing is produced.
+# Record per-session denial counts here and let the turn boundary surface them
+# as a transient notice (turn_runner.on_turn_finished drains + clears). Purely
+# additive: the decision path is unchanged, and a miss is never fatal.
+_PATH_DENIALS: dict[str, dict[str, Any]] = {}  # {session_id: {"count": int, "paths": set[str]}}
+
+
+def record_denial(session_id: str, value: str) -> None:
+    """Fold one PathGuard rejection into the session's counter."""
+    if not session_id:
+        return
+    entry = _PATH_DENIALS.setdefault(session_id, {"count": 0, "paths": set()})
+    entry["count"] += 1
+    if value:
+        entry["paths"].add(value)
+
+
+def drain_denials(session_id: str) -> dict[str, Any] | None:
+    """Take and clear this session's denial tally; None when there were none.
+
+    Draining (not peeking) means the notice fires once per turn, not once per
+    turn forever. The counter is process-local like the reminder throttle — a
+    restart simply forgets old denials.
+    """
+    entry = _PATH_DENIALS.pop(session_id, None)
+    if not entry or not entry.get("count"):
+        return None
+    return {"count": int(entry["count"]), "paths": sorted(entry["paths"])}
+
+
+def clear_denials(session_id: str) -> None:
+    """Drop one session's tally without reporting (session cleanup)."""
+    _PATH_DENIALS.pop(session_id, None)
+
+
 #: Arguments that carry a COMMAND STRING (terminal / python_repl). They are not
 #: path arguments, so the path gate above never sees them; this separate screen
 #: only rejects the hard-deny floor inside them (see ``_screen_command_paths``).
@@ -349,6 +387,7 @@ class PathGuard(AgentMiddleware):
         logger.bind(middleware=type(self).__name__).debug("wrap_tool_call hook fired")
         rejection = self._find_rejection(request)
         if rejection is not None:
+            record_denial(_session_id(request), rejection.value)
             return self._blocked_message(request, rejection)
         return handler(request)
 
@@ -361,5 +400,6 @@ class PathGuard(AgentMiddleware):
         logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
         rejection = self._find_rejection(request)
         if rejection is not None:
+            record_denial(_session_id(request), rejection.value)
             return self._blocked_message(request, rejection)
         return await handler(request)

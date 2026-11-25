@@ -147,17 +147,20 @@
 
 ## 🧪 完成判别器与 goal loop
 
-完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符；这是未设置时的旧基线，会随 serving model 的输出预算缩放）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
+完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符；这是未设置时的旧基线，会随 serving model 的输出预算缩放）、子会话的验证证据摘要以及任务的验收条款，返回 `DONE`、`CONTINUE` 或 `DRIFTED` 及一句话理由；`CONTINUE` 携带一段续轮提示，`DRIFTED` 携带 `drift_correction` 纠偏指令。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
+
+**任务锚钉。** 子代理的 system prompt（`build_subagent_system_prompt_from_context`）含 `## Your Task` 段，承载原始任务。由于 `SystemMessage` 位于被压缩的消息列表之外，任务在压缩后天然存活——子代理的 summarizer 刻意保持 `need_update_system_prompt` 关闭（开启会让重建走主代理的构建器，反而替换掉子代理 prompt）。作为兜底，初始任务 `HumanMessage` 带 `metadata.origin="user"`，压缩摘要因此把它标为 `[User]`（最多 2000 字符）而非 `[System notice]`（500 字符）。spawn 时，从任务提取的规范性条款双写到子代理 state register 的 `subagent_task_acceptance` 键下并展示给判官；子会话状态释放时删除该键。
 
 只要某次 spawn 的预算大于一轮，goal loop 就会运行；预算取 `COMPLETION_JUDGE["goal_max_turns"]`（默认 `5`），且计入第一轮。每次 spawn 的 `goal_max_turns` 参数可覆盖它。收到 `CONTINUE` 时，判别器的提示会作为下一条 `HumanMessage` 注入**同一 checkpoint 线程**，因此续轮延续的是同一个子对话，而不是新开一个。
 
 ```text
 第 1 轮 ─► 判官 DONE ─────────────────────────────────────► 终结
-        └─► 判官 CONTINUE（continuation_prompt）─► 第 2 轮 ─► 判官 …
+        ├─► 判官 CONTINUE（continuation_prompt）─► 第 2 轮 ─► 判官 …
+        └─► 判官 DRIFTED ─► 注入 drift_correction（任务 + 验收）─► 第 2 轮 ─► 判官 …
                （重复直到 DONE、续轮提示为空，或 turns_used == goal_max_turns）
 ```
 
-预算耗尽后，运行仍以 `OK` 终结，并记录 `error="goal_loop_budget_exhausted"`——该循环从不把预算耗尽转成失败。续轮提示为空同样结束循环。预算为 `1` 时子代理保持单轮：根本不会调用判官。
+`DRIFTED` 表示近期工作不再服务原任务（读文件等前置工作仍算 `CONTINUE`/`DONE`）。漂移会注入一条纠偏 `HumanMessage`，标记 `metadata={"internal": true, "provenance": "drift_correction"}`，引用任务与验收条款（或使用判官自带的纠偏文本）；漂移计数在中间的 `CONTINUE` 之间累积不清零。累计三次漂移后运行以 `BUDGET_EXHAUSTED` 报告，并记录 `error="task_drift_3_times"`——该检查在轮次预算门禁之前，避免末轮漂移被误标为普通耗尽。预算耗尽后，运行仍以 `OK` 终结，并记录 `error="goal_loop_budget_exhausted"`——该循环从不把预算耗尽转成失败。续轮提示为空同样结束循环。预算为 `1` 时子代理保持单轮：根本不会调用判官。
 
 ## 🤝 子代理交接（Phase 1）
 

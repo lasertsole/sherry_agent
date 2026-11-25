@@ -66,24 +66,30 @@ _VERIFY_BASE_BY_LANG: dict[str, str] = {
         "[VERIFY] Run the plan's acceptance checks with a reviewer subagent: spawn "
         'sessions_spawn(functional_role="reviewer"), patch this todo\'s subagent_id '
         "with the returned child_session_key, then re-open only the todos it reports "
-        "as failed."
+        "as failed. Also check the Intent Anchor (goal / must-have / must-NOT-have): "
+        "require intent_match + intent_deviations in the report and re-open any "
+        "deviating todo."
     ),
     "zh": (
         "[VERIFY] 用 reviewer 子代理对整套计划跑验收：spawn "
         'sessions_spawn(functional_role="reviewer")，把返回的 child_session_key '
         "写进本 todo 的 subagent_id，然后只把报告为失败的 todo 回退重开。"
+        "同时对照 Intent Anchor（目标 / 必须 / 禁止）检查：要求报告给出 "
+        "intent_match + intent_deviations，并回退重开所有偏离意图的 todo。"
     ),
     "ja": (
         "[VERIFY] reviewer サブエージェントで計画全体の受け入れ検証を行う："
         'sessions_spawn(functional_role="reviewer") を実行し、返された '
         "child_session_key をこの todo の subagent_id に書き、失敗と報告された "
-        "todo だけを再オープンする。"
+        "todo だけを再オープンする。Intent Anchor（目標/必須/禁止）との照合も行い、"
+        "intent_match と intent_deviations の報告を要求し、逸脱した todo を再オープンする。"
     ),
     "ko": (
         "[VERIFY] reviewer 서브에이전트로 계획 전체의 인수 검증을 실행한다: "
         'sessions_spawn(functional_role="reviewer")를 호출하고 반환된 '
         "child_session_key를 이 todo의 subagent_id에 기록한 뒤, 실패로 보고된 "
-        "todo만 다시 연다."
+        "todo만 다시 연다. Intent Anchor(목표/필수/금지)와도 대조하여 "
+        "intent_match 및 intent_deviations 보고를 요구하고, 이탈한 todo를 다시 연다."
     ),
 }
 #: The parallel-taskflow supplement: appended only for plans where the verify
@@ -174,12 +180,44 @@ def is_verify_todo(todo: dict) -> bool:
     return isinstance(metadata, dict) and str(metadata.get("kind") or "") == "verify"
 
 
+#: Terminal run outcomes that are NOT a passing review. ``ok`` is the only
+#: success; an absent outcome (legacy/partial records) stays ``finished`` so the
+#: fail-open default is unchanged.
+_VERIFY_FAILED_OUTCOMES = frozenset({"error", "timeout", "killed", "budget_exhausted", "unknown"})
+
+
+def _reviewer_outcome(child_session_key: str) -> str | None:
+    """The linked reviewer run's terminal outcome value, or ``None`` when unknown."""
+    try:
+        run = _get_run_by_child_session_key(child_session_key)
+    except Exception:  # noqa: BLE001 - a registry failure must not change the state
+        return None
+    if run is None:
+        return None
+    outcome = getattr(getattr(run, "execution", None), "outcome", None)
+    status = getattr(outcome, "status", None)
+    value = str(getattr(status, "value", status) or "").strip().lower()
+    return value or None
+
+
 def verify_subagent_state(todo: dict) -> str:
-    """``none`` | ``running`` | ``finished`` for a verify todo's reviewer link."""
+    """``none`` | ``running`` | ``finished`` | ``failed`` for a verify todo.
+
+    ``failed`` means the linked reviewer run is over but did NOT end with an OK
+    verdict (budget_exhausted / timeout / killed / error, plus the explicit
+    ``unknown`` status). Its report is partial and must not be read as a pass;
+    an ABSENT outcome (missing run / legacy record) keeps the legacy
+    ``finished`` reading (fail-open).
+    """
     subagent_id = str(todo.get("subagent_id") or "").strip()
     if not subagent_id:
         return "none"
-    return "running" if _is_subagent_running(subagent_id) else "finished"
+    if _is_subagent_running(subagent_id):
+        return "running"
+    outcome = _reviewer_outcome(subagent_id)
+    if outcome is not None and outcome in _VERIFY_FAILED_OUTCOMES:
+        return "failed"
+    return "finished"
 
 
 def verify_budget_exhausted(session_id: str) -> bool:
@@ -477,6 +515,17 @@ async def _assert_transition_allowed(
                     f"Cannot complete the verify todo: reviewer {subagent_id} is still "
                     "running. Wait for it to finish first."
                 )
+            # Machine check for intent drift: the approved plan file must still
+            # hash to the revision the anchor was written for. A model can edit
+            # notes, but it cannot silently redefine the approved intent.
+            from agent.tools.plan_mode.intent_anchor import plan_drifted
+
+            if plan_drifted(session_id):
+                raise TodoStoreError(
+                    "Cannot complete the verify todo: the approved plan changed since "
+                    "its intent was anchored. Call enter_plan_mode(replan=True), get the "
+                    "new plan approved, then verify again."
+                )
             open_work = [t for t in work if t.get("status") not in _TERMINAL_STATUSES]
             if open_work:
                 ids = ", ".join(f"#{t.get('todo_id')} ({t.get('status')})" for t in open_work[:8])
@@ -535,12 +584,50 @@ async def _assert_transition_allowed(
             )
 
 
+def _plan_is_gone(todos: list[dict]) -> bool:
+    """Whether the live plan is over: no todos, or every todo is terminal.
+
+    The intent anchor belongs to ONE plan (one todo list). It must be cleared
+    when that list is gone so a stale intent cannot leak into the NEXT task —
+    the anchor rides the todo reminder, so an orphaned one silently re-anchors
+    unrelated later work. A list is over when it is empty (all rows removed /
+    replaced with nothing) or every row is ``completed``/``cancelled``.
+
+    While ANY todo is still active (``pending``/``in_progress``), the plan —
+    and therefore its intent — is live. Keeping the anchor through the verify
+    step is essential: ``_assert_transition_allowed`` calls ``plan_drifted``
+    before the verify todo may complete, and that gate needs the anchor.
+    """
+    if not todos:
+        return True
+    return all(t.get("status") in _TERMINAL_STATUSES for t in todos)
+
+
+def _sync_intent_anchor(session_id: str, todos: list[dict]) -> None:
+    """Clear the approved-plan intent anchor once its todo list is finished.
+
+    Kept strictly out of the drift gate's way: this runs from
+    ``_push_todo_update`` AFTER the write and after ``_normalize_verify``, so a
+    verify todo that was just completed already passed ``plan_drifted`` while
+    the anchor was still present. Cleanup is best-effort and never raises.
+    """
+    if not session_id or not _plan_is_gone(todos):
+        return
+    try:
+        from agent.tools.plan_mode.intent_anchor import clear_intent_anchor
+
+        clear_intent_anchor(session_id)
+    except Exception:  # noqa: BLE001 - lifecycle cleanup never breaks a write
+        logger.debug("intent anchor: todo-gone cleanup failed ({})", session_id, exc_info=True)
+
+
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
-    """Best-effort ``todo_updated`` WS frame; never raises.
+    """Sync anchor lifecycle, then best-effort ``todo_updated`` WS frame.
 
     Mirrors ``server/service/heartbeat.py``: an absent websocket or a failed
     send is logged and swallowed so it cannot break the persistence path.
     """
+    _sync_intent_anchor(session_id, todos)
     try:
         payload = {
             "event": "todo_updated",
@@ -919,6 +1006,8 @@ __all__ = [
     "_TASKFLOW_TERMINAL",
     "_VERIFY_TODO_CONTENT",
     "_normalize_verify",
+    "_plan_is_gone",
+    "_sync_intent_anchor",
     "is_verify_todo",
     "set_verify_budget_exhausted",
     "verify_budget_exhausted",

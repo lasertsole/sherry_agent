@@ -25,7 +25,11 @@ class SubagentConfig(BaseModel):
     # default is a real ceiling because the goal loop (5 turns x 60 iterations)
     # is otherwise unbounded in TIME — a slow provider could run one child for
     # hours. Callers override per spawn via sessions_spawn(run_timeout_seconds).
-    run_timeout_seconds: float = 600.0
+    # 1800 s (30 min) is the LEAF budget: DeepSWE showed 600 s kills a child
+    # mid-way through read + implement + run tests (9/20 resolved at 1800 s vs
+    # 20/20 at 7200 s — time was the bottleneck, not capability). The depth
+    # ladder triples it for each level above the leaf.
+    run_timeout_seconds: float = 1800.0
     # Bounds the LLM tool (sessions_spawn) clamps a model-provided timeout to:
     # 10 min floor / 2 h ceiling. Internal callers (TaskFlow dispatch,
     # delegate_task) bypass the clamp and are trusted to pass sensible values.

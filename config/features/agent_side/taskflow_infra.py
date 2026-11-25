@@ -61,6 +61,23 @@ class TaskFlowInfraConfig(TypedDict):
     #: and undispatched. Without ready work the source keeps its normal 5-turn
     #: cooldown; a ready set is a decision point, so it is reminded sooner.
     taskflow_reminder_cooldown_when_ready: int
+    #: Task-level watchdog: a RUNNING/WAITING flow whose ``updated_at`` is older
+    #: than this is flagged as a stale heartbeat (fast path, distinct from the
+    #: slow ``stale_action_hours`` liveness sweep that FAILS a flow). The
+    #: watchdog only NOTICES — it never fails a flow. 0 disables the check.
+    heartbeat_timeout_s: float
+    #: Deadlock thresholds (all fail-open notices, never forced failures):
+    #: a step re-dispatched this many times with no terminal status is a
+    #: suspected tool-failure loop; with ``judge_feedback`` present it is a
+    #: judged-retry loop; a flow with no step-status change for this long is a
+    #: no-progress stall. 0 disables the respective check.
+    deadlock_tool_fail_count: int
+    deadlock_judge_fail_count: int
+    deadlock_no_progress_s: float
+    #: Reviewer subagents get a numbered PASS/FAIL acceptance checklist extracted
+    #: from normative sentences in their task when this is on. Fail-open: a bad
+    #: extraction just leaves the task text unchanged.
+    reviewer_checklist_enabled: bool
 
 
 TASKFLOW_INFRA: TaskFlowInfraConfig = {
@@ -101,4 +118,12 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     # Ready-but-undispatched work is a decision point, so remind about it on the
     # next turn instead of waiting out the board's normal 5-turn cooldown.
     "taskflow_reminder_cooldown_when_ready": 1,
+    # Fast task-level watchdog (10 min heartbeat) — NOTICE only; the slow
+    # 12h liveness sweep still owns actually failing a flow.
+    "heartbeat_timeout_s": 600.0,
+    # Deadlock detection thresholds — NOTICE only, never forced failure.
+    "deadlock_tool_fail_count": 3,
+    "deadlock_judge_fail_count": 5,
+    "deadlock_no_progress_s": 1800.0,
+    "reviewer_checklist_enabled": True,
 }

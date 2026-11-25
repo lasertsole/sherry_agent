@@ -35,7 +35,7 @@ from .core import (
     transient_source_ids,
 )
 
-__all__ = ["DynamicReminderMiddleware"]
+__all__ = ["DynamicReminderMiddleware", "capture_reminder_snapshot"]
 
 #: ``{session_id: turn_count}`` — the monotonic per-session turn counter the
 #: cooldowns are measured in. One increment per injected-or-attempted turn
@@ -181,6 +181,97 @@ class DynamicReminderMiddleware(AgentMiddleware):
                 return None
         logger.debug("DynamicReminderMiddleware: running loop detected; async-only path skips")
         return None
+
+
+def capture_reminder_snapshot(messages: list[Any], preserved: list[Any]) -> list[Any]:
+    """Capture the last non-transient reminder per source from a cutoff window.
+
+    Called by compression just after it replaces the cutoff window with a
+    summary pair. Without this, every ``<system-reminder>`` that lived inside
+    the window (todo block, TaskFlow board, plan mode, …) disappears with it —
+    the model keeps executing the remaining turn with no state anchor and drifts.
+
+    The snapshot is the version AT COMPRESSION TIME, not live state. It is
+    deliberately inserted between the summary pair and the preserved tail so
+    the model sees a timeline: summary ("we did X") → snapshot ("plan was
+    A/B/C then") → preserved reminders (newer, closer to the tail). Preserved
+    reminders are never removed — they are newer and carry stronger attention.
+
+    Dedup: per source, if the snapshot content is byte-identical to the OLDEST
+    preserved reminder for that source, the snapshot is pure redundancy — the
+    preserved copy already bridges the summary to the live state — so it is
+    dropped. Compare to the OLDEST (not newest) so a state that changed and
+    changed back is not mistaken for "no change".
+
+    Transient sources (current_time, lsp_diagnostics, project_instructions) are
+    never captured: they are re-derived each turn and a stale time/notice would
+    mislead. Failure is fail-open — an empty list just means no snapshot.
+
+    :param messages: The cutoff window being summarized.
+    :param preserved: Messages kept after the cutoff.
+    :returns: Captured reminder messages in their original order (highest
+        injection priority last, matching delivery order).
+    """
+    try:
+        transient_ids = transient_source_ids()
+
+        # 1. Last reminder per non-transient source in the cutoff window.
+        latest_by_origin: dict[str, Any] = {}
+        for msg in messages:
+            if not is_system_reminder(msg):
+                continue
+            meta = getattr(msg, "metadata", None) or {}
+            origin = meta.get("origin")
+            if origin is None or origin in transient_ids:
+                continue
+            latest_by_origin[origin] = msg
+
+        if not latest_by_origin:
+            return []
+
+        # 2. Oldest preserved reminder per source (the first after the summary).
+        oldest_preserved_by_origin: dict[str, Any] = {}
+        for msg in preserved:
+            if not is_system_reminder(msg):
+                continue
+            meta = getattr(msg, "metadata", None) or {}
+            origin = meta.get("origin")
+            if origin is None or origin in transient_ids:
+                continue
+            if origin not in oldest_preserved_by_origin:
+                oldest_preserved_by_origin[origin] = msg
+
+        def _content(msg: Any) -> str:
+            value = getattr(msg, "content", "")
+            return value if isinstance(value, str) else str(value)
+
+        # 3. Skip a snapshot whose content equals the oldest preserved copy.
+        skipped: set[str] = set()
+        for origin, snapshot_msg in latest_by_origin.items():
+            oldest = oldest_preserved_by_origin.get(origin)
+            if oldest is not None and _content(snapshot_msg) == _content(oldest):
+                skipped.add(origin)
+
+        # 4. Re-emit the LAST message per surviving source, in original order.
+        result: list[Any] = []
+        emitted: set[str] = set()
+        for msg in messages:
+            if not is_system_reminder(msg):
+                continue
+            origin = (getattr(msg, "metadata", None) or {}).get("origin")
+            if (
+                origin is None
+                or origin in emitted
+                or origin in skipped
+                or latest_by_origin.get(origin) is not msg
+            ):
+                continue
+            result.append(msg)
+            emitted.add(origin)
+        return result
+    except Exception:  # noqa: BLE001 - compression must never fail on a snapshot
+        logger.debug("capture_reminder_snapshot failed; continuing without snapshot")
+        return []
 
 
 def reset_session(session_id: str) -> None:

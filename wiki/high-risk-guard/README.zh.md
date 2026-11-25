@@ -4,7 +4,7 @@
 
 > 不可逆操作如何被识别、只批准一次、重放时拒绝，以及如何从子智能体冒泡到主智能体交给用户审批。
 
-事实来源：`agent/tools/pub_base/high_risk_guard_store.py`、`agent/tools/pub_base/high_risk_policy.py`、`agent/tools/high_risk_guard.py`、`agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/humanInTheLoop/strategies.py`、`config/features/agent_side/high_risk_guard.py`、`server/trigger/http/high_risk_guard.py`、`client/app/pages/home/components/HighRiskGuardPanel.vue`。
+事实来源：`agent/tools/pub_base/high_risk_guard_store.py`、`agent/tools/pub_base/high_risk_policy.py`、`agent/tools/pub_base/high_risk_gate.py`、`agent/tools/high_risk_guard.py`、`agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/humanInTheLoop/strategies.py`、`agent/tools/ptc/rpc_server.py`、`agent/tools/ldw/guarded_face.py`、`config/features/agent_side/high_risk_guard.py`、`server/trigger/http/high_risk_guard.py`、`client/app/pages/home/components/HighRiskGuardPanel.vue`。
 
 ## 🎯 威胁模型
 
@@ -16,8 +16,11 @@
 | L2 关键字账本 | 哪些操作必须让人看到？ | 内置 + session/global 关键字，子串扫描 |
 | L3 已执行操作账本 | 这次精确调用是否已经跑过？ | `(根 session, 工具, args_hash)` 行 + 首次结果 |
 | L4 审批 | 首次执行由谁批准？ | 主智能体 HITL 卡片；子智能体 `[NEEDS_APPROVAL]` 冒泡 |
+| L5 重放路径 | 哪些自动路径可能重跑同一次调用？ | PTC 脚本内部调用与 LDW leaf 工具面上的同一道闸 |
 
-各层相互独立：即使用户批准了首次执行，账本仍会拒绝重放；关键字命中会在账本还没有记录时就先询问。
+各层相互独立：即使用户批准了首次执行，账本仍会拒绝重放；关键字命中会在账本还没有记录时就先询问。判定表本身放在 `pub_base/high_risk_gate.py`，`ToolGuardrails`、PTC RPC 分发与 LDW leaf 的受保护工具面都调用它，因此脚本内的调用与直调不会各走一套。普通工具在元数据处短路，根本不会打开数据库。
+
+"重放路径"的含义：中间件链并不是工具唯一的执行处。PTC 把脚本里的调用直接送进 `tool.ainvoke`，LDW leaf 则是一个完全没有中间件的裸 `create_agent` 图。这两条路径现在走同一道闸——被拒的内层调用会变成脚本 `calls_log` 里的失败步骤，于是 PTC 预跑退回 ReAct，由正常审批流程（或 TaskFlow 降级）接手。
 
 ## ⚙️ 关键字账本
 
@@ -40,7 +43,19 @@
 
 账本行以**根主会话**（子智能体解析 `APPROVAL_SCOPE_PARENT`）、工具名和稳定参数摘要（排序后的 JSON，绝不保存原始参数）为键。重复调用在执行前被拒绝，并返回首次的 `result_summary`。行按配置的保留期（24 小时）过期，会话删除时一并清除；面板上的删除就是显式的"再跑一次"。
 
+账本行有生命周期。`in_flight` 在 handler 执行**之前**写入，随后变成 `committed`（调用返回了）或 `failed`（工具自己报告失败——不阻断重试，因为重试是合法的）。这补上了账本原先看不见的崩溃窗口：一行由**上一个进程**留下的 `in_flight` 表示调用在报告前被中断，副作用未知，因此按"结果未知"拒绝，直到面板删除该行；而本进程的 `in_flight` 按"仍在执行"拒绝。handler 抛异常时会先把行标成 `failed` 再原样抛出，所以一次异常不会留下永久"进行中"的行。
+
 **已执行**的关键字享受同样的一次性待遇：批准过的操作成功执行后，该关键字被标记为已执行，之后任何参数包含它的调用都会被拒绝并返回首次结果，直到面板（或 `high_risk_guard action=reset_keyword`）清除标记。
+
+### 面板 API 的传输门禁
+
+`args_preview` 可能携带敏感值，因此每个面板路由（`GET/POST/PUT/DELETE /sessions/:sid/high-risk-keywords*`、`/high-risk-ops/:id`、`/high-risk-keywords/builtin`）都要求**安全传输**（`server/trigger/http/transport_guard.py`）：
+
+* **同一主机** —— loopback peer 或 `Host: localhost/127.0.0.1/[::1]` 放行（桌面 webview 直连 `http://localhost:8080`）。
+* **加密** —— `X-Forwarded-Proto: https` 或 `wss` 放行。Fleet Ingress 依据自身 TLS 方案（`tls_cert`/`tls_key`）重新生成该头；只有设置 `SHERRY_INGRESS_TRUST_FORWARDED` 时才采信客户端传入的值，因此明文远程客户端无法伪造 `https`。
+* **否则降级** —— 跨主机纯 HTTP/WS 调用得到 **HTTP 200 + 空的 `keywords`/`ops` + `degraded: true` + 中文提示语**，绝不返回真实账本；写操作同样被拒。面板显示提示而非传输错误，敏感数据不会经不安全链路外泄。
+
+这是传输层门禁，与网关 Origin/token、CSRF、登录门禁互补，不替代它们。
 
 ## 🔁 主智能体与子智能体
 
@@ -69,6 +84,8 @@ HITL 卡片会在 `interrupt()` 之前冻结会话心跳（`HEARTBEAT_SKIP`）�
 
 `high_risk_guard`（主智能体与子智能体均可用）管理账本与操作：`add_keyword`、`list_keywords`、`remove_keyword`、`set_policy`、`reset_keyword`、`register_op`、`list_ops`、`remove_op`。子智能体的写入会解析到根主会话。
 
+子智能体没有人身审批通道，所以它只能**收紧**、不能**放松**这道防线：注册 `block` 关键字、把 `allow` 改回 `block`、删除 allow 覆盖行都允许；把关键字设为 `allow`、删除 block 关键字或内置默认、删除账本行都会被拒绝，并提示改由主智能体/面板处理。唯一例外是 `reset_keyword`——当该子智能体持有这个人身刚刚批准的该关键字记录时允许，这正是"同一个已批准步骤里合法地再跑一次"的场景。
+
 | 端点 | 用途 |
 | :------- | :------ |
 | `GET /sessions/:sid/high-risk-keywords` | 关键字 + 账本（面板一次加载） |
@@ -85,12 +102,18 @@ HITL 卡片会在 `interrupt()` 之前冻结会话心跳（`HEARTBEAT_SKIP`）�
 
 | 套件 | 覆盖内容 |
 | :---- | :----- |
-| `tests/agent/tools/pub_base/test_high_risk_guard_store.py` | 校验、扫描、作用域、策略、已执行标记、账本往返、清理、保留期 |
-| `tests/agent/middlewares/test_high_risk_guard.py` | 账本拒绝/重放、关键字 NEEDS_APPROVAL、批准、YOLO、confirm_all、根作用域 |
+| `tests/agent/tools/pub_base/test_high_risk_guard_store.py` | 校验、扫描、作用域、策略、已执行标记、账本往返、清理、保留期、in-flight 生命周期、旧库结构收敛 |
+| `tests/agent/tools/pub_base/test_high_risk_gate.py` | 共享判定表：元数据短路、committed/in-flight/unknown、审批、YOLO/confirm_all、两个开关 |
+| `tests/agent/middlewares/test_high_risk_guard.py` | 账本拒绝/重放、关键字 NEEDS_APPROVAL、批准、YOLO、confirm_all、根作用域、handler 执行期间的 in-flight 行、error/异常 → failed |
 | `tests/agent/middlewares/humanInTheLoop/test_high_risk_keyword_handler.py` | handler 匹配、已执行拒绝、批准/拒绝、心跳冻结、headless 拒绝 |
-| `tests/agent/tools/test_high_risk_guard_tool.py` | agent 工具的每个 action + 子→根作用域 |
+| `tests/agent/tools/test_high_risk_guard_tool.py` | agent 工具的每个 action + 子→根作用域 + 子代收紧/放松规则 |
+| `tests/agent/tools/ptc/test_rpc_guard.py` | PTC 脚本内部调用的闸、真实子进程端到端、逃生开关 |
+| `tests/agent/tools/ldw/test_guarded_face.py` | leaf 工具面契约、干净调用、关键字拒绝、leaf 图接线 |
+| `tests/agent/middlewares/test_skill_review_ptc_compile.py` | 证据命中拦截词时不编译；干净步骤照常编译 |
+| `tests/agent/test_state_port_high_risk_placeholder.py` | heal 缝上的高危缺失结果文案 |
 | `tests/agent/tools/taskflow/test_approval_resume.py` | 批准后重新派发、重试保留批准、校验拒绝 |
 | `tests/agent/tools/subagent/test_child_access_inheritance.py` | 访问模式继承、批准作用域到 token 根、批准写入 |
+| `tests/agent/tools/subagent/test_ptc_prefill.py` | 预跑把根作用域传给脚本闸 |
 | `tests/server/trigger/http/test_high_risk_guard_api.py` | 关键字 CRUD、策略、重置、账本删除 |
 | `client/app/pages/home/components/__tests__/HighRiskGuardPanel.integration.test.ts` | 面板渲染、添加/策略/重置/删除、后端拒绝 |
 
@@ -100,6 +123,12 @@ HITL 卡片会在 `interrupt()` 之前冻结会话心跳（`HEARTBEAT_SKIP`）�
 - **关键字的已执行标记是会话级的。** 计划里"每个步骤重新询问"在这里被刻意收紧为更严格的语义：第一次批准的操作会标记该关键字，之后任何包含它的调用都被拒绝，直到重置标记。这对防重放是安全的，但合法地再跑一次需要面板操作。
 - **未标注的工具默认低危。** 显式的 `metadata.high_risk` 优先；没有该键的 `mcp__` 工具是高危，其余未标注工具不是。把危险操作藏在普通名字后面的插件必须自己标注。
 - **MCP 按前缀入账本且默认非幂等。** 确实安全的 MCP 读操作可以声明 `high_risk: False` / `idempotent: True`。
-- **账本保存参数预览（≤300 字符）。** 它留在本地 `high_risk_guard.db`（绝不进入被跟踪的 workspace）；预览仍可能包含调用时带入的值。
+- **浏览器动作没有任何风险元数据。** 点击既不扫关键字也不入账本：重复同一个点击常常是合法的（"下一页"按钮），因此浏览器动作的意图判定被刻意排除在范围之外。
+- **重放路径闸可切换。** `HIGH_RISK_GUARD["replay_path_gate_enabled"]`（默认 true）覆盖 PTC 脚本内部调用、LDW leaf 工具面与 PTC 编译检查；设为 false 即可恢复改动前行为，无需回滚代码。`enabled = false` 仍然关掉整个守卫（含中间件链）。
+- **证据命中拦截词的 PTC 步骤不会编译。** 重放并非不可能——该步骤走 ReAct——只是跳过优化，而不是生成一个永远不会成功的脚本。
+- **崩溃窗口只对入账本的工具关闭。** `terminal` / `python_repl` 不入账本（改为扫描文本），因此被中断的 shell 调用没有行可拒绝；它修复后的占位符只会警告"可能已经生效"。
+- **账本保存参数预览（≤300 字符）。** 它留在本地 `high_risk_guard.db`（绝不进入被跟踪的 workspace）；预览仍可能包含调用时带入的值。面板 API 仅在同主机或 HTTPS/WSS 传输下返回它（否则降级提示）。
+- **传输信任基于请求头。** `X-Forwarded-Proto` 仅采信可信代理；在别处终止 TLS 的部署须在 ingress 上设置 `SHERRY_INGRESS_TRUST_FORWARDED` 以转发真实协议。
 - **冒泡依赖父智能体进入回合。** 完成消息现在会自动带引导，但真正的批准仍是主智能体必须发起的 `question` 调用；不读完成消息的父智能体会让步骤一直 blocked。
 - **保留期是惰性的。** 过期行最多每小时在一次账本访问时清扫；一条行可能超过 24 小时窗口存活到下一次清扫。
+

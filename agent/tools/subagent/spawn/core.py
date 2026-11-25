@@ -306,6 +306,7 @@ def _assemble_child_prompts(
     isolated: bool,
     output_schema: dict | None,
     persona_prompt: str | None = None,
+    environment: dict | None = None,
 ) -> tuple[str, str]:
     """Phase 10: the child's system prompt and initial user message."""
     system_prompt = build_subagent_system_prompt_from_context(
@@ -321,6 +322,7 @@ def _assemble_child_prompts(
             child_session_key=child_session_key,
             requester_session_key=controller_session_key,
             can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
+            environment=environment,
         )
     )
 
@@ -470,6 +472,7 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
     flow_id = request.flow_id
     step_id = request.step_id
     approval_context = request.approval_context
+    environment = request.environment
 
     # --- Phases 1–2: input validation and the admission gate ---
     config = get_config()
@@ -716,6 +719,7 @@ async def _spawn_subagent(request: SpawnRequest) -> SpawnResult:
         isolated=isolated_workspace is not None,
         output_schema=output_schema,
         persona_prompt=persona_prompt,
+        environment=environment,
     )
     # Warn if the run already looks orphaned at creation time (e.g. parent disconnected)
     orphan_reason = resolve_run_orphan_reason(run)

@@ -31,6 +31,7 @@ class _FakeCell:
             "token": request.headers.get("token"),
             "origin": request.headers.get("Origin"),
             "cookie": request.headers.get("Cookie"),
+            "forwarded_proto": request.headers.get("X-Forwarded-Proto"),
         }
         return web.json_response({"ok": True, "tenant": self.tenant_id})
 
@@ -90,6 +91,7 @@ async def test_login_proxy_and_auth_token_is_never_forwarded(tmp_path: Path):
             "token": "cell-gateway-token",
             "origin": None,
             "cookie": None,
+            "forwarded_proto": "http",  # re-minted from the ingress's own scheme
         }
 
         blocked = await client.get("/auth/token")
@@ -608,3 +610,68 @@ async def test_accounts_on_different_cells_are_routed_apart(tmp_path: Path):
         await client.close()
         await server_a.close()
         await server_b.close()
+
+
+def test_request_headers_re_mints_forwarded_proto(tmp_path: Path):
+    """The cell only sees an HTTP hop; ingress must restore the outer scheme.
+
+    A client-supplied X-Forwarded-Proto is ignored unless trust_forwarded is
+    set, so a plaintext remote caller cannot mint "https" for the ledger gate.
+    """
+    from types import SimpleNamespace
+
+    from fleet.ingress import CONFIG_KEY, _request_headers
+
+    def make(config, incoming):
+        headers = {"Origin": "https://app.test", "Accept-Language": "en"}
+        if incoming is not None:
+            headers["X-Forwarded-Proto"] = incoming
+        request = SimpleNamespace(
+            headers=headers,
+            scheme="https",  # ingress itself terminates TLS
+            app={CONFIG_KEY: config},
+        )
+        return _request_headers(request, "cell-token")
+
+    secure = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="x" * 40,
+        tls_cert=None,
+        tls_key=None,
+    )
+    # Own TLS, spoofed incoming header ignored by default.
+    out = make(secure, "http")
+    assert out["X-Forwarded-Proto"] == "https"
+    assert "x-forwarded-proto" not in {k.lower() for k in out if k != "X-Forwarded-Proto"}
+    assert out["token"] == "cell-token"
+    assert "origin" not in {k.lower() for k in out}  # browser Origin is dropped
+    assert out["Accept-Language"] == "en"  # a normal header survives
+
+    plain = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="x" * 40,
+    )
+    request = SimpleNamespace(
+        headers={"X-Forwarded-Proto": "https"},
+        scheme="http",
+        app={CONFIG_KEY: plain},
+    )
+    assert _request_headers(request, "t")["X-Forwarded-Proto"] == "http"
+
+    trusting = IngressConfig(
+        host="127.0.0.1",
+        port=0,
+        db_path=tmp_path / "fleet.db",
+        jwt_secret="x" * 40,
+        trust_forwarded=True,
+    )
+    request = SimpleNamespace(
+        headers={"X-Forwarded-Proto": "https"},
+        scheme="http",
+        app={CONFIG_KEY: trusting},
+    )
+    assert _request_headers(request, "t")["X-Forwarded-Proto"] == "https"

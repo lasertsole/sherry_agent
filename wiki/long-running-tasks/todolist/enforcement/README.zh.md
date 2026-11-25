@@ -103,7 +103,7 @@ turn ends (no tool_call, agent loop exits)
 
 **续作预算**：`mark_injected`——每条指令在 trigger 接受后必经的唯一节点——同时给该 turn 计数，因此这个计数器就是真正投递成功的连续续作 turn 数（被 trigger 拒绝的指令不计入，下一轮 turn 结束时重试；恢复指令同样计入）。到 15 时，强制器发出最后一条 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令、给会话上锁，并保持静默，直到出现一个不是本强制器注入的 turn——真实用户消息，或子代理完成通知（那是新事件，不是续作）——才重置计数器与锁。这条上限覆盖停滞检测看不见的形态：模型每轮都微改计划（改一个状态、加一个 step）让快照一直在动，streak 永远不触发。
 
-**最终校验提醒**：计划完成时（没有未完成 todo、也没有活跃 flow），门在把计划当作完成之前，花一个自动 turn 注入自查提示：重读 diff、真正跑测试/类型检查/lint、启动用户可见的改动。它是**提示而不是门**——不查证据、不阻塞。节流以已完成计划的指纹为键，agent 扩展计划后会得到新的提醒；投递被拒会重试。走 TaskFlow 的会话跳过它（由 flow 的 finish 门负责校验）。
+**最终校验提醒**：计划完成时（没有未完成 todo、也没有活跃 flow），门在把计划当作完成之前，花一个自动 turn 注入自查提示：重读 diff、真正跑测试/类型检查/lint、启动用户可见的改动。它是**提示而不是门**——不查证据、不阻塞。节流以已完成计划的指纹为键，agent 扩展计划后会得到新的提醒；投递被拒会重试。走 TaskFlow 的会话跳过它（由 flow 的 finish 门负责校验）。自动 turn 通道**不存在**（headless 运行、eval 框架）不算拒绝：那里提醒永远无法投递，因此门直接进入经验抽取分支，而不是把已完成的计划搁置在一条送不到的提示之后。
 
 **文件**：`stagnation_tracker.py`（~190 行）+ `todo_continuation/core.py`（~545 行）+ `agent/core.py`（~2 行注册）。
 
@@ -135,6 +135,10 @@ for todo in validated:
             f"Cannot mark todo completed: subagent {todo['subagent_id']} is still running."
         )
 ```
+
+**Verify todo 契约 + 意图漂移门禁**（系统自有的 `[VERIFY]` todo，仅 MAIN agent）。每个非空计划恰好获得一个置于末尾的 verify todo；它的完成以已绑定且已结束的 reviewer、以及所有 work todo 已终态为门禁。未以 OK 结论结束的运行（`budget_exhausted` / `timeout` / `killed` / `error`）被标记为 **failed** 而不是 finished：它的报告是局部的，续作提示会明说，且在这种运行上完成 verify 不会解锁经验抽取（缺 outcome 或查不到 run 时保持 fail-open）。reviewer 的结构化报告（`{"verified": bool, "results": [...]}`）驱动失败的 todo 带着证据与修复建议重新打开。当 brief 携带已批准计划的**意图锚点**时，reviewer 额外报告 `intent_match` / `intent_deviations`——这是对原 schema 的追加，旧 reviewer 依然兼容。
+
+`_assert_transition_allowed` 中的机器门禁在 verify todo 完成**之前**运行 `plan_drifted()`：计划文件必须仍哈希到锚点写入时的修订号，否则拒绝完成并要求 replan。锚点本身随每轮 todo reminder 注入（不在系统提示词中），并在 todo 列表消失时由 `_push_todo_update` 清除，因此旧意图不会泄漏到下一个任务。见 [计划模式 §意图锚点](../../../plan-mode/README.zh.md#意图锚点被批准计划的意图而不只是它的文件)。
 
 ### E5: Sisyphus 完成契约 ★★
 

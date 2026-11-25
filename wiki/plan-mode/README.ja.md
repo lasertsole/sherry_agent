@@ -4,7 +4,7 @@
 
 セッションは実行の前に設計できます：エージェントは**プランモード**に入り、読み取り専用ツールだけで作業し、計画を提出し、ユーザーの承認があるまで一切ファイルを書きません。多ファイル変更へいきなり突っ込むのが一番ずれやすい道であり、ユーザーには軌道修正の機会がありません。
 
-事実の出典：`agent/tools/plan_mode/`（2 つのツール + 共有状態ヘルパー）、`agent/middlewares/plan_mode_gate/core.py`（ホワイトリスト）、`workspace/prompt_builder.py::_build_plan_mode_block`（システムリマインダー）、`config/features/agent_side/plan_mode.py`（調整値）。
+事実の出典：`agent/tools/plan_mode/`（3 つのツール — enter、exit、`amend_intent` — と共有状態ヘルパー、`intent_anchor.py`）、`agent/middlewares/plan_mode_gate/core.py`（ホワイトリスト）、`workspace/prompt_builder.py::_build_plan_mode_block`（システムリマインダー）、`config/features/agent_side/plan_mode.py`（調整値）。
 
 ## 流れ
 
@@ -36,7 +36,16 @@
 * **変更予算** — `PLAN_MODE["max_mutations"]`（5）：1 つの計画につき「修正を依頼」は 5 回まで。超えると `exit_plan_mode` は再提出を拒否し、ユーザーに承認か拒否かを求めさせます。
 * **リビジョン結び付け** — 承認は `sha256(plan)[:16]` に結び付きます。承認待ちの間に保存されたリビジョンや計画**ファイル**が変われば、承認は破棄され再提出が必要です。
 * **サイズ上限** — `PLAN_MODE["max_plan_chars"]`（20000）。超える計画は「短くして」と拒否され、切り詰められません。
-* **機能オフ** — `PLAN_MODE["enabled"] = false` で両ツールが登録されず、他は変わりません。
+* **機能オフ** — `PLAN_MODE["enabled"] = false` で 3 つのツールが登録されず、他は変わりません。
+
+## インテントアンカー — 承認された計画の「意図」をファイルではなく保持する
+
+承認はステータスを `ready` に変えるだけではありません。`exit_plan_mode` は計画の `## Goal` / `## Scope`（`Must-have`、`Must-NOT-have`）/ `accept:` 項目をコンパクトな**インテントアンカー**に解析し、`StateKey.PLAN_INTENT_ANCHOR` としてセッション状態レジスタに二重書きします。アンカーはモデルと検証器が照合できる計画の意図であり、承認リビジョン（`sha256(plan)[:16]`）にハッシュで結び付いています。
+
+* **搭載場所** — `workspace/prompt_builder.py::_build_todo_block` がアンカーを毎ターンの todo リマインダー先頭に描画します。作業計画と一緒にモデルへ届き、圧縮後も残り、ブロック全体（todo 単位ではなく）でハッシュ重複排除されます。システムプロンプトには**含まれない**ため、provider のプレフィックスキャッシュには影響しません。
+* **チェック主体** — verify ゲート（[todolist enforcement](../long-running-tasks/todolist/enforcement/README.md) 参照）が reviewer にアンカーとの照合を求め、レポートに `intent_match` / `intent_deviations` を追加します。verify todo 完了前に `plan_drifted()` が計画ファイルを再ハッシュし、承認後に replan なしで変更されていれば完了を拒否し、`enter_plan_mode(replan=True)` を要求します。
+* **制御された修正** — `amend_intent(goal, reason)` でモデルは誤読した目標を直接修正できます（reason は必須で監査記録に残る）。HITL や reviewer の再確認は不要です。`revision` / `source_ref` は不変なので、修正後の意図が計画ドリフトと誤認されることはありません。
+* **ライフサイクル** — アンカーは**1 つの** todo リストに属します。そのリストがクリアされるか、すべての todo が `completed`/`cancelled` になると、todo サービスがアンカーを消去し、古い意図が次のタスクに漏れるのを防ぎます。verify todo を含むいずれかの todo がアクティブな間はアンカーは保持されます。
 
 ## ユーザーに見えるもの
 

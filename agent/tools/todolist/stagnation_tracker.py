@@ -18,6 +18,7 @@ from config.features import TODOLIST_INFRA
 
 # Bound to the feature registry (single source of truth); names preserved.
 _MAX_STAGNATION = TODOLIST_INFRA["stagnation_max_stagnation"]
+_DIFF_STAGNATION_THRESHOLD = TODOLIST_INFRA["diff_stagnation_threshold"]
 _BASE_COOLDOWN_S = TODOLIST_INFRA["stagnation_base_cooldown_s"]
 _MAX_COOLDOWN_S = TODOLIST_INFRA["stagnation_max_cooldown_s"]
 _FAILURE_RESET_WINDOW_S = TODOLIST_INFRA["stagnation_failure_reset_window_s"]
@@ -27,6 +28,13 @@ _MAX_CONTINUATION_TURNS = TODOLIST_INFRA["max_continuation_turns"]
 # per-session state
 _stagnation_count: dict[str, int] = {}
 _last_snapshot: dict[str, str] = {}  # session_id → "content=status|..."
+#: Working-tree diff hash from the previous continuation turn. Complements the
+#: plan-text snapshot: a model can keep the todo text changing while the actual
+#: code patch stays byte-identical (repeated "closure flow" passes). An EMPTY
+#: hash (non-git project / git failure / fail-open) is never recorded — it
+#: breaks the streak instead of counting as "no progress".
+_last_diff_hash: dict[str, str] = {}
+_diff_stagnation_count: dict[str, int] = {}
 _last_inject_time: dict[str, float] = {}  # session_id → last injection timestamp
 _last_failure_time: dict[str, float] = {}  # session_id → last stagnation timestamp
 _recovery_attempts: dict[str, int] = {}  # session_id → recovery attempts used
@@ -76,6 +84,46 @@ def check_stagnation(session_id: str, todos: list[dict]) -> bool:
             _stagnation_count[session_id] = _stagnation_count.get(session_id, 0)
     _last_snapshot[session_id] = snapshot
     return _stagnation_count.get(session_id, 0) >= _MAX_STAGNATION
+
+
+def check_diff_stagnation(session_id: str, diff_hash: str) -> bool:
+    """Return True when the code patch has not changed for N continuation turns.
+
+    ``diff_hash`` is the working-tree diff fingerprint taken at turn end. An
+    unchanged hash across consecutive continuation turns means the model is
+    churning (e.g. editing the plan while never changing the code); a changed
+    hash means real progress and clears the streak. An EMPTY hash is the
+    fail-open signal (non-git project, git unavailable, read failure): it clears
+    the streak and stores nothing, so a non-git session can never be flagged.
+
+    This runs in parallel with the plan-text ``check_stagnation`` — either one
+    firing stops the continuation gate.
+    """
+    if not diff_hash:
+        _last_diff_hash.pop(session_id, None)
+        _diff_stagnation_count.pop(session_id, None)
+        return False
+    if _last_diff_hash.get(session_id) == diff_hash:
+        _diff_stagnation_count[session_id] = _diff_stagnation_count.get(session_id, 0) + 1
+    else:
+        _diff_stagnation_count[session_id] = 0
+    _last_diff_hash[session_id] = diff_hash
+    return _diff_stagnation_count.get(session_id, 0) >= _DIFF_STAGNATION_THRESHOLD
+
+
+def record_diff_baseline(session_id: str, diff_hash: str) -> None:
+    """Set the diff fingerprint as a fresh baseline with a zero streak.
+
+    A real user turn (or a turn with step children in flight) is a new event:
+    whatever the patch looked like, it must not inherit an earlier no-progress
+    streak. An empty hash (fail-open) clears the diff state entirely.
+    """
+    if not diff_hash:
+        _last_diff_hash.pop(session_id, None)
+        _diff_stagnation_count.pop(session_id, None)
+        return
+    _last_diff_hash[session_id] = diff_hash
+    _diff_stagnation_count[session_id] = 0
 
 
 def is_in_cooldown(session_id: str) -> bool:
@@ -165,6 +213,8 @@ def reset(session_id: str) -> None:
     """Clear all tracker state for a session (user takeover / all todos done)."""
     _stagnation_count.pop(session_id, None)
     _last_snapshot.pop(session_id, None)
+    _last_diff_hash.pop(session_id, None)
+    _diff_stagnation_count.pop(session_id, None)
     _last_inject_time.pop(session_id, None)
     _last_failure_time.pop(session_id, None)
     _recovery_attempts.pop(session_id, None)

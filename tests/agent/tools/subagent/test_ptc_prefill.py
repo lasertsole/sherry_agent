@@ -251,3 +251,22 @@ async def test_scoped_execution_injects_progress_before_react(monkeypatch) -> No
     assert "[PTC Pre-run Progress]" in captured[0][0].content
     assert "DO NOT redo" in captured[0][0].content
     assert finalized and finalized[0][1] == "react answer"
+
+
+@pytest.mark.asyncio
+async def test_the_prefill_passes_the_root_scope_to_the_script_gate(monkeypatch) -> None:
+    """A child session key has no APPROVAL_SCOPE_PARENT; the root is explicit."""
+    _patch_candidate(monkeypatch)
+    captured: dict = {}
+
+    async def _run_ptc(*_args, **kwargs) -> str:
+        captured.update(kwargs)
+        return json.dumps(
+            {"status": "ok", "exit_code": 0, "output": "ok", "calls_log": [{"ok": True}]}
+        )
+
+    monkeypatch.setattr("agent.tools.ptc.runner.run_ptc", _run_ptc)
+
+    await core._try_ptc_prefill(_run(), [], [], None)
+
+    assert captured["scope"] == "parent"

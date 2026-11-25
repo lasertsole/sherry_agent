@@ -408,7 +408,30 @@ def build_memory_schema(db: sqlite3.Connection) -> None:
         ON memory_entries(last_used) WHERE archived = 0;
     CREATE INDEX IF NOT EXISTS idx_memory_origin
         ON memory_entries(origin_session);
-    
+
+    -- 2026-11-24 index audit: prune_unused() ages rows by
+    -- COALESCE(last_used, created_at), so the bare-column idx_memory_usage
+    -- above cannot serve it (planner fell back to a full index scan + sort).
+    -- This expression index matches the predicate AND the ORDER BY exactly.
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_aging
+        ON memory_entries(COALESCE(last_used, created_at), id) WHERE archived = 0;
+    -- active_entries_ordered() builds the system prompt on every turn and
+    -- sorts by created_at / usage_count under `target = ?`; cover both so the
+    -- hot path no longer needs a temp B-tree. (sort=updated / sort=last_used
+    -- are covered by the COALESCE index / the aging index respectively.)
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_target_created
+        ON memory_entries(target, created_at, id) WHERE archived = 0;
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_target_usage
+        ON memory_entries(target, usage_count, id) WHERE archived = 0;
+    -- 2026-11-24 index audit: the embedding job and semantic recall filter
+    -- embedding IS NULL / IS NOT NULL on active rows. Two partial indexes keep
+    -- the target prefix (list_missing/list_with filter on target) while excluding
+    -- the opposite embedding state and archived rows from each side.
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_missing_embedding
+        ON memory_entries(target, id) WHERE archived = 0 AND embedding IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_memory_entries_has_embedding
+        ON memory_entries(target, id) WHERE archived = 0 AND embedding IS NOT NULL;
+
     -- UI-editable memory limits (capacity caps, aging window). Absent rows
     -- fall back to config.features.agent_side.memory_tool defaults, so an
     -- untouched install behaves exactly like the code defaults.

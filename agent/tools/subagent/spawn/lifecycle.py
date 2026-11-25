@@ -43,6 +43,99 @@ from .child_agent_factory import (
 from .handoff import _extract_handoff_json, _extract_result_text
 from .ptc_prefill import _try_ptc_prefill
 
+# Acceptance checklist extracted from the task at spawn time. Stored in the
+# child's state bucket so the completion judge can compare the work against the
+# original task's normative clauses, and so a drift correction can quote them.
+# Cleared when the child's session state is released (done/failure/timeout/kill).
+_ACCEPTANCE_KEY = "subagent_task_acceptance"
+
+
+def _extract_acceptance(task_text: str) -> list[str]:
+    """Normative clauses from the task, capped for judge/correction prompts."""
+    try:
+        from agent.tools.taskflow.checklist_extractor import extract_acceptance_checklist
+
+        return extract_acceptance_checklist(task_text)[:8]
+    except Exception:  # noqa: BLE001 - acceptance is advisory, never block a spawn
+        logger.debug("acceptance extraction failed", exc_info=True)
+        return []
+
+
+def _store_acceptance(child_session_key: str, task_text: str) -> list[str]:
+    """Dual-write the task's acceptance clauses into the child's state bucket."""
+    acceptance = _extract_acceptance(task_text)
+    if not acceptance:
+        return []
+    try:
+        from runtime import state_register_db, state_register_mem
+
+        state_register_mem.set_state(child_session_key, _ACCEPTANCE_KEY, acceptance)
+        state_register_db.set_state(child_session_key, _ACCEPTANCE_KEY, acceptance)
+    except Exception:  # noqa: BLE001 - advisory state, never block a spawn
+        logger.debug("acceptance persistence failed", exc_info=True)
+    return acceptance
+
+
+def _clear_acceptance(child_session_key: str) -> None:
+    from runtime import state_register_db, state_register_mem
+
+    state_register_mem.delete_state(child_session_key, _ACCEPTANCE_KEY)
+    state_register_db.delete_state(child_session_key, _ACCEPTANCE_KEY)
+
+
+def _read_acceptance(child_session_key: str) -> list[str]:
+    from runtime import state_register_mem
+
+    value = state_register_mem.get_state(child_session_key, _ACCEPTANCE_KEY, []) or []
+    return list(value) if isinstance(value, list) else []
+
+
+async def reset_child_provider_client(child_agent: Any) -> None:
+    """Force-close a child's provider HTTP client pool after timeout/cancel.
+
+    ``asyncio.wait_for`` raises TimeoutError / CancelledError, both of which
+    bypass ``LLMRetryMiddleware``'s ``except Exception`` — so the middleware's
+    ``reset_async_client()`` never fires on those paths and a stale keep-alive
+    connection can stay in the pool. The goal loop reuses the same child agent
+    across continuation turns, so the bad connection survives to the end of the
+    run. Closing it here lets the next turn start on a fresh pool.
+
+    Fail-open with a debug log (matching ``_refresh_provider_client``): a model
+    without ``_sherry_model``/``reset_async_client``, or a failed rebuild, never
+    changes the timeout/kill outcome.
+    """
+    try:
+        model = getattr(child_agent, "_sherry_model", None)
+        reset = getattr(model, "reset_async_client", None)
+        if not callable(reset):
+            logger.debug("child provider client reset skipped: no resettable model")
+            return
+        refreshed = await reset()
+        if refreshed:
+            logger.warning(
+                "Child timeout/cancel: rebuilt the provider HTTP client on a fresh connection"
+            )
+        else:
+            logger.debug("child provider client rebuild returned no-op")
+    except Exception:  # noqa: BLE001 - fail-open boundary of cleanup
+        logger.debug("child provider client reset failed (fail-open)", exc_info=True)
+
+
+# Fallback when the judge flags drift but omits its own correction text.
+_DRIFT_CORRECTION_PROMPT = """[SYSTEM DIRECTIVE: TASK DRIFT DETECTED]
+
+Your recent work appears to have drifted from the original task. Re-read the task:
+
+Original task: {task}
+Acceptance criteria:
+{acceptance}
+
+Refocus on the original task. Do not continue the current line of work unless it \
+directly serves the original goal.
+"""
+
+_MAX_DRIFT_CORRECTIONS = 3
+
 
 @dataclass(frozen=True)
 class ExecutionSeams:
@@ -324,6 +417,9 @@ def release_child_session_state(run: SubagentRunRecord) -> None:
 
         for _key in SESSION_STATE_KEYS:
             state_register_mem.delete_state(run.child_session_key, _key)
+        # Acceptance is task-scoped and must not outlive the run — otherwise a
+        # reused child session would judge new work against a stale checklist.
+        _clear_acceptance(run.child_session_key)
     except Exception:
         logger.exception(
             "Failed to release OutputRepetitionGuard state for session {}",
@@ -577,8 +673,11 @@ async def _run_goal_loop(
     """Review each turn with the completion judge until DONE or budget spent.
 
     CONTINUE injects the judge's continuation prompt as the next human turn.
-    Fail-open (judge errors => DONE) so it cannot trap the subagent. Returns the
-    latest result text and an outcome only when the budget ran out.
+    DRIFTED injects a correction directive that refocuses the child on the
+    original task and its acceptance criteria; three drifts report the run as
+    BUDGET_EXHAUSTED with ``task_drift_3_times``. Fail-open (judge errors =>
+    DONE) so it cannot trap the subagent. Returns the latest result text and an
+    outcome only when the budget ran out or the child kept drifting.
 
     The judge's FIRST call is skipped when the child's opening turn already
     cleared the bar on its own: a non-empty result plus at least one passing,
@@ -591,6 +690,8 @@ async def _run_goal_loop(
     from .completion_judge import CompletionVerdict, judge_completion
 
     turns_used = 1
+    drift_count = 0
+    acceptance = _read_acceptance(run.child_session_key)
     while True:
         evidence_summary = collect_evidence_summary(session_key=run.child_session_key)
         if turns_used == 1 and _first_turn_self_evident(result_text, evidence_summary):
@@ -604,9 +705,43 @@ async def _run_goal_loop(
             last_response=result_text or "",
             evidence_summary=evidence_summary,
             max_chars=resolve_subagent_output_caps(run.max_output_tokens).judge_chars,
+            acceptance=acceptance,
         )
         if judge_result.verdict == CompletionVerdict.DONE:
             return result_text, None
+        if judge_result.verdict == CompletionVerdict.DRIFTED:
+            # Drift is checked BEFORE the turn-budget guard: a child that has
+            # veered off task near the budget limit must still be reported as
+            # drift, not silently finished as a plain budget exhaustion.
+            drift_count += 1
+            if drift_count >= _MAX_DRIFT_CORRECTIONS:
+                logger.warning("Subagent {} drifted {} times", run.run_id, drift_count)
+                return result_text, RunOutcome(
+                    status=RunOutcomeStatus.BUDGET_EXHAUSTED,
+                    error=f"task_drift_{drift_count}_times",
+                )
+            # The judge supplies a tailored correction when it can; fall back
+            # to quoting the task + acceptance criteria when it omits one.
+            correction = judge_result.drift_correction.strip() or _DRIFT_CORRECTION_PROMPT.format(
+                task=user_message,
+                acceptance=(
+                    "\n".join(f"{i + 1}. {a}" for i, a in enumerate(acceptance))
+                    or "(none extracted)"
+                ),
+            )
+            from langchain_core.messages import HumanMessage
+
+            agent_result = await invoke(
+                [
+                    HumanMessage(
+                        content=correction,
+                        metadata={"internal": True, "provenance": "drift_correction"},
+                    )
+                ]
+            )
+            result_text = _extract_result_text(agent_result)
+            turns_used += 1
+            continue
         if turns_used >= goal_max_turns:
             return result_text, RunOutcome(
                 status=RunOutcomeStatus.BUDGET_EXHAUSTED,
@@ -733,6 +868,11 @@ async def _execute_subagent_scoped(
         if ptc_progress:
             user_message = f"{user_message}\n\n{ptc_progress}"
 
+        # Persist the task's acceptance clauses before the first invoke so the
+        # completion judge (and any drift correction) can compare later turns
+        # against the original task, not against a compacted paraphrase.
+        _store_acceptance(run.child_session_key, user_message)
+
         while True:
             # Build the child LangGraph agent with scoped tools
             child_agent = await seams.build_child_agent(
@@ -752,7 +892,9 @@ async def _execute_subagent_scoped(
                 spawn_depth=run.depth,
             )
 
-            messages = [HumanMessage(content=user_message)]
+            # origin=user makes the task summarize as `[User]` (2000 chars)
+            # instead of `[System notice]` (500 chars) when history is compacted.
+            messages = [HumanMessage(content=user_message, metadata={"origin": "user"})]
 
             agent_config = seams.bind_child_run_context(run)
 
@@ -859,10 +1001,15 @@ async def _execute_subagent_scoped(
 
     # --- Exception handling: map failures to RunOutcome statuses ---
     except TimeoutError:
+        # shield keeps the client reset from being cancelled mid-teardown when
+        # a timeout and an external cancel race; both paths share the fail-open
+        # helper so a reset failure never changes the run outcome.
+        await asyncio.shield(reset_child_provider_client(child_agent))
         outcome = RunOutcome(
             status=RunOutcomeStatus.TIMEOUT, error=f"Subagent timed out after {timeout_seconds}s"
         )
     except asyncio.CancelledError:
+        await asyncio.shield(reset_child_provider_client(child_agent))
         outcome = RunOutcome(status=RunOutcomeStatus.KILLED, error="Subagent was killed")
     except Exception as e:
         outcome = RunOutcome(status=RunOutcomeStatus.ERROR, error=str(e))

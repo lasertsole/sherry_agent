@@ -55,14 +55,26 @@ def is_high_risk(tool: Any) -> bool:
     return _tool_name(tool).startswith(MCP_PREFIX)
 
 
-def is_idempotent(tool: Any) -> bool:
-    """Whether repeating this exact call is harmless (metadata opt-in)."""
-    return _metadata(tool).get("idempotent") is True
+def is_idempotent(tool: Any, args: dict[str, Any] | None = None) -> bool:
+    """Whether repeating this exact call is harmless (metadata opt-in).
+
+    A grouped tool may declare ``metadata["idempotent_actions"]``: that
+    allowlist is checked against the call's ``action`` argument and takes
+    precedence over the scalar flag — the same contract
+    :meth:`ToolGuardrails._is_idempotent` applies to the loop guardrails, so
+    the ledger and the loop detector agree on what "repeat-safe" means.
+    """
+    metadata = _metadata(tool)
+    action_allowlist = metadata.get("idempotent_actions")
+    if isinstance(action_allowlist, (set, frozenset, list, tuple)):
+        action = args.get("action") if isinstance(args, dict) else None
+        return isinstance(action, str) and action in action_allowlist
+    return metadata.get("idempotent") is True
 
 
-def should_ledger(tool: Any) -> bool:
+def should_ledger(tool: Any, args: dict[str, Any] | None = None) -> bool:
     """Whether an execution goes into the high-risk operation ledger."""
-    return is_high_risk(tool) and not is_idempotent(tool)
+    return is_high_risk(tool) and not is_idempotent(tool, args)
 
 
 def should_scan_keywords(tool: Any) -> bool:

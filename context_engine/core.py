@@ -172,6 +172,7 @@ class _SearchRequest:
     role_filter: list[str] | None
     limit: int
     offset: int
+    cross_session: bool = False
 
 
 class _SearchStrategy(ABC):
@@ -207,7 +208,8 @@ class _TrigramStrategy(_SearchStrategy):
             else:
                 parts.append('"' + tok.replace('"', '""') + '"')
         trigram_query = " ".join(parts)
-        tri_where = ["m.session_id = ?", "messages_fts_trigram MATCH ?"]
+        session_clause = "m.session_id != ?" if req.cross_session else "m.session_id = ?"
+        tri_where = [session_clause, "messages_fts_trigram MATCH ?"]
         tri_params: list = [req.session_id, trigram_query]
         if req.role_filter:
             tri_where.append(f"m.role IN ({','.join('?' for _ in req.role_filter)})")
@@ -267,17 +269,18 @@ class _LikeStrategy(_SearchStrategy):
         ]
         token_clauses = []
         # NOTE: SQL placeholder order: instr(?) is FIRST (in SELECT),
-        # then m.session_id = ? (in WHERE), then LIKE values, then
+        # then the session clause (in WHERE), then LIKE values, then
         # role_filter, then LIMIT/OFFSET.  Parameter list must match.
         like_params: list = [non_op_tokens[0]]  # for instr(?) — goes first
-        like_params.append(req.session_id)  # for m.session_id = ?
+        like_params.append(req.session_id)  # for the session clause
         for tok in non_op_tokens:
             esc = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             token_clauses.append(
                 "(m.content LIKE ? ESCAPE '\\' OR m.tool_name LIKE ? ESCAPE '\\' OR m.tool_calls LIKE ? ESCAPE '\\')"
             )
             like_params += [f"%{esc}%", f"%{esc}%", f"%{esc}%"]
-        like_where = ["m.session_id = ?", f"({' OR '.join(token_clauses)})"]
+        session_clause = "m.session_id != ?" if req.cross_session else "m.session_id = ?"
+        like_where = [session_clause, f"({' OR '.join(token_clauses)})"]
         if req.role_filter:
             like_where.append(f"m.role IN ({','.join('?' for _ in req.role_filter)})")
             like_params.extend(req.role_filter)
@@ -314,7 +317,8 @@ class _FtsStrategy(_SearchStrategy):
     def search(self, req: _SearchRequest) -> list[dict[str, Any]]:
         with _lock:
             try:
-                where_clauses = ["m.session_id = ?", "messages_fts MATCH ?"]
+                session_clause = "m.session_id != ?" if req.cross_session else "m.session_id = ?"
+                where_clauses = [session_clause, "messages_fts MATCH ?"]
                 params: list = [req.session_id, req.query]
 
                 if req.role_filter:
@@ -442,14 +446,21 @@ def search_messages(
     role_filter: list[str] | None = None,
     limit: int = 20,
     offset: int = 0,
+    cross_session: bool = False,
 ) -> list[dict[str, Any]]:
+    """Search message history with one of three FTS/LIKE strategies.
+
+    By default only *session_id* is searched. With ``cross_session=True`` every
+    other session is searched instead (``m.session_id != ?``); the current
+    session is excluded.
+    """
     import time
 
     start_time = time.time()
 
     logger.debug(
         f"Searching messages: session_id={session_id}, query='{query[:50]}', "
-        f"limit={limit}, offset={offset}"
+        f"limit={limit}, offset={offset}, cross_session={cross_session}"
     )
 
     if not query or not query.strip():
@@ -467,6 +478,7 @@ def search_messages(
         role_filter=role_filter,
         limit=limit,
         offset=offset,
+        cross_session=cross_session,
     )
     matches = _SEARCH_STRATEGY_FACTORY.select(query).search(req)
 
@@ -491,6 +503,7 @@ async def search_messages_async(
     role_filter: list[str] | None = None,
     limit: int = 20,
     offset: int = 0,
+    cross_session: bool = False,
 ) -> list[dict[str, Any]]:
     """Async entrypoint: runs the blocking FTS5/LIKE search in an executor thread.
 
@@ -504,4 +517,5 @@ async def search_messages_async(
         role_filter=role_filter,
         limit=limit,
         offset=offset,
+        cross_session=cross_session,
     )

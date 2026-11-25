@@ -603,6 +603,20 @@ def _request_headers(request: web.Request, gateway_token: str) -> dict[str, str]
         for key, value in request.headers.items()
         if key.lower() not in _DROP_REQUEST_HEADERS
     }
+    # The cell backend only sees an HTTP hop (ingress -> cell is plain), so the
+    # browser's real transport would be lost. Re-mint X-Forwarded-Proto from the
+    # outer hop: trust an upstream proxy's value when present, else use this
+    # ingress's own scheme (TLS terminates here when tls_cert/key are set).
+    # Sensitive ledger APIs gate on this header (server/trigger/http/
+    # transport_guard.py); a plaintext remote client must stay plaintext.
+    # Only trust a client-supplied forwarded proto when this ingress is
+    # explicitly behind another proxy (SHERRY_INGRESS_TRUST_FORWARDED); the
+    # default ignores it so a plaintext remote client cannot mint "https".
+    trusted_proto = ""
+    if request.app[CONFIG_KEY].trust_forwarded:
+        trusted_proto = str(request.headers.get("X-Forwarded-Proto", "") or "").strip()
+    headers = {k: v for k, v in headers.items() if k.lower() != "x-forwarded-proto"}
+    headers["X-Forwarded-Proto"] = trusted_proto or request.scheme
     headers["token"] = gateway_token
     return headers
 

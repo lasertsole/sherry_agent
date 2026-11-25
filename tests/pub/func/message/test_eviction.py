@@ -73,7 +73,7 @@ class TestPreviewTemplate:
             r"\[full content: \d+ chars, evicted at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\]", preview
         )
         assert f"[full content: {len(content)} chars, evicted at " in preview
-        assert "Use read_file(file_path='" in preview and "offset=0, limit=100" in preview
+        assert "Use read_file(file_path='" in preview and "offset=1, limit=100" in preview
         assert "line-6" not in preview
         assert "line-15" not in preview
 

@@ -28,6 +28,7 @@ pytestmark = [pytest.mark.unit]
 
 _SID = "sess-tc"
 _CONTINUATION_MARKER = "[SYSTEM DIRECTIVE: TODO CONTINUATION]"
+_WAIT_ONLY_MARKER = "[SYSTEM DIRECTIVE: STEPS IN FLIGHT]"
 _RECOVERY_MARKER = "[SYSTEM DIRECTIVE: RECOVERY MODE]"
 
 
@@ -398,7 +399,9 @@ async def test_open_flow_without_todos_still_gates_the_turn(
     assert result is None
     assert len(spy_auto_turn) == 1
     content = spy_auto_turn[0][1].content
-    assert _CONTINUATION_MARKER in content
+    # A dispatched step is in flight → the wait-only directive, not "go do more".
+    assert _WAIT_ONLY_MARKER in content
+    assert _CONTINUATION_MARKER not in content
     assert "TaskFlow board (open flows)" in content
     assert "flow-1 [running]" in content
     assert "1/3 steps done" in content
@@ -540,10 +543,16 @@ async def test_a_pending_todo_keeps_the_normal_continuation(
 
 
 @pytest.mark.asyncio
-async def test_a_ready_sibling_keeps_the_normal_continuation(
+async def test_a_ready_sibling_uses_the_wait_only_directive(
     monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
 ) -> None:
-    """One in-flight/ready step means the flow can still move by itself."""
+    """A ready step is in flight too: wait + process, do not declare completion.
+
+    A ready sibling alongside a blocked step used to keep the normal
+    continuation (the flow "could still move by itself"). The B-class wait-only
+    rule widens in-flight to dispatched/ready: while any child can still produce
+    a result, the only safe instruction is to wait for it first.
+    """
     _patch_todos(monkeypatch, [])
     _patch_flows(
         monkeypatch,
@@ -553,8 +562,31 @@ async def test_a_ready_sibling_keeps_the_normal_continuation(
     await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     content = spy_auto_turn[0][1].content
-    assert _CONTINUATION_MARKER in content
+    assert _WAIT_ONLY_MARKER in content
+    assert _CONTINUATION_MARKER not in content
     assert _BLOCKED_ONLY_MARKER not in content
+    assert "taskflow_step(action='wait_all')" in content
+    assert "Do NOT declare completion" in content
+    # The old directive's framing must be absent — that is the whole fix.
+    assert "Continue working on the next pending task" not in content
+
+
+@pytest.mark.asyncio
+async def test_in_flight_step_outweighs_a_pending_todo(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """Even with advanceable todos, a running child forces the wait-only frame."""
+    _patch_todos(monkeypatch, [_todo("write the docs", "pending")])
+    _patch_flows(monkeypatch, [_flow([_step("step-1", "dispatched")])])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    content = spy_auto_turn[0][1].content
+    assert _WAIT_ONLY_MARKER in content
+    assert _CONTINUATION_MARKER not in content
+    # The todo surface is still visible — the directive gains a scope limit,
+    # it does not hide the rest of the plan.
+    assert "write the docs" in content
 
 
 @pytest.mark.asyncio
@@ -1075,6 +1107,24 @@ async def test_a_refused_reminder_is_retried(
     assert _SID not in tc._reminded_plans, "a refused reminder must be retried"
 
 
+@pytest.mark.asyncio
+async def test_an_absent_auto_turn_channel_still_extracts(
+    monkeypatch: pytest.MonkeyPatch, extraction_spy: list
+) -> None:
+    """Headless / eval runs register no trigger: the reminder can never land.
+
+    Returning early there stranded the extraction behind an undeliverable
+    reminder, so a finished plan was never handed to the skill-review fork.
+    """
+    assert hooks.resolve(hooks.MAYBE_TRIGGER_AUTO_TURN) is None
+    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "completed")])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert extraction_spy == [_SID], "the completed plan must still be extracted"
+    assert _SID not in tc._reminded_plans, "no reminder was recorded as delivered"
+
+
 # ============================================================================
 # (h) the SYSTEM verify todo: wait, drive, and the exhausted escape
 # ============================================================================
@@ -1148,6 +1198,27 @@ async def test_a_finished_reviewer_drives_the_report_read(
     assert _CONTINUATION_MARKER in prompt
     assert "[VERIFY TODO]" in prompt
     assert "read its report" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reviewer_is_reported_as_not_passed(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """A run that ended without an OK verdict must not read as an approval."""
+    _stub_verify(monkeypatch, state="failed")
+    _patch_todos(
+        monkeypatch,
+        [_todo("done work", "completed"), _verify_todo(subagent_id="reviewer-1")],
+    )
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    prompt = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in prompt
+    assert "did NOT finish successfully" in prompt
+    assert "must not be treated as a pass" in prompt
+    assert "A reviewer finished: read its report and act on it." not in prompt
 
 
 @pytest.mark.asyncio

@@ -99,3 +99,48 @@ async def test_builtin_keywords_are_read_only():
     response = await api.high_risk_builtin_keywords_handler(None)
     keywords = _body(response)["keywords"]
     assert "rm -rf" in keywords and "password" in keywords
+
+
+class _RemoteRequest(_FakeRequest):
+    """A non-loopback caller without encryption: must be degraded."""
+
+    def __init__(self, body: dict | None = None) -> None:
+        super().__init__(body)
+        self.headers = {"host": "app.example.com", "x-forwarded-proto": "http"}
+        self.ip_addr = "203.0.113.7"
+
+
+@pytest.mark.asyncio
+async def test_ledger_list_is_degraded_on_plain_remote_transport():
+    default_store().record_op(SESSION, "mcp__stripe__charge", {"amount": 999}, "charged")
+    response = await api.high_risk_keywords_list_handler(_RemoteRequest(), _paths())
+    assert response.status_code == 200
+    body = _body(response)
+    assert body["degraded"] is True
+    assert body["ops"] == []
+    assert body["keywords"] == []
+    assert "HTTPS/WSS" in body["message"]
+
+
+@pytest.mark.asyncio
+async def test_ledger_write_is_degraded_on_plain_remote_transport():
+    response = await api.high_risk_keywords_add_handler(
+        _RemoteRequest({"keyword": "sensitive_operation"}), _paths()
+    )
+    assert response.status_code == 200
+    assert _body(response)["degraded"] is True
+    # Nothing was written.
+    assert all(
+        row["keyword"] != "sensitive_operation" for row in default_store().list_keywords(SESSION)
+    )
+
+
+@pytest.mark.asyncio
+async def test_encrypted_remote_transport_sees_real_ledger():
+    default_store().record_op(SESSION, "mcp__safe__read", {"k": "v"}, "ok")
+    request = _RemoteRequest()
+    request.headers = {"host": "app.example.com", "x-forwarded-proto": "https"}
+    response = await api.high_risk_keywords_list_handler(request, _paths())
+    body = _body(response)
+    assert body.get("degraded") is not True
+    assert any(op["tool_name"] == "mcp__safe__read" for op in body["ops"])

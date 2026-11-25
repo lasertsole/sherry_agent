@@ -230,6 +230,15 @@ async def purge_session_data(session_id: str) -> None:
     # (6) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
 
+    # (6.2) PathGuard's process-local denial tally — a deleted session must not
+    # leave its counter behind (best-effort, like the other in-memory clears).
+    try:
+        from agent.middlewares.path_guard import clear_denials
+
+        clear_denials(session_id)
+    except Exception as e:  # pragma: no cover - cleanup must never break the turn
+        logger.warning(f"Failed to clear PathGuard denials for {session_id}: {e}")
+
     # (6.5) Per-turn trajectory ledger — debug history for a session that no
     # longer exists must not survive it.
     try:

@@ -30,6 +30,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from evals import external_bench  # noqa: E402
+from evals.shared.eval_iteration_budget import (  # noqa: E402
+    pin_eval_budget,
+    resolve_eval_iteration_budget,
+)
+from evals.shared.eval_temperature import pin_eval_temperature  # noqa: E402
 from evals.devbench import suite as devbench  # noqa: E402
 from evals.shared import batch_runner, env_setup, score_reporter  # noqa: E402
 
@@ -196,6 +201,11 @@ async def _run(selected: list[dict[str, Any]], options: dict[str, Any]) -> int:
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401
     import agent.core  # noqa: F401
+
+    # Same eval controls as the other coding suites (devbench.run_task below
+    # inherits them); after workspace override / config hydration.
+    pin_eval_budget(resolve_eval_iteration_budget())
+    pin_eval_temperature()
 
     from evals.coding_capability import suite as harness
     from evals.sandbox import EvalSandbox

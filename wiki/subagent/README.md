@@ -149,17 +149,20 @@ behavior:
 
 ## 🧪 Completion Judge & Goal Loop
 
-The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters on the legacy baseline; scaled with the serving model's output budget), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.
+The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters on the legacy baseline; scaled with the serving model's output budget), the child session's verification-evidence summary, and the task's acceptance criteria, and returns `DONE`, `CONTINUE`, or `DRIFTED` with a one-sentence reason. `CONTINUE` carries a short continuation prompt; `DRIFTED` carries a `drift_correction` directive. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.
+
+**Task anchoring.** The child's system prompt (`build_subagent_system_prompt_from_context`) carries a `## Your Task` section with the original task. Because a `SystemMessage` lives outside the compressed message list, the task survives compaction by construction — the child summarizer deliberately keeps `need_update_system_prompt` off (turning it on would rebuild the prompt through the main agent's builder and replace the child prompt). As a fallback, the initial task `HumanMessage` is tagged `metadata.origin="user"`, so a compaction summary labels it `[User]` (up to 2000 chars) rather than `[System notice]` (500 chars). At spawn, normative clauses extracted from the task are dual-written to the child's state register under `subagent_task_acceptance` and are shown to the judge; the key is deleted when the child's session state is released.
 
 The goal loop runs on every spawn whose budget exceeds one turn, under `COMPLETION_JUDGE["goal_max_turns"]` (default `5`), which counts the first turn. A per-spawn `goal_max_turns` parameter overrides it. On `CONTINUE` the judge's prompt is injected as the next `HumanMessage` on the **same checkpoint thread**, so the continuation extends the same child conversation instead of starting a new one.
 
 ```text
 turn 1 ─► judge DONE ─────────────────────────────────────► finalize
-      └─► judge CONTINUE (continuation_prompt) ─► turn 2 ─► judge …
+      ├─► judge CONTINUE (continuation_prompt) ─► turn 2 ─► judge …
+      └─► judge DRIFTED ─► inject drift_correction (task + acceptance) ─► turn 2 ─► judge …
                (repeat until DONE, empty continuation prompt, or turns_used == goal_max_turns)
 ```
 
-When the budget is spent the run still finalizes as `OK`, with `error="goal_loop_budget_exhausted"` recorded — the loop never converts exhaustion into a failure. An empty continuation prompt also ends the loop. A budget of `1` keeps the child single-turn: the judge is not called at all.
+`DRIFTED` means the recent work does not serve the original task (preparatory work such as reading files stays `CONTINUE`/`DONE`). A drift injects a corrective `HumanMessage` marked `metadata={"internal": true, "provenance": "drift_correction"}` that quotes the task and acceptance criteria (or uses the judge's own correction text); the drift counter accumulates across intervening `CONTINUE` verdicts. Three drifts report the run as `BUDGET_EXHAUSTED` with `error="task_drift_3_times"` — checked before the turn-budget guard so a final-turn drift is not mislabeled as plain exhaustion. When the budget is spent the run still finalizes as `OK`, with `error="goal_loop_budget_exhausted"` recorded — the loop never converts exhaustion into a failure. An empty continuation prompt also ends the loop. A budget of `1` keeps the child single-turn: the judge is not called at all.
 
 ## 🤝 Child Handoff (Phase 1)
 

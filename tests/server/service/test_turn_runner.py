@@ -191,6 +191,66 @@ async def test_on_turn_finished_marks_claimed_row_and_drains_one_queued(env):
 
 
 @pytest.mark.asyncio
+async def test_on_turn_finished_surfaces_path_guard_denials(env, monkeypatch):
+    """B-class #9A: a turn's PathGuard rejections become one transient notice."""
+    tr = env.tr
+    monkeypatch.setattr(tr, "is_hitl_pending", lambda session_id: False)
+    from agent.middlewares.path_guard import clear_denials, record_denial
+    import runtime.session.system_notice as sn
+
+    notices: list[dict[str, Any]] = []
+
+    async def _push(session_id, *, title, content, level, source):
+        notices.append(
+            {
+                "session_id": session_id,
+                "title": title,
+                "content": content,
+                "level": level,
+                "source": source,
+            }
+        )
+
+    monkeypatch.setattr(sn, "push_system_notice", _push)
+    clear_denials("s-pg")
+    record_denial("s-pg", "/etc/passwd")
+    record_denial("s-pg", "/etc/shadow")
+    try:
+        await tr.on_turn_finished("s-pg")
+        await _wait_until(lambda: bool(notices), what="PathGuard notice")
+    finally:
+        clear_denials("s-pg")
+
+    assert len(notices) == 1
+    assert notices[0]["source"] == "path_guard"
+    assert notices[0]["level"] == "warning"
+    assert "2" in notices[0]["content"]
+    assert "/etc/passwd" in notices[0]["content"]
+    assert "/etc/shadow" in notices[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_on_turn_finished_no_path_guard_notice_when_clean(env, monkeypatch):
+    """A clean turn must not emit a notice (one dict lookup, no side effect)."""
+    tr = env.tr
+    monkeypatch.setattr(tr, "is_hitl_pending", lambda session_id: False)
+    from agent.middlewares.path_guard import clear_denials
+    import runtime.session.system_notice as sn
+
+    notices: list[Any] = []
+
+    async def _push(*args, **kwargs):
+        notices.append((args, kwargs))
+
+    monkeypatch.setattr(sn, "push_system_notice", _push)
+    clear_denials("s-clean")
+    await tr.on_turn_finished("s-clean")
+    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="drain task self-cleanup")
+
+    assert notices == []
+
+
+@pytest.mark.asyncio
 async def test_on_turn_finished_promotes_parked_control_choices(env, monkeypatch):
     """A mid-turn control change lands on the next turn (promoted at turn end)."""
     from server.service import session_settings_service as settings

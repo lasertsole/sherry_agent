@@ -59,6 +59,10 @@ class SpawnRequest:
     #: ``{"keyword": ..., "tool": ..., "args_hash"?: ...}`` and its ToolGuardrails
     #: lets that keyword through (per-spawn, never a permanent allow).
     approval_context: dict | None = None
+    #: Task-level facts from the owning TaskFlow's ``environment`` (WorkMode
+    #: stage 5). Injected into the child system prompt as a Task Environment
+    #: block; credential refs are kept as references, never resolved here.
+    environment: dict | None = None
 
     @classmethod
     def from_legacy(cls, **kwargs: Any) -> SpawnRequest:

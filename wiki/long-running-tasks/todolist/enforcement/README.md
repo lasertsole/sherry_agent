@@ -103,7 +103,7 @@ turn ends (no tool_call, agent loop exits)
 
 **The continuation budget**: `mark_injected` — the one point every directive passes through after the trigger accepted it — also counts the turn, so the counter is the number of consecutive continuation turns actually delivered (a directive the trigger refused is not counted and is retried at the next turn end; recovery directives count too). At 15 the enforcer sends one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive, latches the session, and stays silent until a turn the gate did not itself inject — a real user message, or a subagent completion (a new event, not a continuation) — resets the counter and the latch. This covers the shape stagnation cannot see: a plan the model keeps editing just enough (one status flip, one added step) to keep the snapshot moving, so the streak never trips.
 
-**Final-verification reminder.** When the plan is complete (no incomplete todo and no open flow), the gate spends ONE auto-turn on a self-check prompt before it treats the plan as done: re-read the diff, actually run the tests / typecheck / lint, and launch user-facing changes. It is a PROMPT, not a gate — nothing inspects evidence or blocks. The throttle keys on a fingerprint of the completed plan, so a plan the agent extends gets a fresh reminder; a refused delivery is retried. A TaskFlow session skips it (its finish gates own verification).
+**Final-verification reminder.** When the plan is complete (no incomplete todo and no open flow), the gate spends ONE auto-turn on a self-check prompt before it treats the plan as done: re-read the diff, actually run the tests / typecheck / lint, and launch user-facing changes. It is a PROMPT, not a gate — nothing inspects evidence or blocks. The throttle keys on a fingerprint of the completed plan, so a plan the agent extends gets a fresh reminder; a refused delivery is retried. A TaskFlow session skips it (its finish gates own verification). A MISSING auto-turn trigger is not a refusal: a headless run (the eval harness) can never deliver the reminder, so the gate proceeds to the skill-review fork instead of leaving a finished plan un-extracted behind an undeliverable prompt.
 
 **Files**: `stagnation_tracker.py` (~190 lines) + `todo_continuation/core.py` (~545 lines) + `agent/core.py` (~2 lines registration).
 
@@ -135,6 +135,28 @@ for todo in validated:
             f"Cannot mark todo completed: subagent {todo['subagent_id']} is still running."
         )
 ```
+
+**Verify todo contract + intent drift gate** (system-owned `[VERIFY]` todo,
+MAIN-agent-only). Every non-empty plan gets exactly one verify todo, pinned to
+the tail; its completion is gated by a linked, finished reviewer and by every
+work todo already being terminal. A run that ended WITHOUT an OK verdict
+(`budget_exhausted` / `timeout` / `killed` / `error`) is surfaced as **failed**,
+not finished: its report is partial, the continuation says so, and completing
+the verify on such a run does not unlock skill extraction (an absent outcome or
+registry row stays fail-open). The reviewer's structured report
+(`{"verified": bool, "results": [...]}`) drives failed todos back open with
+evidence and a suggested fix. When the brief carries the approved plan's
+**Intent Anchor**, the reviewer additionally reports `intent_match` /
+`intent_deviations` — additive to the original schema, so legacy reviewers stay
+compatible.
+
+The machine gate in `_assert_transition_allowed` runs `plan_drifted()` BEFORE
+the verify todo may complete: the plan file must still hash to the revision the
+anchor was written for, otherwise completion is refused and the agent must
+replan. The anchor itself rides the per-turn todo reminder (not the system
+prompt) and is cleared by `_push_todo_update` once the todo list is gone, so no
+stale intent leaks into the next task. See
+[Plan mode §Intent anchor](../../../plan-mode/README.md#intent-anchor--the-approved-plans-intent-not-just-its-file).
 
 ### E5: Sisyphus Completion Contract ★★
 

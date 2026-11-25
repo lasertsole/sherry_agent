@@ -178,16 +178,17 @@ class TodoService:
 
 ```python
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
-    from runtime import relation_register
-    ws = relation_register.get_websocket_by_session_id(session_id)
-    if ws:
-        await ws.send_text(json.dumps({
+    _sync_intent_anchor(session_id, todos)   # plan ended -> clear the anchor
+    try:
+        await broadcast_to_session(session_id, {
             "event": "todo_updated", "session_id": session_id,
             "content": {"todos": todos}
-        }))
+        }, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Failed to push todo_updated for session {}: {}", session_id, e)
 ```
 
-`relation_register` の直接送信パターンを再利用し、`todo_updated` イベントをプッシュします。
+`_push_todo_update` は**すべての** todo 書き込み（update/add/patch/remove/complete/cancel/reattach）の唯一の収束点であり、現在は**アンカーのライフサイクル**も担います。リストが空になるか、すべての todo が終端（`completed`/`cancelled`）になると、`_sync_intent_anchor` が `StateKey.PLAN_INTENT_ANCHOR` を消去し、完了した計画の意図が次のタスクに漏れるのを防ぎます。verify todo を含むいずれかの todo がアクティブな間はアンカーは保持されます。verify ドリフトゲート `plan_drifted`（[E4](enforcement/README.md#e4-transition-barrier--dual-insurance) 参照）はこの書き込み**前**に走るため、クリーンアップがゲートを解除することはありません。
 
 ---
 
@@ -327,7 +328,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 
 | Block                      | データソース      | コンテキストコスト | 説明                                                      |
 | -------------------------- | ----------------- | ------------------ | --------------------------------------------------------- |
-| `_build_todo_block()`      | registry.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
+| `_build_todo_block()`      | registry.db + `StateKey.PLAN_INTENT_ANCHOR` | ~10行 | インテントアンカー（承認済みの場合）+ 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5行               | アクティブワーク状態                                      |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
@@ -335,27 +336,50 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 
 ```python
 def _build_todo_block(session_id: str) -> str:
-    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-    todos = get_todos_sync(session_id)
+    todos = _read_todos_sync(session_id)
     if not todos:
         return ""
+    # The approved plan's INTENT rides with the working plan; guarded so a
+    # broken anchor can never drop the todo list itself.
+    anchor_text = ""
+    try:
+        anchor = read_intent_anchor(session_id)   # workspace.intent_anchor_view
+        if anchor:
+            anchor_text = format_intent_anchor(anchor)
+    except Exception as error:
+        logger.debug("prompt builder: intent anchor read failed ({})", error)
     lines = ["## Current Todo List"]
-    for t in todos:
-        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
-        tag_parts = [t.get("category", "quick")]
-        if t.get("delegation", "self") != "self":
-            tag_parts.append(t["delegation"])
-        if t.get("flow_id"):
-            tag_parts.append(f"flow:{t['flow_id']}")
-        if t.get("step_id"):
-            tag_parts.append(t["step_id"])
-        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("todowrite の patch/add/remove を優先し、全量書き換えのときだけ replace を使う。")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
-    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
-    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    if anchor_text:
+        lines.append(anchor_text)                  # Goal / Must-have / Must-NOT-have / Accept
+        lines.append("")
+    for todo in todos:
+        icon = _TODO_ICONS.get(todo.get("status", ""), "○")
+        tag_parts = [todo.get("category") or "quick"]
+        delegation = todo.get("delegation")
+        if delegation and delegation != "self":
+            tag_parts.append(delegation)
+        if todo.get("flow_id"):
+            tag_parts.append(f"flow:{todo['flow_id']}")
+        if todo.get("step_id"):
+            tag_parts.append(todo["step_id"])
+        tag = f"({', '.join(tag_parts)})"
+        todo_id = todo.get("todo_id")
+        id_prefix = f"#{todo_id} " if todo_id else ""
+        lines.append(f"- [{icon}] {id_prefix}{tag} {todo['content']} ({todo.get('priority') or 'medium'})")
+        notes = str(todo.get("notes") or "").strip()
+        if notes:
+            lines.append(f"  notes: {notes[:300]}")
+    lines.append(
+        "Your todo list is tracked by the continuation system. "
+        "Incomplete todos will trigger automatic continuation."
+    )
+    lines.append(
+        "Completion is verified by the Sisyphus contract — unverified claims will be rejected."
+    )
     return "\n".join(lines)
 ```
+
+インテントアンカーは**1 ブロック**として描画され（ブロック全体でハッシュ重複排除、todo 単位ではない）、システムプロンプトには含まれず（プレフィックスキャッシュ安全）、圧縮後に再注入されます（reminder catalog のハッシュ状態がリセットされるため）。これを検査する verify ゲートは [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)、計画モード側は [計画モード §インテントアンカー](../../plan-mode/README.ja.md#インテントアンカー--承認された計画の意図をファイルではなく保持する) を参照してください。
 
 ### omo の5層防御より軽量な理由
 

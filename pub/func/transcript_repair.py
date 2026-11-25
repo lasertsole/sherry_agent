@@ -106,14 +106,28 @@ EMPTY_TOOL_RESULT = "(no output)"
 #: was false for empty results and misleading for every other cause.
 MISSING_TOOL_RESULT = "tool result missing (not recorded; re-run the tool if you still need it)."
 
+#: Content for a missing result of a HIGH-RISK tool (terminal / python_repl /
+#: execute_code / MCP): the call may have taken effect before the transcript
+#: lost it, so "just re-run it" would be the double-charge. The status stays
+#: ``success`` (same repair marker contract); only the wording changes.
+MISSING_HIGH_RISK_TOOL_RESULT = (
+    "tool result missing — this call may already have taken effect. "
+    "Verify the external state before retrying."
+)
 
-def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) -> ToolMessage:
+
+def make_missing_tool_result(
+    tool_call_id: str, tool_name: str | None = None, *, high_risk: bool = False
+) -> ToolMessage:
     """
     Create a placeholder tool-result message for a missing result.
 
     Args:
         tool_call_id: Tool-call ID.
         tool_name: Tool name (optional).
+        high_risk: The call's tool can cause an irreversible external effect;
+            the placeholder then warns that it may already have run instead of
+            inviting a blind retry.
 
     Returns:
         A dummy ToolMessage indicating the result was missing. It is a repair
@@ -123,7 +137,7 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
     """
     return ToolMessage(
         name=tool_name or "unknown",
-        content=MISSING_TOOL_RESULT,
+        content=MISSING_HIGH_RISK_TOOL_RESULT if high_risk else MISSING_TOOL_RESULT,
         tool_call_id=tool_call_id,
         status="success",
         additional_kwargs={

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -431,3 +432,62 @@ async def test_the_wording_follows_a_growing_plan():
     # Same plan grows to two items: the re-armed verify gains the supplement.
     await _call(todos=[{"content": "solo"}, {"content": "second"}])
     assert (await _rows())[-1]["content"] == _VERIFY
+
+
+# ── reviewer run outcome → verify state (a non-OK run is FAILED, not finished) ──
+
+
+def _fake_run(outcome: object, *, live: bool = False):
+    execution = SimpleNamespace(outcome=SimpleNamespace(status=outcome))
+    return SimpleNamespace(execution=execution, live=live)
+
+
+@pytest.mark.parametrize("outcome", ["error", "timeout", "killed", "budget_exhausted", "unknown"])
+def test_a_non_ok_reviewer_run_reads_as_failed(monkeypatch: pytest.MonkeyPatch, outcome: str):
+    monkeypatch.setattr(
+        todo_service, "_get_run_by_child_session_key", lambda _key: _fake_run(outcome)
+    )
+    monkeypatch.setattr(todo_service, "_is_live_unended_run", lambda _run: False)
+
+    assert todo_service.verify_subagent_state({"subagent_id": "reviewer-1"}) == "failed"
+
+
+@pytest.mark.parametrize("outcome", ["ok", None])
+def test_an_ok_or_unknown_reviewer_run_stays_finished(
+    monkeypatch: pytest.MonkeyPatch, outcome: str | None
+):
+    run = _fake_run(outcome) if outcome is not None else SimpleNamespace(execution=None)
+    monkeypatch.setattr(todo_service, "_get_run_by_child_session_key", lambda _key: run)
+    monkeypatch.setattr(todo_service, "_is_live_unended_run", lambda _run: False)
+
+    assert todo_service.verify_subagent_state({"subagent_id": "reviewer-1"}) == "finished"
+
+
+def test_a_missing_run_keeps_the_legacy_reading(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(todo_service, "_get_run_by_child_session_key", lambda _key: None)
+
+    assert todo_service.verify_subagent_state({"subagent_id": "reviewer-1"}) == "finished"
+    assert todo_service.verify_subagent_state({}) == "none"
+
+
+def test_a_live_reviewer_is_running_whatever_its_stored_outcome(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        todo_service, "_get_run_by_child_session_key", lambda _key: _fake_run("ok", live=True)
+    )
+    monkeypatch.setattr(todo_service, "_is_live_unended_run", lambda _run: True)
+
+    assert todo_service.verify_subagent_state({"subagent_id": "reviewer-1"}) == "running"
+
+
+def test_a_registry_error_in_the_outcome_read_does_not_flip_the_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The liveness read answers "not running"; the extra outcome read fails open."""
+
+    def _boom(_key: str):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(todo_service, "_is_subagent_running", lambda _key: False)
+    monkeypatch.setattr(todo_service, "_get_run_by_child_session_key", _boom)
+
+    assert todo_service.verify_subagent_state({"subagent_id": "reviewer-1"}) == "finished"

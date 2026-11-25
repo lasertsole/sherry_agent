@@ -37,6 +37,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from evals import external_bench  # noqa: E402
 from evals.shared import env_setup, score_reporter  # noqa: E402
+from evals.shared.eval_iteration_budget import (  # noqa: E402
+    pin_eval_budget,
+    resolve_eval_iteration_budget,
+)
+from evals.shared.eval_temperature import pin_eval_temperature  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
 SUITE = "gaia"
@@ -282,6 +287,10 @@ async def _run(
     eval_workspace = results_dir / "sandbox" / "workspace"
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401
+
+    # Same deterministic decoding + iteration budget as the other suites.
+    pin_eval_budget(resolve_eval_iteration_budget())
+    pin_eval_temperature()
 
     sandbox = EvalSandbox(results_dir)
     sandbox.apply()

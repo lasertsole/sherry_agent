@@ -68,7 +68,7 @@
 `get_backend(policy)`의 디스패치:
 
 1. `OFF`는 즉시 `None`을 반환: 프로브 없음, 가져오기 없음, 서브프로세스 없음.
-2. `platform.system()`의 플랫폼 레지스트리에서 등록된 팩토리로 백엔드를 구성합니다——Linux → `BwrapBackend`, macOS → `SeatbeltBackend`, Windows → `WinSandboxBackend`. 모두 **지연 가져오기** 팩토리로 등록됩니다(`ImportError`는 "사용 불가"이지 크래시가 아님). 팩토리가 등록되지 않은 플랫폼에는 백엔드가 없습니다. `register_sandbox_backend(system, factory)`로 추가/교체할 수 있으며, 중복 등록은 `replace=True` 없이는 거부됩니다.
+2. `platform.system()`의 플랫폼 레지스트리에서 등록된 팩토리로 백엔드를 구성합니다. Linux는 **복합 팩토리**입니다: `BwrapBackend.probe()`가 성공한 경우에만 `BwrapBackend`를 반환하고, 실패하면 `LandlockBackend`로 폴백합니다(`bwrap`이 없는 슬림 컨테이너도 샌드박스 없이 실행되는 대신 커널 LSM 샌드박스를 얻습니다). macOS → `SeatbeltBackend`, Windows → `WinSandboxBackend`. 모두 **지연 가져오기** 팩토리로 등록됩니다(`ImportError`는 "사용 불가"이지 크래시가 아님). 팩토리가 등록되지 않은 플랫폼에는 백엔드가 없습니다. `register_sandbox_backend(system, factory)`로 추가/교체할 수 있으며, 중복 등록은 `replace=True` 없이는 거부됩니다.
 3. 백엔드가 존재하지만 `probe()`가 실패하면: `REQUIRED`는 `RuntimeError("Required sandbox unavailable on {system}")`를 던지고, `AUTO` / `OFF`는 `None`을 반환합니다.
 
 ### 도구 통합
@@ -133,7 +133,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 SHERRY_WIN_SANDBOX_MAX_PROCESSES=50     # Job Object ActiveProcessLimit(1..10000으로 클램프)
 SHERRY_WIN_SANDBOX_MAX_MEMORY_MB=4096   # Job Object JobMemoryLimit(64..1048576으로 클램프)
 SHERRY_WIN_SANDBOX_BLOCK_NETWORK=0      # 1 = internetClient 능력을 부여하지 않음(AppContainer 네트워크 불가)
-SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 1+3계층만 사용, 샌드박스 shell은 Git Bash로 복귀
+SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 제한 토큰 + Job Object만 사용, 샌드박스 shell은 Git Bash로 복귀
 ```
 
 해석할 수 없는 값은 기본값으로 돌아가고 WARNING 한 줄이 남습니다. launcher는 적용하지 못한 각 계층을 Win32 오류 코드와 함께 stderr에 보고하며, 명령 자체는 계속 실행됩니다(fail-open).
@@ -153,7 +153,7 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 1+3계층만 사용, 샌드박스 
 
 ### landlock 폴백(Linux, bwrap 없음)
 
-`agent/tools/pub_base/sandbox_landlock.py`는 두 번째 Linux 백엔드입니다. bwrap이 없는 환경(슬림 컨테이너, distroless 이미지)에서는 커널 수준 landlock LSM(Linux 5.13+)이 외부 바이너리 없이 명령을 제한합니다. 규칙 집합은 **허용 목록** 방식 — 시스템 트리(`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`)는 읽기 전용, 호출자의 쓰기 루트와 `/dev/null`은 읽기+쓰기 — 이며, `~/.ssh` 같은 자격 증명 디렉터리는 **기본적으로 제외**됩니다(bwrap의 마스크보다 강하고, "파일 시스템 전체 읽기"보다 엄격). landlock은 **호출 프로세스 자신**만 제한할 수 있으므로 `wrap()`은 런처(`python -I -c <loader> -- <실제 명령>`)를 반환합니다. 런처는 규칙을 적용한 뒤(ctypes, 시스템 콜 444-446, 먼저 `PR_SET_NO_NEW_PRIVS`) `execvp`로 실제 명령을 실행합니다. 초기화 실패는 종료 코드 126 — 샌드박스는 **페일 클로즈**입니다(`required`에서 bwrap 누락과 동일).冻结 빌드와 x86_64/aarch64가 아닌 머신은 미지원을 보고합니다. REFER(ABI v2)와 TRUNCATE(ABI v3)는 커널에 따라 처리 권한이 늘어납니다. 테스트: `tests/agent/tools/pub_base/test_sandbox_landlock.py`(probe/사양/팩토리. 실제 시스템 콜 경로에는 5.13+ 커널 필요).
+`agent/tools/pub_base/sandbox_landlock.py`는 두 번째 Linux 백엔드입니다. bwrap이 없는 환경(슬림 컨테이너, distroless 이미지)에서는 커널 수준 landlock LSM(Linux 5.13+)이 외부 바이너리 없이 명령을 제한합니다. 규칙 집합은 **허용 목록** 방식 — 시스템 트리(`/usr /bin /sbin /lib /lib64 /etc /opt /dev /proc /sys`)는 읽기 전용, 호출자의 쓰기 루트와 `/dev/null`은 읽기+쓰기 — 이며, `~/.ssh` 같은 자격 증명 디렉터리는 **기본적으로 제외**됩니다(bwrap의 마스크보다 강하고, "파일 시스템 전체 읽기"보다 엄격). landlock은 **호출 프로세스 자신**만 제한할 수 있으므로 `wrap()`은 런처(`python -I -c <loader> -- <실제 명령>`)를 반환합니다. 런처는 규칙을 적용한 뒤(ctypes, 시스템 콜 444-446, 먼저 `PR_SET_NO_NEW_PRIVS`) `execvp`로 실제 명령을 실행합니다. 초기화 실패는 종료 코드 126 — 샌드박스는 **페일 클로즈**입니다(`required`에서 bwrap 누락과 동일).동결 빌드와 x86_64/aarch64가 아닌 머신은 미지원을 보고합니다. REFER(ABI v2)와 TRUNCATE(ABI v3)는 커널에 따라 처리 권한이 늘어납니다. `probe()`는 ABI 번호만으로 통과하지 않습니다. 런처를 통해 실제로 `/bin/true`를 스모크 테스트하고(bwrap의 probe와 동일) 결과를 캐시합니다. 중첩/컨테이너 환경에서는 ABI가 보여도 `restrict_self` 이후 `execve`가 거부될 수 있어(seccomp/`no_new_privs` 상호작용), 이 경우 사용 불가로 보고하고 `AUTO`에서는 축소됩니다. 해당 배포판 레이아웃에 없는 고정 읽기 경로(usrmerge 하의 `/lib64` 등)는 건너뜁니다. 존재하지 않는 경로의 허용 목록 규칙을 건너뛰어도 접근 범위는 넓어지지 않습니다. 테스트: `tests/agent/tools/pub_base/test_sandbox_landlock.py`(probe/사양/팩토리, 스모크 테스트 성공 및 exec 거부 경로 포함. 실제 시스템 콜 경로에는 5.13+ 커널 필요).
 
 ## 🧪 테스트
 
@@ -182,7 +182,7 @@ SHERRY_WIN_SANDBOX_APPCONTAINER=1       # 0 = 1+3계층만 사용, 샌드박스 
 - **Windows에서는 3계층이 모두 동작하지만 shell에 의도적인 변경이 하나 있습니다.** 사용자별 AppContainer profile이 명령에 패키지 SID를 부여합니다. launcher는 `writable_roots`에 상속 가능한 쓰기 ACE를 추가하고(기존 파일에도 전파), shell과 venv의 기본 인터프리터(`pyvenv.cfg`의 `home`)에 읽기+실행을 부여하므로 venv의 `python.exe`도 동작합니다. 제한 토큰이 모든 권한을 제거하고, Job Object가 프로세스/메모리를 제한하며 launcher가 죽으면 트리 전체를 죽이고, `internetClient` 능력을 주지 않으면 네트워크도 차단됩니다. 실제 end-to-end 테스트가 쓰기/읽기 봉쇄, 네트워크 스위치, stdout/stderr/종료 코드, 상한, kill-on-close를 검증합니다. **Git Bash(MSYS2)는 AppContainer 안에서 시작할 수 없습니다**. 따라서 샌드박스된 shell은 `cmd.exe`이며 POSIX 전용 문법(`;`, `$()`, `export`)은 쓸 수 없습니다. Git Bash가 필요하면 `SHERRY_WIN_SANDBOX_APPCONTAINER=0`을 설정하세요(파일/네트워크 봉쇄를 잃고 제한 토큰 + Job Object는 유지). DACL 부여는 허용된 루트에 영구히 남고(패키지 SID만 읽기/쓰기 가능), AppContainer profile은 실행 중 삭제되지 않습니다.
 - **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭, 히어도큐먼트는 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
 - **`python_repl`에는 민감 파일 정규식이 없습니다.** terminal 전용 게이트([격리 §3](isolation/README.ko.md#3-위험-명령-게이트-terminal-전용))가 그것을 덮지 않습니다. 대신 래퍼 스크립트가 빌트인을 제한하고(`open`/`__import__`/`getattr`/`type`/`dir`/`vars` 없음), `pub_base/safe_exec.py`가 자식 프로세스 시작 전에 dunder 속성 접근을 거부합니다 — 다르고 더 좁은 통제이며, 읽기에 민감한 호스트에서는 여전히 OS 샌드박스가 필요합니다.
-- **PTC는 같은 백엔드의 주의점을 물려받습니다.** `execute_code`는 쓸 수 있는 백엔드가 있으면 L2 백엔드로 자식을 감싸고 내성 탈출도 정적으로 거부하지만(제한 집합에 `getattr`/`type`/`dir`/`vars` 없음, dunder 속성 금지). `SANDBOX_POLICY=auto`에서 쓸 수 있는 백엔드가 없으면 이제 실행을 **거부**합니다(PTC에는 HITL 미들웨어가 없어 강등은 승인제가 아니었습니다)——명시적 `off`일 때만 샌드박스 없이 실행됩니다. PTC는 `allow_network=True`를 넘기므로 bwrap은 loopback RPC 브리지를 도달 가능하게 유지하려고 `--unshare-all` 옆에 `--share-net`을 추가합니다. `terminal`과 `python_repl`은 사설 네트워크 네임스페이스를 유지합니다. PTC의 일회용 RPC 토큰과 그 `/proc/<pid>/environ` 잔여 위험은 [PTC 페이지](../ptc/README.ko.md)에 적었습니다.
+- **PTC는 같은 백엔드의 주의점을 물려받습니다.** `execute_code`는 쓸 수 있는 백엔드가 있으면 L2 백엔드로 자식을 감싸고 내성 탈출도 정적으로 거부하지만(제한 집합에 `getattr`/`type`/`dir`/`vars` 없음, dunder 속성 금지). `SANDBOX_POLICY=auto`에서 쓸 수 있는 백엔드가 없으면 이제 실행을 **거부**합니다(PTC에는 HITL 미들웨어가 없어 강등은 승인제가 아니었습니다)——명시적 `off`일 때만 샌드박스 없이 실행됩니다. PTC는 `allow_network=True`를 넘기므로 bwrap은 loopback RPC 브리지를 도달 가능하게 유지하려고 `--unshare-all` 옆에 `--share-net`을 추가합니다. Windows에서는 같은 플래그가 `SHERRY_WIN_SANDBOX_BLOCK_NETWORK`를 억제해(AppContainer가 `internetClient`를 얻음) 변수가 `1`이어도 PTC 자식은 외부 네트워크를 유지합니다(파일/읽기 격리는 불변). `terminal`과 `python_repl`은 사설 네트워크 네임스페이스를 유지합니다. PTC의 일회용 RPC 토큰과 그 `/proc/<pid>/environ` 잔여 위험은 [PTC 페이지](../ptc/README.ko.md)에 적었습니다.
 - **강등 경로는 메인 경로에서 승인제, 그 외는 도구 계층뿐입니다.** `auto` + 백엔드 없음: 메인 세션의 `terminal` / `python_repl`은 샌드박스 우회 카드를 먼저 띄운 뒤 샌드박스 없이 실행하고, 헤드리스 턴은 자동 거부하며, confirm-all 카드에는 안내가 붙고, YOLO는 설계대로 우회합니다(활성화 시 경고). 자식 체인, 백그라운드 그래프, PTC에는 HITL 미들웨어가 없어 `auto`에서 백엔드가 없으면 spawn 전에 거부합니다(`_deny_unsandboxed_degrade`). 명시적 `off`만 샌드박스 없는 경로를 유지합니다. 번들 `.env`는 `auto`입니다. 하드 보장이 필요하면 `required`를 설정하고, `SANDBOX_STRICT_BOOT=1`이면 시작 자체를 거부합니다.
 - **명령 경로 스크린은 완화층이며 장벽이 아닙니다.** 하드 거부 경로(자격 증명/시스템 파일, YOLO 거부 목록)를 **문자 그대로 지목한** 명령만 거부하고 나머지는 샌드박스에 맡깁니다. `base64 -d | sh`, 조각으로 만든 변수, `cd` + 상대 경로는 구조적으로 회피됩니다. 경계는 OS 샌드박스입니다.
 - **환경 변수 세척은 이름 기반입니다.** 차단 부분 문자열이 하나도 없는 이름(그리고 거부 목록에 없는 이름)으로 저장된 시크릿은 그대로 통과합니다. 값 스캔도 동적 시크릿 탐지도 없으며, 이는 의도된 것입니다.

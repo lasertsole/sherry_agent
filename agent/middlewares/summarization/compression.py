@@ -116,6 +116,40 @@ def _invalidate_compressed_read_licenses(
         pass
 
 
+def _insert_reminder_snapshot(
+    final_messages: list[BaseMessage],
+    messages_to_summarize: list[AnyMessage],
+    preserved: list[AnyMessage],
+) -> list[BaseMessage]:
+    """Preserve the last pre-cutoff reminders between the summary and the tail.
+
+    Lazy-imported so the reminder catalogue (which registers default sources on
+    import) is never pulled into compression at module load, and fail-open so a
+    broken capture is simply "no snapshot" — compression always completes. The
+    caller runs this AFTER aggressive/summary truncation so the snapshot cannot
+    be clipped; it is small (one reminder per non-transient source) and goes
+    between the two summary messages and the preserved tail.
+
+    Returns ``final_messages`` unchanged when the summarization branch did not
+    run (no ``final_messages[:2]`` summary pair to anchor to) or no reminder was
+    captured.
+    """
+    if len(final_messages) < 2:
+        return final_messages
+    try:
+        from agent.middlewares.reminder_catalog import capture_reminder_snapshot
+
+        snapshot = capture_reminder_snapshot(messages_to_summarize, preserved)
+    except Exception:  # noqa: BLE001 - fail-open: a snapshot must never block compression
+        logger.debug("compression: reminder snapshot unavailable; continuing without it")
+        return final_messages
+    if not snapshot:
+        return final_messages
+    # summary pair = final_messages[:2]; preserved tail follows it. Inserting
+    # here keeps the timeline summary → snapshot → newer preserved reminders.
+    return [*final_messages[:2], *snapshot, *final_messages[2:]]
+
+
 class CompressionMixin:
     """Budget-based cutoff, multi-strategy pipeline, under-lock application."""
 
@@ -238,6 +272,10 @@ class CompressionMixin:
         current_tokens = self._estimate_tokens(current_messages)
         skip_llm = state_register_mem.get_state(session_id, _SKIP_LLM_KEY, False)
         budget = self._calculate_preserve_budget(session_id)
+        # Set only when a summary pair was actually built — the reminder
+        # snapshot anchors to ``final_messages[:2]`` and must not run when the
+        # cut-off branch was skipped (no summary pair to place it after).
+        snapshot_window: tuple[list[AnyMessage], list[AnyMessage]] | None = None
 
         if current_tokens > budget * 2 or skip_llm or non_llm_reduced == 0:
             cutoff = self._determine_cutoff(current_messages, session_id)
@@ -246,6 +284,7 @@ class CompressionMixin:
                 preserved = current_messages[cutoff:]
                 _invalidate_compressed_read_licenses(messages_to_summarize, preserved, session_id)
                 messages_to_summarize = offload_inline_media(messages_to_summarize, session_id)
+                snapshot_window = (messages_to_summarize, preserved)
 
                 self._fire_compression_reviews(session_id, original_messages, messages_to_summarize)
 
@@ -273,6 +312,13 @@ class CompressionMixin:
             strategy_used = "aggressive"
 
         final_messages = self._truncate_summary_messages(final_messages)
+
+        # Snapshot goes in AFTER truncation (never clipped), before recovery
+        # context rewrites the summary's file section. See helper for fail-open.
+        if snapshot_window is not None:
+            final_messages = _insert_reminder_snapshot(
+                final_messages, snapshot_window[0], snapshot_window[1]
+            )
 
         if recovery_ctx:
             final_messages = self._inject_recovery_context(final_messages, recovery_ctx, session_id)
@@ -317,6 +363,9 @@ class CompressionMixin:
         current_tokens = self._estimate_tokens(current_messages)
         skip_llm = state_register_mem.get_state(session_id, _SKIP_LLM_KEY, False)
         budget = self._calculate_preserve_budget(session_id)
+        # See the sync twin: the snapshot anchors to the summary pair built in
+        # the cut-off branch only.
+        snapshot_window: tuple[list[AnyMessage], list[AnyMessage]] | None = None
 
         if current_tokens > budget * 2 or skip_llm or non_llm_reduced == 0:
             cutoff = self._determine_cutoff(current_messages, session_id)
@@ -327,6 +376,7 @@ class CompressionMixin:
                 messages_to_summarize = await asyncio.to_thread(
                     offload_inline_media, messages_to_summarize, session_id
                 )
+                snapshot_window = (messages_to_summarize, preserved)
 
                 self._fire_compression_reviews(session_id, original_messages, messages_to_summarize)
 
@@ -354,6 +404,12 @@ class CompressionMixin:
             strategy_used = "aggressive"
 
         final_messages = self._truncate_summary_messages(final_messages)
+
+        # Snapshot after truncation, before recovery context (sync twin parity).
+        if snapshot_window is not None:
+            final_messages = _insert_reminder_snapshot(
+                final_messages, snapshot_window[0], snapshot_window[1]
+            )
 
         if recovery_ctx:
             final_messages = self._inject_recovery_context(final_messages, recovery_ctx, session_id)

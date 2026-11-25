@@ -74,9 +74,15 @@ def _system_prompt(step: dict[str, Any]) -> str:
 
 def _leaf_graph(step: dict[str, Any], session_id: str, response_format: Any):
     tools = _leaf_tools(step, session_id)
+    # A bare create_agent has no middleware chain: guard the tool face so the
+    # leaf applies the same keyword/ledger gate a spawned child gets. The raw
+    # list still feeds the PTC prefill map (those calls are gated by the RPC
+    # dispatch instead).
+    from .guarded_face import guarded_tool_face
+
     graph = create_agent(
         model=_leaf_model(step, structured=response_format is not None),
-        tools=tools,
+        tools=guarded_tool_face(tools, session_id),
         system_prompt=_system_prompt(step),
         response_format=response_format,
     )

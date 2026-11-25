@@ -180,16 +180,17 @@ class TodoService:
 
 ```python
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
-    from runtime import relation_register
-    ws = relation_register.get_websocket_by_session_id(session_id)
-    if ws:
-        await ws.send_text(json.dumps({
+    _sync_intent_anchor(session_id, todos)   # plan ended -> clear the anchor
+    try:
+        await broadcast_to_session(session_id, {
             "event": "todo_updated", "session_id": session_id,
             "content": {"todos": todos}
-        }))
+        }, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Failed to push todo_updated for session {}: {}", session_id, e)
 ```
 
-复用 `relation_register` 直发模式，推送 `todo_updated` 事件。
+`_push_todo_update` 是**每一次** todo 写入（update/add/patch/remove/complete/cancel/reattach）的唯一收口，现在还负责**锚点生命周期**：当列表为空或所有 todo 进入终态（`completed`/`cancelled`）时，`_sync_intent_anchor` 清除 `StateKey.PLAN_INTENT_ANCHOR`，避免已完成计划的意图泄漏到下一个任务。只要还有任意 todo（含 verify todo）处于活动态，锚点就保留；verify 漂移门禁 `plan_drifted`（见 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)）在此写入**之前**运行，因此清理永远不会解除该门禁。
 
 ---
 
@@ -329,7 +330,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 
 | Block                      | 数据源            | 上下文开销 | 说明                                             |
 | -------------------------- | ----------------- | ---------- | ------------------------------------------------ |
-| `_build_todo_block()`      | registry.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
+| `_build_todo_block()`      | registry.db + `StateKey.PLAN_INTENT_ANCHOR` | ~10 行 | 意图锚点（若已批准）+ 当前 todo 列表 + 状态 + TaskFlow flow/step 关联 |
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 行      | 活跃工作状态                                     |
 | `_build_knowledge_block()` (retired) | workspace/knowledge/plans/&lt;plan_key&gt;/ | — | Model-facing knowledge block is no longer injected |
 
@@ -337,27 +338,50 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 
 ```python
 def _build_todo_block(session_id: str) -> str:
-    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-    todos = get_todos_sync(session_id)
+    todos = _read_todos_sync(session_id)
     if not todos:
         return ""
+    # The approved plan's INTENT rides with the working plan; guarded so a
+    # broken anchor can never drop the todo list itself.
+    anchor_text = ""
+    try:
+        anchor = read_intent_anchor(session_id)   # workspace.intent_anchor_view
+        if anchor:
+            anchor_text = format_intent_anchor(anchor)
+    except Exception as error:
+        logger.debug("prompt builder: intent anchor read failed ({})", error)
     lines = ["## Current Todo List"]
-    for t in todos:
-        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
-        tag_parts = [t.get("category", "quick")]
-        if t.get("delegation", "self") != "self":
-            tag_parts.append(t["delegation"])
-        if t.get("flow_id"):
-            tag_parts.append(f"flow:{t['flow_id']}")
-        if t.get("step_id"):
-            tag_parts.append(t["step_id"])
-        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("优先用 todowrite 的 patch/add/remove 局部操作；只有整体重写时才用 replace。")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
-    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
-    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    if anchor_text:
+        lines.append(anchor_text)                  # Goal / Must-have / Must-NOT-have / Accept
+        lines.append("")
+    for todo in todos:
+        icon = _TODO_ICONS.get(todo.get("status", ""), "○")
+        tag_parts = [todo.get("category") or "quick"]
+        delegation = todo.get("delegation")
+        if delegation and delegation != "self":
+            tag_parts.append(delegation)
+        if todo.get("flow_id"):
+            tag_parts.append(f"flow:{todo['flow_id']}")
+        if todo.get("step_id"):
+            tag_parts.append(todo["step_id"])
+        tag = f"({', '.join(tag_parts)})"
+        todo_id = todo.get("todo_id")
+        id_prefix = f"#{todo_id} " if todo_id else ""
+        lines.append(f"- [{icon}] {id_prefix}{tag} {todo['content']} ({todo.get('priority') or 'medium'})")
+        notes = str(todo.get("notes") or "").strip()
+        if notes:
+            lines.append(f"  notes: {notes[:300]}")
+    lines.append(
+        "Your todo list is tracked by the continuation system. "
+        "Incomplete todos will trigger automatic continuation."
+    )
+    lines.append(
+        "Completion is verified by the Sisyphus contract — unverified claims will be rejected."
+    )
     return "\n".join(lines)
 ```
+
+意图锚点作为**一个块**渲染（整块哈希去重，不逐条 todo），不在系统提示词中（前缀缓存安全），压缩后会重新注入——因为 reminder catalog 的哈希状态被重置。检查它的 verify 门禁见 [E4](enforcement/README.md#e4-transition-barrier--dual-insurance)，计划模式侧见 [计划模式 §意图锚点](../../plan-mode/README.zh.md#意图锚点被批准计划的意图而不只是它的文件)。
 
 ### 为什么比 omo 的 5 层防御更轻量
 

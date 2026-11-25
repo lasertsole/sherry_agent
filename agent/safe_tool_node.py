@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt.tool_node import (
     ToolNode,
@@ -24,7 +25,13 @@ from langgraph.runtime import Runtime
 from loguru import logger
 
 from config.features import TOOL_PARALLEL
+from pub.func.message.eviction import (
+    EVICTION_PREFIX,
+    evict_tool_result,
+    hard_clip_tool_result,
+)
 
+from .middlewares.context_eviction.core import _rewrite_tool_messages
 from .tools.parallel_safety import BatchPlan, plan_batch
 
 __all__ = ["SafeToolNode", "install_safe_tool_node"]
@@ -49,6 +56,131 @@ def _log_plan(plan: BatchPlan, tool_calls: list[Any]) -> None:
         )
 
 
+# ── Batch-result aggregate size guard ────────────────────────────────────────
+# ContextEviction evicts PER call (in ToolNode._arun_one), so N parallel results
+# each just under its 20K threshold all survive and their sum blows the context
+# window — no middleware sees the batch. The only point with the whole batch in
+# hand is here, between gather and _combine_tool_outputs. Purely additive:
+# default callers of evict_* are unchanged (force=False), and every failure is
+# fail-open (keep the original result).
+
+
+def _session_id(config: RunnableConfig, runtime: Any) -> str:
+    """Resolve the session for batch eviction; empty means "skip the guard".
+
+    Disk offload needs a session directory, so with no identifiable session the
+    guard degrades to a no-op rather than dropping results.
+    """
+    configurable = config.get("configurable") or {} if isinstance(config, dict) else {}
+    context = getattr(runtime, "context", None)
+    if isinstance(context, dict):
+        context_sid = context.get("session_id")
+    else:
+        # user_hooks reads context as an attribute object; support both shapes.
+        context_sid = getattr(context, "session_id", None)
+    return str(configurable.get("thread_id") or context_sid or "")
+
+
+def _extract_tool_message(output: Any) -> ToolMessage | None:
+    """The bare ToolMessage in one outputs element (plain or Command-wrapped)."""
+    if isinstance(output, ToolMessage):
+        return output
+    update = getattr(output, "update", None)
+    if isinstance(update, dict):
+        for msg in update.get("messages", []):
+            if isinstance(msg, ToolMessage):
+                return msg
+    return None
+
+
+def _msg_content_size(output: Any) -> int:
+    """Text char count of an outputs element (0 for non-tool results)."""
+    msg = _extract_tool_message(output)
+    if msg is None:
+        return 0
+    content = msg.content
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(
+            len(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return 0
+
+
+def _is_already_evicted(output: Any) -> bool:
+    """True when a result already carries the eviction/offload marker."""
+    msg = _extract_tool_message(output)
+    if msg is None:
+        return False
+    content = msg.content
+    return isinstance(content, str) and content.startswith(EVICTION_PREFIX)
+
+
+def _evict_one(output: Any, session_id: str) -> Any:
+    """Evict one batch result, preferring disk offload, then in-memory clip."""
+
+    def rewrite(msg: ToolMessage) -> ToolMessage:
+        try:
+            replacement = evict_tool_result(msg, session_id, force=True)
+            if replacement is not None:
+                return replacement
+        except Exception:  # noqa: BLE001 - fail-open
+            logger.debug("batch evict_tool_result failed for {}", getattr(msg, "tool_call_id", "?"))
+        try:
+            clipped = hard_clip_tool_result(msg, force=True)
+            if clipped is not None:
+                return clipped
+        except Exception:  # noqa: BLE001 - fail-open
+            logger.debug("batch hard_clip failed for {}", getattr(msg, "tool_call_id", "?"))
+        return msg
+
+    return _rewrite_tool_messages(output, rewrite)
+
+
+def _enforce_batch_size_limit(outputs: list[Any], session_id: str) -> list[Any]:
+    """Hold a parallel batch under the aggregate char budget.
+
+    When the sum of all tool-result text exceeds the threshold, evict the
+    LARGEST results first (they carry the least marginal value and their
+    head/tail preview is enough) until the batch fits. Already-evicted results
+    and zero-size elements are skipped; an eviction that fails keeps the
+    original. Order and count are preserved — only message content changes.
+    """
+    threshold = TOOL_PARALLEL.get("batch_result_threshold_chars", 0)
+    if threshold <= 0 or len(outputs) <= 1 or not session_id:
+        return outputs
+
+    total = sum(_msg_content_size(o) for o in outputs)
+    if total <= threshold:
+        return outputs
+
+    logger.info(
+        "SafeToolNode: batch result size {} chars exceeds threshold {}, "
+        "evicting largest first ({} outputs)",
+        total,
+        threshold,
+        len(outputs),
+    )
+    indices_by_size = sorted(
+        range(len(outputs)), key=lambda i: _msg_content_size(outputs[i]), reverse=True
+    )
+    result = list(outputs)
+    for i in indices_by_size:
+        if total <= threshold:
+            break
+        if _is_already_evicted(result[i]):
+            continue
+        before = _msg_content_size(result[i])
+        if before <= 0:
+            continue
+        result[i] = _evict_one(result[i], session_id)
+        total -= max(0, before - _msg_content_size(result[i]))
+    return result
+
+
 class SafeToolNode(ToolNode):
     """ToolNode with a file-aware batch order; all other behaviour is inherited."""
 
@@ -58,6 +190,7 @@ class SafeToolNode(ToolNode):
             return self._combine_tool_outputs([], input_type)
         config_list = get_config_list(config, len(tool_calls))
         runtimes = self._build_runtimes(tool_calls, config_list, input, runtime)
+        session_id = _session_id(config, runtime)
         plan = plan_batch(
             [dict(call) for call in tool_calls],
             dict(self.tools_by_name),
@@ -69,8 +202,11 @@ class SafeToolNode(ToolNode):
             return index, await self._arun_one(tool_calls[index], input_type, runtimes[index])
 
         if not TOOL_PARALLEL["enforce"]:
-            outputs = await asyncio.gather(*(run_one(i) for i in range(len(tool_calls))))
-            return self._combine_tool_outputs([out for _, out in outputs], input_type)
+            gathered = await asyncio.gather(*(run_one(i) for i in range(len(tool_calls))))
+            flat = [out for _, out in gathered]
+            if session_id:
+                flat = await asyncio.to_thread(_enforce_batch_size_limit, flat, session_id)
+            return self._combine_tool_outputs(flat, input_type)
 
         async def run_group(indices: tuple[int, ...], concurrent: bool) -> list[tuple[int, Any]]:
             if concurrent and len(indices) > 1:
@@ -85,6 +221,8 @@ class SafeToolNode(ToolNode):
             for index, output in group:
                 by_index[index] = output
         outputs = [by_index[i] for i in range(len(tool_calls))]
+        if session_id:
+            outputs = await asyncio.to_thread(_enforce_batch_size_limit, outputs, session_id)
         return self._combine_tool_outputs(outputs, input_type)
 
     def _func(self, input: Any, config: RunnableConfig, runtime: Runtime) -> Any:
@@ -93,6 +231,7 @@ class SafeToolNode(ToolNode):
             return self._combine_tool_outputs([], input_type)
         config_list = get_config_list(config, len(tool_calls))
         runtimes = self._build_runtimes(tool_calls, config_list, input, runtime)
+        session_id = _session_id(config, runtime)
         plan = plan_batch(
             [dict(call) for call in tool_calls],
             dict(self.tools_by_name),
@@ -110,6 +249,8 @@ class SafeToolNode(ToolNode):
                         runtimes,
                     )
                 )
+            if session_id:
+                outputs = _enforce_batch_size_limit(outputs, session_id)
             return self._combine_tool_outputs(outputs, input_type)
 
         def run_sequential(indices: tuple[int, ...]) -> list[tuple[int, Any]]:
@@ -141,6 +282,8 @@ class SafeToolNode(ToolNode):
             for index, output in group:
                 by_index[index] = output
         outputs = [by_index[i] for i in range(len(tool_calls))]
+        if session_id:
+            outputs = _enforce_batch_size_limit(outputs, session_id)
         return self._combine_tool_outputs(outputs, input_type)
 
     def _build_runtimes(

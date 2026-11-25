@@ -22,7 +22,7 @@ from agent.tools.subagent.swarm.collector import validate_structured_output
 from ..config import StepOutcome, StepStatus, TaskFlowStatus
 from ..evidence_collector import collect_evidence_summary
 from ..registry import store_sqlite
-from ..step_judge import StepVerdict, judge_step_result
+from ..step_judge import StepVerdict, judge_step_result, judge_step_self_eval
 from ..step_state import set_step_status
 from ._retry import (
     apply_redispatch,
@@ -56,6 +56,31 @@ from ._shared import (
 
 
 _STATUS_ORDER = tuple(status.value for status in StepStatus)
+
+_SELF_EVAL_DEFAULT_MIN_SCORE = 7
+_SELF_EVAL_DEFAULT_MAX_RETRIES = 5
+
+
+def _self_eval_min_score(step: dict) -> int:
+    """Read a step's passing score, clamped to 1..10 (default 7)."""
+    raw = step.get("self_eval_min_score")
+    if raw is None:
+        return _SELF_EVAL_DEFAULT_MIN_SCORE
+    try:
+        return min(10, max(1, int(raw)))
+    except (TypeError, ValueError):
+        return _SELF_EVAL_DEFAULT_MIN_SCORE
+
+
+def _self_eval_max_retries(step: dict) -> int:
+    """Read a step's score-retry cap, clamped to 0..20 (default 5)."""
+    raw = step.get("self_eval_max_retries")
+    if raw is None:
+        return _SELF_EVAL_DEFAULT_MAX_RETRIES
+    try:
+        return min(20, max(0, int(raw)))
+    except (TypeError, ValueError):
+        return _SELF_EVAL_DEFAULT_MAX_RETRIES
 
 
 async def _approve_and_redispatch(
@@ -157,6 +182,7 @@ async def taskflow_resume(
     auto_dispatch: bool = True,
     step_id: str = "",
     approval_context: dict | None = None,
+    force_result: bool = False,
     session_id: SessionId = "",
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
@@ -211,6 +237,14 @@ async def taskflow_resume(
     dependents cascade ``skipped``), and ``success``/``partial`` are recorded
     on the result while the gates still run. A ``failed`` step never unlocks
     its dependents.
+
+    Omitting ``result`` injects the child's stored ``completion.result_text``
+    (the parent only sees a ~4k delivery carrier, so retyping a long report
+    loses it). A materially shorter caller-supplied result is refused while the
+    child is recorded as successful/partial; declaring ``failure``/``blocked``
+    carries the caller's own note instead. A child that is not TERMINAL cannot
+    be resumed at all: wait for it, do not speak for it. ``force_result`` is an
+    INTERNAL escape (never exposed in the tool schema) for tests/maintenance.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
@@ -266,7 +300,87 @@ async def taskflow_resume(
             approval=approval,
         )
 
-    result_hash_value = result_hash(child_session_key, result)
+    # ── Result source (2026-11-24) ─────────────────────────────────────────
+    # Omitting `result` means "use the child's own result". The parent only
+    # ever sees the DELIVERY CARRIER (capped at ~4k chars), so requiring it to
+    # retype a long report invites a short summary in place of the real thing;
+    # a DeepSWE run lost a 24k research report exactly that way and the judge
+    # then (correctly) rejected the 452-char summary. The stored completion is
+    # the source of truth; `force_result` is the explicit opt-out.
+    child_run = None
+    if child_session_key:
+        try:
+            from agent.tools.subagent.registry import memory as run_memory
+
+            child_run = run_memory.find_by_child_session_key(child_session_key)
+        except Exception:  # noqa: BLE001 - registry unavailable: keep the old path
+            child_run = None
+    # A schema-bound step is a STRUCTURED-CONTRACT step: the caller passes the
+    # validated JSON (often a short one), and Tier 1 parses `result` against the
+    # schema. Defaulting that to the child's prose answer would break the
+    # contract, so the stored-text default and the summary guard apply to
+    # PROSE steps only; schema steps keep the pre-change behaviour exactly.
+    schema_step = next(
+        (
+            step
+            for step in (flow["state"] or {}).get("steps") or []
+            if isinstance(step, dict) and step.get("child_session_key") == child_session_key
+        ),
+        None,
+    )
+    schema_bound = isinstance((schema_step or {}).get("response_schema"), dict)
+    stored_result = ""
+    child_outcome = ""
+    child_status = None
+    if child_run is not None:
+        stored_result = str(getattr(child_run.completion, "result_text", "") or "")
+        outcome = getattr(child_run.execution, "outcome", None)
+        child_outcome = str(getattr(outcome, "status", "") or "")
+        child_status = child_run.execution.status
+    if child_run is not None and not force_result:
+        from agent.tools.subagent.types.registry import ExecutionStatus
+
+        if child_status != ExecutionStatus.TERMINAL:
+            started = getattr(child_run.execution, "started_at", None)
+            elapsed = f"{max(0.0, time.monotonic() - started):.0f}s" if started else "unknown"
+            return (
+                f"Error: child {child_session_key} is still {child_status} (elapsed {elapsed}); "
+                "its result is not final. Call taskflow_step(action='wait_all') and resume after "
+                "it settles, or pass force_result=true to override deliberately."
+            )
+    supplied_result = bool(result.strip())
+    if (
+        child_run is not None
+        and stored_result.strip()
+        and structured_result is None
+        and not force_result
+        and not schema_bound
+    ):
+        if not supplied_result:
+            result = stored_result
+        elif (
+            declared_outcome in (None, "success", "partial")
+            and len(stored_result) >= 2 * len(result)
+            and len(stored_result) >= 2000
+        ):
+            return (
+                f"Error: the supplied result is {len(result)} chars but the child already stored "
+                f"{len(stored_result)} chars (completion.result_text). Omit `result` to inject the "
+                "child's own result, or pass force_result=true to submit a deliberate summary."
+            )
+    result_source = ""
+    if structured_result is None:
+        if child_run is not None and stored_result.strip() and not supplied_result:
+            result_source = "child_completion"
+        elif supplied_result:
+            result_source = "caller"
+    source_text = ""
+    if result_source:
+        source_text = f"\n  result_source={result_source} ({len(result)} chars)"
+        if child_outcome:
+            source_text += f", child_outcome={child_outcome}"
+
+    result_hash_value = result_hash(child_session_key, result, declared_outcome or "")
     state = dict(flow["state"])
     results = list(state.get("results") or [])
     if any(isinstance(r, dict) and r.get("result_hash") == result_hash_value for r in results):
@@ -414,6 +528,83 @@ async def taskflow_resume(
         elif declared_outcome == StepOutcome.SKIPPED.value:
             set_step_status(step, StepStatus.SKIPPED, skip_reason="step_outcome=skipped")
             outcome_text = "\n  outcome: skipped (declared by the caller)"
+        elif step.get("self_evaluate") and (judge_criteria_text or stored_criteria):
+            # Opt-in scored self-evaluation (WorkMode stage 3). This branch is
+            # isolated from the default three-value judge below so the existing
+            # verdict contract is untouched for every other step.
+            min_score = _self_eval_min_score(step)
+            max_retries = _self_eval_max_retries(step)
+            self_eval = await judge_step_self_eval(
+                step_task=str(step.get("task") or ""),
+                criteria=judge_criteria_text or stored_criteria,
+                result_text=result,
+                evidence_summary=collect_evidence_summary(
+                    session_key=str(step.get("child_session_key") or "")
+                ),
+                structured_result=parsed_result if schema_validated else None,
+            )
+            step["self_eval_score"] = self_eval.score
+            if self_eval.score is None:
+                # An outage is never a passing score — treat like judge UNKNOWN.
+                if str(STEP_JUDGE.get("on_judge_error", "block")).lower() == "pass":
+                    set_step_status(step, StepStatus.DONE)
+                    judge_text = (
+                        f"\n  judge: PASS (fail-open, self-eval unavailable): {self_eval.reason}"
+                    )
+                else:
+                    set_step_status(
+                        step,
+                        StepStatus.BLOCKED,
+                        block_reason=f"self-eval unavailable (unverified): {self_eval.reason}",
+                    )
+                    judge_text = f"\n  judge: BLOCKED (self-eval outage): {self_eval.reason}"
+            elif self_eval.score >= min_score:
+                set_step_status(step, StepStatus.DONE)
+                judge_text = f"\n  judge: self-eval PASS score={self_eval.score}/{min_score}"
+            elif step_retry_count(step) < max_retries:
+                requester_key = requester_key_for_retry(state, session_id)
+                feedback = (
+                    f"Self-eval score {self_eval.score}/10 (need {min_score}): "
+                    f"{self_eval.reason} {self_eval.feedback}".strip()
+                )
+                try:
+                    redispatched_key = await spawn_replacement(
+                        with_judge_feedback(
+                            build_task_with_bindings(
+                                build_task_with_dep_results(step, steps, results),
+                                step,
+                                steps,
+                                results,
+                            ),
+                            feedback,
+                        ),
+                        requester_key,
+                        **step_spawn_kwargs(step, flow_id=flow_id),
+                    )
+                except Exception as exc:  # tool boundary: block instead of raising
+                    set_step_status(
+                        step,
+                        StepStatus.BLOCKED,
+                        block_reason=f"self-eval RETRY re-dispatch failed: {exc}",
+                    )
+                    judge_text = f"\n  judge: self-eval re-dispatch failed: {exc}"
+                else:
+                    retry_count_after = step_retry_count(step) + 1
+                    apply_redispatch(step, redispatched_key, retry_count_after)
+                    step["judge_feedback"] = feedback
+                    judge_text = (
+                        f"\n  judge: self-eval RETRY score={self_eval.score}/{min_score} "
+                        f"({retry_count_after}/{max_retries})"
+                    )
+            else:
+                # Retry budget exhausted: FORCE a pass with an audit marker so
+                # a self-critical model cannot deadlock the flow forever.
+                step["self_eval_forced_pass"] = True
+                set_step_status(step, StepStatus.DONE)
+                judge_text = (
+                    f"\n  judge: self-eval FORCED PASS score={self_eval.score}/{min_score} "
+                    f"after {step_retry_count(step)} retries (max_retries={max_retries})"
+                )
         elif judge_criteria_text or stored_criteria:
             judge_result = await judge_step_result(
                 step_task=str(step.get("task") or ""),
@@ -681,6 +872,7 @@ async def taskflow_resume(
         f"{validation_text}"
         f"{retry_text}"
         f"{judge_text}"
+        f"{source_text}"
         f"{outcome_text}"
         f"{_schema_text(schema_validated, schema_error)}"
         f"\n  auto_dispatched=[{dispatched_text}]"

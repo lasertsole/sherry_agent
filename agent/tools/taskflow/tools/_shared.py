@@ -35,9 +35,20 @@ def requester_session_key(session_id: str) -> str:
     return f"agent:main:session:{session_id}"
 
 
-def result_hash(child_session_key: str, result: str) -> str:
-    """Fingerprint a (child_session_key, result) pair for resume idempotency."""
+def result_hash(child_session_key: str, result: str, step_outcome: str = "") -> str:
+    """Fingerprint a resume payload for idempotency.
+
+    The declared outcome is part of the identity ONLY when one is given: the
+    delivery pipeline auto-resumes a finished child as ``blocked`` (a goal-loop
+    budget exhaustion outranks the gates), and the agent must be able to
+    RE-DECLARE the same stored text as a success so the judge actually sees it.
+    Without the outcome in the key that second resume was "already resumed" and
+    the full result could never be re-judged. An outcome-less call keeps the
+    historical hash, so older result rows still dedupe.
+    """
     payload = f"{child_session_key}\x1f{result}"
+    if step_outcome:
+        payload = f"{payload}\x1f{step_outcome}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -243,6 +254,11 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "persona_prompt",  # resolved expert persona injected into the child prompt
     "skills_whitelist",  # resolved expert skills merged into the step skills
     "goal_max_turns",  # per-step child goal-turn override (1 = single-step expert)
+    # Optional scored self-evaluation (WorkMode stage 3). Opt-in; absent means
+    # the default three-value PASS/RETRY/BLOCK judge.
+    "self_evaluate",  # bool: enable 1-10 scoring instead of a binary verdict
+    "self_eval_min_score",  # int: score >= this passes (default 7)
+    "self_eval_max_retries",  # int: score-retry cap before forced pass (default 5)
 )
 
 

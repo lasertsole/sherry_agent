@@ -30,6 +30,7 @@
 - [판정 게이트](gates/README.ko.md)
 - [증거 원장](gates/evidence-ledger/README.ko.md)
 - [동시성 레인](lanes/README.ko.md)
+- [WorkMode 하위 메커니즘](workmode/README.ko.md)
 - [미참조 플로 고아 GC](#-미참조-플로-고아-gc)
 - [디스패치 직렬화와 멱등 플래닝](#-dispatch-serialization--idempotent-planning)
 - [설정 레지스트리](#-설정-레지스트리)

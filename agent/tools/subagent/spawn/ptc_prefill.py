@@ -150,6 +150,11 @@ async def _try_ptc_prefill(
             run.child_session_key,
             PTC,
             cwd=run.spawned_cwd or None,
+            # The synthetic/child session key does not carry
+            # APPROVAL_SCOPE_PARENT on this path; the plan identity already
+            # resolved the root main session, so the script's high-risk gate
+            # (keyword registry + ledger) shares that scope.
+            scope=root_session,
         )
         result = json.loads(raw)
         if not isinstance(result, dict):

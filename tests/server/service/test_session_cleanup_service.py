@@ -250,6 +250,25 @@ async def test_purge_session_schedules_salvage_before_destroying_stores(
 
 
 @pytest.mark.asyncio
+async def test_purge_clears_path_guard_denial_tally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """B-class #9A: deleting a session drops its process-local denial tally."""
+    from server.service import session_cleanup_service as dao
+    from agent.middlewares.path_guard import clear_denials, drain_denials, record_denial
+
+    _isolate_dao(monkeypatch, tmp_path)
+    clear_denials("sess-denial")
+    record_denial("sess-denial", "/etc/passwd")
+    record_denial("sess-denial", "/etc/shadow")
+
+    await dao.purge_session("sess-denial")
+
+    assert drain_denials("sess-denial") is None
+    clear_denials("sess-denial")
+
+
+@pytest.mark.asyncio
 async def test_salvage_failure_does_not_block_the_purge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
