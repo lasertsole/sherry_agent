@@ -74,13 +74,28 @@ The agent runs for real, so the harness states its rules and then verifies them:
 
 - `todowrite` plus one TaskFlow flow (`taskflow_flow(action="plan")`) must exist
   before any file edit or child spawn; the mutating tools answer with the rule
-  until they do, and per-tool usage is reported (`orchestration_compliant`).
+  until they do, and per-tool usage is reported (`orchestration_compliant`). The
+  counters are bucketed PER SESSION — one suite drives every task in one
+  process, so an earlier task's planning never unlocks a later task — and a
+  read-only `todoread` is not planning. A child agent is counted but never
+  gated (it has no `todowrite`/`taskflow_flow`). Each task's own numbers land in
+  `orchestration_gate`; `orchestration.gate` is the run-wide total.
 - The task text's decidable clauses become a numbered acceptance checklist in
   the prompt, and the gate appends it to every reviewer spawn
   (`sessions_spawn(functional_role="reviewer")`), so the verdict is per clause.
 - The production auto-turn trigger is a server hook; the harness drives plan
   continuation itself (up to 3 turns) and stops as soon as a continuation
-  changes nothing (`no_progress_stop`).
+  changes nothing (`no_progress_stop`). The reader is scoped to the task's OWN
+  session: the plan registry is shared by every task in a run, so an unscoped
+  read let one task's unfinished plan drive the next one.
+- `--timeout` is the budget of the WHOLE drive: every driven turn (first or
+  continuation) draws from one deadline, a turn that would start with nothing
+  left does not start, and the report carries `budget_s`/`deadline_hit`.
+- A terminal provider error (`insufficient_balance`, `invalid_api_key`,
+  401/402/403) stops the suite after TWO consecutive tasks: the remaining ones
+  are never started and are reported as `not_run` (a 429 or a timeout never
+  trips this). `aggregate` then carries `attempted`/`not_run` and
+  `resolve_rate_all` beside the valid-run `resolve_rate`.
 
 ## Verified locally (2026-11-01)
 

@@ -73,8 +73,12 @@ then verifies them instead of trusting the prompt:
 
 - **Orchestration gate** — before any file edit or child spawn the agent must
   have called `todowrite` and opened one TaskFlow flow (`taskflow_flow` with
-  `action="plan"`); otherwise the mutating tool answers with the rule. Usage is
-  counted per tool and reported (`orchestration_compliant`).
+  `action="plan"`); otherwise the mutating tool answers with the rule. The
+  counters are bucketed PER SESSION, because a suite drives every task in one
+  process: an earlier task's planning never unlocks a later task, and a
+  read-only `todoread` is not planning, and a child agent is counted but never
+  gated (it has no `todowrite`/`taskflow_flow`). Usage is counted per tool and reported
+  (`orchestration_compliant`, plus each task's own `orchestration_gate`).
 - **Acceptance checklist** — the task text's decidable clauses (normative
   keywords such as *must* / *raise* / *reject* / *only* / *charset*) become a
   numbered checklist in the prompt, and the gate appends it to every
@@ -82,16 +86,30 @@ then verifies them instead of trusting the prompt:
   PASS/FAIL per clause instead of agreeing with the plan.
 - **Plan continuation** — the production auto-turn trigger is a server hook, so
   the harness drives the continuation itself: after each turn it reads the
-  sandbox plan registry, and while items are open it sends a bounded
+  sandbox plan registry FOR THIS SESSION ONLY (the registry is shared by every
+  task in a run, so an unscoped read let one task's open plan drive the next),
+  and while items are open it sends a bounded
   `[PLAN CONTINUATION]` turn (at most 3). A continuation that changes nothing in
   the diff stops the loop (`no_progress_stop`).
+- **Provider abort** — a TERMINAL provider error (`insufficient_balance`,
+  `invalid_api_key`, 401/402/403) stops the suite after two consecutive tasks:
+  the remaining ones are never started, and their report rows say `not_run`
+  instead of "failed". A 429 or a timeout never trips it.
 - **Report fields** — `orchestration` (policy, per-task counts, gate counters,
-  `acceptance_checklist`, `reviewer_checklist_injections`), `continuations`,
-  `no_progress_stop`, plus the verifier verdict and the patch.
+  `reviewer_checklist_injections`, and the `compliant`/`violating`/`not_run` task
+  lists), each task's `orchestration_gate` and `acceptance_checklist`,
+  `continuations`, `no_progress_stop`, `patch_bytes` + `changed_paths` (BINARY
+  files included; a swept build artifact also raises `large_patch_files`), the
+  extraction `attempted`/`fired`/`produced` split, and the verifier verdict.
+  `aggregate` carries both `resolve_rate` (valid runs only) and
+  `resolve_rate_all`, plus the `not_run` list — a task that never executed is
+  neither a pass nor a failure.
 
-Known gap: the container arm bounds each driven turn with `asyncio.wait_for`; it
-has no hard kill for an in-flight provider call, which can outlive the deadline
-(the retired `--local` mode's worker-process kill is the sketch for fixing this).
+`--timeout` is the budget of the WHOLE drive: every driven turn (first and
+continuations) draws from one deadline, and a turn that would start with nothing
+left does not start (`deadline_hit` in the report). Known gap: a cancelled turn's
+in-flight provider call can still outlive that deadline — there is no hard kill
+(the retired `--local` mode's worker-process kill is the sketch for fixing it).
 
 ## Task results (tasks 1-14)
 

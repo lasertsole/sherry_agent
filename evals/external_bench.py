@@ -948,7 +948,65 @@ _PATH_DENIAL_MARKERS = (
     "access denied",
     "PathGuard: rejected",
 )
-_GATE_STATE: dict[str, int] = {}
+
+#: The counters one session accumulates. ``todo`` counts ``todowrite`` (a
+#: read-only ``todoread`` is not planning) and ``plan_calls`` counts
+#: ``taskflow_flow(action="plan")`` only — the per-task report's ``taskflow_calls``
+#: counts every ``taskflow*`` tool, which is a different metric.
+_GATE_COUNTER_KEYS = (
+    "todo",
+    "plan_calls",
+    "blocked",
+    "reviewer_checklist_injected",
+    "path_denials",
+    "blocked_writes",
+)
+
+#: Counters per SESSION. The gate is process-level but its policy is per task:
+#: every suite drives all of its tasks in one process, so a single global dict
+#: let the first task's planning calls unlock every later task (measured on the
+#: DeepSWE L1 run 20261125_222727: task #2 ran `terminal` with
+#: `taskflow_calls=0`, and `blocked` stayed at 1 for the whole run).
+_GATE_STATE: dict[str, dict[str, int]] = {}
+
+
+def _gate_bucket(session_id: str) -> dict[str, int]:
+    """The (created-on-demand) counter bucket for one session."""
+    bucket: dict[str, int] | None = _GATE_STATE.get(session_id)
+    if bucket is None:
+        bucket = {key: 0 for key in _GATE_COUNTER_KEYS}
+        _GATE_STATE[session_id] = bucket
+    return bucket
+
+
+def _runtime_session_id(runtime: Any) -> str:
+    """The session that issued the call (empty when it cannot be resolved).
+
+    The same resolution the product's ``agent.safe_tool_node`` uses: the tool
+    runtime's context carries the session as a dict key or an attribute. An
+    unresolvable session lands in the ``""`` bucket, which behaves exactly like
+    the old process-wide counter.
+    """
+    try:
+        context = getattr(runtime, "context", None)
+        if isinstance(context, dict):
+            session_id = context.get("session_id")
+        else:
+            session_id = getattr(context, "session_id", None)
+    except Exception:  # noqa: BLE001 — a gate must never break the call
+        return ""
+    return str(session_id or "")
+
+
+#: Child-agent session keys embed their role (a swarm child carries ":swarm:").
+#: Mirrors the product's child checks (``pub_base.high_risk_gate.is_child_session``
+#: and DelegationPressureGate) without importing the agent tool stack here.
+_CHILD_SESSION_MARKERS = (":subagent:", ":swarm:")
+
+
+def _is_child_session(session_id: str) -> bool:
+    """True for a child agent's session key (never gated: it cannot plan)."""
+    return any(marker in session_id for marker in _CHILD_SESSION_MARKERS)
 
 
 def _is_path_denial(text: str) -> bool:
@@ -957,32 +1015,42 @@ def _is_path_denial(text: str) -> bool:
     return any(marker.lower() in lowered for marker in _PATH_DENIAL_MARKERS)
 
 
-def orchestration_state() -> dict[str, int]:
-    """The LIVE gate counters (or a detached copy before the gate installs)."""
-    return _GATE_STATE
+def orchestration_state(session_id: str | None = None) -> dict[str, int]:
+    """Gate counters: one session's bucket, or the run-wide totals.
+
+    Pass a session id for that task's own numbers (the per-task report) and no
+    argument for the run totals. Reads never create buckets, so a report taken
+    before any tool call answers zeros.
+    """
+    if session_id is not None:
+        bucket = _GATE_STATE.get(session_id)
+        return dict(bucket) if bucket else {key: 0 for key in _GATE_COUNTER_KEYS}
+    totals: dict[str, int] = {key: 0 for key in _GATE_COUNTER_KEYS}
+    for bucket in _GATE_STATE.values():
+        for key in _GATE_COUNTER_KEYS:
+            totals[key] += int(bucket.get(key) or 0)
+    return totals
 
 
-def install_orchestration_gate() -> dict[str, int]:
-    """Structurally require ``todowrite`` + one ``taskflow_flow(plan)``.
+def install_orchestration_gate() -> dict[str, dict[str, int]]:
+    """Structurally require ``todowrite`` + one ``taskflow_flow(plan)`` PER TASK.
 
     A prompt-level mandate is not enforcement: a measured ``deepseek-flash``
     run read/patched straight through it (181 tool calls, one ``todowrite``,
     zero ``taskflow_*``). The hook is ``SafeToolNode._arun_one`` — the batch
     executor every tool call passes through — because per-tool ``ainvoke``
-    wrappers are not on that path. Until both planning calls exist, the
-    mutating tools answer with the rule instead of running.
+    wrappers are not on that path. Until both planning calls exist in the
+    calling session, the mutating tools answer with the rule instead of running.
+
+    The counters are bucketed by the session that made the call, so one
+    installed gate serves every task in a run: a task's planning never unlocks
+    another task's writes. A CHILD agent is counted but never gated — it has no
+    ``todowrite``/``taskflow_flow``, so the mandate is the main agent's.
+    Read the counters through :func:`orchestration_state`.
     """
-    global _GATE_INSTALLED, _GATE_STATE
-    state = {
-        "todo": 0,
-        "taskflow": 0,
-        "blocked": 0,
-        "reviewer_checklist_injected": 0,
-        "path_denials": 0,
-        "blocked_writes": 0,
-    }
+    global _GATE_INSTALLED
     if _GATE_INSTALLED:
-        return state
+        return _GATE_STATE
     from langchain_core.messages import ToolMessage
 
     from agent.safe_tool_node import SafeToolNode
@@ -992,22 +1060,29 @@ def install_orchestration_gate() -> dict[str, int]:
     async def gated_arun_one(self: Any, call: Any, input_type: Any, tool_runtime: Any) -> Any:
         name = str((call or {}).get("name") or "")
         args = (call or {}).get("args") or {}
-        if name.startswith("todo"):
-            state["todo"] += 1
-        elif name == "taskflow_flow" and str(args.get("action") or "") == "plan":
-            state["taskflow"] += 1
-        # A reviewer spawn carries the task text's acceptance clauses, so its
-        # report can be answered per item instead of "looks fine".
+        session_id = _runtime_session_id(tool_runtime)
+        state = _gate_bucket(session_id)
         if name == "sessions_spawn" and str(args.get("functional_role") or "") == "reviewer":
+            # A reviewer spawn carries the task text's acceptance clauses, so its
+            # report can be answered per item instead of "looks fine". This also
+            # applies to a child that spawns its own reviewer.
             if _augment_reviewer_task(args):
                 state["reviewer_checklist_injected"] += 1
-        if name in _ORCHESTRATION_GATED and not (state["todo"] and state["taskflow"]):
-            state["blocked"] += 1
-            return ToolMessage(
-                content=_ORCHESTRATION_UNLOCK,
-                tool_call_id=str((call or {}).get("id") or ""),
-                name=name,
-            )
+        # The mandate is the MAIN agent's: a child agent has neither `todowrite`
+        # nor `taskflow_flow`, so enforcing its bucket would block every child
+        # write. Children are counted (path denials) but never gated.
+        if not _is_child_session(session_id):
+            if name == "todowrite":
+                state["todo"] += 1
+            elif name == "taskflow_flow" and str(args.get("action") or "") == "plan":
+                state["plan_calls"] += 1
+            if name in _ORCHESTRATION_GATED and not (state["todo"] and state["plan_calls"]):
+                state["blocked"] += 1
+                return ToolMessage(
+                    content=_ORCHESTRATION_UNLOCK,
+                    tool_call_id=str((call or {}).get("id") or ""),
+                    name=name,
+                )
         result = await original(self, call, input_type, tool_runtime)
         if _is_path_denial(str(getattr(result, "content", "") or "")):
             state["path_denials"] += 1
@@ -1016,10 +1091,9 @@ def install_orchestration_gate() -> dict[str, int]:
         return result
 
     SafeToolNode._arun_one = gated_arun_one  # type: ignore[method-assign]
-    _GATE_STATE = state
     _GATE_INSTALLED = True
     print("[evals] orchestration gate installed (todowrite + taskflow_flow plan)", flush=True)
-    return state
+    return _GATE_STATE
 
 
 async def bind_external_session(

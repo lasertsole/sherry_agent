@@ -61,22 +61,36 @@ DeepSWE는 실제 메인 에이전트를 구동하므로, harness는 규칙을 �
 
 - **오케스트레이션 게이트** — 파일 편집이나 자식 spawn 전에 `todowrite`와 TaskFlow flow
   하나(`taskflow_flow`의 `action="plan"`)가 필요합니다. 없으면 변경 계열 도구가 규칙을
-  돌려줍니다. 사용량은 도구별로 집계되어 `orchestration_compliant`로 보고됩니다.
+  돌려줍니다. 카운터는 **세션별로 분리**됩니다(하나의 suite가 같은 프로세스에서 모든 작업을
+  수행하므로): 앞 작업의 계획이 다음 작업을 풀어주지 않으며, 읽기 전용 `todoread`는 계획으로
+  치지 않습니다. 자식 에이전트는 집계만 되고 게이트 대상이 아닙니다
+  (`todowrite`/`taskflow_flow`가 없기 때문). 사용량은 도구별로 집계되어 `orchestration_compliant`(및 작업별
+  `orchestration_gate`)로 보고됩니다.
 - **수용 체크리스트** — 작업 텍스트의 판정 가능한 조항(*must* / *raise* / *reject* /
   *only* / *charset* 등 규범 키워드)을 번호 체크리스트로 만들어 프롬프트에 넣고,
   게이트가 모든 `sessions_spawn(functional_role="reviewer")` 작업에도 덧붙입니다.
   그래서 검증은 계획에 동의하는 것이 아니라 조항별 PASS/FAIL이 됩니다.
 - **계획 계속 실행** — 프로덕션의 자동 턴 트리거는 서버 hook이므로 harness가 직접
-  구동합니다. 매 턴 후 샌드박스 계획 registry를 읽어 미완료 항목이 있는 동안 상한이 있는
+  구동합니다. 매 턴 후 샌드박스 계획 registry를 **이 세션으로 한정해** 읽어(registry는 한
+  번의 run에 속한 모든 작업이 공유하므로 범위 없이 읽으면 앞 작업의 미완료 계획이 다음
+  작업을 구동하게 됩니다) 미완료 항목이 있는 동안 상한이 있는
   `[PLAN CONTINUATION]` 턴을 보냅니다(최대 3회). diff가 바뀌지 않는 계속 실행은 즉시
   멈춥니다(`no_progress_stop`).
+- **프로바이더 중단** — **종결** provider 오류(`insufficient_balance`, `invalid_api_key`,
+  401/402/403)가 두 작업 연속으로 나면 suite를 멈춥니다. 남은 작업은 시작되지 않고
+  리포트 행은 "실패"가 아니라 `not_run`으로 기록됩니다. 429/타임아웃은 발동하지 않습니다.
 - **리포트 필드** — `orchestration`(정책, 작업별 카운트, 게이트 카운터,
-  `acceptance_checklist`, `reviewer_checklist_injections`), `continuations`,
-  `no_progress_stop`, 그리고 verifier 판정과 patch.
+  `reviewer_checklist_injections`, `compliant`/`violating`/`not_run` 목록), 작업별
+  `orchestration_gate`와 `acceptance_checklist`, `continuations`, `no_progress_stop`,
+  `patch_bytes` + `changed_paths`(**바이너리 포함**; 함께 딸려온 빌드 산출물은
+  `large_patch_files`에도 표시), 경험 추출의 `attempted`/`fired`/`produced` 구분, 그리고
+  verifier 판정. `aggregate`는 `resolve_rate`(유효 실행만)와 `resolve_rate_all`, `not_run`
+  목록을 함께 제공합니다 — 실행되지 않은 작업은 통과도 실패도 아닙니다.
 
-알려진 공백: 컨테이너 경로는 각 턴을 `asyncio.wait_for`로 제한합니다. 진행 중인 provider
-호출에 대한 강제 종료가 없어 기한을 넘길 수 있습니다(삭제된 `--local` 모드의 worker 프로세스
-강제 종료가 수정 참고).
+`--timeout`은 **드라이브 전체**의 예산입니다. 첫 턴과 모든 연속 턴이 하나의 기한에서
+소비하며, 남은 시간이 부족하면 새 턴을 시작하지 않습니다(리포트의 `deadline_hit`). 알려진
+공백: 취소된 턴의 provider 호출은 그 기한을 넘어 남을 수 있습니다 — 강제 종료는 없습니다
+(삭제된 `--local` 모드의 worker 프로세스 강제 종료가 수정 참고).
 
 ## 작업 1–14 실측
 

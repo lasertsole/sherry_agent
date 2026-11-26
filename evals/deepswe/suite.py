@@ -198,6 +198,76 @@ _MAX_PLAN_CONTINUATIONS = 3
 #: graded patch is the whole score, so a just-finished child's edits must land
 #: before it is captured; past this window the run grades what exists.
 _FLOW_SETTLE_WAIT_S = 180.0
+
+#: A terminal provider error does not heal on its own (balance exhausted, key
+#: revoked). Two consecutive runs failing this way stop the suite: the remaining
+#: tasks are reported as NOT RUN, never as failed work (measured: four tasks ran
+#: the whole extract/start/verify pipeline after the balance was already gone).
+_PROVIDER_ABORT_AFTER = 2
+_TERMINAL_PROVIDER_MARKERS = (
+    "insufficient_balance",
+    "insufficient balance",
+    "invalid_api_key",
+    "error code: 401",
+    "error code: 402",
+    "error code: 403",
+)
+
+
+#: A driven turn may not START with less than this left in the task budget.
+_DRIVE_BUDGET_FLOOR_S = 1.0
+
+
+def _drive_deadline(timeout: float) -> float:
+    """The one deadline every driven turn of a task shares (see _next_drive_turn)."""
+    return time.monotonic() + timeout
+
+
+class BudgetSpentError(Exception):
+    """The task's single drive budget ran out before another turn could start."""
+
+
+async def _next_drive_turn(harness: Any, session_id: str, prompt: str, deadline: float) -> Any:
+    """Run one driven turn inside the task's deadline.
+
+    EVERY driven turn shares one budget (``--timeout``), so the wait is the time
+    left, not the whole flag again (measured: 9434 s against the 3600 s default).
+    Raises :class:`BudgetSpentError` when nothing usable is left and lets
+    ``asyncio.TimeoutError`` through when the turn itself overruns the deadline.
+    Both suites drive through this one function.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining < _DRIVE_BUDGET_FLOOR_S:
+        raise BudgetSpentError
+    return await asyncio.wait_for(harness._drive(session_id, prompt), timeout=remaining)
+
+
+def _is_terminal_provider_error(text: str) -> bool:
+    """True for an error the next task cannot get past (429/timeouts are NOT)."""
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _TERMINAL_PROVIDER_MARKERS)
+
+
+class _ProviderAbort:
+    """Counts CONSECUTIVE terminal provider failures; the loop stops when tripped."""
+
+    def __init__(self, threshold: int = _PROVIDER_ABORT_AFTER) -> None:
+        self.threshold = threshold
+        self.count = 0
+
+    @property
+    def tripped(self) -> bool:
+        return self.count >= self.threshold
+
+    def observe(self, result: dict[str, Any]) -> None:
+        if result.get("invalid_run") and _is_terminal_provider_error(
+            str(result.get("error") or "")
+        ):
+            self.count += 1
+        else:
+            self.count = 0
+
+
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: PLAN CONTINUATION]
 
 Your plan is NOT finished. Open items:
@@ -225,13 +295,19 @@ then resume each settled step and continue closing the flow with
 completion while steps are running. Do not ask questions."""
 
 
-def _open_plan_items(results_dir: Path) -> list[str]:
-    """Open todos + non-terminal flows from the sandbox's plan registry.
+def _open_plan_items(results_dir: Path, session_id: str) -> list[str]:
+    """Open todos + non-terminal flows for ONE session's plan.
 
     The production auto-turn trigger is a SERVER hook; the eval harness has no
     server, so ``PlanContinuationEnforcer._inject`` silently returns False and
     a mandatory [VERIFY] todo would never run. This reader is what lets the
     harness drive the continuation itself.
+
+    The registry is shared by every task in a run, so the read is SCOPED: an
+    unscoped read reported another task's open todos as this task's plan (a
+    finished task then never took the "plan complete" exit and kept receiving
+    continuations) and another task's flow as in-flight (injecting the WAIT
+    prompt into a flow-less task).
     """
     # EvalSandbox redirects the plan registry under its own root; older runs
     # may keep it at the results root.
@@ -247,12 +323,15 @@ def _open_plan_items(results_dir: Path) -> list[str]:
         with sqlite3.connect(database, timeout=5) as connection:
             for content, status in connection.execute(
                 "SELECT content, status FROM todos "
-                "WHERE status NOT IN ('completed', 'cancelled') ORDER BY todo_id"
+                "WHERE session_id = ? AND status NOT IN ('completed', 'cancelled') "
+                "ORDER BY todo_id",
+                (session_id,),
             ):
                 items.append(f"todo: {str(content)[:100]} ({status})")
             for flow_id, status in connection.execute(
                 "SELECT flow_id, status FROM task_flows "
-                "WHERE status NOT IN ('done', 'failed', 'cancelled')"
+                "WHERE session_id = ? AND status NOT IN ('done', 'failed', 'cancelled')",
+                (session_id,),
             ):
                 items.append(f"flow: {flow_id} ({status})")
     except sqlite3.Error:
@@ -260,11 +339,11 @@ def _open_plan_items(results_dir: Path) -> list[str]:
     return items
 
 
-def _flow_in_flight(results_dir: Path) -> bool:
-    """True when any non-terminal flow still has READY/DISPATCHED steps.
+def _flow_in_flight(results_dir: Path, session_id: str) -> bool:
+    """True when any non-terminal flow of THIS session has READY/DISPATCHED steps.
 
-    Reads the same sandbox registry as ``_open_plan_items``; a read failure is
-    reported as False (the generic continuation then applies).
+    Reads the same (session-scoped) sandbox registry as ``_open_plan_items``;
+    a read failure is reported as False (the generic continuation then applies).
     """
     candidates = (
         results_dir / "sandbox" / "stores" / "registry.db",
@@ -278,7 +357,8 @@ def _flow_in_flight(results_dir: Path) -> bool:
             rows = list(
                 connection.execute(
                     "SELECT state_json FROM task_flows "
-                    "WHERE status NOT IN ('done', 'failed', 'cancelled')"
+                    "WHERE session_id = ? AND status NOT IN ('done', 'failed', 'cancelled')",
+                    (session_id,),
                 )
             )
     except sqlite3.Error:
@@ -548,7 +628,6 @@ async def _run(
     os.environ["SANDBOX_POLICY"] = "auto"
     started = time.monotonic()
     last_payload: dict[str, Any] = {}
-    gate_state: dict[str, int] = {}
     results: list[dict[str, Any]] = []
     try:
         harness._seed_persona(eval_workspace)
@@ -568,9 +647,10 @@ async def _run(
         if _cfg.run_timeout_seconds < _child_timeout:
             _cfg.run_timeout_seconds = _child_timeout
         external_bench.trim_tools()
-        # Bind the LIVE dict: .update() copied install-time zeros, so the
-        # report never saw later counts.
-        gate_state = external_bench.install_orchestration_gate()
+        # The gate counts per session; read a task's numbers through
+        # ``orchestration_state(session_id)`` and the run totals through
+        # ``orchestration_state()`` — never the install-time return value.
+        external_bench.install_orchestration_gate()
         missing = sorted(
             {"read_file", "write_file", "patch_file", "terminal"}
             - {getattr(tool, "name", "") for tool in _agent_tools()}
@@ -591,7 +671,29 @@ async def _run(
         if prepared is None:
             return 2
 
-        for task, verifier_image in prepared:
+        abort = _ProviderAbort()
+        for index, (task, verifier_image) in enumerate(prepared):
+            if abort.tripped:
+                # A terminal provider error (balance exhausted, key revoked)
+                # does not heal: starting the remaining containers only burns
+                # them. They are reported as NOT RUN instead of as failed tasks.
+                remaining = prepared[index:]
+                for pending_task, _ in remaining:
+                    results.append(
+                        _not_run_result(
+                            pending_task,
+                            experience_extraction=resolve_experience_extraction(
+                                pending_task.task_id, experience_extraction
+                            ),
+                            gold_checked=not skip_self_check,
+                        )
+                    )
+                print(
+                    f"[evals] provider is terminal ({abort.count} consecutive runs); "
+                    f"marking {len(remaining)} remaining task(s) as not run",
+                    flush=True,
+                )
+                break
             result, payload = await _run_task(
                 task,
                 verifier_image,
@@ -605,12 +707,13 @@ async def _run(
             )
             last_payload = payload or last_payload
             results.append(result)
+            abort.observe(result)
             print(
                 f"[evals] {task.task_id}: resolved={result['resolved']} "
                 f"reward={result['reward']} duration={result['duration_s']}s "
                 f"tool_calls={result['tool_calls']} tokens={result['tokens']} "
                 f"todolist={result['todolist_calls']} taskflow={result['taskflow_calls']} "
-                f"orchestration={'ok' if result['orchestration_compliant'] else 'VIOLATED'}",
+                f"orchestration={_compliance_label(result['orchestration_compliant'])}",
                 flush=True,
             )
     except Exception:  # noqa: BLE001 — a setup bug is a harness failure, not a zero
@@ -622,6 +725,7 @@ async def _run(
         if not keep_workdirs:
             shutil.rmtree(_work_root(results_dir), ignore_errors=True)
 
+    gate_totals = external_bench.orchestration_state()
     report = {
         "run_id": run_id,
         "suite": "deepswe",
@@ -649,41 +753,22 @@ async def _run(
         },
         "orchestration": {
             "enforced": True,
-            "gate": gate_state,
-            "acceptance_checklist": results[0].get("acceptance_checklist") if results else [],
-            "reviewer_checklist_injections": int(gate_state.get("reviewer_checklist_injected", 0)),
-            "path_denials": int(gate_state.get("path_denials", 0)),
-            "blocked_writes": int(gate_state.get("blocked_writes", 0)),
+            "gate": gate_totals,
+            "reviewer_checklist_injections": int(gate_totals.get("reviewer_checklist_injected", 0)),
+            "path_denials": int(gate_totals.get("path_denials", 0)),
+            "blocked_writes": int(gate_totals.get("blocked_writes", 0)),
             "policy": (
                 "the prompt MANDATES planning through todowrite/todoread and execution through "
                 "one taskflow flow; usage is counted from tool_start frames and "
-                "reported per task (orchestration_compliant = both > 0)"
+                "reported per task (orchestration_compliant = both > 0). The gate counters are "
+                "per SESSION: todowrite + taskflow_flow(plan) must exist in the calling task "
+                "before it may write, and `gate` here is the run-wide total"
             ),
             "todolist_calls": sum(int(r.get("todolist_calls") or 0) for r in results),
             "taskflow_calls": sum(int(r.get("taskflow_calls") or 0) for r in results),
-            "compliant_tasks": [r["id"] for r in results if r.get("orchestration_compliant")],
-            "violating_tasks": [r["id"] for r in results if not r.get("orchestration_compliant")],
+            **_orchestration_task_lists(results),
         },
-        "experience_extraction": {
-            "enabled_tasks": [
-                r["id"] for r in results if r.get("experience_extraction", {}).get("enabled")
-            ],
-            "fired_tasks": [
-                r["id"] for r in results if r.get("experience_extraction", {}).get("fired")
-            ],
-            "forced_tasks": [
-                r["id"] for r in results if r.get("experience_extraction", {}).get("forced")
-            ],
-            "produced_tasks": [
-                r["id"] for r in results if r.get("experience_extraction", {}).get("snapshot_hash")
-            ],
-            "policy": (
-                "only the 12-task L1 set can opt in via --experience-extraction; "
-                "the session-level skill_extraction_enabled override is written for "
-                "those tasks only, and the eval harness forces the skill-review pass "
-                "after the run so L2/full runs stay on the historical arm"
-            ),
-        },
+        "experience_extraction": _experience_extraction_summary(results),
         "aggregate": _aggregate(results, started),
         "tasks": results,
     }
@@ -768,6 +853,55 @@ def _preflight(
 # ── One task ────────────────────────────────────────────────────────────────
 
 
+def _not_run_result(
+    task: Task, *, experience_extraction: bool, gold_checked: bool
+) -> dict[str, Any]:
+    """The report row for a task the suite never started (provider is terminal).
+
+    Shape-compatible with ``_run_task``'s result so every reader (aggregate,
+    compliance lists, extraction summary) treats it uniformly; ``not_run`` is
+    what distinguishes it from a task that ran and failed.
+    """
+    return {
+        "id": task.task_id,
+        "repo": task.repo,
+        "base_commit": task.base_commit,
+        "language": task.language,
+        "image": task.image,
+        "session_id": "",
+        "resolved": False,
+        "reward": None,
+        "reward_detail": None,
+        "failure_kind": "provider",
+        "invalid_run": True,
+        "not_run": True,
+        "duration_s": 0.0,
+        "tool_calls": 0,
+        "tool_names": {},
+        "todolist_calls": 0,
+        "taskflow_calls": 0,
+        "orchestration_compliant": None,
+        "resumes": 0,
+        "timeout": False,
+        "error": "not run: the provider is terminal (the previous tasks failed on it)",
+        "patch_path": "",
+        "verifier_output_path": "",
+        "changed_paths": [],
+        "reply": "",
+        "tokens": {},
+        "gold_self_check": "checked" if gold_checked else "skipped",
+        "experience_extraction": {
+            "enabled": experience_extraction,
+            "attempted": False,
+            "forced": False,
+            "fired": False,
+            "snapshot_hash": "",
+        },
+        "continuations": 0,
+        "no_progress_stop": False,
+    }
+
+
 async def _run_task(
     task: Task,
     verifier_image: str,
@@ -814,6 +948,7 @@ async def _run_task(
         "gold_self_check": "checked" if gold_checked else "skipped",
         "experience_extraction": {
             "enabled": experience_extraction,
+            "attempted": False,
             "forced": False,
             "fired": False,
             "snapshot_hash": "",
@@ -865,22 +1000,28 @@ async def _run_task(
             "resumes": 0,
             "interrupted": 0,
             "timeout": False,
+            "deadline_hit": False,
             "error": "",
         }
         continuations = 0
         result["no_progress_stop"] = False
         gate_before = dict(external_bench.orchestration_state())
         last_patch = _agent_patch(host_workdir, task.base_commit)
+        # ONE budget for every driven turn: `--timeout` used to be handed to
+        # each of the (up to 4) `asyncio.wait_for` calls, so a task could take
+        # 4x its stated budget (measured: 9434 s against the 3600 s default).
+        deadline = _drive_deadline(timeout)
         for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
             try:
-                turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
-            except TimeoutError:
+                turn = await _next_drive_turn(harness, session_id, prompt, deadline)
+            except (BudgetSpentError, TimeoutError):
                 # Timeout is terminal here (break, no next wait_for), and every
                 # `_drive` rebuilds the main graph+client via
                 # `_GenerateTurn._prepare(force_rebuild=True)`. So unlike the
                 # subagent goal loop there is no stale pool to reset — see the
                 # known-gap note in wiki/evals/README.md.
                 drive["timeout"] = True
+                drive["deadline_hit"] = True
                 break
             drive["tool_calls"] += int(turn.get("tool_calls") or 0)
             for name, count in (turn.get("tool_names") or {}).items():
@@ -892,12 +1033,12 @@ async def _run_task(
             if turn.get("timeout") or turn.get("error"):
                 drive["timeout"] = bool(turn.get("timeout"))
                 break
-            open_items = _open_plan_items(results_dir)
+            open_items = _open_plan_items(results_dir, session_id)
             if not open_items:
                 break
             if attempt >= _MAX_PLAN_CONTINUATIONS:
                 break
-            in_flight = _flow_in_flight(results_dir)
+            in_flight = _flow_in_flight(results_dir, session_id)
             # No-progress stop: a continuation turn that changed NOTHING is
             # churn (measured: repeated "closure flow" passes). Stop and let
             # the result record the unfinished plan instead of burning turns.
@@ -920,7 +1061,11 @@ async def _run_task(
                 )
             )
         result["continuations"] = continuations
+        # Window-based deltas (merged totals) for the path-guard counters, so a
+        # step child's denial inside this task's window is still attributed to
+        # it; the main session's own planning/blocked numbers come per session.
         gate_after = external_bench.orchestration_state()
+        result["orchestration_gate"] = external_bench.orchestration_state(session_id)
         result["path_denials"] = int(gate_after.get("path_denials", 0)) - int(
             gate_before.get("path_denials", 0)
         )
@@ -941,6 +1086,8 @@ async def _run_task(
         )
         result["resumes"] = drive["resumes"]
         result["timeout"] = drive["timeout"]
+        result["budget_s"] = timeout
+        result["deadline_hit"] = drive["deadline_hit"]
         result["error"] = drive["error"]
         result["reply"] = drive["text"][:2000]
         result["tokens"] = await harness._session_tokens(session_id)
@@ -949,7 +1096,7 @@ async def _run_task(
         # writing its edits; wait (bounded) for in-flight steps to settle so the
         # graded patch contains their work instead of racing it.
         settle_deadline = time.monotonic() + _FLOW_SETTLE_WAIT_S
-        while _flow_in_flight(results_dir) and time.monotonic() < settle_deadline:
+        while _flow_in_flight(results_dir, session_id) and time.monotonic() < settle_deadline:
             await asyncio.sleep(5.0)
 
         if experience_extraction:
@@ -960,12 +1107,29 @@ async def _run_task(
 
             result["experience_extraction"].update(await force_experience_extraction(session_id))
             result["experience_extraction"]["forced"] = True
+            result["experience_extraction"]["attempted"] = True
 
         patch = _agent_patch(host_workdir, task.base_commit)
         patch_path = results_dir / f"patch-{task.task_id}.patch"
         patch_path.write_text(patch, encoding="utf-8", newline="\n")
         result["patch_path"] = str(patch_path)
+        result["patch_bytes"] = len(patch.encode("utf-8"))
         result["changed_paths"] = _changed_paths(patch)
+        large_files = _large_patch_files(patch)
+        if large_files:
+            result["large_patch_files"] = large_files
+            print(
+                f"[evals] {task.task_id}: LARGE PATCH {result['patch_bytes']} bytes ("
+                + ", ".join(f"{entry['path']} {entry['bytes']} B" for entry in large_files)
+                + "); check for a swept build artifact",
+                flush=True,
+            )
+        elif result["patch_bytes"] > _PATCH_TOTAL_WARN_BYTES:
+            print(
+                f"[evals] {task.task_id}: LARGE PATCH {result['patch_bytes']} bytes; "
+                "check for a swept build artifact",
+                flush=True,
+            )
 
         grade_dir = results_dir / "verifier" / task.task_id
         reward, resolved, output = _grade(task, verifier_image, patch, grade_dir)
@@ -980,6 +1144,10 @@ async def _run_task(
             kind = harness._failure_kind(False, drive)
             result["failure_kind"] = kind
             result["invalid_run"] = kind == "provider"
+        if result["invalid_run"]:
+            # Never executed past the provider error: neither compliant nor a
+            # violation (the old False painted it as a prompt violation).
+            result["orchestration_compliant"] = None
         result["duration_s"] = round(time.monotonic() - started, 1)
         del output
     except Exception as exc:  # noqa: BLE001 — a harness error is reported as such
@@ -1104,26 +1272,137 @@ def _agent_patch(host_workdir: Path, base_commit: str) -> str:
     return diff.output
 
 
+#: A patch bigger than this in one file, or in total, is printed as a warning:
+#: a rebuilt binary or a swept build artifact is otherwise invisible in
+#: ``changed_paths`` and inflates the graded patch (measured: an 11.5 MB
+#: rebuilt binary inside an 8.3 MB patch).
+_PATCH_FILE_WARN_BYTES = 1_000_000
+_PATCH_TOTAL_WARN_BYTES = 5_000_000
+
+
+def _patch_sections(patch: str) -> list[tuple[str, int]]:
+    """``(path, encoded_bytes)`` per ``diff --git`` section, in patch order."""
+    sections: list[tuple[str, int]] = []
+    path = ""
+    size = 0
+    for line in patch.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            if path:
+                sections.append((path, size))
+            path, size = "", 0
+            target = line.rstrip("\n")[len("diff --git ") :].rsplit(" b/", 1)
+            if len(target) == 2:
+                path = target[1].strip()
+        size += len(line.encode("utf-8"))
+    if path:
+        sections.append((path, size))
+    return sections
+
+
 def _changed_paths(patch: str) -> list[str]:
+    """Every path the patch touches, BINARY files included.
+
+    Parsed from the ``diff --git a/X b/X`` headers rather than ``+++ b/`` lines:
+    a binary change is emitted as ``GIT binary patch`` with no ``---/+++`` pair,
+    so the old reader silently dropped it (measured: a rebuilt 11.5 MB binary
+    was reported as three Go files). A deletion is excluded — the file is gone
+    after the patch — and a rename reports its new path.
+    """
     paths: list[str] = []
+    current: str | None = None
+    deleted = False
+
+    def _flush() -> None:
+        if current and not deleted and current not in paths:
+            paths.append(current)
+
     for line in patch.splitlines():
-        if line.startswith("+++ b/"):
-            path = line[6:].strip()
-            if path and path != "/dev/null" and path not in paths:
-                paths.append(path)
+        if line.startswith("diff --git "):
+            _flush()
+            current, deleted = None, False
+            target = line[len("diff --git ") :].rsplit(" b/", 1)
+            if len(target) == 2:
+                current = target[1].strip()
+        elif line.startswith("deleted file mode"):
+            deleted = True
+    _flush()
     return paths
+
+
+def _large_patch_files(patch: str, *, limit: int = _PATCH_FILE_WARN_BYTES) -> list[dict[str, Any]]:
+    """Files whose encoded patch section exceeds *limit* (binaries surface here)."""
+    return [{"path": path, "bytes": size} for path, size in _patch_sections(patch) if size > limit]
+
+
+def _compliance_label(value: bool | None) -> str:
+    """The console label: ``ok`` / ``VIOLATED`` / ``n/a`` (a run that never happened)."""
+    if value is None:
+        return "n/a"
+    return "ok" if value else "VIOLATED"
+
+
+def _orchestration_task_lists(results: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Per-task compliance split. ``None`` is "could not be judged" (not run)."""
+    return {
+        "compliant_tasks": [
+            result["id"] for result in results if result.get("orchestration_compliant") is True
+        ],
+        "violating_tasks": [
+            result["id"] for result in results if result.get("orchestration_compliant") is False
+        ],
+        "not_run_tasks": [
+            result["id"] for result in results if result.get("orchestration_compliant") is None
+        ],
+    }
+
+
+def _experience_extraction_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """The extraction block: attempted is the force call, fired the flag, produced the output."""
+    per_task = {result["id"]: result.get("experience_extraction") or {} for result in results}
+    return {
+        "enabled_tasks": [task_id for task_id, data in per_task.items() if data.get("enabled")],
+        "attempted_tasks": [
+            task_id
+            for task_id, data in per_task.items()
+            if data.get("attempted") or data.get("forced")
+        ],
+        "forced_tasks": [task_id for task_id, data in per_task.items() if data.get("forced")],
+        "fired_tasks": [task_id for task_id, data in per_task.items() if data.get("fired")],
+        "produced_tasks": [
+            task_id for task_id, data in per_task.items() if data.get("snapshot_hash")
+        ],
+        "policy": (
+            "only the 12-task L1 set can opt in via --experience-extraction; the "
+            "session-level skill_extraction_enabled override is written for those tasks "
+            "only, and the eval harness forces the skill-review pass after the run so "
+            "L2/full runs stay on the historical arm. `attempted` is the force call, "
+            "`fired` the product's once-per-plan flag (a forced pass sets it before the "
+            "call), and `produced` needs a non-empty snapshot hash"
+        ),
+    }
 
 
 def _aggregate(results: list[dict[str, Any]], started: float) -> dict[str, Any]:
     invalid = [result["id"] for result in results if result.get("invalid_run")]
-    valid = len(results) - len(invalid)
+    # A task that never executed (provider abort, or a suite-level abort) cannot
+    # count as attempted: `invalid_run` is the historical name for the provider
+    # arm, `not_run` is set when the suite stopped before starting the task.
+    not_run = [
+        result["id"] for result in results if result.get("invalid_run") or result.get("not_run")
+    ]
+    total = len(results)
+    valid = total - len(invalid)
     resolved = sum(1 for result in results if result.get("resolved"))
     return {
-        "tasks_total": len(results),
+        "tasks_total": total,
+        "attempted": total - len(not_run),
         "resolved": resolved,
+        "not_run": not_run,
         "invalid_runs": invalid,
         "resolve_rate": round(resolved / max(1, valid), 4),
         "resolve_rate_basis": "valid runs only (provider failures excluded)",
+        "resolve_rate_all": round(resolved / max(1, total), 4),
+        "resolve_rate_all_basis": "every selected task, including the ones that never ran",
         "duration_s": round(time.monotonic() - started, 1),
     }
 

@@ -52,21 +52,33 @@ SHERRY_EVAL_CONTAINER_BIN=podman uv run --no-sync python evals/deepswe/suite.py 
 DeepSWE 驱动的是真实主 agent，因此 harness 把规则说出来并**核验**，而不是只靠提示词：
 
 - **编排门禁** —— 任何文件改动或派生子代理之前，必须先调过 `todowrite` 并开一个 TaskFlow
-  flow（`taskflow_flow` 的 `action="plan"`），否则写操作会收到规则提示。用量按工具计数并
-  汇报（`orchestration_compliant`）。
+  flow（`taskflow_flow` 的 `action="plan"`），否则写操作会收到规则提示。计数器**按 session
+  分桶**（一个 suite 在同一进程里跑完全部题目）：前面题目的规划不会解锁后面的题，只读的
+  `todoread` 也不算规划；子代理由 agent 只计数、不受门禁约束（它没有 `todowrite`/`taskflow_flow`）。
+  用量按工具计数并汇报（`orchestration_compliant`，外加每题自己的
+  `orchestration_gate`）。
 - **验收清单** —— 任务文本里可判定的条款（*must* / *raise* / *reject* / *only* / *charset*
   等规范性关键词）会变成带编号的清单写进提示词，门禁还会把清单追加到每个
   `sessions_spawn(functional_role="reviewer")` 的任务里，让验收按条给 PASS/FAIL，而不是
   “读一遍计划表示同意”。
 - **计划续跑** —— 生产环境的自动续跑触发器是 server 的 hook，所以 harness 自己驱动：每轮结束
-  读沙箱里的计划注册表，只要有未完成项就发一条有界的 `[PLAN CONTINUATION]` 回合（最多 3 次）。
+  读沙箱里**本 session** 的计划注册表（注册表由整次 run 的每道题共用，不按 session 过滤
+  会让上一题的未完成计划驱动下一题），只要有未完成项就发一条有界的 `[PLAN CONTINUATION]` 回合（最多 3 次）。
   若某次续跑对 diff 没有任何改变，循环立即停止（`no_progress_stop`）。
-- **报告字段** —— `orchestration`（策略、逐任务计数、门禁计数、`acceptance_checklist`、
-  `reviewer_checklist_injections`）、`continuations`、`no_progress_stop`，以及 verifier 判定
-  和补丁。
+- **provider 中止** —— **终态** provider 错误（`insufficient_balance`、`invalid_api_key`、
+  401/402/403）连续命中两道题后，套件停止：后面的题**不再启动**，报告行记为 `not_run`
+  而不是"失败"。429/超时永远不会触发它。
+- **报告字段** —— `orchestration`（策略、逐任务计数、门禁计数、`reviewer_checklist_injections`、
+  `compliant`/`violating`/`not_run` 三张名单）、每题的 `orchestration_gate` 与
+  `acceptance_checklist`、`continuations`、`no_progress_stop`、`patch_bytes` +
+  `changed_paths`（**含二进制文件**；被顺带提交的构建产物还会进 `large_patch_files`）、
+  经验抽取的 `attempted`/`fired`/`produced` 三分，以及 verifier 判定。`aggregate` 同时给出
+  `resolve_rate`（仅有效运行）与 `resolve_rate_all`，并附 `not_run` 名单——没跑过的题既不算过
+  也不算失败。
 
-已知缺口：容器模式用 `asyncio.wait_for` 约束每个回合，对进行中的 provider 调用没有
-硬杀，可能超过截止时间（已删除的 `--local` 模式的 worker 进程硬杀是修复的参考）。
+`--timeout` 是**整次驱动**的预算：首轮和每次续作都从同一个截止时间里取，剩余时间不足时
+不再开新回合（报告里的 `deadline_hit`）。已知缺口：被取消回合的 provider 调用仍可能超过该
+截止时间——没有硬杀（已删除的 `--local` 模式的 worker 进程硬杀是修复的参考）。
 
 ## 前 14 题实测
 

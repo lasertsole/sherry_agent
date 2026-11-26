@@ -320,6 +320,8 @@ async def run_task(
                     c for n, c in drive["tool_names"].items() if n.startswith("taskflow")
                 ),
                 "timeout": drive["timeout"],
+                "deadline_hit": drive["deadline_hit"],
+                "budget_s": timeout,
                 "error": drive["error"],
                 "reply": drive["text"][:2000],
                 "tokens": await harness._session_tokens(session_id),
@@ -335,9 +337,12 @@ async def run_task(
         patch_path = results_dir / f"patch-{instance_id}.patch"
         patch_path.write_text(model_patch, encoding="utf-8", newline="\n")
         result["patch_path"] = str(patch_path)
-        result["changed_paths"] = [
-            line[6:] for line in model_patch.splitlines() if line.startswith("+++ b/")
-        ]
+        # Same reader as deepswe: a binary change carries no `+++ b/` line, so a
+        # rebuilt artifact used to vanish from the report (see _changed_paths).
+        from evals.deepswe.suite import _changed_paths as _patch_changed_paths
+
+        result["patch_bytes"] = len(model_patch.encode("utf-8"))
+        result["changed_paths"] = _patch_changed_paths(model_patch)
         grade_dir = results_dir / "verifier" / instance_id
         reward, resolved, detail = grade_in_container(
             image,
@@ -369,7 +374,12 @@ async def _drive_with_continuations(
     session_id: str, prompt: str, harness: Any, timeout: float, results_dir: Path
 ) -> dict[str, Any]:
     """Drive the task like deepswe does: one turn, then bounded continuations
-    while the plan registry still has open items."""
+    while THIS session's plan registry still has open items."""
+    from evals.deepswe.suite import (
+        BudgetSpentError,
+        _drive_deadline,
+        _next_drive_turn,
+    )
     from evals.deepswe.suite import _open_plan_items as open_plan_items
 
     drive: dict[str, Any] = {
@@ -377,10 +387,22 @@ async def _drive_with_continuations(
         "tool_names": {},
         "text": "",
         "timeout": False,
+        "deadline_hit": False,
         "error": "",
     }
+    # One budget for the whole drive: handing `timeout` to each of the up-to-4
+    # wait_for calls let a task take 4x its stated budget (same defect deepswe
+    # had). A timeout here is a TIMEOUT, not a harness error.
+    deadline = _drive_deadline(timeout)
     for attempt in range(1 + _MAX_PLAN_CONTINUATIONS):
-        turn = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout)
+        try:
+            turn = await _next_drive_turn(harness, session_id, prompt, deadline)
+        except (BudgetSpentError, TimeoutError):
+            # A spent budget is a TIMEOUT verdict, not a harness error (this
+            # used to escape as `TimeoutError` and land in HARNESS ERROR).
+            drive["timeout"] = True
+            drive["deadline_hit"] = True
+            break
         drive["tool_calls"] += int(turn.get("tool_calls") or 0)
         for name, count in (turn.get("tool_names") or {}).items():
             drive["tool_names"][name] = drive["tool_names"].get(name, 0) + int(count)
@@ -389,7 +411,7 @@ async def _drive_with_continuations(
             drive["timeout"] = bool(turn.get("timeout"))
             drive["error"] = str(turn.get("error") or drive["error"])
             break
-        open_items = open_plan_items(results_dir)
+        open_items = open_plan_items(results_dir, session_id)
         if not open_items or attempt >= _MAX_PLAN_CONTINUATIONS:
             break
         prompt = (

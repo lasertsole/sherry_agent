@@ -17,17 +17,20 @@ def test_open_plan_items_reads_open_todos_and_flows(tmp_path: Path):
     stores.mkdir()
     with sqlite3.connect(stores / "registry.db") as connection:
         connection.execute(
-            "CREATE TABLE todos (todo_id INTEGER PRIMARY KEY, content TEXT, status TEXT)"
+            "CREATE TABLE todos (session_id TEXT, todo_id INTEGER NOT NULL, "
+            "content TEXT, status TEXT, PRIMARY KEY (session_id, todo_id))"
         )
-        connection.execute("CREATE TABLE task_flows (flow_id TEXT PRIMARY KEY, status TEXT)")
-        connection.execute("INSERT INTO todos VALUES (1, 'finished item', 'completed')")
-        connection.execute("INSERT INTO todos VALUES (2, 'verify item', 'in_progress')")
-        connection.execute("INSERT INTO todos VALUES (3, 'skipped item', 'cancelled')")
-        connection.execute("INSERT INTO task_flows VALUES ('flow-open', 'running')")
-        connection.execute("INSERT INTO task_flows VALUES ('flow-done', 'done')")
+        connection.execute(
+            "CREATE TABLE task_flows (session_id TEXT, flow_id TEXT PRIMARY KEY, status TEXT)"
+        )
+        connection.execute("INSERT INTO todos VALUES ('sess-a', 1, 'finished item', 'completed')")
+        connection.execute("INSERT INTO todos VALUES ('sess-a', 2, 'verify item', 'in_progress')")
+        connection.execute("INSERT INTO todos VALUES ('sess-a', 3, 'skipped item', 'cancelled')")
+        connection.execute("INSERT INTO task_flows VALUES ('sess-a', 'flow-open', 'running')")
+        connection.execute("INSERT INTO task_flows VALUES ('sess-a', 'flow-done', 'done')")
         connection.commit()
 
-    items = suite._open_plan_items(tmp_path)
+    items = suite._open_plan_items(tmp_path, "sess-a")
 
     assert any("verify item" in item and "in_progress" in item for item in items)
     assert any("flow-open" in item for item in items)
@@ -35,8 +38,60 @@ def test_open_plan_items_reads_open_todos_and_flows(tmp_path: Path):
     assert not any("flow-done" in item for item in items)
 
 
+def test_open_plan_items_is_scoped_to_one_session(tmp_path: Path):
+    """The registry is run-wide: another task's open plan must not leak in."""
+    stores = tmp_path / "stores"
+    stores.mkdir()
+    with sqlite3.connect(stores / "registry.db") as connection:
+        connection.execute(
+            "CREATE TABLE todos (session_id TEXT, todo_id INTEGER NOT NULL, "
+            "content TEXT, status TEXT, PRIMARY KEY (session_id, todo_id))"
+        )
+        connection.execute(
+            "CREATE TABLE task_flows (session_id TEXT, flow_id TEXT PRIMARY KEY, status TEXT)"
+        )
+        # A previous task left its plan open...
+        connection.execute(
+            "INSERT INTO todos VALUES ('sess-prev', 1, 'previous task item', 'pending')"
+        )
+        connection.execute("INSERT INTO task_flows VALUES ('sess-prev', 'prev-flow', 'running')")
+        # ...while this task finished everything.
+        connection.execute("INSERT INTO todos VALUES ('sess-now', 1, 'my item', 'completed')")
+        connection.execute("INSERT INTO task_flows VALUES ('sess-now', 'my-flow', 'done')")
+        connection.commit()
+
+    assert suite._open_plan_items(tmp_path, "sess-now") == []
+
+    previous = suite._open_plan_items(tmp_path, "sess-prev")
+    assert any("previous task item" in item for item in previous)
+    assert not any("my item" in item for item in previous)
+
+
+def test_flow_in_flight_is_scoped_to_one_session(tmp_path: Path):
+    stores = tmp_path / "stores"
+    stores.mkdir()
+    dispatched = '{"steps": [{"step_id": "s1", "status": "dispatched"}]}'
+    with sqlite3.connect(stores / "registry.db") as connection:
+        connection.execute(
+            "CREATE TABLE task_flows (session_id TEXT, flow_id TEXT PRIMARY KEY, "
+            "status TEXT, state_json TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO task_flows VALUES ('sess-now', 'my-flow', 'running', ?)",
+            ('{"steps": [{"step_id": "s1", "status": "done"}]}',),
+        )
+        connection.execute(
+            "INSERT INTO task_flows VALUES ('sess-prev', 'prev-flow', 'running', ?)",
+            (dispatched,),
+        )
+        connection.commit()
+
+    assert suite._flow_in_flight(tmp_path, "sess-now") is False
+    assert suite._flow_in_flight(tmp_path, "sess-prev") is True
+
+
 def test_open_plan_items_without_a_registry_is_empty(tmp_path: Path):
-    assert suite._open_plan_items(tmp_path) == []
+    assert suite._open_plan_items(tmp_path, "sess-a") == []
 
 
 def test_open_plan_items_prefers_the_sandbox_registry(tmp_path: Path):
@@ -44,13 +99,16 @@ def test_open_plan_items_prefers_the_sandbox_registry(tmp_path: Path):
     sandbox_stores.mkdir(parents=True)
     with sqlite3.connect(sandbox_stores / "registry.db") as connection:
         connection.execute(
-            "CREATE TABLE todos (todo_id INTEGER PRIMARY KEY, content TEXT, status TEXT)"
+            "CREATE TABLE todos (session_id TEXT, todo_id INTEGER NOT NULL, "
+            "content TEXT, status TEXT, PRIMARY KEY (session_id, todo_id))"
         )
-        connection.execute("CREATE TABLE task_flows (flow_id TEXT PRIMARY KEY, status TEXT)")
-        connection.execute("INSERT INTO todos VALUES (1, 'sandbox item', 'pending')")
+        connection.execute(
+            "CREATE TABLE task_flows (session_id TEXT, flow_id TEXT PRIMARY KEY, status TEXT)"
+        )
+        connection.execute("INSERT INTO todos VALUES ('sess-a', 1, 'sandbox item', 'pending')")
         connection.commit()
 
-    items = suite._open_plan_items(tmp_path)
+    items = suite._open_plan_items(tmp_path, "sess-a")
 
     assert any("sandbox item" in item for item in items)
 

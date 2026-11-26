@@ -63,23 +63,38 @@ DeepSWE は実際のメインエージェントを動かすため、harness は�
 
 - **オーケストレーションゲート** — ファイル編集や子エージェントの spawn の前に、
   `todowrite` と TaskFlow の flow 1 つ（`taskflow_flow` の `action="plan"`）が必要です。
-  満たさない場合、変更系ツールはルールを返します。使用量はツール別に集計され、
-  `orchestration_compliant` として報告されます。
+  満たさない場合、変更系ツールはルールを返します。カウンタは**セッションごと**に分かれます
+  （1 つの suite が同一プロセスで全タスクを実行するため）：前のタスクの計画が次のタスクを
+  解錠することはなく、読み取り専用の `todoread` は計画と見なしません。子エージェントは集計
+  のみでゲート対象外です（`todowrite`/`taskflow_flow` を持たないため）。使用量はツール別に
+  集計され、`orchestration_compliant`（およびタスクごとの `orchestration_gate`）として
+  報告されます。
 - **受け入れチェックリスト** — タスク文の判定可能な条項（*must* / *raise* / *reject* /
   *only* / *charset* などの規範語）を番号付きチェックリストにしてプロンプトへ入れ、
   ゲートが各 `sessions_spawn(functional_role="reviewer")` のタスクにも追記します。
   これにより検証は計画への同意ではなく、条項ごとの PASS/FAIL になります。
 - **プラン継続** — 本番の自動ターントリガはサーバーの hook なので、harness が自ら
-  駆動します。各ターン後にサンドボックスのプラン registry を読み、未完了項目がある間は
+  駆動します。各ターン後にサンドボックスのプラン registry を**このセッションに限定して**
+  読み（registry は 1 回の run の全タスクで共有されるため、スコープなしの読み取りでは
+  前のタスクの未完了プランが次のタスクを駆動してしまいます）、未完了項目がある間は
   上限付きの `[PLAN CONTINUATION]` ターンを送ります（最大 3 回）。diff が変わらない
   継続は即座に停止します（`no_progress_stop`）。
+- **プロバイダ中止** — **終端**の provider エラー（`insufficient_balance`、`invalid_api_key`、
+  401/402/403）が 2 タスク連続で出たら suite を停止します。残りのタスクは起動されず、
+  レポート行は「失敗」ではなく `not_run` になります。429/タイムアウトでは発動しません。
 - **レポート項目** — `orchestration`（ポリシー、タスク別カウント、ゲートカウンタ、
-  `acceptance_checklist`、`reviewer_checklist_injections`）、`continuations`、
-  `no_progress_stop`、そして verifier の判定と patch。
+  `reviewer_checklist_injections`、`compliant`/`violating`/`not_run` の各リスト）、タスクごとの
+  `orchestration_gate` と `acceptance_checklist`、`continuations`、`no_progress_stop`、
+  `patch_bytes` + `changed_paths`（**バイナリも含む**。巻き込まれたビルド産物は
+  `large_patch_files` にも載る）、経験抽出の `attempted`/`fired`/`produced`、
+  そして verifier の判定。`aggregate` は `resolve_rate`（有効実行のみ）と
+  `resolve_rate_all`、`not_run` の一覧を併記します——実行されなかったタスクは成功でも失敗でも
+  ありません。
 
-既知のギャップ：コンテナ経路は各ターンを `asyncio.wait_for` で制限します。実行中の
-provider 呼び出しに対する強制終了はなく、期限を超えて残る可能性があります（削除済みの
-`--local` モードの worker プロセス強制終了が修正の参考）。
+`--timeout` は**ドライブ全体**の予算です。最初のターンも各継続ターンも同じ期限から消費し、
+残りが足りないターンは開始しません（レポートの `deadline_hit`）。既知のギャップ：キャンセル
+されたターンの provider 呼び出しはその期限を超えて残る可能性があります——強制終了はありません
+（削除済みの `--local` モードの worker プロセス強制終了が修正の参考）。
 
 ## タスク 1–14 の実測
 
