@@ -15,6 +15,7 @@ frames (as the container report does).
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -269,3 +270,66 @@ def test_run_one_accepts_a_fresh_verdict(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert result["invalid_run"] is False
     assert result["failure_kind"] == ""
     assert result["orchestration_compliant"] is True
+
+
+def test_worker_applies_the_driver_override_after_the_sandbox_pins_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EvalSandbox pins ``required``; the driver's override must win."""
+    from evals.deepswe import local_agent_worker as worker
+
+    monkeypatch.setenv("SANDBOX_POLICY", "required")
+    monkeypatch.setenv("SHERRY_LOCAL_EVAL_SANDBOX_POLICY", "off")
+
+    worker._apply_sandbox_policy()
+
+    assert os.environ["SANDBOX_POLICY"] == "off"
+
+
+def test_worker_keeps_the_sandbox_default_without_an_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from evals.deepswe import local_agent_worker as worker
+
+    monkeypatch.delenv("SHERRY_LOCAL_EVAL_SANDBOX_POLICY", raising=False)
+    monkeypatch.setenv("SANDBOX_POLICY", "required")
+
+    worker._apply_sandbox_policy()
+
+    assert os.environ["SANDBOX_POLICY"] == "required"
+
+
+def test_run_worker_passes_the_policy_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Proc:
+        pid = 1
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            return None
+
+    def _popen(command: list[str], **kwargs: object) -> _Proc:
+        captured["command"] = command
+        captured.update(kwargs)
+        return _Proc()
+
+    monkeypatch.setattr(local_driver.subprocess, "Popen", _popen)
+    monkeypatch.setattr(local_driver, "sandbox_policy", lambda: "off")
+
+    local_driver._run_worker(
+        session_id="sid",
+        repo=tmp_path,
+        run_dir=tmp_path,
+        prompt_file=tmp_path / "prompt.txt",
+        result_file=tmp_path / "result.json",
+        log_file=tmp_path / "agent.log",
+    )
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["SHERRY_LOCAL_EVAL_SANDBOX_POLICY"] == "off"

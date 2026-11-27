@@ -22,10 +22,12 @@ rules, because the first run reported all three as ordinary model results:
   attempts the container harness gives it; that is ``flow_incomplete``, invalid.
 
 The sandbox policy is explicit: a headless host run has no operator to approve
-a per-command sandbox, so a subagent's ``terminal`` is refused outright under
-``auto`` with no OS sandbox backend (measured 2026-11-27). The driver sets
-``SANDBOX_POLICY=off`` unless ``SHERRY_LOCAL_EVAL_SANDBOX_POLICY`` says
-otherwise, and only picks ``auto`` when ``bwrap`` exists.
+a per-command sandbox. ``EvalSandbox.apply()`` pins ``SANDBOX_POLICY=required``
+on Linux (right for the container path, where bwrap exists); on a bare host that
+refuses EVERY terminal/repl call — the measured 2026-11-27 rerun could not run
+``git status``, the project tests, or the recon child's own JSON step. The
+driver therefore passes ``SHERRY_LOCAL_EVAL_SANDBOX_POLICY`` (``off`` without
+bwrap, ``auto`` with it) and the worker applies it AFTER ``apply()``.
 
 Environment:
   DEEPSWE_LOCAL_ROOT            prepared checkouts + ``deepswe_local.py``
@@ -247,7 +249,10 @@ def _run_worker(
     env = os.environ.copy()
     env["SHERRY_EVAL_MAX_ITERATIONS"] = MAX_ITERATIONS
     env["SHERRY_FORCE_EXPERIENCE_EXTRACTION"] = "1"
-    env["SANDBOX_POLICY"] = sandbox_policy()
+    # ``EvalSandbox.apply()`` pins SANDBOX_POLICY=required on Linux (right for the
+    # container path), so the override must ride a SEPARATE variable that the
+    # worker applies AFTER apply(); setting SANDBOX_POLICY here would be lost.
+    env["SHERRY_LOCAL_EVAL_SANDBOX_POLICY"] = sandbox_policy()
     env["PYTHONPATH"] = str(SHERRY_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     command = [
         sys.executable,

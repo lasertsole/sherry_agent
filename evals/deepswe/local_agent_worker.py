@@ -55,6 +55,24 @@ def _error_payload(error: str) -> dict[str, Any]:
     }
 
 
+def _apply_sandbox_policy() -> None:
+    """Apply the driver's sandbox policy AFTER ``EvalSandbox.apply()``.
+
+    ``EvalSandbox`` pins ``SANDBOX_POLICY=required`` on Linux (correct for the
+    container path, where bwrap exists). On a bare host without an OS sandbox
+    backend that refuses EVERY ``terminal``/``python_repl`` call — the measured
+    2026-11-27 rerun could not even run ``git status`` or the project tests, and
+    the recon step child could not answer its JSON schema, which blocked the
+    whole flow. An explicit ``SHERRY_LOCAL_EVAL_SANDBOX_POLICY`` (set by the
+    driver) therefore wins; otherwise the historical ``auto`` stays.
+    """
+    override = os.environ.get("SHERRY_LOCAL_EVAL_SANDBOX_POLICY")
+    if override:
+        os.environ["SANDBOX_POLICY"] = override
+    else:
+        os.environ.setdefault("SANDBOX_POLICY", "auto")
+
+
 def main() -> int:
     """Drive one DeepSWE task with the production Sherry agent."""
     parser = argparse.ArgumentParser()
@@ -82,12 +100,10 @@ def main() -> int:
 
     sandbox = EvalSandbox(results_dir)
     sandbox.apply()
-    # The DRIVER decides the policy: on a host without an OS sandbox backend,
-    # ``auto`` refuses every subagent exec ("caller_scope=subagent has no
-    # operator approval path", measured 2026-11-27), so the delegating agent
-    # cannot build or test from a child. ``setdefault`` lets the driver pass
-    # ``off`` (an explicit operator choice) without editing this file.
-    os.environ.setdefault("SANDBOX_POLICY", "auto")
+    # AFTER apply(): the sandbox pins SANDBOX_POLICY=required on Linux, which a
+    # bare host without bwrap cannot honour (every exec is refused). The driver
+    # decides via SHERRY_LOCAL_EVAL_SANDBOX_POLICY.
+    _apply_sandbox_policy()
     try:
         harness._seed_persona(sandbox.workspace)
         harness.init_agent()
