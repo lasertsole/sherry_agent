@@ -20,6 +20,7 @@ from typing import Any
 from loguru import logger
 
 from config.features import TASKFLOW_INFRA
+from ..clip import clip_text_head_tail
 from ..config import TERMINAL_STATUSES, StepStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
@@ -364,7 +365,7 @@ def build_task_with_dep_results(step: dict, steps: list[dict], results: list[dic
         for record in results
         if isinstance(record, dict)
     }
-    sections: list[str] = []
+    sections: list[tuple[str, str]] = []
     for dep_id in depends_on:
         dep = by_id.get(dep_id)
         child_key = str((dep or {}).get("child_session_key") or "")
@@ -372,8 +373,94 @@ def build_task_with_dep_results(step: dict, steps: list[dict], results: list[dic
         result_text = (
             str(record.get("result") or "") if record is not None else "no result recorded"
         )
-        sections.append(f"### {dep_id}\n{result_text}")
-    return f"{task}\n\n## Upstream Results\n" + "\n\n".join(sections)
+        sections.append((str(dep_id), result_text))
+    return f"{task}\n\n## Upstream Results\n" + "\n\n".join(_aggregate_sections(sections))
+
+
+#: A dependency whose allocation cannot show at least this many characters is
+#: replaced by the one-line omission note: a head/tail clip of a few dozen chars
+#: would be noise dressed up as content.
+_AGGREGATE_MIN_BODY_CHARS = 200
+
+
+def _aggregate_sections(sections: list[tuple[str, str]]) -> list[str]:
+    """Render one section per dependency under the aggregate prompt budget.
+
+    A stored step result can reach ``helpers_frozen_result_cap_bytes`` (24 kB),
+    so ``aggregate_deps`` used to inject an unbounded upstream block (5 deps ≈
+    120 k chars) into the synthesis prompt. Deterministic water-filling bounds
+    it: every dependency first gets ``min(per_dep_cap, total_cap // N)``; results
+    shorter than that keep their bytes, and the leftover is handed to the
+    still-clipped ones in ``depends_on`` order, never past the per-dep cap.
+
+    A section whose text fits its allocation is emitted byte-identically to the
+    legacy format. Over-budget text is head+tail clipped (the conclusion at the
+    END is what a synthesis step needs) with a marker that says how much was
+    dropped and where the full result still lives — the injected receiver is a
+    SUBAGENT, which cannot read the flow's results itself, so the marker never
+    pretends it can.
+    """
+    per_dep = int(TASKFLOW_INFRA["aggregate_result_per_dep_max_chars"])
+    total = int(TASKFLOW_INFRA["aggregate_result_total_max_chars"])
+    if not sections:
+        return []
+    if per_dep <= 0 or total <= 0:
+        return [f"### {dep_id}\n{text}" for dep_id, text in sections]
+
+    n = len(sections)
+    sizes = [len(text) for _, text in sections]
+    if all(size <= per_dep for size in sizes) and sum(sizes) <= total:
+        # Nothing to clip: the legacy block, byte for byte. (This must be a
+        # FIT test, not a capacity test — 100 short results fit even though the
+        # equal share `total // n` would be tiny.)
+        return [f"### {dep_id}\n{text}" for dep_id, text in sections]
+    caps = [min(size, per_dep) for size in sizes]
+    if total // n < _AGGREGATE_MIN_BODY_CHARS:
+        # Pathological fan-in: even a one-line note per dependency does not fit.
+        omitted = sum(sizes)
+        return [
+            f"### upstream results ({n} steps)\n"
+            f"[... {omitted} chars from {n} upstream results omitted; "
+            "the full results stay in the flow's results ...]"
+        ]
+
+    alloc = [0] * n
+    budget = total
+    share = budget // n
+    for index in range(n):
+        take = min(caps[index], share)
+        alloc[index] = take
+        budget -= take
+    active = [i for i in range(n) if alloc[i] < caps[i]]
+    while budget > 0 and active:
+        step = max(1, budget // len(active))
+        progressed = False
+        for index in active:
+            take = min(caps[index] - alloc[index], step, budget)
+            if take > 0:
+                alloc[index] += take
+                budget -= take
+                progressed = True
+        active = [i for i in range(n) if alloc[i] < caps[i]]
+        if not progressed:
+            break
+
+    rendered: list[str] = []
+    for (dep_id, text), limit in zip(sections, alloc, strict=True):
+        if limit >= len(text):
+            rendered.append(f"### {dep_id}\n{text}")
+            continue
+        note = (
+            f"[... {len(text) - limit} chars omitted; the full result stays in "
+            "the flow's results ...]"
+        )
+        if limit < _AGGREGATE_MIN_BODY_CHARS:
+            rendered.append(f"### {dep_id}\n{note}")
+            continue
+        rendered.append(
+            f"### {dep_id}\n" + clip_text_head_tail(text, limit, marker=f"\n\n{note}\n\n")
+        )
+    return rendered
 
 
 def mark_step_done(steps: list[dict], child_session_key: str) -> str | None:

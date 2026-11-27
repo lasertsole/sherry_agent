@@ -249,7 +249,13 @@ results are appended to the dispatched task as a `## Upstream Results` block.
 records (in `depends_on` order) and falls back to a `no result recorded`
 placeholder when a result is missing. The aggregation is re-derived at every
 re-dispatch from the stable results, so the stored step task is never rewritten;
-omitting the flag keeps the legacy dispatch text unchanged.
+omitting the flag keeps the legacy dispatch text unchanged. The injected block is
+BOUNDED: each dependency gets at most `aggregate_result_per_dep_max_chars`
+(4000) and the whole block at most `aggregate_result_total_max_chars` (16000),
+allocated by water-filling in `depends_on` order. Over-budget text is head+tail
+clipped with a visible marker that says how much was dropped (the receiver is a
+subagent, which cannot read the flow's results itself); a result that fits is
+byte-identical to the legacy text.
 
 ## 🧪 Testing
 

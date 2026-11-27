@@ -242,7 +242,7 @@ step은 `skills: ["browser", "code-wiki"]`를 선언할 수 있습니다. dispat
 
 ### 합성 집계(`aggregate_deps`)
 
-`taskflow_step(action="run_task", aggregate_deps=true)`는 의존성 결과를 `## Upstream Results` 블록으로 디스패치 작업에 덧붙이는 합성 단계를 표시합니다. `build_task_with_dep_results(step, steps, results)`는 `depends_on` 순서로 각 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조하고, 결과가 없으면 `no result recorded` 자리표시자로 폴백합니다. 집계는 재디스패치마다 안정적인 결과에서 다시 도출되므로 저장된 단계 작업은 절대 재작성되지 않습니다. 플래그를 생략하면 기존 디스패치 텍스트가 그대로 유지됩니다.
+`taskflow_step(action="run_task", aggregate_deps=true)`는 의존성 결과를 `## Upstream Results` 블록으로 디스패치 작업에 덧붙이는 합성 단계를 표시합니다. `build_task_with_dep_results(step, steps, results)`는 `depends_on` 순서로 각 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조하고, 결과가 없으면 `no result recorded` 자리표시자로 폴백합니다. 집계는 재디스패치마다 안정적인 결과에서 다시 도출되므로 저장된 단계 작업은 절대 재작성되지 않습니다. 플래그를 생략하면 기존 디스패치 텍스트가 그대로 유지됩니다. 주입되는 블록에는 상한이 있습니다: 의존성마다 `aggregate_result_per_dep_max_chars`(4000)자, 블록 전체는 `aggregate_result_total_max_chars`(16000)자까지이며 `depends_on` 순서의 water-filling으로 배분합니다. 초과분은 head+tail로 잘라내고 얼마나 잘렸는지를 눈에 보이는 마커로 표시합니다(받는 쪽은 서브에이전트라 flow의 results를 스스로 읽을 수 없습니다). 상한 안에 드는 결과는 기존 텍스트와 바이트 단위로 동일합니다.
 
 ## 🧪 테스트
 

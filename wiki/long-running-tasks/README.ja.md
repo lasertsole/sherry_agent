@@ -242,7 +242,7 @@ step は `skills: ["browser", "code-wiki"]` を宣言できます。dispatch 時
 
 ### 合成集約（`aggregate_deps`）
 
-`taskflow_step(action="run_task", aggregate_deps=true)` は、依存結果を `## Upstream Results` ブロックとしてディスパッチされるタスクへ追記する合成ステップを指定します。`build_task_with_dep_results(step, steps, results)` は `depends_on` 順に各依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合し、結果が無ければ `no result recorded` プレースホルダへフォールバックします。集約は再ディスパッチのたびに安定した結果から再導出されるため、保存済みステップタスクは決して書き換えられません。フラグを省略すれば従来のディスパッチ本文は不変です。
+`taskflow_step(action="run_task", aggregate_deps=true)` は、依存結果を `## Upstream Results` ブロックとしてディスパッチされるタスクへ追記する合成ステップを指定します。`build_task_with_dep_results(step, steps, results)` は `depends_on` 順に各依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合し、結果が無ければ `no result recorded` プレースホルダへフォールバックします。集約は再ディスパッチのたびに安定した結果から再導出されるため、保存済みステップタスクは決して書き換えられません。フラグを省略すれば従来のディスパッチ本文は不変です。注入されるブロックには上限があります：依存ごとに `aggregate_result_per_dep_max_chars`（4000）文字、ブロック全体で `aggregate_result_total_max_chars`（16000）文字までで、`depends_on` 順の water-filling で配分します。超過分は head+tail で切り詰め、どれだけ落としたかを可視マーカーで示します（受け取り手はサブエージェントで、flow の results を自分では読めません）。上限内に収まる結果は従来のテキストとバイト単位で同一です。
 
 ## 🧪 テスト
 

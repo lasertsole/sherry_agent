@@ -242,7 +242,7 @@ step 可以声明 `skills: ["browser", "code-wiki"]`。dispatch 时系统会把�
 
 ### 合成聚合（`aggregate_deps`）
 
-`taskflow_step(action="run_task", aggregate_deps=true)` 标记一个合成步骤，其依赖结果会以 `## Upstream Results` 区块追加到派发任务中。`build_task_with_dep_results(step, steps, results)` 按 `depends_on` 顺序，将每个依赖的 `child_session_key` 与 flow 的 `{child_session_key, result, result_hash}` 记录匹配；结果缺失时回退为 `no result recorded` 占位符。聚合会在每次重派时从稳定结果重新推导，因此已存储的步骤任务永不被改写；省略该标志则保持旧有派发文本不变。
+`taskflow_step(action="run_task", aggregate_deps=true)` 标记一个合成步骤，其依赖结果会以 `## Upstream Results` 区块追加到派发任务中。`build_task_with_dep_results(step, steps, results)` 按 `depends_on` 顺序，将每个依赖的 `child_session_key` 与 flow 的 `{child_session_key, result, result_hash}` 记录匹配；结果缺失时回退为 `no result recorded` 占位符。聚合会在每次重派时从稳定结果重新推导，因此已存储的步骤任务永不被改写；省略该标志则保持旧有派发文本不变。注入区块是有上限的：每个依赖最多 `aggregate_result_per_dep_max_chars`（4000）字符、整块最多 `aggregate_result_total_max_chars`（16000）字符，按 `depends_on` 顺序做 water-filling 分配；超限文本做 head+tail 裁剪并带可见标记说明裁掉多少（接收方是子代理，自身读不到 flow 的 results），未超限的结果与旧文本逐字节相同。
 
 ## 🧪 测试
 

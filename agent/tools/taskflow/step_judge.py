@@ -27,6 +27,7 @@ from loguru import logger
 
 from config.features import STEP_JUDGE
 from models import build_taskflow_llm
+from .clip import clip_text_head_tail
 
 
 class StepVerdict(StrEnum):
@@ -201,16 +202,15 @@ def _clip_for_judge(text: str, limit: int | None = None) -> str:
     "dependency-ordered implementation plan" / final verdict lives at the END of
     a long report. The middle is dropped with a visible marker so the judge
     knows the text was clipped.
+
+    Delegates to the shared :func:`agent.tools.taskflow.clip.clip_text_head_tail`
+    (the ``aggregate_deps`` prompt budget uses the same helper) while keeping
+    this wrapper's marker and default budget byte-identical to before.
     """
     budget = int(limit if limit is not None else STEP_JUDGE["max_result_chars"])
-    if budget <= 0 or len(text) <= budget:
-        return text
-    marker = "\n\n[... middle omitted for the judge ...]\n\n"
-    head = (budget * 7) // 10
-    tail = budget - head - len(marker)
-    if tail <= 0:
-        return text[:budget]
-    return text[:head] + marker + text[-tail:]
+    return clip_text_head_tail(
+        text, budget, marker="\n\n[... middle omitted for the judge ...]\n\n"
+    )
 
 
 async def judge_step_self_eval(

@@ -78,6 +78,14 @@ class TaskFlowInfraConfig(TypedDict):
     #: from normative sentences in their task when this is on. Fail-open: a bad
     #: extraction just leaves the task text unchanged.
     reviewer_checklist_enabled: bool
+    #: Bounds on the ``aggregate_deps`` synthesis prompt. A stored step result can
+    #: reach ``SUBAGENT_INFRA["helpers_frozen_result_cap_bytes"]`` (24 kB), so a
+    #: synthesis step with several dependencies used to inject an UNBOUNDED
+    #: upstream block. The per-dependency cap and the whole-block budget are
+    #: enforced with head+tail clipping and a visible marker; ``0`` disables the
+    #: respective bound.
+    aggregate_result_per_dep_max_chars: int
+    aggregate_result_total_max_chars: int
 
 
 TASKFLOW_INFRA: TaskFlowInfraConfig = {
@@ -126,4 +134,9 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     "deadlock_judge_fail_count": 5,
     "deadlock_no_progress_s": 1800.0,
     "reviewer_checklist_enabled": True,
+    # 4k per dependency / 16k for the block: a synthesis prompt still sees several
+    # full-length reports, while the block stays a fraction of any supported
+    # model's window (the step judge's own result view is 8k).
+    "aggregate_result_per_dep_max_chars": 4000,
+    "aggregate_result_total_max_chars": 16000,
 }
