@@ -8,19 +8,19 @@ question (with the measured before/after numbers).
 
 ## The gap
 
-`vendored_lightrag` had no path algorithm: `query_nodes_by_vector` and the
+`graph_rag` had no path algorithm: `query_nodes_by_vector` and the
 relation recall each run one vector search (`top_k=40` by default) and return.
 A bridge entity outside the top-k makes a relationship question unanswerable by
 traversal even when the graph contains the chain, so "multi-hop" was a
 probabilistic outcome of the LLM reasoning over a candidate set.
 
 The entity vectors are dense-only (`BGE-M3`, 1024 dimensions). There is no
-sparse channel and no BM25 fallback in the vendored engine.
+sparse channel and no BM25 fallback in the in-package engine.
 
 ## The path layer
 
 `skills/builtin/core/multimodal_rag/scripts/graph_rag/path_search.py` is
-skill-owned (the vendored tree only gains a dispatch hook in `operate.py`):
+skill-owned (the LightRAG side only gains a dispatch hook in `operate.py`):
 
 - **Endpoint resolution** — three passes in cost order: exact graph node name →
   graph-label containment (`Kepler-7 launch pad` → `Kepler-7 Launch Pad`) →
@@ -58,10 +58,38 @@ defaults are `TOP_K=20`, `CHUNK_TOP_K=12`, `COSINE_THRESHOLD=0.4` and
 `MAX_SOURCE_IDS_PER_ENTITY=50`, `MAX_SOURCE_IDS_PER_RELATION=50`,
 `SOURCE_IDS_LIMIT_METHOD=FIFO` and `RELATED_CHUNK_NUMBER=5`.
 
-They are installed in `graph_rag/__init__.py`, **before** the vendored package
+They are installed in `graph_rag/__init__.py`, **before** the vendored modules
 is imported: `QueryParam` and the LightRAG dataclass read environment variables
 into class-level defaults at import time, so the old placement in `base.py`
 (after its own LightRAG import) silently never took effect.
+
+## FTS5 hybrid entity retrieval
+
+`entities_vdb` now has an optional SQLite FTS5 shadow index
+(`graph_rag/fts_shadow_index.py`). Short identifiers such as `_strip_bom`,
+function names and file names are exact-match problems, so FTS5 keyword recall
+is merged with the existing vector cosine score. `relationships_vdb` and
+`chunks_vdb` deliberately stay pure vector: their prose benefits from semantic
+similarity.
+
+The index mirrors `entity_name`, `content` and `keywords` into two FTS5 tables
+(`unicode61` for ASCII identifiers, `trigram` for CJK/substring queries) and is
+kept in sync inside `SNKVVectorStorage.upsert()` / `delete()`. Retrieval is
+opt-in via `GRAPH_RAG_PATH["fts_hybrid_enabled"]` (default `false`); weights are
+`fts_hybrid_weight=0.4` and `fts_hybrid_vec_weight=0.6`. When FTS finds nothing
+the result falls back to the unmodified vector ranking. Merged hits retain the
+vector metadata (`entity_name`, `content`, `source_id`) that downstream
+`_get_node_data` reads.
+
+Two related cleanups shipped with it:
+
+- `QueryParam.mode` no longer accepts `bypass` (and now rejects unknown modes
+  at runtime); the dead dispatch branches in `lightrag.py` are gone.
+- The old `vendored_lightrag/` and `vendored_raganything/` trees were merged
+  into `graph_rag/`: LightRAG sits at the package root (base classes in
+  `lightrag_base.py`, Sherry adapter in `sherry_adapter.py`) and RAG-Anything
+  under `raganything/`. The bare `lightrag` / `raganything` `sys.modules`
+  aliases still resolve to the in-package copies.
 
 ## Sparse recall: why it is not implemented
 
@@ -72,8 +100,8 @@ OpenAI-compatible `/embeddings` endpoint. `SNKVVectorStorage` keeps a single
 HNSW cosine index, and `EmbeddingFunc` returns one `ndarray`. BGE-M3's native
 sparse output would require `FlagEmbedding` (PyTorch plus several hundred MiB)
 or a sparse-capable endpoint; both are rejected for the desktop bundle. Rare
-ID/version-string recall therefore remains open, with SQLite FTS5/BM25 as the
-documented future option rather than a dual sparse index.
+ID/version-string recall is covered by the FTS5 shadow index above; a native
+dual sparse index remains out of scope.
 
 The local/remote choice is a construction-time Strategy: `build_embed_model`
 injects `_LocalEmbeddingBackend` or `_RemoteEmbeddingBackend`, and the facade
@@ -118,7 +146,8 @@ were retired.
 
 ```bash
 uv run --no-sync pytest tests/skills/builtin/core/multimodal_rag/test_path_search.py \
-  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py -q
+  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py \
+  tests/skills/builtin/core/multimodal_rag/test_fts_hybrid.py -q
 uv run --no-sync python evals/graph_rag/multihop_bench.py --modes mix,path
 uv run --group evals python evals/evals.py graph_rag
 ```

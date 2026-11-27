@@ -3,7 +3,7 @@
 # importing the package never touches the model stack — dynamic exports are
 # invisible to type checkers and IDEs, hence this stub.
 
-from .base import LightRAG
+from .lightrag_base import LightRAG
 from .core import RAGAnything
 
 async def get_lightrag() -> LightRAG: ...

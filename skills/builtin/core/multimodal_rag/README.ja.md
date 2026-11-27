@@ -11,13 +11,13 @@
 - **マルチモーダル取り込み**：さまざまな形式の文書（TXT / Markdown / PDF など）を有効なパーサーでインデックスします。
 - **ナレッジグラフ**：フラットなベクトルチャンクの代わりに、文書からエンティティ–関係グラフを構築します。
 - **マルチホップ検索**：複数の文書/エンティティにまたがる推論が必要な複雑な質問に答えます。
-- **ネイティブストレージ**：検索スタック全体は完全にベンダリングされています — RAG-Anything パイプラインと、ストレージ層が [SNKV バックエンドと完全に融合](scripts/graph_rag/vendored_lightrag/)された LightRAG エンジンです。
+- **ネイティブストレージ**：検索スタック全体は完全にベンダリングされています — RAG-Anything パイプラインと、ストレージ層が [SNKV バックエンドと完全に融合](scripts/graph_rag/)された LightRAG エンジンです。
 
 ---
 
 ## 🔧 インストール
 
-このスキルは EMA エージェントに同梱されるため、個別インストールは不要です。RAG エンジン（`graph_rag`）は `scripts/graph_rag/` 配下に完全にベンダリングされ、RAG-Anything パイプラインの `vendored_raganything` と、ストレージが SNKV と融合された LightRAG エンジンの `vendored_lightrag` の 2 部構成です。両者とも `graph_rag/__init__.py` で短いインポート名に別名付けされるため、PIP からのインストールは不要です。残りのランタイム依存（SNKV、mineru パーサー、埋め込みモデル）は EMA プロジェクト環境から解決されます。
+このスキルは EMA エージェントに同梱されるため、個別インストールは不要です。RAG エンジン（`graph_rag`）は `scripts/graph_rag/` 配下に完全にベンダリングされています。LightRAG はパッケージ直下（基底クラスは `lightrag_base.py`）、RAG-Anything は `raganything/` にあります。両者とも `graph_rag/__init__.py` で短いインポート名に別名付けされるため、PIP からのインストールは不要です。残りのランタイム依存（SNKV、mineru パーサー、埋め込みモデル）は EMA プロジェクト環境から解決されます。
 
 ---
 
@@ -107,8 +107,9 @@ multimodal_rag/
 │   ├── rag_import_test.py      # 多形式サンプルの取り込み
 │   ├── rag_import_pdf_test.py  # mineru パーサーによる実 PDF 取り込み
 │   └── graph_rag/           # 完全にベンダリングされた RAG エンジン
-│       ├── vendored_raganything/  # ベンダリングされた RAG-Anything パイプライン
-│       ├── vendored_lightrag/  # ベンダリングされた LightRAG、SNKV と融合したストレージ
+│       ├── raganything/  # ベンダリングされた RAG-Anything パイプライン
+│       ├── lightrag_base.py  # LightRAG 基底クラス、SNKV と融合したストレージ
+│       ├── fts_shadow_index.py  # entities_vdb 用の任意指定 FTS5 シャドウインデックス
 │       └── ...
 └── tests/
     └── test_rag_anything_vendored.py

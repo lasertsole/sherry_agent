@@ -26,8 +26,8 @@ for path in (str(REPO_ROOT), str(SCRIPTS_DIR)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from graph_rag.vendored_lightrag.chunker import semantic_vector as semantic_vector_module
-from graph_rag.vendored_lightrag.chunker.semantic_chunker import SemanticChunker
+from graph_rag.chunker import semantic_vector as semantic_vector_module
+from graph_rag.chunker.semantic_chunker import SemanticChunker
 
 pytestmark = [pytest.mark.unit]
 

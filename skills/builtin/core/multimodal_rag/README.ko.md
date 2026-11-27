@@ -11,13 +11,13 @@
 - **멀티모달 수집**: 다양한 형식의 문서(TXT / Markdown / PDF 등)를 활성화된 파서로 인덱싱합니다.
 - **지식 그래프**: 플랫한 벡터 청크 대신 문서로부터 엔티티–관계 그래프를 구축합니다.
 - **멀티홉 검색**: 여러 문서/엔티티를 오가는 추론이 필요한 복잡한 질문에 답합니다.
-- **네이티브 스토리지**: 전체 검색 스택은 완전히 벤더되어 있습니다 — RAG-Anything 파이프라인과 그 스토리지 계층이 [SNKV 백엔드와 완전히 융합](scripts/graph_rag/vendored_lightrag/)된 LightRAG 엔진입니다.
+- **네이티브 스토리지**: 전체 검색 스택은 완전히 벤더되어 있습니다 — RAG-Anything 파이프라인과 그 스토리지 계층이 [SNKV 백엔드와 완전히 융합](scripts/graph_rag/)된 LightRAG 엔진입니다.
 
 ---
 
 ## 🔧 설치
 
-이 스킬은 EMA 에이전트와 함께 배포되므로 별도 설치는 필요 없습니다. RAG 엔진(`graph_rag`)은 `scripts/graph_rag/` 아래에 완전히 벤더되어 두 부분으로 구성됩니다 — RAG-Anything 파이프라인인 `vendored_raganything`과 저장소가 SNKV와 융합된 LightRAG 엔진인 `vendored_lightrag` — 두 부분 모두 `graph_rag/__init__.py`에 의해 짧은 임포트 이름으로 별칭 처리되므로 PIP 설치가 필요 없습니다. 나머지 런타임 의존성(SNKV, mineru 파서, 임베딩 모델)은 EMA 프로젝트 환경에서 해석됩니다.
+이 스킬은 EMA 에이전트와 함께 배포되므로 별도 설치는 필요 없습니다. RAG 엔진(`graph_rag`)은 `scripts/graph_rag/` 아래에 완전히 벤더되어 있습니다. LightRAG는 패키지 루트(기본 클래스는 `lightrag_base.py`), RAG-Anything는 `raganything/`에 있습니다. 둘 다 `graph_rag/__init__.py`에 의해 짧은 임포트 이름으로 별칭 처리되므로 PIP 설치가 필요 없습니다. 나머지 런타임 의존성(SNKV, mineru 파서, 임베딩 모델)은 EMA 프로젝트 환경에서 해석됩니다.
 
 ---
 
@@ -107,8 +107,9 @@ multimodal_rag/
 │   ├── rag_import_test.py      # 다중 형식 샘플 가져오기
 │   ├── rag_import_pdf_test.py  # mineru 파서를 통한 실제 PDF 가져오기
 │   └── graph_rag/           # 완전히 벤더된 RAG 엔진
-│       ├── vendored_raganything/  # 벤더된 RAG-Anything 파이프라인
-│       ├── vendored_lightrag/  # 벤더된 LightRAG, SNKV와 융합된 스토리지
+│       ├── raganything/  # 벤더된 RAG-Anything 파이프라인
+│       ├── lightrag_base.py  # LightRAG 기본 클래스, SNKV와 융합된 스토리지
+│       ├── fts_shadow_index.py  # entities_vdb용 선택적 FTS5 섀도 인덱스
 │       └── ...
 └── tests/
     └── test_rag_anything_vendored.py

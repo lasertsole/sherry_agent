@@ -3,9 +3,10 @@
 
 Why this exists
 ---------------
-``pyproject.toml`` fully excludes ``vendored_lightrag/`` and ``vendored_raganything/``
-from basedpyright, and the pinned ruff selection carries only ``S110`` from
-flake8-bandit. Those trees broker API keys for several LLM providers, so a
+``pyproject.toml`` fully excludes the vendored ``graph_rag/`` tree and its
+``raganything/`` subpackage from basedpyright, and the pinned ruff selection
+carries only ``S110`` from flake8-bandit. Those trees broker API keys for
+several LLM providers, so a
 hardcoded secret or a dangerous call there would pass every existing gate.
 
 Why regex rules instead of ruff's ``S`` rules
@@ -52,8 +53,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VENDORED_ROOTS: tuple[Path, ...] = (
-    REPO_ROOT / "skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_lightrag",
-    REPO_ROOT / "skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_raganything",
+    REPO_ROOT / "skills/builtin/core/multimodal_rag/scripts/graph_rag",
 )
 SOURCE_SUFFIXES = frozenset({".py", ".pyi"})
 BASELINE_PATH = Path(__file__).with_name("vendored_security_baseline.txt")

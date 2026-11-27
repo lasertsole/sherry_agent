@@ -1,6 +1,6 @@
 """The eval report must describe the run that happened, not a friendlier one.
 
-Three measured distortions on the DeepSWE L1 run 20261125_222727:
+Three measured distortions on the DeepSWE L1 run of 2026-11-25:
 
 - ``changed_paths`` came from ``+++ b/`` lines, so the 11.5 MB rebuilt binary in
   the abs patch was invisible (the report said three Go files);

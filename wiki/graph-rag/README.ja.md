@@ -7,20 +7,20 @@
 
 ## 欠けていたもの
 
-`vendored_lightrag` にはパスアルゴリズムがありませんでした：
+`graph_rag` 内の LightRAG にはパスアルゴリズムがありませんでした：
 `query_nodes_by_vector` と関係召回はそれぞれ 1 回のベクトル検索
 （既定 `top_k=40`）を実行して返すだけです。橋渡しエンティティが top-k の外に
 落ちると、グラフに経路が存在しても「A と B の関係は？」を探索で答えることは
 できません。いわゆる「マルチホップ」は候補集合上で LLM が推論する確率的事象で
 した。
 
-エンティティベクトルは純粋に稠密（`BGE-M3`、1024 次元）です。vendored エンジン
+エンティティベクトルは純粋に稠密（`BGE-M3`、1024 次元）です。パッケージ内エンジン
 にはスパース経路も BM25 フォールバックもありません。
 
 ## パス層
 
 `skills/builtin/core/multimodal_rag/scripts/graph_rag/path_search.py` はスキル
-側にあります（vendored ツリーには `operate.py` のディスパッチフックだけを
+側にあります（LightRAG 側には `operate.py` のディスパッチフックだけを
 追加）：
 
 - **端点解決** — コストの低い順に 3 段階：グラフノードの完全一致名 → グラフ
@@ -64,6 +64,32 @@ LightRAG の既定値はほぼ何でも通していました：`TOP_K=40`、`CHU
 インポート時に環境変数をクラス既定値へ読み込むため、旧配置（`base.py` 自身の
 LightRAG インポート後）では実際には一度も効いていませんでした。
 
+## FTS5 エンティティハイブリッド検索
+
+`entities_vdb` に任意指定の SQLite FTS5 シャドウインデックス
+（`graph_rag/fts_shadow_index.py`）を追加しました。`_strip_bom`、関数名、
+ファイル名などの短い識別子は完全一致の問題なので、FTS5 キーワード検索を
+既存のベクトルコサインスコアと統合します。`relationships_vdb` と
+`chunks_vdb` は意図的に純ベクトルのままです（散文には意味的類似が適しています）。
+
+インデックスは `entity_name`、`content`、`keywords` を 2 つの FTS5 テーブル
+（`unicode61` は ASCII 識別子、`trigram` は日本語/部分文字列用）にミラーし、
+`SNKVVectorStorage.upsert()` / `delete()` 内で同期します。検索は
+`GRAPH_RAG_PATH["fts_hybrid_enabled"]` で有効化します（既定 `false`）。重みは
+`fts_hybrid_weight=0.4`、`fts_hybrid_vec_weight=0.6` です。FTS がヒットしない
+場合は元のベクトル順に戻ります。統合結果は下流の `_get_node_data` が読む
+ベクトル側メタデータ（`entity_name`、`content`、`source_id`）を保持します。
+
+併せて 2 点を整理しました：
+
+- `QueryParam.mode` から `bypass` を削除し（未知の mode は実行時に拒否）、
+  `lightrag.py` の関連分岐を削除しました。
+- 旧 `vendored_lightrag/` と `vendored_raganything/` を `graph_rag/` に統合しました。
+  LightRAG はパッケージ直下（基底クラスは `lightrag_base.py`、Sherry アダプターは
+  `sherry_adapter.py`）、RAG-Anything は `raganything/` にあります。裸の
+  インポート名 `lightrag` / `raganything` は `sys.modules` 経由で従来どおり
+  パッケージ内コピーを指します。
+
 ## スパース召回：実装しなかった理由
 
 計画のスパース経路は embedding 層で塞がっています。
@@ -73,9 +99,8 @@ LightRAG インポート後）では実際には一度も効いていません�
 インデックスしか持たず、`EmbeddingFunc` も `ndarray` を 1 つ返すだけです。
 BGE-M3 のネイティブなスパース出力には `FlagEmbedding`（PyTorch と数百 MiB）
 またはスパース対応エンドポイントが必要で、どちらもデスクトップ配布には不適切
-です。したがって希少な ID・バージョン文字列の召回は未解決のままで、SQLite
-FTS5/BM25 が二重スパースインデックスではなく将来の選択肢として記録されて
-います。
+です。希少な ID・バージョン文字列の召回は上記の FTS5 シャドウインデックスで
+対応済みです。ネイティブな二重スパースインデックスは引き続き対象外です。
 
 ローカル/リモートの選択は構築時の Strategy です: `build_embed_model` が
 `_LocalEmbeddingBackend` または `_RemoteEmbeddingBackend` を注入し、ファサードは
@@ -115,7 +140,8 @@ answer relevancy は `0.916` で、変更前の 2 回は `0.963` と `0.934`—�
 
 ```bash
 uv run --no-sync pytest tests/skills/builtin/core/multimodal_rag/test_path_search.py \
-  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py -q
+  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py \
+  tests/skills/builtin/core/multimodal_rag/test_fts_hybrid.py -q
 uv run --no-sync python evals/graph_rag/multihop_bench.py --modes mix,path
 uv run --group evals python evals/evals.py graph_rag
 ```

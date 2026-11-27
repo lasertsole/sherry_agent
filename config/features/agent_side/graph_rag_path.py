@@ -46,6 +46,12 @@ class GraphRagPathConfig(TypedDict):
     """Weight of the average edge weight in a beam candidate's score."""
     max_evidence_chunks: int
     """Source chunks quoted under the path section."""
+    fts_hybrid_enabled: bool
+    """Master switch for FTS5+vector hybrid entity retrieval. Off = pure vector."""
+    fts_hybrid_weight: float
+    """FTS5 reciprocal-rank weight in the merged entity score."""
+    fts_hybrid_vec_weight: float
+    """Vector cosine weight in the merged entity score."""
 
 
 GRAPH_RAG_PATH: GraphRagPathConfig = {
@@ -80,4 +86,7 @@ GRAPH_RAG_PATH: GraphRagPathConfig = {
     "beam_max_hops": 5,
     "beam_edge_weight": 0.2,
     "max_evidence_chunks": 12,
+    "fts_hybrid_enabled": False,
+    "fts_hybrid_weight": 0.4,
+    "fts_hybrid_vec_weight": 0.6,
 }

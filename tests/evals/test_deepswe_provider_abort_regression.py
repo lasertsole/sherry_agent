@@ -1,6 +1,6 @@
 """Regression: a terminal provider error stops the suite after two tasks.
 
-Measured on the DeepSWE L1 run 20261125_222727: the balance was gone at task 9
+Measured on the DeepSWE L1 run of 2026-11-25: the balance was gone at task 9
 and tasks 10–12 still ran the full pipeline, each recorded as failed work. The
 correct sequence stops before starting the next container and reports the rest
 as NOT RUN — which the aggregate must then reflect (attempted, not_run, and both

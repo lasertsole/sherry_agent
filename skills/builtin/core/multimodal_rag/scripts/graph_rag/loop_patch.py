@@ -1,6 +1,6 @@
 """Re-entrant event-loop patching for the vendored LightRAG sync shims.
 
-The vendored LightRAG (``graph_rag/vendored_lightrag``) exposes sync wrappers
+The in-package LightRAG (``graph_rag/``) exposes sync wrappers
 around its coroutines — ``loop.run_until_complete(self.aquery(...))`` and
 friends — so they only work when the ambient loop is re-entrant. That is what
 ``nest_asyncio`` provides, and it is why the module used to call

@@ -11,13 +11,13 @@
 - **多模态摄取**：可摄取多种格式文档（TXT / Markdown / PDF 等），由启用的解析器处理。
 - **知识图谱**：基于你的文档构建实体–关系图谱，而非扁平向量分块。
 - **多跳检索**：回答需要跨多个文档 / 实体推理的复杂问题。
-- **原生存储**：整个检索栈已完全 vendored —— RAG-Anything 管线与存储层已[完全融合 SNKV 后端](scripts/graph_rag/vendored_lightrag/)的 LightRAG 引擎。
+- **原生存储**：整个检索栈已完全 vendored —— RAG-Anything 管线与存储层已[完全融合 SNKV 后端](scripts/graph_rag/)的 LightRAG 引擎。
 
 ---
 
 ## 🔧 安装
 
-本技能随 EMA 一起分发，无需单独安装。RAG 引擎（`graph_rag`）已完全 vendored 到 `scripts/graph_rag/` 下，分为两部分 —— `vendored_raganything`（RAG-Anything 管线）与 `vendored_lightrag`（存储层与 SNKV 融合的 LightRAG 引擎），并由 `graph_rag/__init__.py` 别名到裸导入名，因此两者均无需从 PIP 安装。其余运行时依赖（SNKV、mineru 解析器、嵌入模型）从 EMA 项目环境中解析。
+本技能随 EMA 一起分发，无需单独安装。RAG 引擎（`graph_rag`）已完全 vendored 到 `scripts/graph_rag/` 下：LightRAG 位于包根目录（基类在 `lightrag_base.py`），RAG-Anything 位于 `raganything/`。两者均由 `graph_rag/__init__.py` 别名到裸导入名，因此均无需从 PIP 安装。其余运行时依赖（SNKV、mineru 解析器、嵌入模型）从 EMA 项目环境中解析。
 
 ---
 
@@ -107,8 +107,9 @@ multimodal_rag/
 │   ├── rag_import_test.py      # 多格式示例导入
 │   ├── rag_import_pdf_test.py  # 经 mineru 解析器的真实 PDF 导入
 │   └── graph_rag/           # 已完全 vendored 的 RAG 引擎
-│       ├── vendored_raganything/  # vendored RAG-Anything 管线
-│       ├── vendored_lightrag/  # vendored LightRAG，存储与 SNKV 融合
+│       ├── raganything/  # vendored RAG-Anything 管线
+│       ├── lightrag_base.py  # LightRAG 基类，存储与 SNKV 融合
+│       ├── fts_shadow_index.py  # entities_vdb 的可选 FTS5 影子索引
 │       └── ...
 └── tests/
     └── test_rag_anything_vendored.py

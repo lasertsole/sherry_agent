@@ -32,11 +32,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 _CORE = "graph_rag.core"
 _PKG_TOP = "graph_rag"
-_PKG = "graph_rag.vendored_lightrag.kg"
-_LR = "graph_rag.vendored_lightrag"
+_PKG = "graph_rag.kg"
+_LR = "graph_rag"
 
-from graph_rag.vendored_lightrag import LightRAG  # noqa: E402
-from graph_rag.vendored_lightrag.utils import EmbeddingFunc  # noqa: E402
+from graph_rag import LightRAG  # noqa: E402
+from graph_rag.utils import EmbeddingFunc  # noqa: E402
 
 
 async def _stub_llm(prompt, system_prompt=None, history_messages=None, **kwargs):

@@ -1,6 +1,6 @@
 """Regression: one 3600 s budget, not four.
 
-Measured on the DeepSWE L1 run 20261125_222727: arktype took 9434 s with
+Measured on the DeepSWE L1 run of 2026-11-25: arktype took 9434 s with
 ``continuations=3`` because ``--timeout`` was re-handed to every ``wait_for``.
 The correct shape: turns keep starting while the budget lasts, the turn that
 does not fit never starts, and the drive reports the deadline instead of

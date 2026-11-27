@@ -1,6 +1,6 @@
 """Regression: the orchestration gate enforces PER TASK inside one run.
 
-Measured on the DeepSWE L1 run ``20261125_222727``: task #1 planned, and the
+Measured on the DeepSWE L1 run of 2026-11-25: task #1 planned, and the
 process-wide gate counters then stayed satisfied for the rest of the exit —
 task #2 (``taskflow_calls=0``) executed `terminal` freely and the run recorded a
 single ``blocked`` in total. This pins the measured sequence: after task A

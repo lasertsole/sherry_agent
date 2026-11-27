@@ -193,8 +193,7 @@ exclude = [
     "/graphify-out",
     "/.omo",
     "/.playwright-mcp",
-    "**/vendored_raganything/**",
-    "**/vendored_lightrag/**",
+    "**/graph_rag/raganything/**",
     "**/vendored_kg/**",
     "/vendor",
 ]
@@ -218,8 +217,8 @@ ignore = [
 ]
 [tool.ruff.lint.per-file-ignores]
 # Vendored LightRAG / RAG-Anything code - keep close to upstream, don't chase style
-"skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_raganything/*" = ["E402", "F403", "F405", "S110", "N"]
-"skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_lightrag/**" = ["S110", "N"]
+"skills/builtin/core/multimodal_rag/scripts/graph_rag/raganything/**" = ["E402", "F403", "F405", "S110", "N"]
+"skills/builtin/core/multimodal_rag/scripts/graph_rag/**" = ["S110", "N"]
 # Skill scripts initialize env/model before imports (intentional delayed imports);
 # best-effort cleanup uses try-except-pass deliberately
 "skills/builtin/**/scripts/*" = ["E402", "S110", "N", "D200", "T20"]

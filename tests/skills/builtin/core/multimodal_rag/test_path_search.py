@@ -108,7 +108,7 @@ class FakeVectorStorage:
         return [{"entity_name": name, "distance": score} for score, name in scored[:top_k]]
 
     async def get_vectors_by_ids(self, ids):
-        from graph_rag.vendored_lightrag.utils import compute_mdhash_id
+        from graph_rag.utils import compute_mdhash_id
 
         by_hash = {
             compute_mdhash_id(name, prefix="ent-"): vector for name, vector in self.vectors.items()

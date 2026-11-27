@@ -7,19 +7,19 @@
 
 ## 빠져 있던 것
 
-`vendored_lightrag`에는 경로 알고리즘이 없었습니다:
+`graph_rag`의 LightRAG에는 경로 알고리즘이 없었습니다:
 `query_nodes_by_vector`와 관계 검색은 각각 한 번의 벡터 검색(기본
 `top_k=40`)만 수행하고 반환합니다. 중간 연결 엔티티가 top-k 밖으로 밀리면
 그래프에 체인이 존재해도 "A와 B의 관계는?"을 탐색으로 답할 수 없습니다. 이른바
 "멀티홉"은 후보 집합 위에서 LLM이 추론하는 확률적 사건이었습니다.
 
-엔티티 벡터는 순수하게 밀집형(`BGE-M3`, 1024 차원)입니다. vendored 엔진에는
+엔티티 벡터는 순수하게 밀집형(`BGE-M3`, 1024 차원)입니다. 패키지 내 엔진에는
 스파스 채널도, BM25 폴백도 없습니다.
 
 ## 경로 계층
 
 `skills/builtin/core/multimodal_rag/scripts/graph_rag/path_search.py`는 스킬
-계층에 있습니다(vendored 트리에는 `operate.py`의 디스패치 훅만 추가):
+계층에 있습니다(LightRAG 쪽에는 `operate.py`의 디스패치 훅만 추가):
 
 - **끝점 해석** — 비용이 낮은 순서로 3단계: 그래프 노드 정확한 이름 → 그래프
   레이블 포함 일치(`Kepler-7 launch pad` → `Kepler-7 Launch Pad`) →
@@ -61,6 +61,32 @@ LightRAG 기본값은 거의 모든 후보를 통과시켰습니다: `TOP_K=40`,
 기본값으로 읽으므로, 예전 위치(`base.py` 자체의 LightRAG 임포트 이후)에서는
 실제로 한 번도 적용되지 않았습니다.
 
+## FTS5 엔티티 하이브리드 검색
+
+`entities_vdb`에 선택적 SQLite FTS5 섀도 인덱스
+(`graph_rag/fts_shadow_index.py`)를 추가했습니다. `_strip_bom`, 함수명,
+파일명 같은 짧은 식별자는 정확 일치 문제이므로 FTS5 키워드 검색을 기존 벡터
+코사인 점수와 병합합니다. `relationships_vdb`와 `chunks_vdb`는 의도적으로
+순수 벡터로 두었습니다(산문에는 의미적 유사성이 적합).
+
+인덱스는 `entity_name`, `content`, `keywords`를 두 FTS5 테이블
+(`unicode61`은 ASCII 식별자, `trigram`은 CJK/부분 문자열)에 미러링하고
+`SNKVVectorStorage.upsert()` / `delete()` 안에서 동기화합니다. 검색은
+`GRAPH_RAG_PATH["fts_hybrid_enabled"]`로 켭니다(기본 `false`). 가중치는
+`fts_hybrid_weight=0.4`, `fts_hybrid_vec_weight=0.6`입니다. FTS 결과가 없으면
+원래 벡터 순서로 되돌아갑니다. 병합 결과는 하위 `_get_node_data`가 읽는
+벡터 측 메타데이터(`entity_name`, `content`, `source_id`)를 유지합니다.
+
+함께 정리한 사항:
+
+- `QueryParam.mode`에서 `bypass`를 제거했고(알 수 없는 mode는 런타임에 거부),
+  `lightrag.py`의 관련 분기 also 제거했습니다.
+- 기존 `vendored_lightrag/`, `vendored_raganything/`를 `graph_rag/`로 합쳤습니다.
+  LightRAG는 패키지 루트(기본 클래스 `lightrag_base.py`, Sherry 어댑터
+  `sherry_adapter.py`), RAG-Anything는 `raganything/`에 있습니다. 짧은
+  import 이름 `lightrag` / `raganything`는 `sys.modules` 별칭을 통해
+  패키지 내부 복사본을 그대로 가리킵니다.
+
 ## 스파스 검색: 구현하지 않은 이유
 
 계획의 스파스 경로는 embedding 계층에서 막힙니다.
@@ -69,9 +95,9 @@ LightRAG 기본값은 거의 모든 후보를 통과시켰습니다: `TOP_K=40`,
 `/embeddings` 엔드포인트입니다. `SNKVVectorStorage`는 단일 HNSW 코사인
 인덱스만 두고, `EmbeddingFunc`도 `ndarray` 하나를 반환합니다. BGE-M3의 네이티브
 스파스 출력에는 `FlagEmbedding`(PyTorch와 수백 MiB) 또는 스파스 지원
-엔드포인트가 필요하고 둘 다 데스크톱 배포에 부적합합니다. 따라서 희귀 ID/버전
-문자열 검색은 미해결로 남고, SQLite FTS5/BM25가 이중 스파스 인덱스가 아닌
-향후 선택지로 기록되어 있습니다.
+엔드포인트가 필요하고 둘 다 데스크톱 배포에 부적합합니다. 희귀 ID/버전
+문자열 검색은 위의 FTS5 섀도 인덱스로 처리됩니다. 네이티브 이중 스파스
+인덱스는 여전히 범위 밖입니다.
 
 로컬/원격 선택은 생성 시점의 Strategy입니다: `build_embed_model`이
 `_LocalEmbeddingBackend` 또는 `_RemoteEmbeddingBackend`를 주입하고, 파사드는
@@ -110,7 +136,8 @@ answer relevancy는 `0.916`였고 변경 전 두 번의 실행은 `0.963`과 `0.
 
 ```bash
 uv run --no-sync pytest tests/skills/builtin/core/multimodal_rag/test_path_search.py \
-  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py -q
+  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py \
+  tests/skills/builtin/core/multimodal_rag/test_fts_hybrid.py -q
 uv run --no-sync python evals/graph_rag/multihop_bench.py --modes mix,path
 uv run --group evals python evals/evals.py graph_rag
 ```

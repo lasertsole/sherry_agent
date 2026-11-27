@@ -1,6 +1,6 @@
 """The harness must stop spending when the provider is terminally down.
 
-Measured on the DeepSWE L1 run 20261125_222727: the balance was exhausted
+Measured on the DeepSWE L1 run of 2026-11-25: the balance was exhausted
 (``insufficient_balance``) and four more tasks each ran the whole
 extract → container → bind → verifier pipeline before being recorded as failed
 work. A terminal provider error is not retryable, while a 429 or a timeout is.

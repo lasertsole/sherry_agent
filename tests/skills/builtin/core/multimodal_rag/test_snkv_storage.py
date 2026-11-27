@@ -2,8 +2,8 @@
 
 The ``graph_rag`` lightweight-RAG module was refactored (per
 hash-anu/lightrag-snkv) to store its data on snkv backends instead of any
-other LightRAG storage family.  The vendored ``lightrag`` (under
-``graph_rag/vendored_lightrag/``) is SNKV-only -- its ``kg`` registries
+other LightRAG storage family.  The in-package ``lightrag`` (under
+``graph_rag/``) is SNKV-only -- its ``kg`` registries
 natively contain the four SNKV classes (baked directly into ``kg/__init__.py``,
 no runtime ``register()`` injection).  These tests exercise:
 
@@ -16,7 +16,7 @@ no runtime ``register()`` injection).  These tests exercise:
    ``sys.path``) resolves under a single module identity.
 
 The vendored lightrag uses short, absolute imports internally
-(``graph_rag.vendored_lightrag.kg``, etc.), so it is consistent only under the short
+(``graph_rag.kg``, etc.), so it is consistent only under the short
 identity.  The deep dotted ``skills...graph_rag`` path is deliberately NOT
 used here: it would create a second module identity whose registries diverge
 from the ones the vendored internals read.
@@ -42,19 +42,19 @@ SCRIPTS_DIR = REPO_ROOT / "skills" / "builtin" / "core" / "multimodal_rag" / "sc
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-# The SNKV storage classes are NATIVE modules of the vendored ``vendored_lightrag``
-# ``kg`` package: ``<...>/vendored_lightrag/kg/snkv_*_impl.py``.
-_PKG = "graph_rag.vendored_lightrag.kg"
-_LR = "graph_rag.vendored_lightrag"
+# The SNKV storage classes are NATIVE modules of the in-package ``graph_rag``
+# ``kg`` package: ``<...>/graph_rag/kg/snkv_*_impl.py``.
+_PKG = "graph_rag.kg"
+_LR = "graph_rag"
 
-from graph_rag.vendored_lightrag import LightRAG  # noqa: E402
-from graph_rag.vendored_lightrag.kg.factory import (  # noqa: E402, F401
+from graph_rag import LightRAG  # noqa: E402
+from graph_rag.kg.factory import (  # noqa: E402, F401
     get_storage_class,
 )
-from graph_rag.vendored_lightrag.kg import (  # noqa: E402
+from graph_rag.kg import (  # noqa: E402
     STORAGE_IMPLEMENTATIONS,
 )
-from graph_rag.vendored_lightrag.utils import EmbeddingFunc  # noqa: E402
+from graph_rag.utils import EmbeddingFunc  # noqa: E402
 
 
 async def _stub_llm(prompt, system_prompt=None, history_messages=None, **kwargs):
@@ -134,5 +134,5 @@ def test_production_import_path_works():
     mod = importlib.import_module("graph_rag")
     assert hasattr(mod, "get_lightrag")
     # Exactly ONE module identity for the package no matter how reached.
-    assert "graph_rag.vendored_lightrag.kg" in sys.modules
+    assert "graph_rag.kg" in sys.modules
     assert "skills.builtin.core.multimodal_rag.scripts.graph_rag" not in sys.modules

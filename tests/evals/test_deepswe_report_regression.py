@@ -1,4 +1,4 @@
-"""Regression: the report of the measured L1 run 20261125_222727.
+"""Regression: the report of the measured L1 run of 2026-11-25.
 
 That run selected 12 tasks, four of them died on a provider 402 before any tool
 call, four resolved, and one patch carried a rebuilt 11.5 MB binary. The report

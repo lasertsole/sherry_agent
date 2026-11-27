@@ -1,13 +1,12 @@
 """graph_rag package — LightRAG-backed multimodal RAG.
 
-The vendored LightRAG (``graph_rag.vendored_lightrag``) is **SNKV-only**.
-The four SNKV storage backends are NATIVE modules of the vendored LightRAG,
-co-located in ``vendored_lightrag.kg.snkv_*_impl`` and registered directly
-in ``kg/__init__.py`` — no runtime ``register()`` injection is involved.
-The vendored LightRAG is fundamentally reachable only through the short,
-absolute module name ``graph_rag.vendored_lightrag.*`` (its ~80 files use
-short absolute imports internally).  That only resolves when the parent
-directory of this package (``scripts/``) is on ``sys.path``.
+LightRAG and RAG-Anything are vendored directly under this package:
+``graph_rag/*`` (LightRAG, base classes in ``lightrag_base.py``) and
+``graph_rag/raganything/*`` (RAG-Anything).  The four SNKV storage backends
+are NATIVE modules co-located in ``graph_rag/kg/snkv_*_impl.py`` and
+registered directly in ``kg/__init__.py`` — no runtime ``register()``
+injection is involved.  All ~80 vendored files use short absolute imports
+(``graph_rag.*``), which resolve only when ``scripts/`` is on ``sys.path``.
 
 This package may be reached two ways at runtime:
 1. As a script ``python rag_index.py`` -> ``scripts/`` is already on path.
@@ -15,8 +14,8 @@ This package may be reached two ways at runtime:
    graph_rag`` -> only the repo root is on path, NOT ``scripts/``.
 
 To support BOTH cases we ensure ``scripts/`` is on ``sys.path`` here, before
-any submodule (notably ``base``) executes a short ``graph_rag`` import.
-The setup is idempotent and cheap (a set membership check).
+any submodule (notably ``sherry_adapter``) executes a short ``graph_rag``
+import.  The setup is idempotent and cheap (a set membership check).
 """
 
 from __future__ import annotations
@@ -36,8 +35,8 @@ if _scripts_dir not in sys.path:
 
 # Environment defaults are installed HERE, before anything imports the vendored
 # package: QueryParam and the LightRAG dataclass read them into class-level
-# defaults at class-definition time (import time). ``base.py`` used to set them
-# after its own ``from graph_rag.vendored_lightrag import LightRAG`` line, which
+# defaults at class-definition time (import time). ``sherry_adapter.py`` used to
+# set them after its own ``from graph_rag import LightRAG`` line, which
 # meant the LightRAG defaults (top_k=40, chunk_top_k=20, cosine=0.2, no rerank
 # floor) always won. This package __init__ is the earliest seam every importer
 # crosses.
@@ -51,15 +50,15 @@ os.environ.setdefault("COSINE_THRESHOLD", "0.4")
 os.environ.setdefault("MIN_RERANK_SCORE", "0.5")
 
 
-def _alias_vendored_lightrag() -> None:
-    """Expose the vendored LightRAG under the bare ``lightrag`` import names.
+def _alias_lightrag() -> None:
+    """Expose the in-package LightRAG under the bare ``lightrag`` import names.
 
-    The installed ``raganything`` (in site-packages) resolves bare
+    The vendored ``raganything`` resolves bare
     ``from lightrag import LightRAG`` / ``from lightrag.utils import ...`` /
     ``from lightrag.kg.shared_storage import ...`` at module-import time.  We run
-    exclusively against the vendored LightRAG, so we alias every bare name that
-    raganything imports onto the corresponding vendored module via ``sys.modules``.
-    This lets ``lightrag-hku`` be dropped from the dependency graph entirely.
+    exclusively against the in-package LightRAG, so we alias every bare name it
+    imports onto the corresponding module via ``sys.modules``.  This lets
+    ``lightrag-hku`` be dropped from the dependency graph entirely.
 
     The raganything import surface (verified against raganything 1.3.1):
       - ``from lightrag import LightRAG, QueryParam``
@@ -70,18 +69,18 @@ def _alias_vendored_lightrag() -> None:
       - ``from lightrag.kg.shared_storage import get_namespace_data,
         get_pipeline_status_lock``
 
-    Must run BEFORE ``.base`` / ``.core`` are imported (they pull in
+    Must run BEFORE ``.sherry_adapter`` / ``.core`` are imported (they pull in
     ``raganything`` transitively).
     """
-    from .vendored_lightrag import (
+    from . import (
         lightrag as _lightrag_mod,
         operate as _operate_mod,
         utils as _utils_mod,
     )
-    from .vendored_lightrag.kg import shared_storage as _shared_storage_mod
-    import graph_rag.vendored_lightrag as _vendored
+    from .kg import shared_storage as _shared_storage_mod
+    import graph_rag as _vendored
 
-    # Submodule aliases: key = bare import name, value = vendored module object.
+    # Submodule aliases: key = bare import name, value = in-package module object.
     _aliases = {
         "lightrag": _vendored,
         "lightrag.lightrag": _lightrag_mod,
@@ -94,12 +93,12 @@ def _alias_vendored_lightrag() -> None:
         sys.modules.setdefault(bare_name, vendored_mod)
 
 
-_alias_vendored_lightrag()
+_alias_lightrag()
 
 
 # --- Vendored RAG-Anything ---
 #
-# ``raganything`` itself is now VENDORED as ``graph_rag.vendored_raganything``
+# ``raganything`` itself is now VENDORED as ``graph_rag.raganything``
 # (the package was copied out of ``.venv`` site-packages so that the
 # ``raganything`` dependency can be dropped from ``pyproject.toml``/``uv.lock``).
 # Its ~19 files use short, bare absolute imports internally (e.g. ``from
@@ -107,8 +106,8 @@ _alias_vendored_lightrag()
 # import Parser``).  For those to keep resolving to the vendored copy — instead
 # of an installed PIP package — we load the vendored package directly under the
 # bare ``raganything`` identity.
-def _alias_vendored_raganything() -> None:
-    """Expose the vendored RAG-Anything under the bare ``raganything`` name.
+def _alias_raganything() -> None:
+    """Expose the in-package RAG-Anything under the bare ``raganything`` name.
 
     The vendored ``__init__.py`` does ``from .raganything import RAGAnything``
     and the vendored submodules import each other with bare ``from
@@ -132,7 +131,7 @@ def _alias_vendored_raganything() -> None:
     ``from raganything import RAGAnything, ...``).
     """
     _this_dir = os.path.dirname(os.path.abspath(__file__))
-    _vendor_dir = os.path.join(_this_dir, "vendored_raganything")
+    _vendor_dir = os.path.join(_this_dir, "raganything")
     _init_path = os.path.join(_vendor_dir, "__init__.py")
 
     if "raganything" in sys.modules:
@@ -154,20 +153,37 @@ def _alias_vendored_raganything() -> None:
         importlib.import_module(f"raganything.{_sub}")
 
 
-_alias_vendored_raganything()
-
+from ._version import __version__ as __version__
 from .ensure_mineru_models import ensure_mineru_models
 
+# The old LightRAG package __init__ used to own these lazy exports; after the
+# directory merge they live on graph_rag itself so the bare ``lightrag`` alias
+# (used by raganything) keeps resolving exactly as before.
 _LAZY_EXPORTS = {
-    "get_lightrag": ".base",
+    "get_lightrag": ".sherry_adapter",
     "get_rag_anything": ".core",
+    "LightRAG": ".lightrag",
+    "QueryParam": ".lightrag",
+    "RoleLLMConfig": ".lightrag",
+    "RoleSpec": ".lightrag",
+    "ROLES": ".lightrag",
 }
 
-__all__ = ["get_lightrag", "get_rag_anything", "ensure_mineru_models"]
+__all__ = [
+    "get_lightrag",
+    "get_rag_anything",
+    "ensure_mineru_models",
+    "LightRAG",
+    "QueryParam",
+    "RoleLLMConfig",
+    "RoleSpec",
+    "ROLES",
+    "__version__",
+]
 
 
 def __getattr__(name: str):
-    # Lazy on purpose: .base/.core import the model stack (llama_cpp); eager
+    # Lazy on purpose: .sherry_adapter/.core import the model stack (llama_cpp); eager
     # exports broke hermetic CI and loaded GGUF weights at import time.
     # Same recipe as models/__init__.py: resolve on first attribute access,
     # then cache into globals() so repeat lookups take the fast path.
@@ -181,3 +197,8 @@ def __getattr__(name: str):
 
 def __dir__() -> list[str]:
     return list(__all__)
+
+
+# Must run after __getattr__ is installed: vendored raganything imports
+# ``from lightrag import LightRAG`` at module-import time.
+_alias_raganything()

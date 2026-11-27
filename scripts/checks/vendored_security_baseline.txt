@@ -15,4 +15,4 @@
 #
 # Reviewed exception (2026-09-14): "{bcrypt}" is a hash FORMAT marker that
 # passwords.py concatenates/strips around bcrypt.checkpw - not a credential.
-hardcoded-secret-assignment	skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_lightrag/tools/passwords.py	a3c9fc498741146a	bcrypt hash format-prefix marker, not a credential
+hardcoded-secret-assignment	skills/builtin/core/multimodal_rag/scripts/graph_rag/tools/passwords.py	a3c9fc498741146a	bcrypt hash format-prefix marker, not a credential

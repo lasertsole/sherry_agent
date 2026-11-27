@@ -25,8 +25,8 @@ from typing import Any
 
 from config.features import GRAPH_RAG_PATH
 
-from graph_rag.vendored_lightrag.constants import GRAPH_FIELD_SEP
-from graph_rag.vendored_lightrag.utils import logger
+from graph_rag.constants import GRAPH_FIELD_SEP
+from graph_rag.utils import logger
 
 _RELATIONSHIP_RE = tuple(
     re.compile(pattern, re.IGNORECASE) for pattern in GRAPH_RAG_PATH["relationship_patterns"]
@@ -106,7 +106,7 @@ async def _node_vectors(entities_vdb: Any, node_ids: list[str]) -> dict[str, Any
     getter = getattr(entities_vdb, "get_vectors_by_ids", None)
     if getter is None or not node_ids:
         return {}
-    from graph_rag.vendored_lightrag.utils import compute_mdhash_id
+    from graph_rag.utils import compute_mdhash_id
 
     vdb_ids = {node_id: compute_mdhash_id(node_id, prefix="ent-") for node_id in node_ids}
     try:

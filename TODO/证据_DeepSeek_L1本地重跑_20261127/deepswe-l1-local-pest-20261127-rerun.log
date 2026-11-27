@@ -1,0 +1,5 @@
+[local-l1] pest-character-class-coalescing: agent start session=evals-deepswe-local-pest-character-class-coalescing-6a9f6a
+[local-l1] pest-character-class-coalescing: grade exit=1
+[local-l1] pest-character-class-coalescing: resolved=False reward={'reward': 0, 'f2p_total': 104, 'f2p_passed': 104, 'p2p_total': 250, 'p2p_passed': 0, 'f2p': 1.0, 'p2p': 0.0, 'partial': 0.2937853107344633} tool_calls=70 orchestration=False duration=1165.5s
+[local-l1] report: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194833/report.json
+[local-l1] summary: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194833/summary.md

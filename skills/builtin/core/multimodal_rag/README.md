@@ -11,13 +11,13 @@
 - **Multimodal ingestion**: indexes documents of many formats (TXT / Markdown / PDF / and more) by any enabled parser.
 - **Knowledge graph**: builds entity–relationship graphs from your documents instead of flat vector chunks.
 - **Multi-hop retrieval**: answers complex questions that require reasoning across multiple documents / entities.
-- **Native storage**: the entire retrieval stack is fully vendored — the RAG-Anything pipeline and a LightRAG engine whose storage layer is [fully fused with the SNKV backend](scripts/graph_rag/vendored_lightrag/).
+- **Native storage**: the entire retrieval stack is fully vendored — the RAG-Anything pipeline and a LightRAG engine whose storage layer is [fully fused with the SNKV backend](scripts/graph_rag/).
 
 ---
 
 ## 🔧 Installation
 
-The skill ships with the EMA agent — no separate installation is needed. The RAG engine (`graph_rag`) is fully vendored under `scripts/graph_rag/` as two parts — `vendored_raganything` (the RAG-Anything pipeline) and `vendored_lightrag` (the LightRAG engine whose storage layer is fused with SNKV) — aliased onto their bare import names by `graph_rag/__init__.py`, so neither needs to be installed from PIP. Remaining runtime dependencies (SNKV, mineru parser, embedding models) are resolved from the EMA project environment.
+The skill ships with the EMA agent — no separate installation is needed. The RAG engine (`graph_rag`) is fully vendored under `scripts/graph_rag/`: LightRAG lives at the package root (base classes in `lightrag_base.py`) and RAG-Anything under `raganything/`. Both are aliased onto their bare import names by `graph_rag/__init__.py`, so neither needs to be installed from PIP. Remaining runtime dependencies (SNKV, mineru parser, embedding models) are resolved from the EMA project environment.
 
 ---
 
@@ -107,8 +107,9 @@ multimodal_rag/
 │   ├── rag_import_test.py      # Multi-format sample import
 │   ├── rag_import_pdf_test.py  # Real PDF import via mineru parser
 │   └── graph_rag/           # Fully vendored RAG engine
-│       ├── vendored_raganything/  # Vendored RAG-Anything pipeline
-│       ├── vendored_lightrag/  # Vendored LightRAG, storage fused with SNKV
+│       ├── raganything/  # Vendored RAG-Anything pipeline
+│       ├── lightrag_base.py  # LightRAG base classes; storage fused with SNKV
+│       ├── fts_shadow_index.py  # Opt-in FTS5 shadow index for entities_vdb
 │       └── ...
 └── tests/
     └── test_rag_anything_vendored.py

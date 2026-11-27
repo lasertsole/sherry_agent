@@ -1,6 +1,6 @@
 """`--timeout` is the budget of the WHOLE drive, not of every turn.
 
-Measured on the DeepSWE L1 run 20261125_222727: the flag (3600 s by default) was
+Measured on the DeepSWE L1 run of 2026-11-25: the flag (3600 s by default) was
 handed to each of the up-to-4 ``asyncio.wait_for`` calls, so arktype ran 9434 s
 with ``continuations=3`` and no signal in the report. Both suites now run every
 driven turn through ``_next_drive_turn`` on ONE deadline.

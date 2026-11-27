@@ -6,18 +6,18 @@
 
 ## 缺口
 
-`vendored_lightrag` 没有任何路径算法：`query_nodes_by_vector` 与关系召回各自做
+`graph_rag` 的 LightRAG 没有任何路径算法：`query_nodes_by_vector` 与关系召回各自做
 一次向量搜索（默认 `top_k=40`）后直接返回。中间桥接实体一旦落在 top-k 之外，
 即使图里确实存在这条链路，"A 和 B 什么关系"也无法通过遍历回答——所谓"多跳"
 只是 LLM 在候选集合上做推理的概率事件。
 
-实体向量是纯稠密的（`BGE-M3`，1024 维）。vendored 引擎里没有稀疏通道，也没有
+实体向量是纯稠密的（`BGE-M3`，1024 维）。包内引擎里没有稀疏通道，也没有
 BM25 兜底。
 
 ## 路径层
 
 `skills/builtin/core/multimodal_rag/scripts/graph_rag/path_search.py` 属于技能层
-（vendored 树只在 `operate.py` 增加一个分发钩子）：
+（LightRAG 侧只在 `operate.py` 增加一个分发钩子）：
 
 - **端点解析**——按成本从低到高三遍：图节点精确名 → 图标签包含匹配
   （`Kepler-7 launch pad` → `Kepler-7 Launch Pad`）→ 以
@@ -56,6 +56,30 @@ LightRAG 的默认值几乎放行一切：`TOP_K=40`、`CHUNK_TOP_K=20`、
 `QueryParam` 与 LightRAG dataclass 会在导入时把环境变量读成类级默认值，旧位置
 （`base.py` 里自己的 LightRAG 导入之后）实际上从未生效。
 
+## FTS5 实体混合检索
+
+`entities_vdb` 现在有可选的 SQLite FTS5 影子索引
+（`graph_rag/fts_shadow_index.py`）。`_strip_bom`、函数名、文件名这类短标识符
+是精确匹配问题，因此 FTS5 关键词召回会与原有向量余弦分数合并。
+`relationships_vdb` 和 `chunks_vdb` 刻意保持纯向量：散文描述更适合语义相似。
+
+索引把 `entity_name`、`content`、`keywords` 镜像到两张 FTS5 表
+（`unicode61` 用于 ASCII 标识符，`trigram` 用于中文/子串查询），并在
+`SNKVVectorStorage.upsert()` / `delete()` 内同步。检索默认关闭，由
+`GRAPH_RAG_PATH["fts_hybrid_enabled"]` 开启；权重为
+`fts_hybrid_weight=0.4`、`fts_hybrid_vec_weight=0.6`。FTS 无命中时退化为原
+向量排序。合并结果保留向量侧元数据（`entity_name`、`content`、
+`source_id`），供下游 `_get_node_data` 使用。
+
+同时完成了两项清理：
+
+- `QueryParam.mode` 不再接受 `bypass`（未知 mode 现在会在运行时报错），
+  `lightrag.py` 中的相关分发分支已删除。
+- 原 `vendored_lightrag/`、`vendored_raganything/` 已合并进 `graph_rag/`：
+  LightRAG 位于包根目录（基类在 `lightrag_base.py`，Sherry 适配在
+  `sherry_adapter.py`），RAG-Anything 位于 `raganything/`。裸导入名
+  `lightrag` / `raganything` 仍通过 `sys.modules` 别名指向包内副本。
+
 ## 稀疏召回：为什么没有实现
 
 计划的稀疏通道被 embedding 层挡住。
@@ -63,8 +87,7 @@ LightRAG 的默认值几乎放行一切：`TOP_K=40`、`CHUNK_TOP_K=20`、
 llama.cpp `create_embedding`，远程走 OpenAI 兼容的 `/embeddings` 端点。
 `SNKVVectorStorage` 只有单路 HNSW 余弦索引，`EmbeddingFunc` 只返回一个
 `ndarray`。要用 BGE-M3 原生稀疏输出，需要 `FlagEmbedding`（PyTorch 加几百
-MiB）或一个支持稀疏的端点；两者都不适合桌面打包。因此稀有 ID/版本串的召回
-仍然开放，SQLite FTS5/BM25 是记录在案的未来选项，而不是双路稀疏索引。
+MiB）或一个支持稀疏的端点；两者都不适合桌面打包。稀有 ID/版本串的召回已由上文的 FTS5 影子索引覆盖；原生双路稀疏索引仍不在范围内。
 
 本地/远程的选择是构造期 Strategy：`build_embed_model` 注入
 `_LocalEmbeddingBackend` 或 `_RemoteEmbeddingBackend`，门面只做委托
@@ -100,7 +123,8 @@ context recall 与 context precision 保持 `1.000`；answer relevancy 为 `0.91
 
 ```bash
 uv run --no-sync pytest tests/skills/builtin/core/multimodal_rag/test_path_search.py \
-  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py -q
+  tests/skills/builtin/core/multimodal_rag/test_path_query_integration.py \
+  tests/skills/builtin/core/multimodal_rag/test_fts_hybrid.py -q
 uv run --no-sync python evals/graph_rag/multihop_bench.py --modes mix,path
 uv run --group evals python evals/evals.py graph_rag
 ```

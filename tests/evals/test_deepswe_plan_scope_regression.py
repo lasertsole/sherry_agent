@@ -1,6 +1,6 @@
 """Regression: the eval continuation driver is SESSION-scoped.
 
-Measured on the DeepSWE L1 run ``20261125_222727``: task #2 (bandit) ended with
+Measured on the DeepSWE L1 run of 2026-11-25: task #2 (bandit) ended with
 five open todos in the run-wide plan registry, and from then on every later
 task's ``open_items`` was permanently non-empty — ``if not open_items: break``
 could never fire, so a task that had closed its own plan still received

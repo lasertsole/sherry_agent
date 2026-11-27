@@ -1,0 +1,6 @@
+[local-l1] csstree-shorthand-expansion-compression: agent start session=evals-deepswe-local-csstree-shorthand-expansion-compression-06629a
+[local-l1] csstree-shorthand-expansion-compression: grade exit=1
+[local-l1] csstree-shorthand-expansion-compression: resolved=False reward={'reward': 0, 'f2p_total': 79, 'f2p_passed': 0, 'p2p_total': 16715, 'p2p_passed': 16715, 'f2p': 0.0, 'p2p': 1.0, 'partial': 0.9952959390258426} tool_calls=51 orchestration=False duration=320.3s
+[local-l1] pest-character-class-coalescing: resolved=False reward=None tool_calls=0 orchestration=None duration=6.6s
+[local-l1] report: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194110/report.json
+[local-l1] summary: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_194110/summary.md

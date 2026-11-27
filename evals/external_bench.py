@@ -965,7 +965,7 @@ _GATE_COUNTER_KEYS = (
 #: Counters per SESSION. The gate is process-level but its policy is per task:
 #: every suite drives all of its tasks in one process, so a single global dict
 #: let the first task's planning calls unlock every later task (measured on the
-#: DeepSWE L1 run 20261125_222727: task #2 ran `terminal` with
+#: DeepSWE L1 run of 2026-11-25: task #2 ran `terminal` with
 #: `taskflow_calls=0`, and `blocked` stayed at 1 for the whole run).
 _GATE_STATE: dict[str, dict[str, int]] = {}
 

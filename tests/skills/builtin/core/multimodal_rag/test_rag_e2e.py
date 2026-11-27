@@ -41,7 +41,7 @@ for _path in (str(REPO_ROOT), str(SCRIPTS_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-import graph_rag.base as graph_rag_base  # noqa: E402
+import graph_rag.sherry_adapter as graph_rag_base  # noqa: E402
 import graph_rag.core as graph_rag_core  # noqa: E402
 import rag_index as rag_index_module  # noqa: E402
 from rag_index import file_index  # noqa: E402

@@ -141,7 +141,7 @@ def _extract_pdf(data: bytes) -> str:
         from skills.builtin.core.multimodal_rag.scripts.graph_rag.core import (
             ensure_mineru_models,
         )
-        from skills.builtin.core.multimodal_rag.scripts.graph_rag.vendored_raganything.parser import (
+        from skills.builtin.core.multimodal_rag.scripts.graph_rag.raganything.parser import (
             MineruParser,
         )
 

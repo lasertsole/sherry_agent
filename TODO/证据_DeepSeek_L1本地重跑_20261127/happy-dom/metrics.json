@@ -1,0 +1,45 @@
+{
+  "task": "happy-dom-abort-pending-body-reads",
+  "source": "local-agent-20261127_011710 (driver was interrupted before writing report.json; metrics recovered from agent-result.json and grade.log)",
+  "resolved": false,
+  "reward": {
+    "reward": 0,
+    "f2p_total": 14,
+    "f2p_passed": 0,
+    "p2p_total": 165,
+    "p2p_passed": 165,
+    "f2p": 0.0,
+    "p2p": 1.0,
+    "partial": 0.9217877094972067
+  },
+  "duration_s": 287.6,
+  "tool_calls": 67,
+  "tool_names": {
+    "todowrite": 1,
+    "terminal": 34,
+    "taskflow_flow": 1,
+    "read_file": 27,
+    "taskflow_step": 1,
+    "search_files": 3
+  },
+  "tokens": {
+    "input": 3426904,
+    "output": 8055
+  },
+  "orchestration_gate": {
+    "todo": 0,
+    "plan_calls": 0,
+    "blocked": 0,
+    "reviewer_checklist_injected": 0,
+    "path_denials": 0,
+    "blocked_writes": 0
+  },
+  "orchestration_compliant": false,
+  "experience_extraction": {
+    "fired": true,
+    "snapshot_hash": "de455825d482b507",
+    "produced": null
+  },
+  "test_edits": [],
+  "error": ""
+}
