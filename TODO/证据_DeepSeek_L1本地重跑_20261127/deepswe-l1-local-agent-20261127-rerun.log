@@ -1,4 +1,0 @@
-[local-l1] happy-dom-abort-pending-body-reads: agent start session=evals-deepswe-local-happy-dom-abort-pending-body-reads-eb78c3
-[local-l1] happy-dom-abort-pending-body-reads: grade exit=1
-[local-l1] happy-dom-abort-pending-body-reads: resolved=False reward={'reward': 0, 'f2p_total': 14, 'f2p_passed': 0, 'p2p_total': 165, 'p2p_passed': 165, 'f2p': 0.0, 'p2p': 1.0, 'partial': 0.9217877094972067} tool_calls=67 orchestration=False duration=287.6s
-[local-l1] csstree-shorthand-expansion-compression: agent start session=evals-deepswe-local-csstree-shorthand-expansion-compression-45f6bb

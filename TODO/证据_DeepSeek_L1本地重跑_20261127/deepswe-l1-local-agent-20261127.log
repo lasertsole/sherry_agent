@@ -1,7 +1,0 @@
-[local-l1] happy-dom-abort-pending-body-reads: agent start session=evals-deepswe-local-happy-dom-abort-pending-body-reads-3177ed
-[local-l1] happy-dom-abort-pending-body-reads: grade exit=1
-[local-l1] happy-dom-abort-pending-body-reads: resolved=False reward=None tool_calls=78 orchestration=False duration=527.2s
-[local-l1] csstree-shorthand-expansion-compression: resolved=False reward=None tool_calls=0 orchestration=None duration=5.9s
-[local-l1] pest-character-class-coalescing: resolved=False reward=None tool_calls=0 orchestration=None duration=8.6s
-[local-l1] report: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_010353/report.json
-[local-l1] summary: /home/honor/Desktop/project/deepswe-local/results/local-agent-20261127_010353/summary.md
