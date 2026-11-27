@@ -78,7 +78,7 @@ def _prepare_base(task: str) -> Path:
     return base
 
 
-def _build_prompt(task: str, repo: Path, base_commit: str) -> Path:
+def _build_prompt(task: str, repo: Path, base_commit: str) -> str:
     instruction_file = TASKS_DIR / task / "instruction.md"
     if not instruction_file.is_file():
         instruction_file = LOCAL_ROOT / "tasks-py-node" / task / "instruction.md"
