@@ -151,3 +151,121 @@ def test_cancelled_and_stale_verifier_are_invalid() -> None:
     assert cancelled["invalid_run"] is True
     assert stale["invalid_run"] is True
     assert plain_miss["invalid_run"] is False
+
+
+# ── end-to-end wiring of _run_one (worker + grade faked) ──────────────────
+
+
+class _Completed:
+    def __init__(self, stdout: str = "", returncode: int = 0) -> None:
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = returncode
+
+
+def _fake_worker(payload: dict[str, object]):
+    def _run_worker(**kwargs: object) -> None:
+        Path(str(kwargs["result_file"])).write_text(json.dumps(payload), encoding="utf-8")
+
+    return _run_worker
+
+
+def _patch_run_one(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    payload: dict[str, object],
+    grade,
+) -> None:
+    monkeypatch.setattr(local_driver, "local_root", lambda: tmp_path / "local")
+    monkeypatch.setattr(local_driver, "tasks_dir", lambda: tmp_path / "tasks")
+    base = tmp_path / "local" / "work" / "task" / "base"
+    base.mkdir(parents=True)
+    instruction = tmp_path / "tasks" / "task" / "instruction.md"
+    instruction.parent.mkdir(parents=True)
+    instruction.write_text("fix the thing", encoding="utf-8")
+    monkeypatch.setattr(local_driver, "_prepare_base", lambda task: base)
+    monkeypatch.setattr(
+        local_driver,
+        "_git",
+        lambda repo, *args, timeout=300.0: _Completed(
+            "deadbeefdeadbeefdeadbeef\n" if args and args[0] == "rev-parse" else ""
+        ),
+    )
+    monkeypatch.setattr(local_driver, "_run_worker", _fake_worker(payload))
+    monkeypatch.setattr(local_driver, "_grade", grade)
+
+
+def _drive_payload(**drive: object) -> dict[str, object]:
+    base_drive: dict[str, object] = {
+        "tool_calls": 3,
+        "tool_names": {"todowrite": 1, "taskflow_flow": 1},
+        "text": "",
+        "resumes": 0,
+        "interrupted": 0,
+        "timeout": False,
+        "cancelled": False,
+        "error": "",
+    }
+    base_drive.update(drive)
+    return {
+        "drive": base_drive,
+        "tokens": {},
+        "experience_extraction": {},
+        "orchestration_gate": {"todo": 0, "plan_calls": 0, "blocked": 0},
+        "agent_config": {},
+    }
+
+
+def test_run_one_marks_a_cancelled_turn_invalid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def _grade(task: str, patch_file: Path, out_dir: Path, log_file: Path):
+        return None
+
+    _patch_run_one(
+        monkeypatch,
+        tmp_path,
+        payload=_drive_payload(cancelled=True),
+        grade=_grade,
+    )
+
+    result = local_driver._run_one("task", tmp_path / "run")
+
+    assert result["failure_kind"] == "cancelled"
+    assert result["invalid_run"] is True
+    assert result["orchestration_compliant"] is None
+
+
+def test_run_one_marks_a_stale_verifier_invalid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def _grade(task: str, patch_file: Path, out_dir: Path, log_file: Path):
+        _write(out_dir / task / "new.xml", '<testsuites timestamp="2026-11-25T22:08:37+08:00"/>')
+        _write(out_dir / task / "reward.json", json.dumps({"reward": 0}))
+        return {"reward": 0}
+
+    _patch_run_one(monkeypatch, tmp_path, payload=_drive_payload(), grade=_grade)
+
+    result = local_driver._run_one("task", tmp_path / "run")
+
+    assert result["failure_kind"] == "stale_verifier"
+    assert result["invalid_run"] is True
+    assert result["resolved"] is False
+
+
+def test_run_one_accepts_a_fresh_verdict(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def _grade(task: str, patch_file: Path, out_dir: Path, log_file: Path):
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        _write(out_dir / task / "new.xml", f'<testsuites timestamp="{stamp}"/>')
+        _write(out_dir / task / "reward.json", json.dumps({"reward": 1}))
+        return {"reward": 1}
+
+    _patch_run_one(monkeypatch, tmp_path, payload=_drive_payload(), grade=_grade)
+
+    result = local_driver._run_one("task", tmp_path / "run")
+
+    assert result["resolved"] is True
+    assert result["invalid_run"] is False
+    assert result["failure_kind"] == ""
+    assert result["orchestration_compliant"] is True
