@@ -982,20 +982,40 @@ def _gate_bucket(session_id: str) -> dict[str, int]:
 def _runtime_session_id(runtime: Any) -> str:
     """The session that issued the call (empty when it cannot be resolved).
 
-    The same resolution the product's ``agent.safe_tool_node`` uses: the tool
-    runtime's context carries the session as a dict key or an attribute. An
-    unresolvable session lands in the ``""`` bucket, which behaves exactly like
-    the old process-wide counter.
+    Resolution is STATE-FIRST, mirroring the product's
+    ``UserHooks._session_of_request``: the product invokes its graph with
+    ``input={"session_id": …}``, and ``runtime.context`` stays ``None`` unless a
+    caller passes ``context=`` — which the product never does. Reading only the
+    context (the pre-2026-11-27 behaviour) left EVERY counter in the ``""``
+    bucket, silently reverting this gate to process-wide; the per-task read then
+    answered zeros for every task (measured on the DeepSWE L1 rerun of
+    2026-11-27).
+
+    ``thread_id`` is NOT a session id — it is an int hash of one
+    (``pub.func.build_agent_config``) — so it is deliberately never used as a
+    fallback. An unresolvable session still lands in ``""``, which behaves
+    exactly like the old process-wide counter (documented fallback).
     """
     try:
+        state = getattr(runtime, "state", None)
+        if isinstance(state, dict):
+            session_id = state.get("session_id")
+            if session_id:
+                return str(session_id)
         context = getattr(runtime, "context", None)
         if isinstance(context, dict):
             session_id = context.get("session_id")
         else:
             session_id = getattr(context, "session_id", None)
+        if session_id:
+            return str(session_id)
+        config = getattr(runtime, "config", None)
+        configurable = config.get("configurable") if isinstance(config, dict) else None
+        if isinstance(configurable, dict) and configurable.get("session_id"):
+            return str(configurable["session_id"])
     except Exception:  # noqa: BLE001 — a gate must never break the call
         return ""
-    return str(session_id or "")
+    return ""
 
 
 #: Child-agent session keys embed their role (a swarm child carries ":swarm:").

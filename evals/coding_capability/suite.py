@@ -433,11 +433,17 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
 
 
 def _failure_kind(passed: bool, drive: dict[str, Any]) -> str:
-    """``""`` (a real verdict) / ``provider`` (invalid run) / ``timeout`` / ``harness``."""
+    """``""`` / ``provider`` / ``cancelled`` / ``timeout`` / ``harness``.
+
+    ``cancelled`` and ``provider`` mean the run never produced a verdict about
+    the agent (invalid run); ``timeout`` and ``""`` are real outcomes.
+    """
     if passed:
         return ""
     if drive["timeout"]:
         return "timeout"
+    if drive.get("cancelled"):
+        return "cancelled"
     error = str(drive.get("error") or "")
     if error:
         lowered = error.lower()
@@ -532,6 +538,7 @@ async def _drive(
         "resumes": 0,
         "interrupted": 0,
         "timeout": False,
+        "cancelled": False,
         "error": "",
     }
 
@@ -554,6 +561,15 @@ async def _drive(
                 state["tool_names"][name] = state["tool_names"].get(name, 0) + 1
             elif kind == "text":
                 state["text"] += str(data.get("content") or "")
+            elif kind == "stopped":
+                # A cancelled turn (asyncio.Task.cancel landing on the stream)
+                # ends NORMALLY here: the driver sends "stopped" with the
+                # "Request cancelled" text and no "done". Without this the
+                # cancellation was invisible — the run looked like a completed
+                # turn that simply produced nothing (measured 2026-11-27).
+                state["cancelled"] = True
+            elif kind == "error":
+                state["error"] = state["error"] or str(data.get("content") or "error frame")
             _emit()
 
     try:

@@ -64,8 +64,10 @@ DeepSWE は実際のメインエージェントを動かすため、harness は�
 - **オーケストレーションゲート** — ファイル編集や子エージェントの spawn の前に、
   `todowrite` と TaskFlow の flow 1 つ（`taskflow_flow` の `action="plan"`）が必要です。
   満たさない場合、変更系ツールはルールを返します。カウンタは**セッションごと**に分かれます
-  （1 つの suite が同一プロセスで全タスクを実行するため）：前のタスクの計画が次のタスクを
-  解錠することはなく、読み取り専用の `todoread` は計画と見なしません。子エージェントは集計
+  （1 つの suite が同一プロセスで全タスクを実行するため）。セッションは**グラフの state** から
+  解決します：製品は `input={"session_id": …}` でグラフを呼び、`runtime.context` は空のまま、
+  `thread_id` はチェックポインタ用の整数ハッシュで session id ではありません。前のタスクの
+  計画が次のタスクを解錠することはなく、読み取り専用の `todoread` は計画と見なしません。子エージェントは集計
   のみでゲート対象外です（`todowrite`/`taskflow_flow` を持たないため）。使用量はツール別に
   集計され、`orchestration_compliant`（およびタスクごとの `orchestration_gate`）として
   報告されます。
@@ -82,19 +84,28 @@ DeepSWE は実際のメインエージェントを動かすため、harness は�
 - **プロバイダ中止** — **終端**の provider エラー（`insufficient_balance`、`invalid_api_key`、
   401/402/403）が 2 タスク連続で出たら suite を停止します。残りのタスクは起動されず、
   レポート行は「失敗」ではなく `not_run` になります。429/タイムアウトでは発動しません。
+- **無効な実行** — キャンセルされたターン（ドライバが `stopped` フレームを受けた）、harness
+  自体の失敗、reward を出さなかった verifier、そして verifier 産物自身のタイムスタンプが
+  今回の採点より前である場合、タスクは `invalid_run`（`failure_kind` は `cancelled` /
+  `harness` / `stale_verifier`）となり `resolve_rate` から除外されます。いずれもエージェントに
+  ついて何も語りません。ローカルの単一ターンドライバはさらに「flow が未完了のまま終了」を
+  `flow_incomplete` として報告します。
 - **レポート項目** — `orchestration`（ポリシー、タスク別カウント、ゲートカウンタ、
   `reviewer_checklist_injections`、`compliant`/`violating`/`not_run` の各リスト）、タスクごとの
   `orchestration_gate` と `acceptance_checklist`、`continuations`、`no_progress_stop`、
   `patch_bytes` + `changed_paths`（**バイナリも含む**。巻き込まれたビルド産物は
-  `large_patch_files` にも載る）、経験抽出の `attempted`/`fired`/`produced`、
+  `large_patch_files` にも載る）、経験抽出の `attempted`/`fired`/`produced`
+  （`produced` は auto-skill ツリーが実際に変わったことを意味します。汎用化不可と判定された
+  スキップは snapshot hash を記録しますが何も書きません）、
   そして verifier の判定。`aggregate` は `resolve_rate`（有効実行のみ）と
   `resolve_rate_all`、`not_run` の一覧を併記します——実行されなかったタスクは成功でも失敗でも
   ありません。
 
 `--timeout` は**ドライブ全体**の予算です。最初のターンも各継続ターンも同じ期限から消費し、
-残りが足りないターンは開始しません（レポートの `deadline_hit`）。既知のギャップ：キャンセル
-されたターンの provider 呼び出しはその期限を超えて残る可能性があります——強制終了はありません
-（削除済みの `--local` モードの worker プロセス強制終了が修正の参考）。
+残りが足りないターンは開始しません（レポートの `deadline_hit`）。キャンセルされたターンは
+`cancelled`（無効）として報告されますが、その provider 呼び出しは期限を超えて残る可能性が
+あります——強制終了はありません（削除済みの `--local` モードの worker プロセス強制終了が
+修正の参考）。
 
 ## タスク 1–14 の実測
 

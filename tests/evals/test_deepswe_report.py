@@ -153,6 +153,43 @@ def test_a_forced_extraction_is_attempted_but_only_production_is_produced():
     assert summary["produced_tasks"] == ["forced-produced"]
 
 
+def test_a_non_generalizable_skip_is_not_production():
+    """The runner records a snapshot hash when it SKIPS the review too.
+
+    Measured on the DeepSWE L1 rerun of 2026-11-27: happy-dom was judged
+    non-generalizable (``reusable=False``, nothing written) yet reported as
+    produced because the hash was non-empty. The explicit ``produced`` flag is
+    the authority; the hash-only fallback stays for older artifacts.
+    """
+    results = [
+        _result(
+            "skipped",
+            experience_extraction={
+                "enabled": True,
+                "attempted": True,
+                "fired": True,
+                "produced": False,
+                "snapshot_hash": "de455825d482b507",
+            },
+        ),
+        _result(
+            "wrote-a-skill",
+            experience_extraction={
+                "enabled": True,
+                "attempted": True,
+                "fired": True,
+                "produced": True,
+                "produced_paths": ["pest-meta-notes/SKILL.md"],
+            },
+        ),
+    ]
+
+    summary = suite._experience_extraction_summary(results)
+
+    assert summary["fired_tasks"] == ["skipped", "wrote-a-skill"]
+    assert summary["produced_tasks"] == ["wrote-a-skill"]
+
+
 def test_the_compliance_label_is_explicit_about_unjudged_runs():
     assert suite._compliance_label(True) == "ok"
     assert suite._compliance_label(False) == "VIOLATED"

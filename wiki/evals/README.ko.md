@@ -62,8 +62,10 @@ DeepSWE는 실제 메인 에이전트를 구동하므로, harness는 규칙을 �
 - **오케스트레이션 게이트** — 파일 편집이나 자식 spawn 전에 `todowrite`와 TaskFlow flow
   하나(`taskflow_flow`의 `action="plan"`)가 필요합니다. 없으면 변경 계열 도구가 규칙을
   돌려줍니다. 카운터는 **세션별로 분리**됩니다(하나의 suite가 같은 프로세스에서 모든 작업을
-  수행하므로): 앞 작업의 계획이 다음 작업을 풀어주지 않으며, 읽기 전용 `todoread`는 계획으로
-  치지 않습니다. 자식 에이전트는 집계만 되고 게이트 대상이 아닙니다
+  수행하므로). 세션은 **그래프 state**에서 해석합니다: 제품은 `input={"session_id": …}`로
+  그래프를 호출하고 `runtime.context`는 비어 있으며, `thread_id`는 체크포인터용 정수 해시일
+  뿐 session id가 아닙니다. 앞 작업의 계획이 다음 작업을 풀어주지 않으며, 읽기 전용
+  `todoread`는 계획으로 치지 않습니다. 자식 에이전트는 집계만 되고 게이트 대상이 아닙니다
   (`todowrite`/`taskflow_flow`가 없기 때문). 사용량은 도구별로 집계되어 `orchestration_compliant`(및 작업별
   `orchestration_gate`)로 보고됩니다.
 - **수용 체크리스트** — 작업 텍스트의 판정 가능한 조항(*must* / *raise* / *reject* /
@@ -79,18 +81,25 @@ DeepSWE는 실제 메인 에이전트를 구동하므로, harness는 규칙을 �
 - **프로바이더 중단** — **종결** provider 오류(`insufficient_balance`, `invalid_api_key`,
   401/402/403)가 두 작업 연속으로 나면 suite를 멈춥니다. 남은 작업은 시작되지 않고
   리포트 행은 "실패"가 아니라 `not_run`으로 기록됩니다. 429/타임아웃은 발동하지 않습니다.
+- **무효 실행** — 취소된 턴(드라이버가 `stopped` 프레임을 받음), harness 자체 실패,
+  reward를 내지 않은 verifier, 또는 verifier 산출물 자체의 타임스탬프가 이번 채점보다
+  이전인 경우 모두 작업을 `invalid_run`(`failure_kind` = `cancelled` / `harness` /
+  `stale_verifier`)으로 표시하고 `resolve_rate`에서 제외합니다: 어느 것도 에이전트에 대해
+  말해주지 않습니다. 로컬 단일 턴 드라이버는 추가로 "턴 종료 시 flow 미완료"를
+  `flow_incomplete`로 보고합니다.
 - **리포트 필드** — `orchestration`(정책, 작업별 카운트, 게이트 카운터,
   `reviewer_checklist_injections`, `compliant`/`violating`/`not_run` 목록), 작업별
   `orchestration_gate`와 `acceptance_checklist`, `continuations`, `no_progress_stop`,
   `patch_bytes` + `changed_paths`(**바이너리 포함**; 함께 딸려온 빌드 산출물은
-  `large_patch_files`에도 표시), 경험 추출의 `attempted`/`fired`/`produced` 구분, 그리고
-  verifier 판정. `aggregate`는 `resolve_rate`(유효 실행만)와 `resolve_rate_all`, `not_run`
+  `large_patch_files`에도 표시), 경험 추출의 `attempted`/`fired`/`produced` 구분
+  (`produced`는 auto-skill 트리가 실제로 바뀌었다는 뜻입니다. 일반화 불가로 건너뛴 경우
+  snapshot hash는 기록되지만 아무것도 쓰지 않습니다), 그리고 verifier 판정. `aggregate`는 `resolve_rate`(유효 실행만)와 `resolve_rate_all`, `not_run`
   목록을 함께 제공합니다 — 실행되지 않은 작업은 통과도 실패도 아닙니다.
 
 `--timeout`은 **드라이브 전체**의 예산입니다. 첫 턴과 모든 연속 턴이 하나의 기한에서
-소비하며, 남은 시간이 부족하면 새 턴을 시작하지 않습니다(리포트의 `deadline_hit`). 알려진
-공백: 취소된 턴의 provider 호출은 그 기한을 넘어 남을 수 있습니다 — 강제 종료는 없습니다
-(삭제된 `--local` 모드의 worker 프로세스 강제 종료가 수정 참고).
+소비하며, 남은 시간이 부족하면 새 턴을 시작하지 않습니다(리포트의 `deadline_hit`). 취소된
+턴은 `cancelled`(무효)로 보고되지만, 그 provider 호출은 기한을 넘어 남을 수 있습니다 —
+강제 종료는 없습니다(삭제된 `--local` 모드의 worker 프로세스 강제 종료가 수정 참고).
 
 ## 작업 1–14 실측
 

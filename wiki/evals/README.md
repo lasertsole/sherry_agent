@@ -75,9 +75,12 @@ then verifies them instead of trusting the prompt:
   have called `todowrite` and opened one TaskFlow flow (`taskflow_flow` with
   `action="plan"`); otherwise the mutating tool answers with the rule. The
   counters are bucketed PER SESSION, because a suite drives every task in one
-  process: an earlier task's planning never unlocks a later task, and a
-  read-only `todoread` is not planning, and a child agent is counted but never
-  gated (it has no `todowrite`/`taskflow_flow`). Usage is counted per tool and reported
+  process. The session comes from the graph STATE: the product invokes its graph
+  with `input={"session_id": …}` and `runtime.context` stays empty, while
+  `thread_id` is the checkpointer's integer hash and NOT a session id. An
+  earlier task's planning never unlocks a later task, a read-only `todoread` is
+  not planning, and a child agent is counted but never gated (it has no
+  `todowrite`/`taskflow_flow`). Usage is counted per tool and reported
   (`orchestration_compliant`, plus each task's own `orchestration_gate`).
 - **Acceptance checklist** — the task text's decidable clauses (normative
   keywords such as *must* / *raise* / *reject* / *only* / *charset*) become a
@@ -95,21 +98,31 @@ then verifies them instead of trusting the prompt:
   `invalid_api_key`, 401/402/403) stops the suite after two consecutive tasks:
   the remaining ones are never started, and their report rows say `not_run`
   instead of "failed". A 429 or a timeout never trips it.
+- **Invalid runs** — a cancelled turn (the driver sees a `stopped` frame), a
+  harness failure, a verifier that produced no reward, or a verifier artifact
+  whose OWN timestamp predates the grade run all mark the task `invalid_run`
+  (`failure_kind` = `cancelled` / `harness` / `stale_verifier`), excluded from
+  `resolve_rate`: none of them says anything about the agent. The local
+  single-turn driver additionally reports an unfinished plan as
+  `flow_incomplete`.
 - **Report fields** — `orchestration` (policy, per-task counts, gate counters,
   `reviewer_checklist_injections`, and the `compliant`/`violating`/`not_run` task
   lists), each task's `orchestration_gate` and `acceptance_checklist`,
   `continuations`, `no_progress_stop`, `patch_bytes` + `changed_paths` (BINARY
   files included; a swept build artifact also raises `large_patch_files`), the
-  extraction `attempted`/`fired`/`produced` split, and the verifier verdict.
+  extraction `attempted`/`fired`/`produced` split (`produced` means the
+  auto-skill tree actually changed — a non-generalizable skip records a
+  snapshot hash but writes nothing), and the verifier verdict.
   `aggregate` carries both `resolve_rate` (valid runs only) and
   `resolve_rate_all`, plus the `not_run` list — a task that never executed is
   neither a pass nor a failure.
 
 `--timeout` is the budget of the WHOLE drive: every driven turn (first and
 continuations) draws from one deadline, and a turn that would start with nothing
-left does not start (`deadline_hit` in the report). Known gap: a cancelled turn's
-in-flight provider call can still outlive that deadline — there is no hard kill
-(the retired `--local` mode's worker-process kill is the sketch for fixing it).
+left does not start (`deadline_hit` in the report). A cancelled turn is reported
+as `cancelled` (invalid), but its in-flight provider call can still outlive that
+deadline — there is no hard kill (the retired `--local` mode's worker-process
+kill is the sketch for fixing it).
 
 ## Task results (tasks 1-14)
 

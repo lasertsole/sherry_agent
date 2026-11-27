@@ -47,8 +47,11 @@ def experience_extraction_evidence(session_id: str) -> dict[str, object]:
     """Read the extraction trace a task left behind (never raises).
 
     ``fired`` means the plan-completion hook or an eval-forced pass scheduled
-    the extraction; ``snapshot_hash`` is non-empty only after a pass actually
-    produced output. Both are read mem-first, like the extraction gates.
+    the extraction. ``snapshot_hash`` is the plan fingerprint recorded when a
+    pass CONCLUDED — which includes the "task judged non-generalizable" skip,
+    where nothing is written; it is therefore not a production signal (the
+    ``produced`` flag below is). Both are read mem-first, like the extraction
+    gates.
     """
     if not session_id:
         return {"fired": False, "snapshot_hash": ""}
@@ -78,9 +81,23 @@ async def force_experience_extraction(session_id: str) -> dict[str, object]:
     directly from the eval side without touching product code. The fired marker
     is written before the call so a forced attempt stays observable even when
     the pass no-ops or raises; failures are fail-open and never break the eval.
+
+    ``produced`` is measured here, not inferred from ``snapshot_hash``: the
+    runner also records that hash when it SKIPS the review as non-generalizable
+    (nothing written), so the hash alone over-reports production. The auto-skill
+    tree is snapshotted around the pass and any changed/created/deleted file is
+    reported in ``produced_paths``.
     """
     if not session_id:
-        return {"fired": False, "snapshot_hash": ""}
+        return {"fired": False, "snapshot_hash": "", "produced": False}
+    produced_paths: list[str] = []
+    before: object = None
+    try:
+        from agent.middlewares.summarization.skill_review import snapshot_auto_skills
+
+        before = snapshot_auto_skills()
+    except Exception:  # noqa: BLE001 - telemetry only
+        before = None
     try:
         from agent.middlewares.summarization.background_reviews import _SKILL_REVIEW_LOCK_KEY
         from agent.middlewares.summarization.skill_review_runner import _run_skill_review
@@ -92,4 +109,18 @@ async def force_experience_extraction(session_id: str) -> dict[str, object]:
         await _run_skill_review(session_id)
     except Exception:  # noqa: BLE001 - an eval-forced pass must never fail the run
         logger.exception("forced experience extraction failed for %s", session_id)
-    return experience_extraction_evidence(session_id)
+    if before is not None:
+        try:
+            from agent.middlewares.summarization.skill_review import (
+                changed_skill_paths,
+                snapshot_auto_skills,
+            )
+
+            produced_paths = sorted(changed_skill_paths(before, snapshot_auto_skills()))
+        except Exception:  # noqa: BLE001 - telemetry only
+            produced_paths = []
+    return {
+        **experience_extraction_evidence(session_id),
+        "produced": bool(produced_paths),
+        "produced_paths": produced_paths[:20],
+    }

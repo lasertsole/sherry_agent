@@ -199,6 +199,14 @@ _MAX_PLAN_CONTINUATIONS = 3
 #: before it is captured; past this window the run grades what exists.
 _FLOW_SETTLE_WAIT_S = 180.0
 
+#: Failure kinds that mean the run never produced a verdict about the agent, so
+#: the task must not count as a (resolved or unresolved) attempt:
+#: ``provider`` (terminal API error), ``cancelled`` (the turn was cancelled —
+#: measured 2026-11-27: pest's turn ended at 981.8 s with ``Request cancelled``
+#: and was graded as a normal failure), ``harness`` (the harness itself raised /
+#: the verifier produced no reward, e.g. the stale-junit grade of 2026-11-27).
+_INVALID_FAILURE_KINDS: frozenset[str] = frozenset({"provider", "cancelled", "harness"})
+
 #: A terminal provider error does not heal on its own (balance exhausted, key
 #: revoked). Two consecutive runs failing this way stop the suite: the remaining
 #: tasks are reported as NOT RUN, never as failed work (measured: four tasks ran
@@ -895,6 +903,7 @@ def _not_run_result(
             "attempted": False,
             "forced": False,
             "fired": False,
+            "produced": False,
             "snapshot_hash": "",
         },
         "continuations": 0,
@@ -951,6 +960,7 @@ async def _run_task(
             "attempted": False,
             "forced": False,
             "fired": False,
+            "produced": False,
             "snapshot_hash": "",
         },
     }
@@ -1140,12 +1150,13 @@ async def _run_task(
         if reward is None:
             result["failure_kind"] = "harness"
             result["error"] = (result["error"] + " verifier produced no reward").strip()
+            result["invalid_run"] = True
         elif not resolved:
             kind = harness._failure_kind(False, drive)
             result["failure_kind"] = kind
-            result["invalid_run"] = kind == "provider"
+            result["invalid_run"] = kind in _INVALID_FAILURE_KINDS
         if result["invalid_run"]:
-            # Never executed past the provider error: neither compliant nor a
+            # Never produced a verdict about the agent: neither compliant nor a
             # violation (the old False painted it as a prompt violation).
             result["orchestration_compliant"] = None
         result["duration_s"] = round(time.monotonic() - started, 1)
@@ -1153,6 +1164,8 @@ async def _run_task(
     except Exception as exc:  # noqa: BLE001 — a harness error is reported as such
         result["failure_kind"] = "harness"
         result["error"] = f"{type(exc).__name__}: {exc}"
+        result["invalid_run"] = True
+        result["orchestration_compliant"] = None
         result["duration_s"] = round(time.monotonic() - started, 1)
         print(f"[evals] {task.task_id}: HARNESS ERROR: {result['error']}", flush=True)
     finally:
@@ -1356,6 +1369,20 @@ def _orchestration_task_lists(results: list[dict[str, Any]]) -> dict[str, list[s
     }
 
 
+def _produced_extraction(data: dict[str, Any]) -> bool:
+    """True when the extraction pass actually WROTE something.
+
+    ``snapshot_hash`` alone cannot answer this: the runner records it when the
+    pass concludes, which includes the "task judged non-generalizable" skip
+    (nothing written). Reports written before the explicit ``produced`` field
+    existed fall back to the hash, which over-reports — the per-task field is
+    the authority from 2026-11-27 on.
+    """
+    if "produced" in data:
+        return bool(data.get("produced"))
+    return bool(data.get("snapshot_hash"))
+
+
 def _experience_extraction_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     """The extraction block: attempted is the force call, fired the flag, produced the output."""
     per_task = {result["id"]: result.get("experience_extraction") or {} for result in results}
@@ -1369,7 +1396,7 @@ def _experience_extraction_summary(results: list[dict[str, Any]]) -> dict[str, A
         "forced_tasks": [task_id for task_id, data in per_task.items() if data.get("forced")],
         "fired_tasks": [task_id for task_id, data in per_task.items() if data.get("fired")],
         "produced_tasks": [
-            task_id for task_id, data in per_task.items() if data.get("snapshot_hash")
+            task_id for task_id, data in per_task.items() if _produced_extraction(data)
         ],
         "policy": (
             "only the 12-task L1 set can opt in via --experience-extraction; the "
@@ -1377,7 +1404,8 @@ def _experience_extraction_summary(results: list[dict[str, Any]]) -> dict[str, A
             "only, and the eval harness forces the skill-review pass after the run so "
             "L2/full runs stay on the historical arm. `attempted` is the force call, "
             "`fired` the product's once-per-plan flag (a forced pass sets it before the "
-            "call), and `produced` needs a non-empty snapshot hash"
+            "call), and `produced` means the pass actually changed the auto-skill tree "
+            "(a non-generalizable skip records a snapshot hash but writes nothing)"
         ),
     }
 

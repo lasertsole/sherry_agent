@@ -53,7 +53,9 @@ DeepSWE 驱动的是真实主 agent，因此 harness 把规则说出来并**核�
 
 - **编排门禁** —— 任何文件改动或派生子代理之前，必须先调过 `todowrite` 并开一个 TaskFlow
   flow（`taskflow_flow` 的 `action="plan"`），否则写操作会收到规则提示。计数器**按 session
-  分桶**（一个 suite 在同一进程里跑完全部题目）：前面题目的规划不会解锁后面的题，只读的
+  分桶**（一个 suite 在同一进程里跑完全部题目）：session 从**图 state** 解析——产品调用图时
+  只带 `input={"session_id": …}`，`runtime.context` 恒为空，而 `thread_id` 是 checkpoint 用的
+  整数哈希、不是 session id。前面题目的规划不会解锁后面的题，只读的
   `todoread` 也不算规划；子代理由 agent 只计数、不受门禁约束（它没有 `todowrite`/`taskflow_flow`）。
   用量按工具计数并汇报（`orchestration_compliant`，外加每题自己的
   `orchestration_gate`）。
@@ -68,11 +70,16 @@ DeepSWE 驱动的是真实主 agent，因此 harness 把规则说出来并**核�
 - **provider 中止** —— **终态** provider 错误（`insufficient_balance`、`invalid_api_key`、
   401/402/403）连续命中两道题后，套件停止：后面的题**不再启动**，报告行记为 `not_run`
   而不是"失败"。429/超时永远不会触发它。
+- **无效运行** —— 回合被取消（驱动收到 `stopped` 帧）、harness 自身出错、verifier 没有产出
+  reward，或 verifier 产物自带的时间戳早于本次判分，都记为 `invalid_run`（`failure_kind` 分别是
+  `cancelled` / `harness` / `stale_verifier`），不计入 `resolve_rate`：它们都没有对 agent 给出
+  判定。本地单回合驱动额外把「回合结束时 flow 仍未结束」记为 `flow_incomplete`。
 - **报告字段** —— `orchestration`（策略、逐任务计数、门禁计数、`reviewer_checklist_injections`、
   `compliant`/`violating`/`not_run` 三张名单）、每题的 `orchestration_gate` 与
   `acceptance_checklist`、`continuations`、`no_progress_stop`、`patch_bytes` +
   `changed_paths`（**含二进制文件**；被顺带提交的构建产物还会进 `large_patch_files`）、
-  经验抽取的 `attempted`/`fired`/`produced` 三分，以及 verifier 判定。`aggregate` 同时给出
+  经验抽取的 `attempted`/`fired`/`produced` 三分（`produced` 看 auto-skill 树是否真的被
+  改写；被判不可泛化的跳过会写 snapshot hash，但不算产出），以及 verifier 判定。`aggregate` 同时给出
   `resolve_rate`（仅有效运行）与 `resolve_rate_all`，并附 `not_run` 名单——没跑过的题既不算过
   也不算失败。
 

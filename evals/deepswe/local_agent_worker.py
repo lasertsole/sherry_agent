@@ -82,7 +82,12 @@ def main() -> int:
 
     sandbox = EvalSandbox(results_dir)
     sandbox.apply()
-    os.environ["SANDBOX_POLICY"] = "auto"
+    # The DRIVER decides the policy: on a host without an OS sandbox backend,
+    # ``auto`` refuses every subagent exec ("caller_scope=subagent has no
+    # operator approval path", measured 2026-11-27), so the delegating agent
+    # cannot build or test from a child. ``setdefault`` lets the driver pass
+    # ``off`` (an explicit operator choice) without editing this file.
+    os.environ.setdefault("SANDBOX_POLICY", "auto")
     try:
         harness._seed_persona(sandbox.workspace)
         harness.init_agent()

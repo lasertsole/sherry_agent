@@ -222,7 +222,12 @@ def test_force_experience_extraction_runs_product_pass_and_marks_fired(monkeypat
     evidence = asyncio.run(force_experience_extraction("evals-deepswe-l1"))
 
     assert calls == ["evals-deepswe-l1"]
-    assert evidence == {"fired": True, "snapshot_hash": "forced-hash"}
+    assert evidence == {
+        "fired": True,
+        "snapshot_hash": "forced-hash",
+        "produced": False,
+        "produced_paths": [],
+    }
     assert db.values[str(StateKey.SKILL_REVIEW_FIRED)] is True
     assert mem.values[str(background_reviews._SKILL_REVIEW_LOCK_KEY)] is False
 
@@ -253,13 +258,67 @@ def test_force_experience_extraction_fails_open(monkeypatch):
     assert asyncio.run(force_experience_extraction("evals-deepswe-l1")) == {
         "fired": True,
         "snapshot_hash": "",
+        "produced": False,
+        "produced_paths": [],
     }
 
 
 def test_force_experience_extraction_skips_empty_session():
     from evals.shared.eval_session import force_experience_extraction
 
-    assert asyncio.run(force_experience_extraction("")) == {"fired": False, "snapshot_hash": ""}
+    assert asyncio.run(force_experience_extraction("")) == {
+        "fired": False,
+        "snapshot_hash": "",
+        "produced": False,
+    }
+
+
+def test_force_experience_extraction_measures_production(monkeypatch):
+    """``produced`` comes from the auto-skill tree, NOT from the snapshot hash.
+
+    Measured 2026-11-27: the review runner records a snapshot hash when it
+    SKIPS a non-generalizable task (nothing written), so a hash-only report
+    called a no-op pass "produced" — and pest's real skill write was reported as
+    "未观测".
+    """
+    import agent.middlewares.summarization.skill_review as skill_review
+    import agent.middlewares.summarization.skill_review_runner as runner
+    import runtime
+    from evals.shared.eval_session import force_experience_extraction
+    from runtime.session.state_keys import StateKey
+
+    class _Register:
+        def __init__(self) -> None:
+            self.values: dict[str, object] = {}
+
+        def set_state(self, _sid: str, key: object, value: object) -> None:
+            self.values[str(key)] = value
+
+        def get_state(self, _sid: str, key: object, default: object = None) -> object:
+            return self.values.get(str(key), default)
+
+    mem, db = _Register(), _Register()
+    monkeypatch.setattr(runtime, "state_register_mem", mem)
+    monkeypatch.setattr(runtime, "state_register_db", db)
+
+    class _Snapshot:
+        def __init__(self, files: dict[str, bytes]) -> None:
+            self.files = files
+            self.dirs: set[str] = set()
+
+    snapshots = iter([_Snapshot({}), _Snapshot({"pest-notes/SKILL.md": b"content"})])
+    monkeypatch.setattr(skill_review, "snapshot_auto_skills", lambda root=None: next(snapshots))
+
+    async def _fake_skill_review(session_id: str) -> None:
+        db.set_state(session_id, StateKey.SKILL_REVIEW_SNAPSHOT_HASH, "recorded-on-pass")
+
+    monkeypatch.setattr(runner, "_run_skill_review", _fake_skill_review)
+
+    evidence = asyncio.run(force_experience_extraction("evals-deepswe-l1"))
+
+    assert evidence["snapshot_hash"] == "recorded-on-pass"
+    assert evidence["produced"] is True
+    assert evidence["produced_paths"] == ["pest-notes/SKILL.md"]
 
 
 def test_bind_external_session_grants_yolo(monkeypatch, tmp_path: Path):
