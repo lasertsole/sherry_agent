@@ -155,7 +155,15 @@ def read_or_evict_output(
 
 
 def discard_stdout_tmp(handle: Any, path: Path | None) -> None:
-    """Close + unlink the fd output file on a failure path (never raises)."""
+    """Close + unlink the fd output file on a failure path (never raises OSError).
+
+    Filesystem problems are swallowed — cleaning up a diagnostics file must not
+    change the call's outcome. A NON-``OSError`` exception is deliberately NOT
+    swallowed: an injected sandbox hook that raises (measured 2026-11-27 — an
+    external delete guard rejected this very unlink) must stay visible instead
+    of turning into a silent no-op. Do not widen this to ``BaseException`` just
+    to hide such a hook.
+    """
     if handle is not None:
         try:
             handle.close()

@@ -65,20 +65,38 @@ def _log_plan(plan: BatchPlan, tool_calls: list[Any]) -> None:
 # fail-open (keep the original result).
 
 
-def _session_id(config: RunnableConfig, runtime: Any) -> str:
+def _session_id(config: RunnableConfig, runtime: Any, state: Any = None) -> str:
     """Resolve the session for batch eviction; empty means "skip the guard".
 
     Disk offload needs a session directory, so with no identifiable session the
     guard degrades to a no-op rather than dropping results.
+
+    Resolution is STATE-FIRST: the product invokes its graph with
+    ``input={"session_id": …}``, while ``runtime.context`` stays None unless a
+    caller passes ``context=`` (it does not). The batch entry points receive the
+    graph ``Runtime`` (which carries NO state), so they pass the extracted state
+    explicitly; a ``ToolRuntime`` carries ``.state`` itself. ``thread_id`` is NOT
+    a session id — ``pub.func.build_agent_config`` puts an INT HASH of the
+    session id there, for the checkpointer — so it is never used as a fallback:
+    doing that wrote evicted files under ``SESSIONS_DIR/<hash>/``, outside the
+    session tree (the preview then pointed at a directory no cleanup owned and
+    the session's own path exemption did not cover).
     """
-    configurable = config.get("configurable") or {} if isinstance(config, dict) else {}
+    for candidate in (state, getattr(runtime, "state", None)):
+        if isinstance(candidate, dict):
+            session_id = candidate.get("session_id")
+            if session_id:
+                return str(session_id)
     context = getattr(runtime, "context", None)
     if isinstance(context, dict):
         context_sid = context.get("session_id")
     else:
         # user_hooks reads context as an attribute object; support both shapes.
         context_sid = getattr(context, "session_id", None)
-    return str(configurable.get("thread_id") or context_sid or "")
+    if context_sid:
+        return str(context_sid)
+    configurable = config.get("configurable") or {} if isinstance(config, dict) else {}
+    return str(configurable.get("session_id") or "")
 
 
 def _extract_tool_message(output: Any) -> ToolMessage | None:
@@ -190,7 +208,7 @@ class SafeToolNode(ToolNode):
             return self._combine_tool_outputs([], input_type)
         config_list = get_config_list(config, len(tool_calls))
         runtimes = self._build_runtimes(tool_calls, config_list, input, runtime)
-        session_id = _session_id(config, runtime)
+        session_id = _session_id(config, runtime, runtimes[0].state if runtimes else input)
         plan = plan_batch(
             [dict(call) for call in tool_calls],
             dict(self.tools_by_name),
@@ -231,7 +249,7 @@ class SafeToolNode(ToolNode):
             return self._combine_tool_outputs([], input_type)
         config_list = get_config_list(config, len(tool_calls))
         runtimes = self._build_runtimes(tool_calls, config_list, input, runtime)
-        session_id = _session_id(config, runtime)
+        session_id = _session_id(config, runtime, runtimes[0].state if runtimes else input)
         plan = plan_batch(
             [dict(call) for call in tool_calls],
             dict(self.tools_by_name),
