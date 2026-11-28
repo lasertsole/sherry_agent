@@ -929,7 +929,10 @@
     "roleSummary": "总结",
     "emptyStream": "等待发言人开始…",
     "interrupt": "插话",
-    "interruptPlaceholder": "输入插话内容…"
+    "interruptPlaceholder": "输入插话内容…",
+    "askUser": "需要你确认",
+    "summaryDraft": "主持人结论",
+    "conclusion": "结论"
   },
   "superagent": {
     "title": "超级智能体",

@@ -53,6 +53,13 @@
           data-test="meeting-current-speaker">
           {{ t('meetings.speaking') }}: {{ store.currentSpeakerId }}
         </p>
+        <div
+          v-if="store.finalSummary"
+          class="mt-3 text-xs"
+          data-test="meeting-summary-draft">
+          <h2 class="font-medium mb-1">{{ t('meetings.conclusion') }}</h2>
+          <p class="text-gray-500">{{ store.finalSummary }}</p>
+        </div>
       </aside>
 
       <!-- Message stream (MessageBubble reuse) -->
@@ -76,6 +83,12 @@
             data-test="meeting-empty-stream">
             {{ t('meetings.emptyStream') }}
           </div>
+        </div>
+        <div
+          v-if="store.pendingQuestion"
+          class="px-3 py-2 text-sm text-theme-main"
+          data-test="meeting-ask-user">
+          {{ t('meetings.askUser') }}: {{ store.pendingQuestion }}
         </div>
         <div class="border-t border-solid border-gray-light dark:border-gray-dark p-3 flex gap-2">
           <InputText
@@ -112,6 +125,19 @@ const id = String(route.params.id ?? '');
 const interruptText = ref('');
 const streamRef = ref<HTMLElement | null>(null);
 
+// Live meeting stream. Disabled while the store is in mock mode so the page
+// stays navigable without a backend; every known frame is delegated to the
+// store's handleFrame (which already drives speaker/message/thinking UI).
+let ws: WsConnection | null = null;
+const onMeetingFrame = createWsMessageHandler<Record<string, unknown>>({
+  meeting_speaker_changed: frame => store.handleFrame(frame),
+  meeting_message_delta: frame => store.handleFrame(frame),
+  meeting_message_completed: frame => store.handleFrame(frame),
+  meeting_thinking_delta: frame => store.handleFrame(frame),
+  meeting_ask_user: frame => store.handleFrame(frame),
+  meeting_summary_draft: frame => store.handleFrame(frame)
+});
+
 function goBack(): void {
   void router.push('/home');
 }
@@ -142,8 +168,24 @@ watch(
 
 onMounted(() => {
   void store.openMeeting(id);
-  // The meeting WS endpoint is not shipped; handleFrame is ready for it, and
-  // the mock store seeds the stream so the page is fully navigable today.
+  if (!store.useMock && id) {
+    ws = new WsConnection({
+      url: () =>
+        appendWsTicket(
+          withGatewayToken(`${WS_BASE_URL}/meetings/ws?meeting_id=${encodeURIComponent(id)}&session_id=default`)
+        ),
+      beforeConnect: prepareWsTicket,
+      reconnectDelayMs: 3000,
+      onFrame: event => {
+        onMeetingFrame(event);
+      }
+    });
+    ws.connect();
+  }
 });
-onBeforeUnmount(() => store.closeMeeting());
+onBeforeUnmount(() => {
+  ws?.dispose();
+  ws = null;
+  store.closeMeeting();
+});
 </script>

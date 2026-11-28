@@ -96,6 +96,18 @@ describe('meeting page (S4)', () => {
     expect(wrapper.find('[data-test="meeting-empty-stream"]').exists()).toBe(true);
   });
 
+  it('renders the pending ask-user banner and the conclusion panel', async () => {
+    const wrapper = await mountPage();
+    const store = useMeetingStore();
+
+    store.handleFrame({ event: 'meeting_ask_user', question: 'Use microservices?' });
+    store.handleFrame({ event: 'meeting_summary_draft', summary: 'Final decision' });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="meeting-ask-user"]').text()).toContain('Use microservices?');
+    expect(wrapper.get('[data-test="meeting-summary-draft"]').text()).toContain('Final decision');
+  });
+
   it('sends an interrupt and clears the input', async () => {
     const wrapper = await mountPage();
     const store = useMeetingStore();

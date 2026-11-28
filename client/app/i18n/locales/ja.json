@@ -929,7 +929,10 @@
     "roleSummary": "要約",
     "emptyStream": "発言を待っています…",
     "interrupt": "割り込み",
-    "interruptPlaceholder": "割り込み内容を入力…"
+    "interruptPlaceholder": "割り込み内容を入力…",
+    "askUser": "確認が必要です",
+    "summaryDraft": "ホストの結論",
+    "conclusion": "結論"
   },
   "superagent": {
     "title": "スーパーエージェント",

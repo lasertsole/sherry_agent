@@ -929,7 +929,10 @@
     "roleSummary": "Summary",
     "emptyStream": "Waiting for speakers…",
     "interrupt": "Interject",
-    "interruptPlaceholder": "Type your interjection…"
+    "interruptPlaceholder": "Type your interjection…",
+    "askUser": "Question for you",
+    "summaryDraft": "Host conclusion",
+    "conclusion": "Conclusion"
   },
   "superagent": {
     "title": "Super Agent",

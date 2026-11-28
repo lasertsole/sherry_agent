@@ -929,7 +929,10 @@
     "roleSummary": "요약",
     "emptyStream": "발언을 기다리는 중…",
     "interrupt": "끼어들기",
-    "interruptPlaceholder": "끼어들 내용 입력…"
+    "interruptPlaceholder": "끼어들 내용 입력…",
+    "askUser": "확인이 필요합니다",
+    "summaryDraft": "호스트 결론",
+    "conclusion": "결론"
   },
   "superagent": {
     "title": "슈퍼 에이전트",

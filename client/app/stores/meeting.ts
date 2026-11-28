@@ -21,6 +21,8 @@ export interface MeetingSummary {
   iteration_count: number;
   created_at: number;
   updated_at: number;
+  execution_plan?: MeetingExecutionPlan;
+  final_summary?: string;
 }
 
 export interface MeetingMessage {
@@ -97,6 +99,8 @@ export const useMeetingStore = defineStore('meeting', () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const currentSpeakerId = ref<string | null>(null);
+  const pendingQuestion = ref<string>('');
+  const finalSummary = ref<string>('');
 
   const activeCount = computed(() => meetings.value.filter(m => m.status === 'in_progress').length);
   const orderedMessages = computed(() => [...messages.value].sort((a, b) => a.sequence - b.sequence));
@@ -108,8 +112,8 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (useMock.value) {
         meetings.value = MOCK_MEETINGS.map(m => ({ ...m }));
       } else {
-        const res = await $fetch<{ meetings: MeetingSummary[] }>('/api/meetings');
-        meetings.value = res.meetings;
+        const res = await fetchApiPayload<{ meetings: MeetingSummary[] }>({ url: '/meetings' });
+        meetings.value = res?.meetings ?? [];
       }
     } catch (err) {
       error.value = String(err);
@@ -135,12 +139,16 @@ export const useMeetingStore = defineStore('meeting', () => {
       meetings.value = [meeting, ...meetings.value];
       return meeting;
     }
-    const created = await $fetch<MeetingSummary>('/api/meetings', {
-      method: 'POST',
-      body: { topic, participant_ids: participantIds }
+    // The backend seats participants by registered EXPERT NAME and needs a
+    // session id; the app uses the same fixed 'default' session as the WS channel.
+    const sessionId = 'default';
+    const res = await fetchApiPayload<{ meeting: MeetingSummary }>({
+      url: '/meetings',
+      method: 'post',
+      opts: { session_id: sessionId, topic, participants: participantIds }
     });
     await loadMeetings();
-    return created;
+    return res!.meeting;
   }
 
   async function openMeeting(id: string): Promise<void> {
@@ -158,11 +166,14 @@ export const useMeetingStore = defineStore('meeting', () => {
       return;
     }
     const [detail, history] = await Promise.all([
-      $fetch<MeetingSummary>(`/api/meetings/${id}`),
-      $fetch<{ messages: MeetingMessage[] }>(`/api/meetings/${id}/messages`)
+      fetchApiPayload<{ meeting: MeetingSummary }>({ url: '/meetings/one', opts: { id } }),
+      fetchApiPayload<{ messages: MeetingMessage[] }>({ url: '/meetings/messages', opts: { id } })
     ]);
-    currentMeeting.value = detail;
-    messages.value = history.messages;
+    currentMeeting.value = detail!.meeting;
+    messages.value = history!.messages;
+    if (detail!.meeting.execution_plan) {
+      executionPlan.value = { phases: detail!.meeting.execution_plan.phases ?? [] };
+    }
   }
 
   function handleFrame(frame: Record<string, unknown>): void {
@@ -199,10 +210,17 @@ export const useMeetingStore = defineStore('meeting', () => {
         if (target) target.thinking_md = (target.thinking_md ?? '') + String(frame.delta ?? '');
         break;
       }
+      case 'meeting_ask_user':
+        pendingQuestion.value = String(frame.question ?? '');
+        break;
+      case 'meeting_summary_draft':
+        finalSummary.value = String(frame.summary ?? '');
+        break;
     }
   }
 
   async function interrupt(content: string): Promise<void> {
+    pendingQuestion.value = '';
     if (useMock.value) {
       messages.value.push({
         id: messages.value.length + 1,
@@ -218,7 +236,12 @@ export const useMeetingStore = defineStore('meeting', () => {
       });
       return;
     }
-    await $fetch(`/api/meetings/${currentMeeting.value?.id}/interrupt`, { method: 'POST', body: { content } });
+    await fetchApiPayload({
+      url: '/meetings/interrupt',
+      method: 'post',
+      opts: { meeting_id: currentMeeting.value?.id, content }
+    });
+    pendingQuestion.value = '';
   }
 
   async function confirmEnd(): Promise<void> {
@@ -228,13 +251,23 @@ export const useMeetingStore = defineStore('meeting', () => {
       meetings.value = meetings.value.map(m => (m.id === currentMeeting.value?.id ? { ...m, status: 'ended' } : m));
       return;
     }
-    await $fetch(`/api/meetings/${currentMeeting.value.id}/confirm-end`, { method: 'POST' });
+    await fetchApiPayload({
+      url: '/meetings/confirm-end',
+      method: 'post',
+      opts: { meeting_id: currentMeeting.value.id, summary: finalSummary.value || undefined }
+    });
     await loadMeetings();
   }
 
   async function execute(): Promise<void> {
     if (!currentMeeting.value) return;
-    if (!useMock.value) await $fetch(`/api/meetings/${currentMeeting.value.id}/execute`, { method: 'POST' });
+    if (!useMock.value) {
+      await fetchApiPayload({
+        url: '/meetings/execute',
+        method: 'post',
+        opts: { meeting_id: currentMeeting.value.id, session_id: 'default' }
+      });
+    }
   }
 
   function closeMeeting(): void {
@@ -242,6 +275,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     messages.value = [];
     executionPlan.value = null;
     currentSpeakerId.value = null;
+    pendingQuestion.value = '';
+    finalSummary.value = '';
   }
 
   return {
@@ -251,6 +286,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     orderedMessages,
     executionPlan,
     currentSpeakerId,
+    pendingQuestion,
+    finalSummary,
     useMock,
     loading,
     error,

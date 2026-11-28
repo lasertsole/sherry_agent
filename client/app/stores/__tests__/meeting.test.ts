@@ -80,6 +80,23 @@ describe('stores/meeting — mock mode (S4)', () => {
     expect(store.currentMeeting?.status).toBe('ended');
   });
 
+  it('reduces ask_user and summary_draft frames into visible state', async () => {
+    const store = useMeetingStore();
+    await store.openMeeting('meeting-demo');
+
+    store.handleFrame({ event: 'meeting_ask_user', question: 'Use microservices?' });
+    expect(store.pendingQuestion).toBe('Use microservices?');
+    store.handleFrame({ event: 'meeting_summary_draft', summary: 'Final decision' });
+    expect(store.finalSummary).toBe('Final decision');
+
+    await store.interrupt('supplement');
+    expect(store.pendingQuestion).toBe(''); // reply/question clears the pending ask
+
+    store.closeMeeting();
+    expect(store.pendingQuestion).toBe('');
+    expect(store.finalSummary).toBe('');
+  });
+
   it('closeMeeting clears all live state', async () => {
     const store = useMeetingStore();
     await store.openMeeting('meeting-demo');
