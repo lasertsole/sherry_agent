@@ -930,5 +930,17 @@
     "emptyStream": "等待发言人开始…",
     "interrupt": "插话",
     "interruptPlaceholder": "输入插话内容…"
+  },
+  "superagent": {
+    "title": "超级智能体",
+    "subtitle": "来源、评估与委派任务",
+    "healthy": "运行正常",
+    "paused": "已暂停",
+    "overview": "总览",
+    "source": "来源",
+    "trigger": "触发器",
+    "eval": "评估",
+    "execution": "执行",
+    "settings": "设置"
   }
 }

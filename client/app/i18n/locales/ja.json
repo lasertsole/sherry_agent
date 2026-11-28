@@ -930,5 +930,17 @@
     "emptyStream": "発言を待っています…",
     "interrupt": "割り込み",
     "interruptPlaceholder": "割り込み内容を入力…"
+  },
+  "superagent": {
+    "title": "スーパーエージェント",
+    "subtitle": "ソース、評価、委任された作業",
+    "healthy": "正常",
+    "paused": "一時停止",
+    "overview": "概要",
+    "source": "ソース",
+    "trigger": "トリガー",
+    "eval": "評価",
+    "execution": "実行",
+    "settings": "設定"
   }
 }

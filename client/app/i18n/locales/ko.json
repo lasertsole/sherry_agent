@@ -930,5 +930,17 @@
     "emptyStream": "발언을 기다리는 중…",
     "interrupt": "끼어들기",
     "interruptPlaceholder": "끼어들 내용 입력…"
+  },
+  "superagent": {
+    "title": "슈퍼 에이전트",
+    "subtitle": "소스, 평가 및 위임된 작업",
+    "healthy": "정상",
+    "paused": "일시정지",
+    "overview": "개요",
+    "source": "소스",
+    "trigger": "트리거",
+    "eval": "평가",
+    "execution": "실행",
+    "settings": "설정"
   }
 }

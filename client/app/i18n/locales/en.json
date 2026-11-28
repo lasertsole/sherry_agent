@@ -930,5 +930,17 @@
     "emptyStream": "Waiting for speakers…",
     "interrupt": "Interject",
     "interruptPlaceholder": "Type your interjection…"
+  },
+  "superagent": {
+    "title": "Super Agent",
+    "subtitle": "Sources, evaluations and delegated work",
+    "healthy": "Healthy",
+    "paused": "Paused",
+    "overview": "Overview",
+    "source": "Source",
+    "trigger": "Trigger",
+    "eval": "Eval",
+    "execution": "Execution",
+    "settings": "Settings"
   }
 }
