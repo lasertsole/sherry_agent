@@ -147,3 +147,98 @@ async def test_run_route_executes_the_loop_with_a_fake_engine(api, monkeypatch):
         "messages"
     ]
     assert any("statement from fe" in m["content"] for m in messages)
+
+
+async def test_interrupt_route_classifies_and_rolls_back(api):
+    created = _payload(
+        await api.create_meeting_handler(
+            _request({"session_id": "s1", "topic": "t", "participants": ["fe", "be"]})
+        )
+    )["meeting"]
+    store = await persistence.get_meeting_store()
+    await store.update_meeting(
+        created["id"],
+        execution_plan_json=[
+            {"id": "p1", "allowed_agent_ids": ["fe"]},
+            {"id": "p2", "allowed_agent_ids": ["be"], "prerequisites": ["p1"]},
+        ],
+    )
+
+    response = await api.interrupt_meeting_handler(
+        _request({"meeting_id": created["id"], "content": "scope change: use microservices"})
+    )
+    payload = _payload(response)
+    assert payload["success"] is True
+    assert payload["interrupt_type"] == "scope_change"
+    assert payload["rolled_back"] == ["p1", "p2"]
+    assert payload["should_end"] is False
+
+
+async def test_reply_route_forces_supplement(api):
+    created = _payload(
+        await api.create_meeting_handler(
+            _request({"session_id": "s1", "topic": "t", "participants": ["fe"]})
+        )
+    )["meeting"]
+    response = await api.reply_meeting_handler(
+        _request({"meeting_id": created["id"], "content": "scope change: ignore rollback"})
+    )
+    payload = _payload(response)
+    assert payload["success"] is True
+    messages = _payload(await api.meeting_messages_handler(_request(query={"id": created["id"]})))[
+        "messages"
+    ]
+    assert messages[-1]["speaker_kind"] == "user"
+
+
+async def test_conclusion_and_confirm_end_routes(api):
+    created = _payload(
+        await api.create_meeting_handler(
+            _request({"session_id": "s1", "topic": "t", "participants": ["fe"]})
+        )
+    )["meeting"]
+    conclusion = _payload(await api.get_conclusion_handler(_request(query={"id": created["id"]})))
+    assert conclusion["success"] is True
+    assert "taskflow_plan" in conclusion["conclusion"]
+
+    response = await api.confirm_meeting_end_handler(
+        _request({"meeting_id": created["id"], "summary": "final decision"})
+    )
+    payload = _payload(response)
+    assert payload["meeting"]["status"] == "ended"
+    assert payload["meeting"]["final_summary"] == "final decision"
+
+
+async def test_execute_route_uses_injected_taskflow(api, monkeypatch):
+    created = _payload(
+        await api.create_meeting_handler(
+            _request({"session_id": "s1", "topic": "t", "participants": ["fe"]})
+        )
+    )["meeting"]
+    store = await persistence.get_meeting_store()
+    await store.update_meeting(
+        created["id"],
+        execution_plan_json=[
+            {"id": "p1", "allowed_agent_ids": ["fe"], "completion_criteria": "do the work"}
+        ],
+        status="ended",
+    )
+
+    recorded: dict = {}
+
+    class FakePort:
+        async def execute(self, conclusion, *, meeting_id, session_id):
+            recorded.update(meeting_id=meeting_id, session_id=session_id, conclusion=conclusion)
+            return {"flow_id": f"meeting-{meeting_id}", "step_ids": ["step-p1"]}
+
+    import agent.meeting.execution as execution_mod
+
+    monkeypatch.setattr(
+        execution_mod, "execute_conclusion", lambda *a, **kw: FakePort().execute(*a, **kw)
+    )
+    response = await api.execute_meeting_handler(
+        _request({"meeting_id": created["id"], "session_id": "s1"})
+    )
+    payload = _payload(response)
+    assert payload["flow_id"] == f"meeting-{created['id']}"
+    assert recorded["meeting_id"] == created["id"]

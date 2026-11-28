@@ -235,6 +235,37 @@ class MeetingStore(BaseSQLiteRepository):
             row = await cursor.fetchone()
         return int(row[0]) if row else 1
 
+    # -- compaction segments (阶段 3) -------------------------------------
+
+    async def append_compaction_segment(
+        self,
+        meeting_id: str,
+        *,
+        summary: str,
+        start_sequence: int,
+        end_sequence: int,
+    ) -> int:
+        """Persist one compaction segment and return its row id."""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT INTO meeting_compaction_segments(meeting_id, segment_summary,"
+                " start_sequence, end_sequence, created_at) VALUES (?, ?, ?, ?, ?)",
+                (meeting_id, summary, start_sequence, end_sequence, int(time.time())),
+            )
+            await db.commit()
+            return int(cursor.lastrowid or 0)
+
+    async def list_compaction_segments(self, meeting_id: str) -> list[dict[str, Any]]:
+        """All compaction segments for a meeting, oldest first."""
+        async with self._connect() as db:
+            db.row_factory = sqlite3.Row
+            cursor = await db.execute(
+                "SELECT * FROM meeting_compaction_segments WHERE meeting_id = ? ORDER BY id ASC",
+                (meeting_id,),
+            )
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
 
 _STORE: MeetingStore | None = None
 _STORE_LOCK = asyncio.Lock()

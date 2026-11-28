@@ -156,3 +156,174 @@ async def run_meeting_handler(request):
         meeting_id=meeting_id,
     )
     return ok({"success": True, **result})
+
+
+@app.post("/meetings/interrupt")
+async def interrupt_meeting_handler(request):
+    """阶段 2: classify a user interjection and apply local rollback."""
+    from agent.meeting.flow import apply_interruption
+
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    meeting_id = str(body.get("meeting_id") or "").strip()
+    content = str(body.get("content") or "").strip()
+    if not meeting_id or not content:
+        return bad_request("meeting_id and content are required")
+    from agent.meeting.persistence import get_meeting_store
+
+    store = await get_meeting_store()
+    if await store.get_meeting(meeting_id) is None:
+        return not_found("meeting not found")
+    try:
+        result = await apply_interruption(store, meeting_id, content)
+    except KeyError:
+        return not_found("meeting not found")
+    return ok(
+        {
+            "success": True,
+            "interrupt_type": result["verdict"].interrupt_type.value,
+            "reason": result["verdict"].reason,
+            "flow_stage": result["flow_stage"],
+            "should_end": result["should_end"],
+            "rolled_back": result["rolled_back"],
+            "message": result["message"].model_dump(),
+        }
+    )
+
+
+@app.post("/meetings/reply")
+async def reply_meeting_handler(request):
+    """阶段 2/5: a user reply to an ask_user is an interjection (supplement)."""
+    from agent.meeting.flow import apply_interruption
+
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    meeting_id = str(body.get("meeting_id") or "").strip()
+    content = str(body.get("content") or "").strip()
+    if not meeting_id or not content:
+        return bad_request("meeting_id and content are required")
+    from agent.meeting.persistence import get_meeting_store
+
+    store = await get_meeting_store()
+    if await store.get_meeting(meeting_id) is None:
+        return not_found("meeting not found")
+
+    # A reply never rolls back the plan: force a supplement verdict.
+    def as_supplement(_request, _plan, _history):
+        from agent.meeting.interrupt import InterruptVerdict
+        from agent.meeting.models import InterruptType
+
+        return InterruptVerdict(InterruptType.SUPPLEMENT, [], "user reply")
+
+    result = await apply_interruption(store, meeting_id, content, classifier=as_supplement)
+    return ok({"success": True, "message": result["message"].model_dump()})
+
+
+@app.get("/meetings/conclusion")
+async def get_conclusion_handler(request):
+    """阶段 4: read (or build on demand) a meeting's structured conclusion."""
+    meeting_id = str(request.query_params.get("id") or "")
+    if not meeting_id:
+        return bad_request("id is required")
+    from agent.meeting.conclusion import build_conclusion
+    from agent.meeting.models import MeetingPhase
+    from agent.meeting.persistence import get_meeting_store
+
+    store = await get_meeting_store()
+    meeting = await store.get_meeting(meeting_id)
+    if meeting is None:
+        return not_found("meeting not found")
+    phases = [MeetingPhase.model_validate(p) for p in (meeting.get("execution_plan") or [])]
+    messages = await store.list_messages(meeting_id)
+    history = [
+        {
+            "speaker_kind": row["speaker_kind"],
+            "speaker_id": row["speaker_id"],
+            "speaker_name": row["speaker_name"],
+            "content": row["content"],
+            "role": row["message_role"],
+        }
+        for row in messages
+    ]
+    summary = meeting.get("final_summary") or ""
+    conclusion = build_conclusion(history, phases, meeting["topic"], summary)
+    return ok({"success": True, "conclusion": conclusion.model_dump()})
+
+
+@app.post("/meetings/execute")
+async def execute_meeting_handler(request):
+    """阶段 4: turn a meeting conclusion into a dispatched TaskFlow."""
+    import time
+
+    from agent.meeting.conclusion import build_conclusion
+    from agent.meeting.execution import execute_conclusion
+    from agent.meeting.models import MeetingPhase
+    from agent.meeting.persistence import get_meeting_store
+
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    meeting_id = str(body.get("meeting_id") or "").strip()
+    if not meeting_id:
+        return bad_request("meeting_id is required")
+    session_id = str(body.get("session_id") or "").strip()
+    store = await get_meeting_store()
+    meeting = await store.get_meeting(meeting_id)
+    if meeting is None:
+        return not_found("meeting not found")
+    session_id = session_id or meeting["session_id"]
+    phases = [MeetingPhase.model_validate(p) for p in (meeting.get("execution_plan") or [])]
+    messages = await store.list_messages(meeting_id)
+    history = [
+        {
+            "speaker_kind": row["speaker_kind"],
+            "speaker_id": row["speaker_id"],
+            "speaker_name": row["speaker_name"],
+            "content": row["content"],
+            "role": row["message_role"],
+        }
+        for row in messages
+    ]
+    conclusion = build_conclusion(
+        history, phases, meeting["topic"], meeting.get("final_summary") or ""
+    )
+    result = await execute_conclusion(conclusion, meeting_id=meeting_id, session_id=session_id)
+    await store.update_meeting(meeting_id, status="ended", ended_at=int(time.time()))
+    return ok({"success": True, "conclusion": conclusion.model_dump(), **result})
+
+
+@app.post("/meetings/confirm-end")
+async def confirm_meeting_end_handler(request):
+    """阶段 2/5: the host summarizes and the user confirms the meeting end."""
+    import time
+
+    from agent.meeting.models import MeetingFlowStage
+    from agent.meeting.persistence import get_meeting_store
+
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    meeting_id = str(body.get("meeting_id") or "").strip()
+    if not meeting_id:
+        return bad_request("meeting_id is required")
+    store = await get_meeting_store()
+    meeting = await store.get_meeting(meeting_id)
+    if meeting is None:
+        return not_found("meeting not found")
+    if meeting["status"] in {"ended", "cancelled"}:
+        return ok({"success": True, "already_ended": True, "meeting": meeting})
+    summary = (
+        str(body.get("summary") or "").strip()
+        or meeting.get("final_summary")
+        or (f"Meeting on '{meeting['topic']}' ended by user confirmation.")
+    )
+    await store.update_meeting(
+        meeting_id,
+        status="ended",
+        ended_at=int(time.time()),
+        final_summary=summary,
+        flow_stage=MeetingFlowStage.END_CONFIRMATION.value,
+    )
+    return ok({"success": True, "meeting": await store.get_meeting(meeting_id)})

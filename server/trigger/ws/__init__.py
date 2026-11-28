@@ -3,3 +3,4 @@ from . import logs as logs
 from . import subagent_ws as subagent_ws
 from . import browser_ws as browser_ws
 from . import trajectory_ws as trajectory_ws
+from . import meeting_ws as meeting_ws

@@ -74,6 +74,13 @@ Hook contracts (registration sites must provide these signatures; the
     (``server/trigger/ws/trajectory_ws.py``). Called by the ledger after its
     upsert, fail-open; missing hook -> the event is only in the database.
 
+``MEETING_EVENT_PUSH`` (``"meeting_event_push"``)
+    ``(meeting_id: str, event: dict) -> None``: deliver one meeting frame
+    (speaker change, message delta/completed, thinking, ask_user, summary) to
+    that meeting's live WS subscribers (``server/trigger/ws/meeting_ws.py``).
+    Called fail-open by the agent-side meeting loop; missing hook -> the event
+    is dropped (no WS in this process, e.g. a bare unit test).
+
 ``WS_PUSH`` (``"ws_push"``)
     ``async (session_id: str, payload: dict) -> None``: fan a frame out to the
     session's live sockets (``runtime.session.ws_push.broadcast_to_session``).
@@ -102,6 +109,7 @@ __all__ = [
     "BUILD_BACKGROUND_AGENT_TOOLS",
     "BUILD_REJECT_MESSAGE",
     "GET_CURRENT_TURN_ID",
+    "MEETING_EVENT_PUSH",
     "MAYBE_TRIGGER_AUTO_TURN",
     "RECORD_TRAJECTORY_EVENT",
     "SCAN_SKILL",
@@ -116,6 +124,7 @@ __all__ = [
 
 RECORD_TRAJECTORY_EVENT = "record_trajectory_event"
 GET_CURRENT_TURN_ID = "get_current_turn_id"
+MEETING_EVENT_PUSH = "meeting_event_push"
 MAYBE_TRIGGER_AUTO_TURN = "maybe_trigger_auto_turn"
 AUTO_TURN_MODULE = "auto_turn_module"
 WS_ACTIVE_TASKS = "ws_active_tasks"

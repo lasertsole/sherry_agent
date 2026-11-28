@@ -328,6 +328,16 @@ def main() -> None:
     except Exception:
         logger.exception("boot recovery failed; starting anyway")
 
+    # Meeting auto-adjourn: a live meeting's loop lives in the old process, so
+    # after a restart its in_progress/waiting_user rows are cancelled with the
+    # process_restart reason. Fail-open like the other boot sweeps.
+    from agent.meeting.startup import auto_adjourn_at_boot
+
+    try:
+        asyncio.run(auto_adjourn_at_boot())
+    except Exception:
+        logger.exception("meeting boot recovery failed; starting anyway")
+
     # Restart-recovery effects: opt-in (effects.enabled + effects.restart_replay).
     # The terminal declarations and intent replay are async, so they use the
     # same one-shot loop style as boot recovery.

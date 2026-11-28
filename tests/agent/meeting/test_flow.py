@@ -6,24 +6,12 @@ stage machine, the persistence calls and the round budget, not the model.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-import pytest_asyncio
 
-import agent.meeting.persistence as persistence
 from agent.meeting.flow import run_meeting
 from agent.meeting.models import MeetingParticipant, MeetingTurnDecision
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
-
-
-@pytest_asyncio.fixture
-async def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> persistence.MeetingStore:
-    persistence._reset_store_for_tests(tmp_path / "registry.db")
-    store = persistence.MeetingStore()
-    await store.ensure_db()
-    return store
 
 
 PARTICIPANTS = [
