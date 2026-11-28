@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
-import { sleep } from '../lib/driver.mjs';
-import { closeDialog } from '../lib/app.mjs';
+import { closeDialog, ensureSession } from '../lib/app.mjs';
 
 export default {
   id: 'F59',
   name: 'Tasks popover sections',
   status: 'implemented',
   async run({ ui }) {
-    await ui.clickAriaPrefix('Tasks').catch(() => {});
-    await sleep(600);
-    const body = await ui.bodyText();
-    assert.ok(body.length > 0, 'tasks interaction must not crash');
+    await ensureSession(ui);
+    // The left nav item is also labelled "Tasks"; target the toolbar button
+    // explicitly so this exercises the TasksButton popover, not the task board.
+    await ui.click('button[aria-label="Running background tasks"]');
+    await ui.find('[data-test="tasks-open-activity"]', 10_000);
     await closeDialog(ui);
   }
 };

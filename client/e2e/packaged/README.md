@@ -1,6 +1,6 @@
 # Packaged-app E2E (WebDriver)
 
-15 个核心功能的真实操作桩：驱动**打包后的 Tauri app**（deb 解包布局），使用 app
+67 个核心与扩展功能的真实操作桩：驱动**打包后的 Tauri app**（deb 解包布局），使用 app
 自带的真实 Python 后端，模型指向本地 OpenAI 兼容 mock。
 
 > 为什么不是 Playwright：Linux 的 WebKitGTK 不暴露 CDP，Playwright 无法附着打包
@@ -40,7 +40,7 @@ runner 默认取最新的 deb，解包到临时前缀并执行 `<prefix>/usr/bin
 ## 当前状态
 
 在本机 Linux arm64 / Xvfb `:99` / WebKitWebDriver 2.52.6 / tauri-driver 2.1.0
-上，对 **deb 解包后的实际 app** 实跑：**62/62 PASS**（F01–F15 核心 + F16–F63
+上，对 **deb 解包后的实际 app** 实跑：**67/67 PASS**（F01–F15 核心 + F16–F67
 扩容覆盖）。扩容实测同样抓出并修复了真实缺陷：
 
 - Tauri bridge 的 agent WS 未带 gateway token（聊天全被拒）；
@@ -59,10 +59,10 @@ app 的 "Choose folder…" 走 Tauri dialog，测试桩改用后端 API 做 fixt
 ```bash
 cd client
 
-pnpm test:e2e:packaged:list          # 15 个 feature
+pnpm test:e2e:packaged:list          # 67 个 feature
 pnpm test:e2e:packaged:mock          # mock 模型 SSE/工具/错误自检
 pnpm test:e2e:packaged:spike         # 单会话启动冒烟 + 截图
-pnpm test:e2e:packaged               # 15 项全跑
+pnpm test:e2e:packaged               # 67 项全跑
 
 # 只跑一项 / 一组（逗号分隔）
 pnpm test:e2e:packaged -- --feature F05
@@ -115,7 +115,7 @@ pnpm test:e2e:packaged -- \
 
 自检：`python3 e2e/packaged/mock_llm.py --selftest`。
 
-## 62 个功能
+## 67 个功能
 
 | ID  | 功能         | 用户动作                                          | 断言                                         |
 | --- | ------------ | ------------------------------------------------- | -------------------------------------------- |
@@ -168,6 +168,7 @@ pnpm test:e2e:packaged -- \
 | F47 | 搜索后端     | Menu → Web Search                                 | 面板渲染                                     |
 | F48 | 人设编辑     | Menu → Presets & Role                             | Character Setup 渲染                         |
 | F49 | 账户面板     | Menu → Account                                    | auth-status 渲染                             |
+| F50 | 会议详情     | nav Meetings → 会议卡 → Back                      | meeting-page / meeting-stream 渲染并回到会话 |
 | F51 | 语言切换     | System Config → Language                          | 中文/English 切换并回退                      |
 | F52 | 快捷键设置   | System Config → Shortcuts                         | 快捷键行渲染                                 |
 | F53 | 直播安全     | System Config → Live Safety                       | 安全开关渲染                                 |
@@ -176,11 +177,15 @@ pnpm test:e2e:packaged -- \
 | F56 | 操作终端     | Toolbox → Terminal → echo                         | 输出出现                                     |
 | F57 | 白板         | Toolbox → Whiteboard → 画                         | canvas 可绘                                  |
 | F58 | 浏览器面板   | Toolbox → Browser                                 | 面板渲染                                     |
-| F59 | 任务气泡     | composer 任务入口                                 | 交互不崩                                     |
+| F59 | 任务气泡     | 工具栏 Running background tasks                   | tasks-open-activity 出现                     |
 | F60 | 上下文环     | 环按钮 → 面板/预算                                | legend/open-budget                           |
 | F61 | 单机无切换   | —                                                 | TenantSwitcher 隐藏                          |
 | F62 | 桌面标题栏   | —                                                 | TitleBar 渲染                                |
 | F63 | Git 图       | Files body → Shadow G…                            | checkpoint/分支态渲染                        |
+| F64 | 专家编辑     | nav Experts → expert card                        | expert-edit-panel / form-name 渲染           |
+| F65 | 会话活动/看板 | Running tasks → Activity → Open board            | session-activity-panel / taskflow-board      |
+| F66 | 高风险防护   | 工具栏盾牌按钮                                    | high-risk-keyword-input 渲染                 |
+| F67 | 新建会议弹窗 | nav Meetings → + → Cancel                         | meeting-create-dialog 出现并关闭              |
 
 ## 已知限制
 
@@ -190,7 +195,7 @@ pnpm test:e2e:packaged -- \
 - 打包 app 的前端 API base 是编译期 `http://localhost:8080`；不要同时开开发后端。
 - 测试机需要 `webkit2gtk-driver` 和 `tauri-driver`；它们不是 app 依赖，不进 deb。
 - 当前不加入 CI（需要桌面/Xvfb、WebDriver 和约 500 MB 的打包产物）。
-- 只覆盖 15 个核心功能；新增功能按 `features/fNN-*.mjs` + `features/index.mjs`
+- 覆盖 67 项核心与扩展功能；新增功能按 `features/fNN-*.mjs` + `features/index.mjs`
   的同一模式追加。
 
 ## 故障排查

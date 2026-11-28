@@ -13,12 +13,28 @@ export default {
     const started = Date.now();
     let text = '';
     while (Date.now() - started < 60_000) {
-      text = await ui.execute(`
+      const state = await ui.execute(`
         const rows = document.querySelectorAll('[data-message-role="tool"]');
-        const last = rows[rows.length - 1];
-        return last ? last.innerText : '';
+        const folds = document.querySelectorAll('[data-test="turn-history-status"]');
+        const lastTool = rows[rows.length - 1];
+        const lastFold = folds[folds.length - 1];
+        return {
+          tool: lastTool ? lastTool.innerText : '',
+          fold: lastFold ? lastFold.innerText : '',
+          expanded: lastFold ? lastFold.getAttribute('aria-expanded') : null,
+        };
       `);
+      text = state.tool;
       if (text.includes('read_file')) break;
+      // A settled turn hides its tool cards behind the fold; expand the newest
+      // fold so the tool card is genuinely rendered before asserting on it.
+      if (state.fold.includes('Tools executed') && state.expanded !== 'true') {
+        await ui.execute(`
+          const folds = document.querySelectorAll('[data-test="turn-history-status"]');
+          const last = folds[folds.length - 1];
+          if (last) last.click();
+        `);
+      }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     assert.match(text, /read_file/);

@@ -56,6 +56,10 @@ export async function currentSid(ui) {
 }
 
 export async function newSession(ui) {
+  // A previous stub may have left the left sidebar on Files/Tasks/Experts,
+  // where the "New Chat" button is not rendered. Restore the session list
+  // before looking for the preset dialog so newSession is order-independent.
+  await ensureSessionList(ui);
   const previousSid = await currentSid(ui);
   if (!(await ui.exists(PRESET_DIALOG))) {
     await ui.clickText('New Chat');
@@ -105,7 +109,7 @@ export async function ensureSession(ui) {
  * (UI upgrade S1): every item has a `nav-{id}` hook, so clicking the chat icon
  * activates the session list from whichever panel is showing. Idempotent.
  */
-async function ensureSessionList(ui) {
+export async function ensureSessionList(ui) {
   const navChat = '[data-test="nav-chat"]';
   if (await ui.exists(navChat)) {
     await ui.click(navChat);

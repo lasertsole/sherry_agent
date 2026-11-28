@@ -47,6 +47,7 @@ import f46 from './f46-extend.mjs';
 import f47 from './f47-web-search.mjs';
 import f48 from './f48-persona.mjs';
 import f49 from './f49-account.mjs';
+import f50 from './f50-meeting-page.mjs';
 import f51 from './f51-language.mjs';
 import f52 from './f52-shortcuts.mjs';
 import f53 from './f53-safety.mjs';
@@ -60,6 +61,10 @@ import f60 from './f60-context-ring.mjs';
 import f61 from './f61-standalone-tenant.mjs';
 import f62 from './f62-titlebar.mjs';
 import f63 from './f63-git-graph.mjs';
+import f64 from './f64-expert-edit.mjs';
+import f65 from './f65-session-activity-board.mjs';
+import f66 from './f66-high-risk-guard.mjs';
+import f67 from './f67-meeting-create-dialog.mjs';
 
 export const FEATURES = [
   f01,
@@ -111,6 +116,7 @@ export const FEATURES = [
   f47,
   f48,
   f49,
+  f50,
   f51,
   f52,
   f53,
@@ -123,5 +129,9 @@ export const FEATURES = [
   f60,
   f61,
   f62,
-  f63
+  f63,
+  f64,
+  f65,
+  f66,
+  f67
 ];

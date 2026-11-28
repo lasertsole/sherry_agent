@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { openMenuTile, closeRightTab } from '../lib/app.mjs';
 
 export default {
@@ -7,8 +6,9 @@ export default {
   status: 'implemented',
   async run({ ui }) {
     await openMenuTile(ui, 'account');
-    await ui.waitText('Account', 20_000).catch(() => {});
-    assert.ok(await ui.exists('[data-test="auth-status"]'), 'auth status should render');
+    // Older packaged builds render the same visible auth state without the
+    // auth-status data-test hook, so assert the user-visible text instead.
+    await ui.waitText('Login protection is', 20_000);
     await closeRightTab(ui);
   }
 };
