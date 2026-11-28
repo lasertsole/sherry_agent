@@ -48,6 +48,7 @@ import server.trigger.http.health  # noqa: F401  (side-effect route registration
 import server.trigger.http.mcp  # noqa: F401  (side-effect route registration)
 import server.trigger.http.lsp_config  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_report  # noqa: F401  (side-effect route registration)
+import server.trigger.http.superagent  # noqa: F401  (side-effect route registration)
 
 # The per-turn trajectory ledger is reached by agent-side producers through the
 # process-level hook registry (agent/** must not import server/**).

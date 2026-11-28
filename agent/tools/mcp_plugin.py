@@ -1,11 +1,14 @@
 """MCP server discovery + tool building.
 
-Two sources layer into one namespace (user overrides bundled on a name
-clash):
+Three sources layer into one namespace (the later a source is, the higher its
+priority on a name clash):
 
 * **Bundled defaults** — the read-only ``plugins/mcp_server/config.json``
   (shipped with the install; currently a placeholder ``{}``). Its ``$here/``
   resolves to its own directory, exactly as before.
+* **``sherry.jsonc``** — the ``mcp.servers`` object in the app-level settings
+  file. This is the path the super-agent integration uses to expose its
+  ``orchestrator_*`` MCP tools. Its ``$here/`` resolves to ``APP_HOME``.
 * **The user drop folder** — ``APP_HOME/mcp_servers/``, the ONE writable place
   a user adds MCP servers in a unified (read-only) install. Two shapes:
   a flat ``<name>.json`` (the file IS the server spec) and a self-contained
@@ -36,6 +39,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config import MCP_SERVERS_DIR, PLUGINS_PATH  # noqa: E402  (delayed import: after sys.path setup above, which guarantees `config` is importable when this file runs outside the package context)
+from config.sherry_settings import SHERRY_CONFIG_PATH, load_sherry_settings  # noqa: E402
 
 __all__ = ["McpServerEntry", "build_mcp_tools", "scan_mcp_servers"]
 
@@ -113,14 +117,46 @@ def _parse_user_entry(entry: Path) -> McpServerEntry | None:
     return McpServerEntry(name=name, source="user", spec=spec, here=here)
 
 
-def scan_mcp_servers() -> list[McpServerEntry]:
-    """Every discovered MCP server: bundled defaults, then the user folder.
+def _settings_entries() -> list[McpServerEntry]:
+    """Servers declared in ``sherry.jsonc`` under ``mcp.servers``.
 
-    Sorted per source for a deterministic scan order (a name clash means the
-    user entry wins at merge time, regardless of order). This is discovery
-    only — nothing is spawned or connected.
+    A malformed settings object is reported as one failed entry (same contract
+    as a bad drop-folder file), never allowed to take the whole scan down.
     """
-    entries = _bundled_entries()
+    here = SHERRY_CONFIG_PATH.parent
+    try:
+        servers = load_sherry_settings().get("mcp.servers") or {}
+        if not isinstance(servers, dict):
+            raise ValueError("mcp.servers must be a JSON object")
+    except (OSError, TypeError, ValueError) as exc:
+        return [
+            McpServerEntry(
+                name="(sherry.jsonc)",
+                source="sherry.jsonc",
+                spec=None,
+                here=here,
+                error=str(exc),
+            )
+        ]
+    return [
+        McpServerEntry(
+            name=str(name),
+            source="sherry.jsonc",
+            spec=spec if isinstance(spec, dict) else None,
+            here=here,
+            error=None if isinstance(spec, dict) else "expected a JSON object",
+        )
+        for name, spec in sorted(servers.items(), key=lambda item: str(item[0]))
+    ]
+
+
+def scan_mcp_servers() -> list[McpServerEntry]:
+    """Every discovered MCP server: bundled, sherry.jsonc, then user folder.
+
+    Later sources override earlier ones on a name clash at merge time. This is
+    discovery only — nothing is spawned or connected.
+    """
+    entries = _bundled_entries() + _settings_entries()
     if MCP_SERVERS_DIR.is_dir():
         for path in sorted(MCP_SERVERS_DIR.iterdir()):
             parsed = _parse_user_entry(path)

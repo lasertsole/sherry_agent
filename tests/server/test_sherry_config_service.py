@@ -23,6 +23,9 @@ SAMPLE = """// app settings
 
   "WORKSPACE_TEMPLATE_LANG": "en",
   "model_capabilities": {},
+  "mcp": {
+    "servers": {}
+  },
   "safety_filter": {
     "enabled": false,
     "llm_moderation_mode": "off",
@@ -54,6 +57,10 @@ SAMPLE = """// app settings
   },
   "browser": {
     "debug_capture": true
+  },
+  "superagent": {
+    "enabled": false,
+    "port": 3082
   },
   "effects": {
     "enabled": false,
