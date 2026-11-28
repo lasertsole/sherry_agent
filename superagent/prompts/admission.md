@@ -1,0 +1,1 @@
+Assess the candidate Trigger against every enabled rule exactly once.\nReturn a matched rule only with evidence in the Trigger text or thread window.\n

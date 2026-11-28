@@ -1,0 +1,1 @@
+Work only inside the assigned Ticket directory and report progress with orchestrator_report.\nIf a human decision is needed, report blocked with the question; never guess.\n

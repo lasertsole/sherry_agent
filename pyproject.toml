@@ -216,6 +216,16 @@ ignore = [
     "vendor",
 ]
 [tool.ruff.lint.per-file-ignores]
+# Protocol members are intentionally terse stubs; docstrings are on the protocol.
+"superagent/core/ports.py" = ["D102"]
+"superagent/app/passes.py" = ["D102"]
+"superagent/sources/kind.py" = ["D102"]
+"superagent/sources/host.py" = ["D102"]
+"superagent/infra/commands.py" = ["D102"]
+"superagent/app/assessment.py" = ["D102"]
+"superagent/app/sessions.py" = ["D102"]
+"superagent/executor/sherry.py" = ["D102"]
+
 # Vendored LightRAG / RAG-Anything code - keep close to upstream, don't chase style
 "skills/builtin/core/multimodal_rag/scripts/graph_rag/raganything/**" = ["E402", "F403", "F405", "S110", "N"]
 "skills/builtin/core/multimodal_rag/scripts/graph_rag/**" = ["S110", "N"]
@@ -269,8 +279,43 @@ root_packages = [
     "runtime",
     "server",
     "skills",
+    "superagent",
     "workspace",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Superagent layered dependency contract"
+type = "layers"
+layers = [
+    "superagent.panel",
+    "superagent.mcp",
+    "superagent.executor",
+    "superagent.app",
+    "superagent.sources",
+    "superagent.infra",
+    "superagent.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: superagent.core must stay pure"
+type = "forbidden"
+source_modules = ["superagent.core"]
+forbidden_modules = [
+    "superagent.app",
+    "superagent.sources",
+    "superagent.executor",
+    "superagent.infra",
+    "superagent.panel",
+    "agent",
+    "server",
+    "runtime",
+]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: agent must not import superagent"
+type = "forbidden"
+source_modules = ["agent"]
+forbidden_modules = ["superagent"]
 
 [[tool.importlinter.contracts]]
 name = "Server layered dependency contract"

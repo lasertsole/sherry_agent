@@ -99,6 +99,10 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # config/model_capabilities.json catalog:
     # {"custom-provider/my-model": {"supports_images": true}}
     "model_capabilities": {},
+    # MCP servers as configured in sherry.jsonc (``mcp.servers``). The same
+    # spec shape as the drop folder, consumed by agent/tools/mcp_plugin.py;
+    # empty by default so an untouched install still uses only bundled/drop-folder servers.
+    "mcp.servers": {},
     # Live-stream safety filter (keyword rules + optional LLM moderation).
     # OFF by default: an untouched install behaves exactly as before. These are
     # read LIVE (the 系统配置 → 直播安全 tab flips them from a switch), not only
@@ -147,6 +151,11 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # records intents while the original path still runs (observation only);
     # execution requires effects.enabled + worker_enabled and is disabled
     # while shadow mode is on.
+    # Side-process super-agent orchestrator (superagent/ package). OFF by
+    # default so an untouched install never starts the side process or exposes
+    # the /internal/superagent/* loopback routes; restart required to enable.
+    "superagent.enabled": False,
+    "superagent.port": 3082,
     "effects.enabled": False,
     "effects.shadow_mode": False,
     "effects.worker_enabled": False,
@@ -173,12 +182,13 @@ _INT_KEYS = frozenset(
         "effects.max_attempts",
         "extraction.iteration_budget_main",
         "extraction.iteration_budget_sub",
+        "superagent.port",
     }
 )
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
 #: Keys whose value is a JSON object (dict) rather than a scalar. The value is
 #: already parsed by json5; a string form is accepted for API writes.
-_OBJECT_KEYS = frozenset({"model_capabilities"})
+_OBJECT_KEYS = frozenset({"model_capabilities", "mcp.servers"})
 _BOOL_KEYS = frozenset(
     {
         "safety_filter.enabled",
@@ -194,6 +204,7 @@ _BOOL_KEYS = frozenset(
         "effects.restart_replay",
         "extraction.skill_extraction_enabled",
         "extraction.flow_extraction_enabled",
+        "superagent.enabled",
     }
 )
 

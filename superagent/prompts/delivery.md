@@ -1,0 +1,1 @@
+A Ticket may finish only after a ready report and the required approvals.\nDo not enable auto-merge unless another account's CLI is named for the merge.\n

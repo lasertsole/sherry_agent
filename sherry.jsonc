@@ -41,6 +41,14 @@
   //   "custom-provider/my-model": { "supports_images": true, "supports_pdf": false }
   "model_capabilities": {},
 
+  // MCP servers exposed to every agent build (including subagents). Each key
+  // is a server name and its value is the standard langchain-mcp-adapters spec
+  // (stdio command/args/env or sse/streamableHttp url/headers). The user drop
+  // folder (APP_HOME/mcp_servers/) wins on a name clash. Restart required.
+  "mcp": {
+    "servers": {}
+  },
+
   // Live-stream safety filter (系统配置 → 直播安全). OFF by default.
   // Keyword rules live in the file named by keyword_file (relative to the
   // workspace dir); nothing is bundled with the app.
@@ -134,6 +142,16 @@
   // controls the passive CDP domains. Read live — no restart needed.
   "browser": {
     "debug_capture": true
+  },
+
+  // Side-process super-agent orchestrator (superagent/ package). The process
+  // owns its own SQLite state and talks to Sherry through /internal/superagent/*
+  // loopback routes. OFF by default: an untouched install never starts it.
+  "superagent": {
+    // Master switch for the Sherry-side loopback hooks + panel page. Restart required.
+    "enabled": false,
+    // Port the side process serves its panel API on.
+    "port": 3082
   },
 
   // Restart-recovery effect queue (runtime/effects/ + server/service/effects/).

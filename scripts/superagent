@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# scripts/superagent — start/stop/restart/status for the superagent side process.
+#
+# Exit codes (also consumed by the hourly-check cron):
+#   0  healthy / action succeeded
+#   1  not running, or a runtime error after the action
+#   2  running but one or more non-runtime parts report an error (do not restart)
+#   3  running but setup is incomplete (do not restart; report what setup needs)
+#
+# The service owns its own tmux session, independent of the Sherry profile.
+# ``--respect-stop`` preserves a stop marker written by ``stop`` (only ``stop``
+# writes it, ``start`` clears it, ``restart`` leaves it alone).
+set -euo pipefail
+
+PROFILE="${DSH_SUPERAGENT_PROFILE:-superagent}"
+CHECKOUT="${DSH_SUPERAGENT_CHECKOUT:-$(pwd)}"
+PORT="${DSH_SUPERAGENT_PORT:-3082}"
+SESSION="dsh-superagent-$PROFILE"
+STATE_DIR="${DSH_SUPERAGENT_STATE_DIR:-$CHECKOUT/.artifacts/superagent}"
+LOG_DIR="$STATE_DIR/artifacts"
+MARKER="$STATE_DIR/stop.marker"
+STATE_URL="http://127.0.0.1:$PORT/orchestrator/api/state"
+READY_TIMEOUT="${DSH_SUPERAGENT_READY_TIMEOUT:-60}"
+
+RESPECT_STOP=0
+COMMAND=""
+
+usage() {
+  echo "usage: $0 [--profile NAME] [--checkout DIR] [--port N] [--respect-stop] {start|stop|restart|status}" >&2
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --profile) PROFILE="${2:-$PROFILE}"; SESSION="dsh-superagent-$PROFILE"; shift 2 ;;
+    --checkout) CHECKOUT="${2:-$CHECKOUT}"; shift 2 ;;
+    --port) PORT="${2:-$PORT}"; STATE_URL="http://127.0.0.1:$PORT/orchestrator/api/state"; shift 2 ;;
+    --respect-stop) RESPECT_STOP=1; shift ;;
+    start|stop|restart|status) COMMAND="$1"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+[ -n "$COMMAND" ] || { usage; exit 1; }
+
+session_exists() { tmux has-session -t "$SESSION" 2>/dev/null; }
+write_stop_marker() { mkdir -p "$STATE_DIR"; : > "$MARKER"; }
+clear_stop_marker() { rm -f "$MARKER"; }
+stop_respected() { [ "$RESPECT_STOP" -eq 1 ] && [ -f "$MARKER" ]; }
+
+cmd_start() {
+  if session_exists; then echo "already running"; exit 1; fi
+  if stop_respected; then echo "manually_stopped"; exit 1; fi
+  mkdir -p "$LOG_DIR"
+  clear_stop_marker
+  tmux new-session -d -s "$SESSION" \
+    "cd '$CHECKOUT' && uv run python -m superagent 2>&1 | tee -a '$LOG_DIR/$SESSION.log'"
+  local i
+  for i in $(seq 1 "$READY_TIMEOUT"); do
+    if curl -sf "$STATE_URL" >/dev/null 2>&1; then echo "ready"; exit 0; fi
+    if ! session_exists; then echo "process exited during startup"; exit 1; fi
+    sleep 1
+  done
+  echo "did not come up within ${READY_TIMEOUT}s"; exit 1
+}
+
+cmd_stop() {
+  if ! session_exists; then echo "not running"; exit 0; fi
+  tmux send-keys -t "$SESSION" C-c
+  write_stop_marker
+  echo "stopped"
+}
+
+cmd_restart() {
+  # restart does NOT write a stop marker; --respect-stop still honours an old one.
+  if session_exists; then tmux send-keys -t "$SESSION" C-c; fi
+  sleep 1
+  cmd_start "$@"
+}
+
+cmd_status() {
+  if ! session_exists; then echo "not running"; exit 1; fi
+  local state
+  state="$(curl -sf "$STATE_URL" 2>/dev/null || echo '{}')"
+  if [ -f "$MARKER" ]; then echo "manually_stopped"; fi
+  # The python service reports setup/health in the payload. A missing/empty
+  # payload means the process is alive but not yet serving → treat as runtime error.
+  if [ "$state" = "{}" ]; then echo "runtime error: no state"; exit 1; fi
+  case "$state" in
+    *'"setup_ok":false'*|*'"setup_ok": false'*) echo "setup incomplete"; exit 3 ;;
+    *'"health_error"'*) echo "part error"; exit 2 ;;
+    *) echo "healthy"; exit 0 ;;
+  esac
+}
+
+case "$COMMAND" in
+  start) cmd_start "$@" ;;
+  stop) cmd_stop ;;
+  restart) cmd_restart "$@" ;;
+  status) cmd_status ;;
+  *) usage; exit 1 ;;
+esac

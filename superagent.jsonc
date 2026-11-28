@@ -1,0 +1,42 @@
+// superagent side-process configuration (JSON5: comments and trailing commas allowed).
+// Copy this file next to the checkout or point DSH_SUPERAGENT_CONFIG at it. Every
+// value can also be supplied by an environment variable (the env wins). The
+// process owns its own SQLite state and talks to Sherry only over loopback HTTP.
+{
+  // Directory holding orchestrator.sqlite, the single-instance lock, worker-bin
+  // shims, worker-gitconfig and per-Ticket worktrees. Env: DSH_SUPERAGENT_STATE_DIR
+  "state_dir": ".artifacts/superagent",
+
+  // Sherry backend base URL for /internal/superagent/* loopback calls.
+  // Env: DSH_SUPERAGENT_SHERRY_URL
+  "sherry_backend_url": "http://127.0.0.1:3081",
+
+  // Port the side process serves its panel API on. Env: DSH_SUPERAGENT_PORT
+  "port": 3082,
+
+  // Shared secret for loopback calls. Prefer the DSH_SUPERAGENT_SECRET env var so
+  // the value never lands in a tracked file.
+  "shared_secret": "",
+
+  // Transport used to expose orchestrator_* tools to Sherry: stdio | sse.
+  "mcp_transport": "stdio",
+
+  // Source instances, keyed by id. Each value is validated by the Source's
+  // pydantic schema. Empty by default: an untouched install polls nothing.
+  "sources": {},
+
+  // Policy / acceptance settings. observe = record Decisions but do not accept.
+  "policy": {
+    "accept_mode": "observe",
+    "paused": false,
+    "eval_timeout_ms": 600000,
+    "listening": [],
+    "rules": {}
+  },
+
+  // Worker execution limits.
+  "executor": {
+    "max_workers": 2,
+    "blocked_commands": []
+  }
+}
